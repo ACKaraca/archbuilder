@@ -14,6 +14,7 @@ are not restated here.
 | [0004](0004-element-geometry-tiers.md) | Element geometry from planar generators, exact solids only where needed | Accepted |
 | [0005](0005-housing-acceptance-and-independent-validation.md) | Housing fixtures and independent validation as release gates | Accepted |
 | [0006](0006-canonical-text-form.md) | Canonical text form for comparison and merge | Accepted |
+| [0007](0007-exchange-identifiers.md) | Exchange identifiers independent of the other application's identifiers | Accepted |
 
 ## Template
 

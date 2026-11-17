@@ -11,7 +11,7 @@ that milestone's exit criteria.
 | M2 | 2 | Documentation and exchange |
 | M3 | 3 | Coordination, depth and site |
 | M4 | 4 | Structure, building services, massing and visualization |
-| M5 | 5 | Multi-user editing, fabrication depth and assistance |
+| M5 | 5 | Multi-user editing, fabrication depth, application exchange, web and tablet, and assistance |
 
 ## M1 Model core (phase 2)
 
@@ -136,10 +136,11 @@ and photoreal visualization.
   exposure.
 - A photoreal still and a solar study of fixture A are produced through RenderBuilder.
 
-## M5 Multi-user editing, fabrication depth and assistance (phase 5)
+## M5 Multi-user editing, fabrication depth, application exchange, web and tablet, and assistance (phase 5)
 
 **Goal.** Element-level multi-user editing and branch and merge through Arc Hub, fabrication-level
-steel and services output, and optional assistant workflows.
+steel and services output, exchange with the native project files of other applications through
+connectors, browser and tablet builds for massing and review, and optional assistant workflows.
 
 **Scope.**
 - AB-COLLAB-007 to AB-COLLAB-016
@@ -147,12 +148,23 @@ steel and services output, and optional assistant workflows.
   [27-fabrication-detailing.md](product/capabilities/27-fabrication-detailing.md), and rows of the
   other reserved files planned for phase 5
 - AB-AUTO-015
+- [30-application-connectors.md](product/capabilities/30-application-connectors.md) and AB-IO-020:
+  connectors, exchange package, round trips, licensed bridges and open readers
+- [31-web-and-tablet.md](product/capabilities/31-web-and-tablet.md): browser and tablet builds,
+  touch and pen massing, on-site review, offline documents
 
 **Dependencies.** Arc Hub design collaboration module with change-set exchange; `arc-doc`
-change-set support; suite assistant panel in `arc-app`.
+change-set support; suite assistant panel in `arc-app`; the Arc exchange package specification in
+`arc-core` and the `arc-connectors` repository (runtime only; connectors are not linked into
+ArchBuilder); WebAssembly, iOS and Android targets of `arc-core`, `arc-gpu` and `arc-ui`; a
+user-installed open solver for AB-ANALYT-051.
 
 **Exit criteria.**
 - WF-14 passes in full, including branch merge with conflict preservation.
 - Several users edit fixture A concurrently with element borrowing, and no synchronization discards
   work.
 - A steel stair and frame produce shop drawings and fabrication files that pass independent readers.
+- WF-15 passes: a housing fixture round-trips through a connector three times without duplicates, and
+  a re-import lists exactly the elements edited on each side.
+- WF-16 passes: a mass is sketched with a pen on a tablet, reviewed on site offline and synchronized
+  through Arc Hub, and the same document opens in the browser build.

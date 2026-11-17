@@ -252,3 +252,39 @@ The reference fixtures are synthetic documents created with the product's own co
   shows the same elements.
 - Merging edits to different elements completes automatically; an edit to the same element on both
   lines is presented as a conflict with both states kept (AB-COLLAB-013).
+
+## WF-15 Round trip with a native project file of another application
+
+1. Export housing fixture A to an exchange package for a connector (AB-CONNECT-002) and apply it in
+   the other application.
+2. Edit wall types and room names there and move one storey's grids; edit a different wall type
+   here.
+3. Re-import the package (AB-CONNECT-001) and review the change list (AB-CONNECT-012).
+4. Repeat the round trip twice more (AB-CONNECT-011).
+
+**Acceptance**
+
+- No element is duplicated across three round trips and no element identifier changes
+  (AB-CONNECT-010).
+- The change list contains exactly the edited elements; an element edited on both sides is a
+  conflict with both states kept (AB-CONNECT-013).
+- Parameters that only the other application understands are written back unchanged (AB-IO-018).
+- The loss report names every unmapped family and the fidelity level used (AB-CONNECT-015,
+  AB-CONNECT-016).
+
+## WF-16 Massing and review on a tablet
+
+1. Open the site document on a tablet, sketch a massing option with the pen and push and pull its
+   faces (AB-TOUCH-004, AB-TOUCH-005).
+2. Go offline, walk the site with the model aligned to the device position, and record two issues
+   with photos and pen markup (AB-TOUCH-012, AB-TOUCH-011).
+3. Reconnect and synchronize through Arc Hub (AB-TOUCH-016); open the document in the browser build
+   (AB-TOUCH-017).
+
+**Acceptance**
+
+- The mass and its areas on the tablet equal those of the desktop build for the same commands
+  (AB-TOUCH-001).
+- Everything done offline is present after synchronization; a conflicting edit keeps both states
+  (AB-TOUCH-016).
+- The issues open in the desktop build with viewpoints, photos and markup (AB-TOUCH-011).
