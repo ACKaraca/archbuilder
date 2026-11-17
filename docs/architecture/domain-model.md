@@ -101,6 +101,7 @@ All physical elements share: `id`, `category`, `type_id` (where applicable), `st
 | `DraftingView`, `DetachedDrawing` | Drafting document; for detached: source view and revision, copied detail IDs | Independent of the model |
 | `Schedule` | Query, fields, formatting | Placed on sheets |
 | `Sheet`, `Viewport`, `Revision`, `SheetSet` | Paper geometry, sources, numbering | Publishing |
+| `ExchangeLink` | Package location, mapping table, last exchanged state with per-entry hashes, exchange identifiers | Persistent per document; drives change detection in [30-application-connectors.md](../product/capabilities/30-application-connectors.md) |
 
 ```mermaid
 erDiagram
@@ -140,6 +141,9 @@ erDiagram
    identifier and revision.
 7. Imported elements record their source identifiers in the identity map so re-import updates in
    place.
+8. Elements exchanged with another application through a connector also carry an exchange
+   identifier, assigned once, never reused and never derived from the other application's
+   identifiers ([ADR 0007](../adr/0007-exchange-identifiers.md)).
 
 ## Invariants
 

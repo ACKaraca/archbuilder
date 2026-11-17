@@ -14,7 +14,8 @@ model or redrawn by hand without any record of where it came from.
 ArchBuilder is a building information modeling application for architecture, structure and building
 services. One semantic model per document holds the building; plans, sections, elevations, 3D views,
 schedules, sheets and exchange files are derived from it and can be rebuilt at any time. It runs
-natively on Windows, macOS and Linux, works fully offline without an account, stores documents in a
+natively on Windows, macOS and Linux, has browser and tablet builds of the same code for concept
+massing, viewing and markup, works fully offline without an account, stores documents in a
 documented open package, and treats IFC as a first-class representation of its own data.
 
 ## Primary users and deliverables
@@ -55,21 +56,24 @@ schedules and sheets; phases, design options, groups and assemblies; links and c
 collaboration through Arc Hub; visualization through RenderBuilder; automation and extensibility;
 IFC-grade interoperability; structural modeling, reinforcement, steel detailing and the analytical
 model; HVAC, piping and electrical systems with fabrication detailing; concept massing and early
-performance analysis. The capability areas are listed in
+performance analysis; exchange with the native project and family files of other applications
+through connectors, licensed bridges and open readers; concept massing, viewing and markup in the
+browser and on tablets; and linear static solving of simple structural cases through open solver
+processes. The capability areas are listed in
 [capabilities/README.md](capabilities/README.md).
 
 ## Non-goals
 
 | Non-goal | Reason |
 |---|---|
-| Reading or writing proprietary BIM project formats without a published specification | Those formats are exchanged through IFC and other open formats; reverse engineering is excluded by the suite's clean-room policy |
+| Reverse engineering undocumented file formats or binaries, and running the compiled or protected scripts of other applications | Excluded for legal reasons by the suite's clean-room policy; native project and family files are exchanged through connectors that use the other application's public API ([30](capabilities/30-application-connectors.md)) |
 | A built-in path tracer | Photoreal output comes from RenderBuilder through the Arc Scene contract, which keeps one renderer for the suite |
 | Detailed civil design (alignments, corridors, grading optimization, networks) | Covered by CivilBuilder; ArchBuilder exchanges terrain and context with it |
 | Federated clash management across many models, 4D sequencing and 5D cost review | Covered by Arc Review; ArchBuilder provides in-document interference checks and BCF |
-| Structural finite-element solving and code design checks | The analytical model is exchanged with analysis software; results are imported and displayed |
+| Native finite-element kernels, nonlinear and dynamic analysis, and code design checks | Linear static solving of simple cases runs in an open solver process (AB-ANALYT-051); other analyses and code design checks stay with analysis software, and results are imported and displayed |
 | Embedded scripting interpreters and native plug-ins | Scripts run out of process through the automation protocol; plug-ins are sandboxed WebAssembly |
 | Mandatory cloud services | Arc Hub is optional and self-hostable; nothing in the product depends on a hosted service |
-| Touch-first tablet authoring | The product targets desktop authoring; viewing on other devices is provided by Arc Hub and Arc Review |
+| Full construction-documentation authoring on tablets and in the browser | Tablet and browser builds cover concept massing, viewing, markup and light edits ([31](capabilities/31-web-and-tablet.md)); sheets, schedules and detailed authoring stay on the desktop build |
 | Certifying compliance with building regulations | Checks report against stated rules and sources; certification remains with the responsible professional |
 
 ## Positioning
@@ -86,6 +90,8 @@ FreeCAD BIM workbench. It is an independent, open-source implementation built on
 |---|---|
 | IFC 4.3 semantics as the model's exchange vocabulary, with IDS validation, BCF and data dictionary lookup | [19](capabilities/19-interoperability.md), [15](capabilities/15-links-and-coordination.md), [09](capabilities/09-parameters-and-constraints.md) |
 | Loss-reported round trips with preserved foreign data and stable identity maps | AB-IO-017, AB-IO-018, AB-IO-008 |
+| Repeated round trips with native project files of other applications, with identifiers independent of their worksharing and change detection on re-import | AB-CONNECT-010, AB-CONNECT-011, AB-CONNECT-012 |
+| Concept massing by touch and pen, on-site review and offline use on tablets, and the same document in the browser | AB-TOUCH-004, AB-TOUCH-012, AB-TOUCH-014, AB-TOUCH-017 |
 | Multi-threaded, revision-tagged regeneration of geometry, views and schedules | AB-VIEW-018, [architecture overview](../architecture/overview.md) |
 | Element-level model comparison, a canonical text form for diff tools, and branch and merge through Arc Hub | AB-COLLAB-004, AB-COLLAB-005, AB-COLLAB-007 |
 | One constraint solver for project constraints, family sketches and profiles | AB-PARAM-020, AB-FAM-008 |

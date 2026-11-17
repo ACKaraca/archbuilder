@@ -49,7 +49,7 @@ implement and test.
 | [16-collaboration.md](16-collaboration.md) | `COLLAB` | Hub versions, locks, comparison, packages, branches, multi-user editing | 16 |
 | [17-visualization.md](17-visualization.md) | `VIS` | Viewport, sun and shadows, cameras, walkthroughs, rendering through RenderBuilder | 12 |
 | [18-automation-and-extensibility.md](18-automation-and-extensibility.md) | `AUTO` | Commands, automation protocol, CLI, scripting, node graphs, plug-ins, model checking, assistant | 15 |
-| [19-interoperability.md](19-interoperability.md) | `IO` | Native document, IFC, IDS, COBie, DWG and DXF, meshes, OpenUSD, STEP, loss reports | 19 |
+| [19-interoperability.md](19-interoperability.md) | `IO` | Native document, IFC, IDS, COBie, DWG and DXF, meshes, OpenUSD, STEP, exchange package, loss reports | 20 |
 | [20-structural-modeling.md](20-structural-modeling.md) | `STRUCT` | Physical structural model: columns, framing, foundations, structural walls and floors | 65 |
 | [21-reinforcement.md](21-reinforcement.md) | `REBAR` | Reinforcement modeling, schedules and detailing | 50 |
 | [22-steel-detailing.md](22-steel-detailing.md) | `STEEL` | Steel parts, connections, numbering, shop drawings and fabrication output | 96 |
@@ -60,6 +60,8 @@ implement and test.
 | [27-fabrication-detailing.md](27-fabrication-detailing.md) | `FAB` | Fabrication parts for building services, hangers, fabrication output | 46 |
 | [28-concept-massing.md](28-concept-massing.md) | `MASS` | Concept massing, mass floors, divided surfaces, early design | 76 |
 | [29-building-performance-analysis.md](29-building-performance-analysis.md) | `PERF` | Solar, energy, daylight, wind and carbon analysis | 58 |
+| [30-application-connectors.md](30-application-connectors.md) | `CONNECT` | Connectors for native project and family files of other applications, exchange package, round trips, change detection, licensed bridges, open readers | 20 |
+| [31-web-and-tablet.md](31-web-and-tablet.md) | `TOUCH` | Browser and tablet builds, touch and pen massing, viewing and markup, on-site review, offline documents, Hub synchronization | 18 |
 
 ## Capabilities and issues
 

@@ -2,7 +2,9 @@
 
 This area specifies the native document and exchange with other formats. Fidelity levels, mapping
 principles, validation and deliberately unsupported formats are described in
-[interoperability.md](../../architecture/interoperability.md). Publishing of sheets is specified in
+[interoperability.md](../../architecture/interoperability.md). Exchange with the native project and
+family files of other applications through connectors, licensed bridges and open readers is
+specified in [30-application-connectors.md](30-application-connectors.md). Publishing of sheets is specified in
 [13-sheets-and-publishing.md](13-sheets-and-publishing.md) and references in
 [15-links-and-coordination.md](15-links-and-coordination.md).
 
@@ -14,7 +16,7 @@ principles, validation and deliberately unsupported formats are described in
 | Mapping table | Source category or type, target entity, predefined type, property set mapping | Saved and shared as files |
 | Loss report | Preserved, approximated, unsupported items, identity map, validation evidence | Produced by every import and export |
 | Preserved foreign data | Source format, original payload, owning element or document | Kept for round trip |
-| Identity map | Native ID to IFC GlobalId and other source identifiers | Persistent per document |
+| Identity map | Native ID to IFC GlobalId, exchange identifier and other source identifiers | Persistent per document |
 
 ## Native document
 
@@ -54,3 +56,4 @@ principles, validation and deliberately unsupported formats are described in
 | AB-IO-017 | Loss reports | Produces a structured report for every import and export: what was preserved, approximated and unsupported, the identity map, the engine version and validation results. | T1 | 2 |
 | AB-IO-018 | Preserved foreign data | Keeps content an importer cannot model with its owning element or the document and writes it back when exporting to the same format. | T1 | 2 |
 | AB-IO-019 | Export self-validation | Validates each export against its schema rules before reporting success; an export that fails validation is reported as failed and its file is marked incomplete. | T1 | 2 |
+| AB-IO-020 | Arc exchange package | Reads and writes the Arc exchange package, the open container through which connectors in other applications deliver and receive project data, at data fidelity and, where the connector declares it, edit fidelity. Every exchange produces a loss report. Entry-level behavior is specified in [30-application-connectors.md](30-application-connectors.md). | T3 | 5 |

@@ -5,16 +5,19 @@ The vocabulary used across ArchBuilder documents, one entry per term.
 | Term | Meaning |
 |---|---|
 | Anchor | The model or view reference an annotation is attached to: element role, persistent face or edge reference, datum, linked element, view coordinate or drafting entity |
+| Arc exchange package | The open container through which connectors deliver and receive project data; specified in `arc-core` |
 | Area scheme | A named way of measuring areas (gross, rentable, net or user-defined) with its own area plans |
 | Arc document package | The suite's single-file SQLite document format; ArchBuilder documents use the `.archb` extension |
 | Arc Scene | The suite contract for renderable scenes exchanged with RenderBuilder |
 | Assembly | A named collection of elements treated as one deliverable unit with its own views and schedules |
 | Attachment | A wall's top or base following the surface of a floor, roof, ceiling or plane |
 | Bounded expression language | The typed, unit-checked formula language for parameters and schedule fields, with no loops or external access |
+| Browser build | The product's crates compiled to WebAssembly with the same UI kit; opens the same documents as the desktop build |
 | Canonical text form | A deterministic text serialization of a document's semantic records for comparison and review |
 | Category | The fixed classification of an element (wall, door, room) that sets its behavior, graphics and default IFC entity |
 | Change set | The transactions of one user exchanged during multi-user editing |
 | Child view | A partial view sharing its parent's settings and detail layer, with its own crop |
+| Connector | An add-in running inside the user's own licensed copy of another application that uses its public API to read and write the Arc exchange package |
 | Coordination item | A recorded change of a monitored linked element awaiting a decision |
 | Core boundary | The division in a layered type between structural core layers and finish layers |
 | Curtain wall | A wall made of a grid of panels and mullions |
@@ -29,6 +32,7 @@ The vocabulary used across ArchBuilder documents, one entry per term.
 | Dormer | An assembly of a small roof, its walls and the cut in a host roof |
 | Drafting view | A model-independent 2D view drawn with the drafting engine |
 | Element | A record in the model with an identity, such as a wall, door, room or view |
+| Exchange identifier | An identifier assigned once by an exchange and stored on both sides, independent of the other application's own identifiers |
 | Family | A definition of an element kind with typed parameters, types and geometry recipes |
 | Family test case | A stored parameter set a family is evaluated against before publishing |
 | Geometry recipe | A declarative form (extrusion, blend, revolve, sweep, swept blend, array or node graph) in a family |
@@ -40,12 +44,14 @@ The vocabulary used across ArchBuilder documents, one entry per term.
 | Level | A named horizontal datum at an elevation; a storey level creates a storey |
 | Library package | A versioned file of family definitions with a manifest, license and checksums |
 | Library parameter | A parameter definition with a stable identifier shared across documents |
+| Licensed bridge | A user-installed, user-licensed conversion library called as a separate process; never distributed with Arc |
 | Link | A reference to another document or file displayed in this document without copying it |
 | Live dimension | A transient dimension shown on selection that moves the element when edited |
 | Location line | The line of a wall that stays fixed when its thickness changes |
 | Loss report | The structured record of what an import or export preserved, approximated and could not carry |
 | Model view | A plan, section, elevation, callout or 3D view projected from the model |
 | Monitored element | A local element compared against a linked element for changes |
+| Open reader | A native reader for a format that has a permissively licensed implementation or a published specification |
 | Opening recipe | A built-in parametric door or window definition usable without a family |
 | Orphaned annotation | An annotation whose anchor no longer resolves; it keeps its position and shows no trusted value |
 | Part | A piece of a layered element split per layer for scheduling and fabrication |

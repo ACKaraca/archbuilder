@@ -11,9 +11,9 @@ automation surface and the testing strategy. Suite-wide decisions are in the
 |---|---|---|
 | `archbuilder-model` | Headless domain (above `arc-doc`) | Object types of [domain-model.md](domain-model.md), invariants, family definitions and evaluation, element geometry generation, joins, room and area computation, quantity rules, view definitions and the view-generation inputs, warning rules, regeneration graph nodes. Organized in modules per discipline (architecture, structure, services, steel, massing) |
 | `archbuilder-commands` | Headless | User-level commands with parameter schemas and interactive prompt machines: placement, modify, family editing, views, annotation, sheets, schedules, phases, options, groups, links, numbering, checks |
-| `archbuilder-io` | Headless | Mapping between the domain model and the neutral models of `arc-io-*` crates: IFC, IDS, BCF, DWG/DXF, PDF, glTF, OBJ, STL, OpenUSD, STEP, LandXML, point clouds, gbXML, COBie, CSV/XLSX; loss reports and identity maps |
+| `archbuilder-io` | Headless | Mapping between the domain model and the neutral models of `arc-io-*` crates: IFC, IDS, BCF, DWG/DXF, PDF, glTF, OBJ, STL, OpenUSD, STEP, 3DM and other open-reader formats, LandXML, point clouds, gbXML, COBie, CSV/XLSX, the Arc exchange package; loss reports and identity maps |
 | `archbuilder-ui` | UI (egui) | Tools, panels, property grid bindings, viewport interaction, family editor workspace, schedule and sheet editors |
-| `apps/archbuilder` | Application | Desktop application wiring: shell, plug-in host, settings |
+| `apps/archbuilder` | Application | Desktop application wiring: shell, plug-in host, settings. Browser and tablet builds compile the same crates for WebAssembly, iOS and Android with a touch layout in `archbuilder-ui` ([31-web-and-tablet.md](../product/capabilities/31-web-and-tablet.md)); connectors for other applications live in the separate `arc-connectors` repository and exchange only through the package |
 | `apps/archbuilder-cli` | Application | Headless CLI: convert, validate, check, publish, compare, canonical text, run scripts and commands, serve the automation protocol |
 
 No other crate exists at the start. A crate is split out when a second concrete user appears:
@@ -66,7 +66,7 @@ flowchart TB
 | `arc-view` | Plan, section and elevation projection, hidden-line removal, cut patterns producing `arc-draft` geometry |
 | `arc-scene` | Materials appearance, render scene export to RenderBuilder |
 | `arc-nodes` | Node graphs for design, family recipes and event rules |
-| `arc-io-*` | IFC, DXF, DWG, STEP, mesh, USD, point cloud, geo, PDF and BCF neutral models |
+| `arc-io-*` | IFC, DXF, DWG, STEP, mesh, USD, point cloud, geo, PDF, BCF and exchange package neutral models, and readers for formats with an open reader |
 | `arc-hub-api` | Hub versions, locks, issues, packages, change sets |
 | `arc-gpu`, `arc-ui`, `arc-app` | Viewport, widgets, shell, localization, crash reporting, plug-in loading, assistant panel |
 
@@ -115,6 +115,7 @@ sequenceDiagram
 | View pipeline | `archbuilder-model` with `arc-view` | View definition to drafting geometry; see [views-and-documentation.md](views-and-documentation.md) |
 | Quantity rules | `archbuilder-model` | One measurement implementation for schedules, takeoffs and IFC quantity sets |
 | Exchange mappers | `archbuilder-io` | Domain to neutral-model mapping with loss reports; see [interoperability.md](interoperability.md) |
+| Exchange link engine | `archbuilder-io` | Matches entries by exchange identifier, detects changes by content hash and applies reviewed changes as one transaction |
 | Rule checker | `archbuilder-model`, `archbuilder-io` | IDS and rule sets evaluated over the model and over IFC exports |
 
 ## Threading and background work

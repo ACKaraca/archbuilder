@@ -37,7 +37,7 @@ designers who automate models. See [the vision](docs/product/vision.md).
 | Collaboration | Hub versions, comparison, branches, multi-user editing | [16](docs/product/capabilities/16-collaboration.md) |
 | Visualization | Viewport, sun, cameras, rendering through RenderBuilder | [17](docs/product/capabilities/17-visualization.md) |
 | Automation and extensibility | Commands, protocol, CLI, node graphs, plug-ins, checks | [18](docs/product/capabilities/18-automation-and-extensibility.md) |
-| Interoperability | Native document, IFC, IDS, DWG, meshes, loss reports | [19](docs/product/capabilities/19-interoperability.md) |
+| Interoperability | Native document, IFC, IDS, DWG, meshes, exchange package, loss reports | [19](docs/product/capabilities/19-interoperability.md) |
 | Structural modeling | Columns, framing, foundations, structural walls and floors | [20](docs/product/capabilities/20-structural-modeling.md) |
 | Reinforcement | Reinforcement modeling and schedules | [21](docs/product/capabilities/21-reinforcement.md) |
 | Steel detailing | Connections, numbering, shop drawings, fabrication output | [22](docs/product/capabilities/22-steel-detailing.md) |
@@ -48,6 +48,8 @@ designers who automate models. See [the vision](docs/product/vision.md).
 | Fabrication detailing | Services fabrication parts and output | [27](docs/product/capabilities/27-fabrication-detailing.md) |
 | Concept massing | Masses, mass floors, divided surfaces | [28](docs/product/capabilities/28-concept-massing.md) |
 | Building performance analysis | Solar, energy, daylight, wind, carbon | [29](docs/product/capabilities/29-building-performance-analysis.md) |
+| Application connectors | Exchange with native project and family files of other applications | [30](docs/product/capabilities/30-application-connectors.md) |
+| Web and tablet | Browser and tablet builds, touch and pen massing, on-site review | [31](docs/product/capabilities/31-web-and-tablet.md) |
 
 ## How it fits in the suite
 

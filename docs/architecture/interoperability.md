@@ -34,10 +34,39 @@ properties, relationships) and **edit** (native, parametric editing after import
 | gbXML | Write | Data | Energy model | AB-IO-016 |
 | CSV, XLSX | Read, write | Data | Schedules by stable ID | AB-SCHED-016 |
 | Parameter library, keynote table, classification table | Read | Data | Open text formats | AB-PARAM-004, AB-ANNO-011, AB-PARAM-016 |
+| Arc exchange package | Read, write | Data; edit where the connector declares it | Open container used by connectors in other applications | AB-IO-020, AB-CONNECT-001, AB-CONNECT-002 |
+| 3DM and other formats with a permissively licensed open reader or a published specification | Read | View or data, per format | Native readers behind `arc-io-*` crates | AB-CONNECT-019 |
+| Formats converted by a user-licensed library | Read, write | Per library | Separate process, never distributed with Arc | AB-CONNECT-018 |
 
-Structural analysis exchange and steel fabrication formats are listed in the reserved capability
-files [23-analytical-model.md](../product/capabilities/23-analytical-model.md) and
+Structural analysis exchange and steel fabrication formats are listed in the capability files [23-analytical-model.md](../product/capabilities/23-analytical-model.md) and
 [22-steel-detailing.md](../product/capabilities/22-steel-detailing.md) and follow the same principles.
+
+## Exchange with other applications
+
+Native project and family files that have no published specification are exchanged by connectors:
+add-ins that run inside the user's own licensed copy of the other application, use only its official
+public API, and read or write the Arc exchange package (suite
+[ADR-0017](https://github.com/ACKaraca/arc-suite/blob/main/docs/adr/0017-exchange-connectors-and-licensed-bridges.md)).
+The package is specified in
+[`interchange.md`](https://github.com/ACKaraca/arc-core/blob/main/docs/architecture/interchange.md)
+in `arc-core`. The mapping principles below apply unchanged, with these additions.
+
+1. **Exchange identifiers.** Each exchanged element carries an exchange identifier that does not
+   depend on the other application's session, worksharing or file-copy identifiers; it is recorded
+   in the identity map next to the GlobalId (AB-CONNECT-010, [ADR 0007](../adr/0007-exchange-identifiers.md)).
+2. **Change detection.** A re-import compares per-entry content hashes with the last exchanged state
+   and applies added, removed and modified entries after review; entries edited on both sides keep
+   both states (AB-CONNECT-012, AB-CONNECT-013).
+3. **Fidelity is declared.** A connector states the level (view, data, edit) per element kind and
+   direction before an exchange runs (AB-CONNECT-015). Parameters and content that only one side
+   understands are preserved as foreign data and written back.
+4. **Mapping tables.** Categories, families, types, parameters, materials and levels are mapped by
+   editable tables stored in the document (AB-CONNECT-014).
+5. **Licensed bridges and open readers.** A conversion library licensed to the user runs as a
+   separate process and is never required for a core workflow; formats with an open reader are read
+   natively.
+6. **Still excluded.** Reverse engineering undocumented formats or binaries and running the compiled
+   or protected scripts of other applications are not provided, for legal reasons.
 
 ## Mapping principles
 
@@ -78,6 +107,7 @@ files [23-analytical-model.md](../product/capabilities/23-analytical-model.md) a
 | glTF | Validated by a glTF validator; bounds, units and node names checked |
 | BCF | Round trip through an independent BCF library; viewpoints compared |
 | COBie | Required sheets and columns present; values cross-checked with the model |
+| Exchange package | Schema validation by an independent reader; export, re-import and change detection reproduce the identity map and report no change on an unchanged model |
 
 Exports also self-validate before reporting success (AB-IO-019). Fixtures are synthetic documents
 built by scripts, held in the suite's corpus repositories with owner, license and checksum; no vendor
@@ -106,9 +136,8 @@ shown in the interface, written as JSON by the CLI, and stored with the document
 
 | Format or exchange | Reason | How it is exchanged instead |
 |---|---|---|
-| RVT and RFA project and family files | No published specification; reverse engineering is excluded | IFC 4.3 export from the source application, DWG for drawings, STEP or glTF for family geometry |
-| PLN, PLA and other proprietary BIM project formats | Same reason | IFC |
-| DGN | No permissively licensed implementation is planned for phase 2 | DWG or DXF, IFC |
-| SKP and 3DM | No published specification under a compatible license for a core workflow | OBJ, glTF, STEP, IFC |
+| Native project and family files read by reverse engineering or by decoding unpublished binaries | Excluded for legal reasons | Connectors inside the other application, IFC 4.3, DWG for drawings, STEP or glTF for geometry |
+| DGN versions without a published specification or open reader | No permissively licensed implementation | DWG or DXF, IFC |
+| SKP | No published specification under a compatible license | OBJ, glTF, STEP, IFC, or a connector |
 | NWC, NWD and similar proprietary coordination caches | Proprietary | IFC and BCF; federation in Arc Review |
 | Proprietary fabrication databases | Proprietary | Open fabrication formats listed in the reserved fabrication and steel files |
