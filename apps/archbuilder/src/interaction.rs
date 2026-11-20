@@ -506,6 +506,8 @@ impl WallInteraction {
                 height: 1.0,
                 base_offset: 0.0,
                 location,
+                start_join: archbuilder_model::wall::JoinStyle::Auto,
+                end_join: archbuilder_model::wall::JoinStyle::Auto,
             };
             let (low, high) = wall.extent();
             let (nx, ny) = (-(end[1] - start[1]) / length, (end[0] - start[0]) / length);

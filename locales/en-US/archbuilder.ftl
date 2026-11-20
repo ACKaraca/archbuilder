@@ -75,3 +75,10 @@ ab-aspect-data = Relations
 
 ab-outliner-no-project = This document has no project.
 ab-outliner-create-project = Create Project
+ab-prop-start-join = Start join
+ab-prop-end-join = End join
+ab-prop-wall-volume = Volume
+ab-join-auto = Automatic
+ab-join-butt = Butt
+ab-join-square = Square
+ab-join-disallowed = Not joined

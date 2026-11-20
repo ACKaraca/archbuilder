@@ -406,9 +406,46 @@ fn a_change_of_a_level_extracts_the_walls_of_its_storey_again() {
         dependents(&snapshot, &modified("archbuilder.storey", storey.id)),
         [wall]
     );
-    // A change of the wall itself is extracted by the shell already; "everything" needs no help.
-    assert!(dependents(&snapshot, &modified("archbuilder.wall", wall)).is_empty());
+    // "Everything" needs no help.
     assert!(dependents(&snapshot, &Changes::All).is_empty());
+}
+
+#[test]
+fn a_changed_or_deleted_wall_extracts_the_walls_it_joins_again() {
+    use arc_doc::events::{ChangeGroups, Changes};
+    use arc_doc::schema::TypeKey;
+    let rig = Rig::new();
+    for (a, b) in [([0.0, 0.0], [4.0, 0.0]), ([4.0, 0.0], [4.0, 3.0])] {
+        rig.invoke("archbuilder.wall.create", json!({"start": a, "end": b}));
+    }
+    let snapshot = rig.document.snapshot();
+    let ids: Vec<_> = spatial::objects(&snapshot, WALL)
+        .iter()
+        .map(|w| w.id)
+        .collect();
+    let group =
+        |g: ChangeGroups| Changes::Listed([(TypeKey::new("archbuilder.wall").unwrap(), g)].into());
+    let moved = group(ChangeGroups {
+        modified: [ids[0]].into(),
+        ..ChangeGroups::default()
+    });
+    let mut found = archbuilder::extract_wall::dependents(&snapshot, &moved);
+    found.sort();
+    let mut both = ids.clone();
+    both.sort();
+    assert_eq!(found, both);
+    // A deleted wall names no storey, yet its neighbors are extracted again.
+    let gone = group(ChangeGroups {
+        deleted: [{
+            use arc_base::id::Identifier as _;
+            arc_base::ObjectId::from_u128(99)
+        }]
+        .into(),
+        ..ChangeGroups::default()
+    });
+    let mut found = archbuilder::extract_wall::dependents(&snapshot, &gone);
+    found.sort();
+    assert_eq!(found, both);
 }
 
 #[test]

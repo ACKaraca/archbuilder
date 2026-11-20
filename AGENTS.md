@@ -19,8 +19,10 @@ foundation's planar solids, `archbuilder.wall.create` (chains of walls with the 
 coordinates; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wall.flip` and `archbuilder.object.delete`
 (the Delete key: the selected walls, else the selected storey; one undo step), edits through
 `archbuilder.property.set`, shaded walls in the viewport that follow their storey's level
-elevation, the outliner and the property grid, and the wall list of `archbuilder-cli inspect`. Walls
-have no joins, types, layers or hosted inserts yet. Families, views, exchange and the rest are still
+elevation, the outliner and the property grid, and the wall list of `archbuilder-cli inspect`. Wall
+joins are derived from a storey's walls and never stored; only each end's style is authored
+(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`).
+Walls have no types, layers or hosted inserts yet. Families, views, exchange and the rest are still
 specifications. Read in this order: `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
@@ -30,7 +32,7 @@ specifications. Read in this order: `docs/product/vision.md`,
 Present:
 
 ```
-crates/archbuilder-model/     spatial structure and wall types, validation rules, wall solid, readers, project length unit (headless)
+crates/archbuilder-model/     spatial structure and wall types, validation rules, wall solid, wall joins, readers, project length unit (headless)
 crates/archbuilder-commands/  type set and the commands of the structure and the wall (headless)
 apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, level and wall extractors, wall tool, labels
 apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with the wall list

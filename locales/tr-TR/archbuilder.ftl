@@ -74,3 +74,10 @@ ab-aspect-data = Bağlantılar
 
 ab-outliner-no-project = Bu belgede proje yok.
 ab-outliner-create-project = Proje Oluştur
+ab-prop-start-join = Başlangıç birleşimi
+ab-prop-end-join = Bitiş birleşimi
+ab-prop-wall-volume = Hacim
+ab-join-auto = Otomatik
+ab-join-butt = Alın
+ab-join-square = Kare
+ab-join-disallowed = Birleşmesiz

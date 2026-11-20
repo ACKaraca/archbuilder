@@ -126,6 +126,10 @@ pub mod wall {
     /// The level the wall's top is constrained to; absent for an unconnected wall, whose top is
     /// at the base plus the stored height.
     pub const TOP_LEVEL: usize = 9;
+    /// How the start end joins ([`crate::wall::JoinStyle`] code); appended in schema 1.1.
+    pub const START_JOIN: usize = 10;
+    /// How the end end joins ([`crate::wall::JoinStyle`] code); appended in schema 1.1.
+    pub const END_JOIN: usize = 11;
 }
 
 /// The elevation base code of the project origin.
@@ -200,15 +204,17 @@ fn blank_name(values: &[Option<Value>]) -> Vec<Finding> {
 }
 
 fn declaration(key: &str, fields: Vec<FieldDecl>) -> Result<TypeDecl> {
+    // The minor version is the one that appended the latest field.
+    let minor = fields.iter().map(|f| f.since_minor).max().unwrap_or(0);
     let mut decl = TypeDecl::new(
         TypeKey::new(key)?,
-        Schema::new(SchemaVersion::new(1, 0), fields),
+        Schema::new(SchemaVersion::new(1, minor), fields),
     );
     decl.validators.push(blank_name);
     Ok(decl)
 }
 
-/// Registers the five types of the spatial structure and the wall, version 1.0 each.
+/// Registers the five types of the spatial structure (version 1.0) and the wall (1.1).
 ///
 /// # Errors
 /// The registry's errors; none occur for these declarations.
@@ -282,6 +288,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         FieldDecl::new("top_level", ValueType::Reference(optional_level()))
             .optional()
             .in_aspect("geometry"),
+        join_field("start_join"),
+        join_field("end_join"),
     ];
     for (key, fields) in [
         (PROJECT, project),
@@ -294,6 +302,22 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(declaration(key, fields)?)?;
     }
     Ok(())
+}
+
+/// The join style of one end of a wall, appended to the wall in schema 1.1.
+fn join_field(name: &str) -> FieldDecl {
+    FieldDecl::new(
+        name,
+        ValueType::Enum(
+            crate::wall::JoinStyle::ALL
+                .iter()
+                .map(|s| EnumVariant::new(s.name(), s.code()))
+                .collect(),
+        ),
+    )
+    .with_default(Value::Enum(crate::wall::JoinStyle::Auto.code()))
+    .in_aspect("geometry")
+    .since_minor(1)
 }
 
 /// A text value, when the field is set to one.
@@ -372,6 +396,8 @@ mod tests {
                     ("base_offset", wall::BASE_OFFSET),
                     ("location_line", wall::LOCATION_LINE),
                     ("top_level", wall::TOP_LEVEL),
+                    ("start_join", wall::START_JOIN),
+                    ("end_join", wall::END_JOIN),
                 ],
             ),
         ];

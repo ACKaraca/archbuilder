@@ -10,6 +10,7 @@
 //! No function in this crate panics.
 
 pub mod error;
+pub mod join;
 pub mod names;
 pub mod spatial;
 pub mod types;

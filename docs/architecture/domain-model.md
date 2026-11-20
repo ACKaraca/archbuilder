@@ -74,6 +74,7 @@ meters:
 | `height` | Height above the base of an unconnected wall; the fallback of a constrained one | 10 mm to 1000 m; 3 m by default |
 | `top_level` | The level the top is constrained to; absent for an unconnected wall | Optional reference to a level, cleared when the level is deleted; by default the level of the next higher storey, when there is one |
 | `base_offset` | The base's distance above the storey's level | -1000 m to 1000 m; 0 by default |
+| `start_join`, `end_join` | How each end joins: `auto`, `butt`, `square` or `disallowed` (schema 1.1; absent in older files, read as `auto`) | `auto` by default; the only authored part of a join |
 | `location_line` | Which line of the wall the baseline is: `center`, `exterior` (the exterior face) or `interior` (the interior face) | `center` by default; changing it keeps the wall's physical position: the stored baseline moves across by the difference of the offsets |
 
 The solid is derived, never stored: a prism over the rectangle of the baseline and the thickness,
@@ -88,9 +89,26 @@ kernel's face tags (`Side` of the footprint loop: the exterior face is curve 2 a
 face is curve 0 of the loop that runs start-right, end-right, end-left, start-left; the two ends
 are curves 1 and 3; the caps are `Top` and `Bottom`).
 
-Known limits of this slice: walls have no joins (two walls that meet at a corner overlap, and
-each keeps the volume of its own prism), no constraints, types, layers, curves or hosted inserts.
-The viewport extracts a wall again when its storey or the level of its storey changes. A storey
+Joins are derived, never stored: when the solids are made, the walls of a storey are read
+together and each wall's footprint gets its ends closed against the walls it meets. Only the
+per-end style above is authored. Walls whose ends coincide (within 0.1 mm) form a node: two walls
+miter, three or four close a star, two collinear walls with equal faces meet flush, and a straight
+run through a node lets the others stop at its face. An end on the interior of another wall's
+baseline is a T and stops at that wall's near face without entering it. All rules use the faces
+(the location line and thickness decide where they are), so walls of different thickness and
+location line close without gap or overlap. `butt` and `square` make a corner of two walls run
+one wall through (this end stops at the other's face; `square` cuts it square), and the style of
+the other end decides which wall runs through; both ends butt cancel into the miter. `disallowed`
+takes the end out of every join (square end, overlap allowed). A corner that would reach more
+than two thicknesses past the end, or past the middle of the wall, is refused and the ends of
+that node stay square; the volume, the property grid and `inspect` use the joined solid, so a
+closed rectangle counts each corner once. The viewport extracts the walls of a storey again when
+any of them is created, changed or deleted.
+
+Known limits: walls have no constraints, types, layers, curves or hosted inserts; a wall that
+crosses another without ending on it is not joined; a node of three or more walls without a
+straight run (a Y) leaves a small notch at its center; styles other than `auto` apply only at a
+corner of two walls and at a T. The viewport extracts a wall again when its storey or the level of its storey changes. A storey
 that has walls cannot be deleted; the walls are never deleted with it. `archbuilder.wall.flip` moves a wall's body to the other side of its location line (the
 baseline stays; a center line has no side), and `archbuilder.wall.delete`
 deletes walls (the named ones, else the selected ones) in one transaction, so one undo restores

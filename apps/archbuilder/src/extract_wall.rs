@@ -4,8 +4,10 @@
 //! coordinates; the scene uploads it relative to the wall's start point at its base, so
 //! single-precision display coordinates stay exact far from the project origin.
 //!
-//! A change of the wall re-extracts it, and so does a change of its storey or of the level of its
-//! storey ([`dependents`]): the solid stands at the level's elevation.
+//! The solid is that of the wall's joined footprint ([`archbuilder_model::join`]), derived from the
+//! walls of its storey. A change of the wall re-extracts it, and so does a change of its storey or
+//! of the level of its storey, or of any wall on its storey ([`dependents`]): the solid stands at
+//! the level's elevation and its ends follow the walls it meets.
 
 use arc_base::math::Point3;
 use std::collections::BTreeSet;
@@ -15,9 +17,9 @@ use arc_doc::events::Changes;
 use arc_doc::{Object, Snapshot};
 use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
-use archbuilder_model::spatial;
 use archbuilder_model::types::{LEVEL, STOREY, WALL};
 use archbuilder_model::wall::Wall;
+use archbuilder_model::{join, spatial};
 
 /// The color of a wall (linear RGB).
 pub const COLOR: Color = Color {
@@ -43,7 +45,8 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
     let elevation = storey
         .as_ref()
         .map_or(0.0, |s| spatial::storey_elevation(snapshot, s));
-    let solid = wall.solid(elevation)?;
+    let footprint = join::footprint_of(snapshot, object).unwrap_or_else(|| wall.plain_footprint());
+    let solid = wall.solid_in(footprint, elevation)?;
     let origin = Point3::new(wall.start[0], wall.start[1], elevation + wall.base_offset);
     let mesh = TriMesh::from_polyhedron(&solid, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
     let mut extraction = Extraction::default();
@@ -57,25 +60,49 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
 }
 
 /// The walls to extract again after a commit: those of a storey that the commit changed or whose
-/// level it changed (the elevation of the level places the solid).
+/// level it changed (the elevation of the level places the solid), those of the storeys of walls
+/// the commit created, changed or deleted (the ends of walls that meet follow each other), and
+/// the walls whose top follows a changed level. A deleted wall no longer names its storey, so its
+/// deletion extracts the walls of every storey again.
 #[must_use]
 pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let Changes::Listed(by_type) = changes else {
         return Vec::new();
     };
-    let touched: BTreeSet<ObjectId> = by_type
-        .iter()
-        .filter(|(key, _)| [LEVEL, STOREY].contains(&key.as_str()))
-        .flat_map(|(_, g)| g.created.iter().chain(&g.modified).chain(&g.recreated))
-        .copied()
+    let ids = |key: &str, deleted: bool| -> BTreeSet<ObjectId> {
+        by_type
+            .iter()
+            .filter(|(k, _)| k.as_str() == key)
+            .flat_map(|(_, g)| {
+                let live = g.created.iter().chain(&g.modified).chain(&g.recreated);
+                let gone = g.deleted.iter().filter(move |_| deleted);
+                live.chain(gone)
+            })
+            .copied()
+            .collect()
+    };
+    let touched: BTreeSet<ObjectId> = [LEVEL, STOREY]
+        .into_iter()
+        .flat_map(|key| ids(key, false))
         .collect();
-    if touched.is_empty() {
+    let changed_walls = ids(WALL, true);
+    if touched.is_empty() && changed_walls.is_empty() {
         return Vec::new();
     }
+    // A wall that is gone from the snapshot leaves no storey to name.
+    let some_gone = changed_walls
+        .iter()
+        .any(|w| spatial::type_of(snapshot, *w).as_deref() != Some(WALL));
+    let owners: BTreeSet<ObjectId> = changed_walls
+        .iter()
+        .filter_map(|w| spatial::get(snapshot, *w).and_then(|o| o.header.owner))
+        .collect();
     let on_storey = spatial::objects(snapshot, STOREY)
         .into_iter()
         .filter(|s| {
-            touched.contains(&s.id)
+            some_gone
+                || touched.contains(&s.id)
+                || owners.contains(&s.id)
                 || spatial::level_of(snapshot, s).is_some_and(|l| touched.contains(&l.id))
         })
         .flat_map(|s| spatial::walls(snapshot, s.id));

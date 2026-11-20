@@ -5,7 +5,8 @@
 //! `archbuilder.storey.add`, `archbuilder.storey.rename`, `archbuilder.storey.delete`,
 //! `archbuilder.building.rename`, `archbuilder.level.set_elevation`, `archbuilder.object.rename`,
 //! `archbuilder.object.select` (selection only, no transaction) and `archbuilder.property.set`;
-//! [`wall`]: `archbuilder.wall.create`, `archbuilder.wall.delete` and `archbuilder.object.delete`
+//! [`wall`]: `archbuilder.wall.create`, `archbuilder.wall.delete`, `archbuilder.wall.join_style`,
+//! `archbuilder.wall.disallow_join`, `archbuilder.wall.allow_join` and `archbuilder.object.delete`
 //! (the selected walls, else the selected storey). Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!

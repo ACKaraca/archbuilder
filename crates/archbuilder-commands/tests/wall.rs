@@ -76,6 +76,10 @@ impl Env {
         lines.join("\n")
     }
 
+    fn code_of(&self, command: &str, params: Json) -> &'static str {
+        self.run(command, params).unwrap_err().code()
+    }
+
     fn code(&self, params: Json) -> &'static str {
         let before = self.dump();
         let error = self.run("archbuilder.wall.create", params).unwrap_err();
@@ -454,4 +458,104 @@ fn a_level_cannot_go_below_the_walls_that_follow_it_and_deleting_it_keeps_their_
     .unwrap();
     let object = spatial::get(&env.snapshot(), id).unwrap();
     assert!(Wall::top_level(&object.values).is_some());
+}
+
+/// The joined volume of every wall of the lowest storey.
+fn joined_volume(env: &Env) -> f64 {
+    let snapshot = env.snapshot();
+    let walls = spatial::objects(&snapshot, WALL);
+    walls
+        .iter()
+        .map(|w| {
+            let data = Wall::from_values(&w.values).unwrap();
+            let foot = archbuilder_model::join::footprint_of(&snapshot, w).unwrap();
+            data.solid_in(foot, 0.0).unwrap().volume()
+        })
+        .sum()
+}
+
+#[test]
+fn a_closed_chain_counts_its_corners_once_and_deleting_a_wall_squares_its_neighbors() {
+    let env = Env::new();
+    let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]];
+    for k in 0..4 {
+        env.run(
+            "archbuilder.wall.create",
+            json!({"start": corners[k], "end": corners[(k + 1) % 4], "height": 3.0}),
+        )
+        .unwrap();
+    }
+    let ring = (10.2 * 6.2 - 9.8 * 5.8) * 3.0;
+    assert!((joined_volume(&env) - ring).abs() < 1e-9);
+    let before = env.dump();
+    let bottom = spatial::objects(&env.snapshot(), WALL)
+        .iter()
+        .find(|w| Wall::from_values(&w.values).unwrap().start == [0.0, 0.0])
+        .unwrap()
+        .id;
+    env.run("archbuilder.wall.delete", json!({"walls": [bottom]}))
+        .unwrap();
+    // Two mitered corners remain; the free ends are square. Each bar counts its corner once:
+    // 6.0 * 0.2 on each side (the miter averages the outer and inner lengths) and 10 * 0.2.
+    let v = joined_volume(&env);
+    assert!((v - (6.0 + 10.0 + 6.0) * 0.2 * 3.0).abs() < 1e-9, "{v}");
+    env.document.undo().wait().unwrap();
+    assert_eq!(env.dump(), before);
+    assert!(
+        (joined_volume(&env) - ring).abs() < 1e-9,
+        "undo restores the joins"
+    );
+}
+
+#[test]
+fn join_styles_are_set_per_end_swap_with_a_flip_and_undo() {
+    let env = Env::new();
+    for (a, b) in [([0.0, 0.0], [4.0, 0.0]), ([4.0, 0.0], [4.0, 3.0])] {
+        env.run("archbuilder.wall.create", json!({"start": a, "end": b}))
+            .unwrap();
+    }
+    let ids: Vec<_> = spatial::objects(&env.snapshot(), WALL)
+        .iter()
+        .map(|w| w.id)
+        .collect();
+    let miter = joined_volume(&env);
+    let style = |env: &Env, k: usize| {
+        let w = spatial::get(&env.snapshot(), ids[k]).unwrap();
+        let d = Wall::from_values(&w.values).unwrap();
+        (d.start_join.name(), d.end_join.name())
+    };
+    assert_eq!(style(&env, 0), ("auto", "auto"));
+    let before = env.dump();
+    env.run(
+        "archbuilder.wall.join_style",
+        json!({"walls": [ids[0]], "end": "end", "style": "butt"}),
+    )
+    .unwrap();
+    assert_eq!(style(&env, 0), ("auto", "butt"));
+    // Butt keeps the union: the corner is still filled once.
+    assert!((joined_volume(&env) - miter).abs() < 1e-9);
+    env.document.undo().wait().unwrap();
+    assert_eq!(env.dump(), before);
+    // Disallowing both ends of a wall: it and its neighbor stay square and overlap.
+    env.run("archbuilder.wall.disallow_join", json!({"walls": [ids[0]]}))
+        .unwrap();
+    assert_eq!(style(&env, 0), ("disallowed", "disallowed"));
+    assert!((joined_volume(&env) - (4.0 + 3.0) * 0.2 * 3.0).abs() < 1e-9);
+    env.run(
+        "archbuilder.wall.allow_join",
+        json!({"walls": [ids[0]], "end": "end"}),
+    )
+    .unwrap();
+    assert_eq!(style(&env, 0), ("disallowed", "auto"));
+    // A flip swaps the styles with the ends.
+    env.run("archbuilder.wall.flip", json!({"walls": [ids[0]]}))
+        .unwrap();
+    assert_eq!(style(&env, 0), ("auto", "disallowed"));
+    assert_eq!(
+        env.code_of(
+            "archbuilder.wall.join_style",
+            json!({"walls": [ids[0]], "style": "bevel"})
+        ),
+        "cmd.params.invalid"
+    );
 }

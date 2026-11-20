@@ -9,8 +9,11 @@
 //! location line says which line of the wall the baseline is (see [`LocationLine`]), so changing
 //! it moves the baseline: the physical position stays (see [`Wall::with_location`]).
 //!
-//! Known limit of this slice: walls have no joins. Two walls that meet at a corner overlap there,
-//! and their volumes and faces are those of the separate prisms.
+//! Joins are derived and never stored ([`crate::join`]): the ends of walls that meet are closed
+//! against each other when the solids are made, from the walls of the storey. The only authored
+//! part is the choice of each end, [`JoinStyle`]. [`Wall::solid`] is the solid of the wall alone
+//! (square ends); [`Wall::solid_in`] takes the joined footprint that [`crate::join::footprints`]
+//! derives.
 
 use arc_base::math::Point2;
 use arc_base::{Limits, Result, Tolerance};
@@ -65,6 +68,67 @@ impl LocationLine {
     }
 }
 
+/// How one end of a wall takes part in a join; the only authored part of a join.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JoinStyle {
+    /// The default: walls meeting at their ends close the corner (a miter for two walls), and a
+    /// wall ending on another wall stops at its face.
+    #[default]
+    Auto,
+    /// This end stops at the face of the other wall, which runs through to the far face of this
+    /// one. Where two walls meet and both ends say butt, the corner is mitered.
+    Butt,
+    /// Like [`Self::Butt`], with this end cut square across: it stops where its nearer corner
+    /// touches the other wall.
+    Square,
+    /// The end is not joined: it stays square at the baseline's end and may overlap other walls.
+    Disallowed,
+}
+
+impl JoinStyle {
+    /// Every style, in code order.
+    pub const ALL: [Self; 4] = [Self::Auto, Self::Butt, Self::Square, Self::Disallowed];
+
+    /// The name of the variant in the wall record.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Butt => "butt",
+            Self::Square => "square",
+            Self::Disallowed => "disallowed",
+        }
+    }
+
+    /// The code stored in the wall record.
+    #[must_use]
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::Auto => 0,
+            Self::Butt => 1,
+            Self::Square => 2,
+            Self::Disallowed => 3,
+        }
+    }
+
+    /// The style of a stored code; the default for a code that names none.
+    #[must_use]
+    pub fn from_code(code: u32) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|s| s.code() == code)
+            .unwrap_or_default()
+    }
+
+    /// The style of a record's field; the default when the field is absent.
+    fn of_field(values: &[Option<Value>], at: usize) -> Self {
+        match values.get(at) {
+            Some(Some(Value::Enum(code))) => Self::from_code(*code),
+            _ => Self::default(),
+        }
+    }
+}
+
 /// The curve of the footprint loop that is the exterior face of the solid: the side on the left of
 /// the baseline's direction. The footprint loop runs start right, end right, end left, start left.
 pub const EXTERIOR_CURVE: u32 = 2;
@@ -101,6 +165,10 @@ pub struct Wall {
     pub base_offset: f64,
     /// Which line of the wall the baseline is.
     pub location: LocationLine,
+    /// How the start end joins.
+    pub start_join: JoinStyle,
+    /// How the end end joins.
+    pub end_join: JoinStyle,
 }
 
 impl Wall {
@@ -119,6 +187,8 @@ impl Wall {
             height: m(wall::HEIGHT)?,
             base_offset: m(wall::BASE_OFFSET)?,
             location,
+            start_join: JoinStyle::of_field(values, wall::START_JOIN),
+            end_join: JoinStyle::of_field(values, wall::END_JOIN),
         })
     }
 
@@ -232,19 +302,13 @@ impl Wall {
         }
     }
 
-    /// The solid of the wall standing on a level at `level_elevation`: a prism over the
-    /// footprint rectangle from `level_elevation + base_offset` up by the height. The exterior
-    /// face carries [`EXTERIOR_FACE`] and the interior face [`INTERIOR_FACE`]; the caps are
-    /// [`FaceTag::Top`] and [`FaceTag::Bottom`], and the two ends the other side tags.
-    ///
-    /// # Errors
-    /// `geom.region.loop_zero_area` and the other errors of the solid kernel for a wall whose
-    /// baseline has no length or whose numbers are not finite.
-    pub fn solid(&self, level_elevation: f64) -> Result<Polyhedron> {
+    /// The four corners of the wall alone, square at both ends, in the order of the footprint
+    /// loop: start right, end right, end left, start left (see [`EXTERIOR_CURVE`]). A zero-length
+    /// baseline gets the direction of the x axis and falls through to the kernel's
+    /// degenerate-loop error in [`Self::solid_in`].
+    #[must_use]
+    pub fn plain_footprint(&self) -> [[f64; 2]; 4] {
         let length = self.length();
-        let tolerance = Tolerance::DEFAULT;
-        // The unit vector along the baseline; a zero-length baseline falls through to the
-        // kernel's degenerate-loop error below.
         let (ux, uy) = if length > 0.0 {
             (
                 (self.end[0] - self.start[0]) / length,
@@ -256,24 +320,47 @@ impl Wall {
         let (low, high) = self.extent();
         // The left normal of the direction.
         let (nx, ny) = (-uy, ux);
-        let corner = |at: [f64; 2], side: f64| Point2::new(at[0] + nx * side, at[1] + ny * side);
-        let points = [
+        let corner = |at: [f64; 2], side: f64| [at[0] + nx * side, at[1] + ny * side];
+        [
             corner(self.start, low),
             corner(self.end, low),
             corner(self.end, high),
             corner(self.start, high),
-        ];
+        ]
+    }
+
+    /// The solid of the wall alone standing on a level at `level_elevation`: a prism over the
+    /// footprint rectangle (see [`Self::solid_in`]).
+    ///
+    /// # Errors
+    /// As [`Self::solid_in`].
+    pub fn solid(&self, level_elevation: f64) -> Result<Polyhedron> {
+        self.solid_in(self.plain_footprint(), level_elevation)
+    }
+
+    /// The solid of the wall standing on a level at `level_elevation`: a prism over `footprint`
+    /// (the corners in the order of [`Self::plain_footprint`], joined by
+    /// [`crate::join::footprints`]) from `level_elevation + base_offset` up by the height. The
+    /// exterior face carries [`EXTERIOR_FACE`] and the interior face [`INTERIOR_FACE`]; the caps
+    /// are [`FaceTag::Top`] and [`FaceTag::Bottom`], and the two ends the other side tags.
+    ///
+    /// # Errors
+    /// `geom.region.loop_zero_area` and the other errors of the solid kernel for a wall whose
+    /// baseline has no length or whose numbers are not finite.
+    pub fn solid_in(&self, footprint: [[f64; 2]; 4], level_elevation: f64) -> Result<Polyhedron> {
+        let tolerance = Tolerance::DEFAULT;
+        let points = footprint.map(|p| Point2::new(p[0], p[1]));
         let mut curves = Vec::with_capacity(4);
         for k in 0..4 {
             let (a, b) = (points[k], points[(k + 1) % 4]);
             curves.push(Curve2::Segment(Segment2::new(a, b)?));
         }
-        let footprint = Region::new(vec![RegionPart::new(
+        let region = Region::new(vec![RegionPart::new(
             Loop2::new(curves, &tolerance)?,
             Vec::new(),
         )])?;
         prism(
-            &footprint,
+            &region,
             level_elevation + self.base_offset,
             self.height,
             CHORD,
@@ -302,6 +389,8 @@ mod tests {
             height: 3.0,
             base_offset: 0.0,
             location: LocationLine::Exterior,
+            start_join: JoinStyle::Auto,
+            end_join: JoinStyle::Auto,
         };
         // The body lies at y in [-0.2, 0]; the baseline follows its new face or middle.
         let interior = wall.with_location(LocationLine::Interior);
@@ -322,6 +411,8 @@ mod tests {
             height: 2.5,
             base_offset: 0.1,
             location,
+            start_join: JoinStyle::Auto,
+            end_join: JoinStyle::Auto,
         }
     }
 

@@ -136,6 +136,48 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "start_join",
+        Message {
+            message_id: "ab-prop-start-join",
+        },
+    ),
+    (
+        "end_join",
+        Message {
+            message_id: "ab-prop-end-join",
+        },
+    ),
+    (
+        "wall_volume",
+        Message {
+            message_id: "ab-prop-wall-volume",
+        },
+    ),
+    (
+        "auto",
+        Message {
+            message_id: "ab-join-auto",
+        },
+    ),
+    (
+        "butt",
+        Message {
+            message_id: "ab-join-butt",
+        },
+    ),
+    (
+        "square",
+        Message {
+            message_id: "ab-join-square",
+        },
+    ),
+    (
+        "disallowed",
+        Message {
+            message_id: "ab-join-disallowed",
+        },
+    ),
+    (
         "unconnected",
         Message {
             message_id: "ab-top-unconnected",
@@ -348,11 +390,30 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 .owner
                 .and_then(|id| spatial::get(snapshot, id))
                 .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+            // The join choices of the two ends stay in the grid; the rest of the record is shown
+            // through the fields below.
+            let joins: Vec<(FieldDecl, Option<Value>)> = (types::wall::START_JOIN
+                ..=types::wall::END_JOIN)
+                .filter_map(|at| Some((fields.get(at)?.clone(), values.get(at)?.clone())))
+                .collect();
             fields.truncate(types::wall::TOP_LEVEL);
             values.truncate(types::wall::TOP_LEVEL);
             fields.push(text_field("wall_storey"));
             values.push(storey.map(Value::String));
             read_only.push("wall_storey".to_owned());
+            // The volume of the joined solid, which counts a corner once.
+            let volume = archbuilder_model::wall::Wall::of(snapshot, object).and_then(|w| {
+                let level = object
+                    .header
+                    .owner
+                    .and_then(|id| spatial::get(snapshot, id))
+                    .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
+                let footprint = archbuilder_model::join::footprint_of(snapshot, object)?;
+                w.solid_in(footprint, level).ok().map(|s| s.volume())
+            });
+            fields.push(text_field("wall_volume"));
+            values.push(volume.map(|v| Value::String(format!("{v:.3} m³"))));
+            read_only.push("wall_volume".to_owned());
             // The top level is a choice below; editing the height disconnects the top.
             // A constrained wall shows the height its level gives.
             if let Some(wall) = archbuilder_model::wall::Wall::of(snapshot, object)
@@ -377,6 +438,10 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 FieldDecl::new("top_constraint", ValueType::Enum(variants)).in_aspect("geometry"),
             );
             values.push(Some(Value::Enum(current)));
+            for (field, value) in joins {
+                fields.push(field);
+                values.push(value);
+            }
         }
         // The building's base elevation has no effect yet: the levels carry the elevations.
         BUILDING => read_only.push("elevation".to_owned()),

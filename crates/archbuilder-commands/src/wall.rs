@@ -28,7 +28,7 @@ use archbuilder_model::types::{
     storey,
 };
 use archbuilder_model::units::{decimal_separator, length_text};
-use archbuilder_model::wall::LocationLine;
+use archbuilder_model::wall::{JoinStyle, LocationLine};
 use archbuilder_model::{defaults, names};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,12 @@ pub const WALL_CREATE: &str = "archbuilder.wall.create";
 pub const WALL_DELETE: &str = "archbuilder.wall.delete";
 /// The identifier of the command that flips walls to the other side of their location line.
 pub const WALL_FLIP: &str = "archbuilder.wall.flip";
+/// The identifier of the command that sets the join style of wall ends.
+pub const WALL_JOIN_STYLE: &str = "archbuilder.wall.join_style";
+/// The identifier of the command that takes wall ends out of joins.
+pub const WALL_DISALLOW_JOIN: &str = "archbuilder.wall.disallow_join";
+/// The identifier of the command that puts wall ends back into joins.
+pub const WALL_ALLOW_JOIN: &str = "archbuilder.wall.allow_join";
 /// The identifier of the command that deletes the selection: its walls, else its storey.
 pub const OBJECT_DELETE: &str = "archbuilder.object.delete";
 
@@ -155,6 +161,70 @@ pub struct FlipWalls {
     pub walls: Option<Vec<IdParam>>,
 }
 
+/// Which end of a wall a join command changes.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WallEnd {
+    /// The baseline's start.
+    Start,
+    /// The baseline's end.
+    End,
+    /// Both ends.
+    #[default]
+    Both,
+}
+
+/// A join style as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinStyleParam {
+    /// Miter at a corner, stop at the face at a T.
+    Auto,
+    /// This end stops at the other wall's face, which runs through.
+    Butt,
+    /// Like butt, with the end cut square.
+    Square,
+    /// The end is not joined.
+    Disallowed,
+}
+
+impl From<JoinStyleParam> for JoinStyle {
+    fn from(style: JoinStyleParam) -> Self {
+        match style {
+            JoinStyleParam::Auto => Self::Auto,
+            JoinStyleParam::Butt => Self::Butt,
+            JoinStyleParam::Square => Self::Square,
+            JoinStyleParam::Disallowed => Self::Disallowed,
+        }
+    }
+}
+
+/// Parameters of `archbuilder.wall.join_style`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetJoinStyle {
+    /// The walls; else the walls of the selection.
+    #[serde(default)]
+    pub walls: Option<Vec<IdParam>>,
+    /// The end; both when absent.
+    #[serde(default)]
+    pub end: Option<WallEnd>,
+    /// The style of that end.
+    pub style: JoinStyleParam,
+}
+
+/// Parameters of `archbuilder.wall.disallow_join` and `archbuilder.wall.allow_join`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JoinEnds {
+    /// The walls; else the walls of the selection.
+    #[serde(default)]
+    pub walls: Option<Vec<IdParam>>,
+    /// The end; both when absent.
+    #[serde(default)]
+    pub end: Option<WallEnd>,
+}
+
 /// Parameters of `archbuilder.object.delete`: none; the selection decides.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -218,6 +288,14 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
             continue;
         };
         let txn = ctx.txn()?;
+        // The ends swap with the baseline, and so do their join styles.
+        for (field, style) in [("start_join", wall.end_join), ("end_join", wall.start_join)] {
+            txn.modify(
+                id,
+                arc_doc::FieldPath::new(field),
+                Some(Value::Enum(style.code())),
+            )?;
+        }
         for (field, value) in [
             ("start_x", wall.end[0]),
             ("start_y", wall.end[1]),
@@ -228,6 +306,44 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
                 id,
                 arc_doc::FieldPath::new(field),
                 Some(types::length(value)),
+            )?;
+        }
+    }
+    ensure_valid(ctx)
+}
+
+/// Sets the join style of the chosen ends of walls, in one transaction.
+fn set_join(
+    ctx: &mut Context<'_>,
+    walls: Option<Vec<IdParam>>,
+    end: Option<WallEnd>,
+    style: JoinStyle,
+) -> Result<()> {
+    let ids: BTreeSet<ObjectId> = match walls {
+        Some(list) if list.len() > MAX_DELETED => {
+            return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+        }
+        Some(list) => list.into_iter().map(|IdParam(id)| id).collect(),
+        None => selected_walls(ctx).into_iter().collect(),
+    };
+    if ids.is_empty() {
+        return Err(Error::new(codes::NOTHING_SELECTED));
+    }
+    for id in &ids {
+        expect(ctx.snapshot(), *id, WALL)?;
+    }
+    let fields: &[&str] = match end.unwrap_or_default() {
+        WallEnd::Start => &["start_join"],
+        WallEnd::End => &["end_join"],
+        WallEnd::Both => &["start_join", "end_join"],
+    };
+    let txn = ctx.txn()?;
+    for id in ids {
+        for field in fields {
+            txn.modify(
+                id,
+                arc_doc::FieldPath::new(*field),
+                Some(Value::Enum(style.code())),
             )?;
         }
     }
@@ -340,6 +456,8 @@ fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
             Some(types::length(base_offset)),
             Some(Value::Enum(location.code())),
             top_level.map(Value::Reference),
+            Some(Value::Enum(JoinStyle::Auto.code())),
+            Some(Value::Enum(JoinStyle::Auto.code())),
         ],
     )?;
     ensure_valid(ctx)?;
@@ -720,6 +838,42 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         WALL_FLIP_LABEL.message_id,
         WALL_FLIP_DESCRIPTION.message_id,
         flip_walls,
+    ))?;
+    const JOIN_STYLE_LABEL: Msg = Msg {
+        message_id: "ab-cmd-wall-join-style-label",
+    };
+    const JOIN_STYLE_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-wall-join-style-description",
+    };
+    const DISALLOW_LABEL: Msg = Msg {
+        message_id: "ab-cmd-wall-disallow-join-label",
+    };
+    const DISALLOW_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-wall-disallow-join-description",
+    };
+    const ALLOW_LABEL: Msg = Msg {
+        message_id: "ab-cmd-wall-allow-join-label",
+    };
+    const ALLOW_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-wall-allow-join-description",
+    };
+    registry.register(CommandSpec::new(
+        WALL_JOIN_STYLE,
+        JOIN_STYLE_LABEL.message_id,
+        JOIN_STYLE_DESCRIPTION.message_id,
+        |ctx: &mut Context<'_>, p: SetJoinStyle| set_join(ctx, p.walls, p.end, p.style.into()),
+    ))?;
+    registry.register(CommandSpec::new(
+        WALL_DISALLOW_JOIN,
+        DISALLOW_LABEL.message_id,
+        DISALLOW_DESCRIPTION.message_id,
+        |ctx: &mut Context<'_>, p: JoinEnds| set_join(ctx, p.walls, p.end, JoinStyle::Disallowed),
+    ))?;
+    registry.register(CommandSpec::new(
+        WALL_ALLOW_JOIN,
+        ALLOW_LABEL.message_id,
+        ALLOW_DESCRIPTION.message_id,
+        |ctx: &mut Context<'_>, p: JoinEnds| set_join(ctx, p.walls, p.end, JoinStyle::Auto),
     ))?;
     registry.register(CommandSpec::new(
         OBJECT_DELETE,

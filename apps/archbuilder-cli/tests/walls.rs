@@ -100,3 +100,49 @@ fn inspect_lists_each_wall_with_its_storey_and_the_volume_of_its_solid() {
     assert!((wall["volume"].as_f64().unwrap() - 5.0 * 0.25 * 4.0).abs() < 1e-9);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn inspect_counts_the_corners_of_a_closed_rectangle_once() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-cli-joins-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("house.archb");
+    let (file, dir_text) = (file.to_str().unwrap(), dir.to_str().unwrap());
+    let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]];
+    for k in 0..4 {
+        let params = json!({"start": corners[k], "end": corners[(k + 1) % 4],
+                            "height": 3.0})
+        .to_string();
+        let mut args = vec![
+            "run",
+            file,
+            "--save",
+            "--allow-edit",
+            "--write-root",
+            dir_text,
+        ];
+        if k == 0 {
+            args.extend([
+                "--create",
+                "--command",
+                "archbuilder.project.new",
+                "--params",
+                "{}",
+            ]);
+            assert_eq!(cli(&args).0, Exit::Success);
+            args.truncate(6);
+        }
+        args.extend(["--command", "archbuilder.wall.create", "--params", &params]);
+        assert_eq!(cli(&args).0, Exit::Success);
+    }
+    let (_, dump) = cli(&["inspect", file]);
+    let walls = dump["walls"].as_array().unwrap();
+    assert_eq!(walls.len(), 4);
+    let total: f64 = walls.iter().map(|w| w["volume"].as_f64().unwrap()).sum();
+    assert!(
+        (total - (10.2 * 6.2 - 9.8 * 5.8) * 3.0).abs() < 1e-9,
+        "{total}"
+    );
+    assert_eq!(walls[0]["start_join"], "auto");
+    let _ = std::fs::remove_dir_all(&dir);
+}
