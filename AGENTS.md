@@ -20,7 +20,7 @@ on the Delete key, edits through `archbuilder.property.set`, shaded solids, outl
 (`archbuilder.door.place`, `window.place`, `insert.flip_hand`, `flip_facing`) that cut openings.
 Floors (`archbuilder.floor.create` by picked walls or sketch, `floor.add_hole`) have a boundary whose
 wall-associated edges are derived from the wall faces and freeze when the wall is deleted; no layers,
-slope or join cleanup yet. Walls have no types or layers either. Families, views, exchange and the
+slope or join cleanup yet. Walls have no types or layers either. IFC4 export of these kinds exists; families, views and the
 rest are still specifications. Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
@@ -33,17 +33,17 @@ Present:
 ```
 crates/archbuilder-model/     spatial, wall, insert and floor types, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands of the structure, wall, insert and floor (headless)
+crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors with a loss report; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall, insert and floor tools
-apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window and floor lists
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window and floor lists, `export-ifc`
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages
 locales/tr-TR/                Turkish catalogs of the same crates
 ```
 
-Planned, not created yet:
+Planned, not created yet (`archbuilder-io` will also map DWG/DXF, PDF, meshes, BCF and more):
 
 ```
-crates/archbuilder-io/        mapping to IFC, DWG/DXF, PDF, meshes, BCF and other formats (headless)
 crates/archbuilder-ui/        tools, panels, viewport interaction (egui); until it exists the panels
                               are in apps/archbuilder
 ```

@@ -8,6 +8,7 @@ ab-panel-properties = Properties
 ab-panel-outliner = Outliner
 ab-panel-command-line = Command line
 ab-menu-structure = Structure
+ab-menu-export = Export
 
 ab-tool-new = New
 ab-tool-new-hint = Create a new project
@@ -112,3 +113,5 @@ ab-prop-floor-area = Area
 ab-prop-floor-volume = Volume
 ab-prop-floor-walls = Associated walls
 ab-prop-floor-storey = Storey
+ab-notice-ifc-exported = Exported { $name } ({ $count } elements)
+ab-notice-ifc-loss = The loss report lists { $count } item(s) that are missing from the file or only approximated.

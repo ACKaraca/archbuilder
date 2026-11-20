@@ -61,6 +61,9 @@ const TITLE: Message = Message {
 const MENU_STRUCTURE: Message = Message {
     message_id: "ab-menu-structure",
 };
+const MENU_EXPORT: Message = Message {
+    message_id: "ab-menu-export",
+};
 
 fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry {
     Entry {
@@ -80,6 +83,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         .with_types(archbuilder_commands::types()?)
         .with_commands(archbuilder_commands::registry()?);
     arc_app::commands::register(builder.commands_mut())?;
+    archbuilder_io::register(builder.commands_mut())?;
     let seed = Arc::new(AtomicU64::new(clock.now_unix_millis()));
     builder.interaction(move || Box::new(interaction::WallInteraction::new(&seed)));
     // A wall's solid derives from the elevation of its storey's level: a change of the level or
@@ -183,9 +187,26 @@ fn tabs(panels: &[&str]) -> Dock {
     }
 }
 
-/// The menu bar: the shell's File and Edit menus and the Structure menu with the storey commands.
+/// The menu bar: the shell's File and Edit menus, with an Export submenu in File, and the Structure
+/// menu with the storey commands.
 fn menu() -> Result<Menu> {
     let mut items = shell::default_menu()?.items().to_vec();
+    // After Save As: File > Export > IFC.
+    if let Some(MenuItem::Submenu { items: file, .. }) = items.first_mut() {
+        let at = file
+            .iter()
+            .position(|i| matches!(i, MenuItem::Command { command } if command == arc_app::commands::FILE_SAVE_AS))
+            .map_or(file.len(), |k| k + 1);
+        file.insert(
+            at,
+            MenuItem::Submenu {
+                label: MENU_EXPORT.message_id.into(),
+                items: vec![MenuItem::Command {
+                    command: archbuilder_io::command::EXPORT_IFC.into(),
+                }],
+            },
+        );
+    }
     items.push(MenuItem::Submenu {
         label: MENU_STRUCTURE.message_id.into(),
         items: [
@@ -286,6 +307,7 @@ pub fn localizer(requested: &[String]) -> Result<arc_app::locale::Localizer> {
     let english = [
         include_str!("../../../locales/en-US/archbuilder.ftl"),
         include_str!("../../../locales/en-US/archbuilder-commands.ftl"),
+        include_str!("../../../locales/en-US/archbuilder-io.ftl"),
         include_str!("../../../locales/en-US/archbuilder-model.ftl"),
     ]
     .concat();
@@ -293,6 +315,7 @@ pub fn localizer(requested: &[String]) -> Result<arc_app::locale::Localizer> {
     let turkish = [
         include_str!("../../../locales/tr-TR/archbuilder.ftl"),
         include_str!("../../../locales/tr-TR/archbuilder-commands.ftl"),
+        include_str!("../../../locales/tr-TR/archbuilder-io.ftl"),
         include_str!("../../../locales/tr-TR/archbuilder-model.ftl"),
     ]
     .concat();

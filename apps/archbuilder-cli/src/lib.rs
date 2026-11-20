@@ -10,6 +10,9 @@
 //! thickness, height and the volume of its derived solid minus its openings, and the `doors` and
 //! `windows` lists: each with its host wall, distance along it, width, height and sill, and the
 //! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow.
+//! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
+//! ([`export`]) and prints the loss report; the shared `run` also has the command
+//! `archbuilder.file.export_ifc`.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
@@ -17,10 +20,22 @@ use std::io::{BufRead, Write};
 use arc_command::headless::{self, Exit, Product};
 use archbuilder_model::insert::Kind;
 
+pub mod export;
 pub mod floors;
 pub mod walls;
 
-pub use archbuilder_commands::product;
+/// The product of the CLI: the commands of `archbuilder-commands` and the export command.
+///
+/// # Errors
+/// The errors of the product's registry.
+pub fn product(
+    clock: std::sync::Arc<dyn arc_command::Clock>,
+    owner: arc_doc::package::LockOwner,
+) -> arc_base::Result<Product> {
+    let mut product = archbuilder_commands::product(clock, owner)?;
+    archbuilder_io::register(&mut product.registry)?;
+    Ok(product)
+}
 
 /// A seed from the operating system's random source, for a run that names no seed. `std`'s
 /// `RandomState` takes its keys from the operating system, so two runs differ.
@@ -39,7 +54,7 @@ pub fn run<R, W, E>(
     product: &Product,
     stdin: R,
     stdout: W,
-    stderr: E,
+    mut stderr: E,
 ) -> Exit
 where
     R: BufRead,
@@ -62,6 +77,25 @@ where
         archbuilder_commands::install(document);
         Ok(())
     };
+    if args.first().and_then(|a| a.to_str()) == Some("export-ifc") {
+        return export::run(&args[1..], product, stdout, stderr);
+    }
+    if args.first().and_then(|a| a.to_str()) == Some("help") {
+        let exit = headless::run_with_setup(
+            args,
+            product,
+            None,
+            Some(&setup),
+            stdin,
+            stdout,
+            &mut stderr,
+        );
+        let _ = writeln!(
+            stderr,
+            "  export-ifc <file> <out.ifc> [--timestamp T]   write the document as an IFC4 file; prints the loss report"
+        );
+        return exit;
+    }
     if args.first().and_then(|a| a.to_str()) == Some("inspect") {
         return inspect(args, product, &setup, stdin, stdout, stderr);
     }

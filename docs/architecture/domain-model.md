@@ -143,14 +143,23 @@ distance along it; `archbuilder.wall.flip` reverses the baseline, so it also set
 wall's length minus the distance and flips each facing, which keeps every insert where it is and swinging
 the same way in the room.
 
-Planned IFC mapping (the writer is pending in the foundation, so nothing is exported yet): a wall
-maps to `IfcWall` with its body representation, contained in the `IfcBuildingStorey` of its storey; each
-door or window maps to `IfcDoor` or `IfcWindow` in the same storey, placed in an `IfcOpeningElement`
-that voids the wall (`IfcRelVoidsElement`) and is filled by the insert (`IfcRelFillsElement`); the
-opening's profile is the rectangle of the width and the height at the sill, through the thickness;
-`OverallWidth` and `OverallHeight` come from `width` and `height`; `OperationType` comes from the
-operation, the hand and the facing (single swing left or right, opening to the interior or exterior
-side); the sill height places the opening, and the quantities come from the same rule as the schedules.
+IFC mapping as implemented (`archbuilder-io`, IFC4, lengths in meters, every `GlobalId` from the
+object's identifier): a wall maps to `IfcWall`, contained in the `IfcBuildingStorey` of its storey and
+placed on the storey with its origin at the baseline's start, base offset up and the x axis along the
+baseline. Its body is the extrusion of the joined footprint by the derived height (the corners the
+joins give, so the volume is the one of `inspect`). `Qto_WallBaseQuantities` holds `Length` (baseline),
+`Width`, `Height`, `GrossVolume` (the joined prism) and `NetVolume` (the volume with the openings
+cut, the same rule as the property grid). The wall type is `NOTDEFINED` and no `Pset_WallCommon` is
+written: the model has no external flag, and writing `IsExternal` either way would state what is not
+known. Each door or window maps to an `IfcOpeningElement` (identifier derived from the insert's with
+the role `INSERT_OPENING`) that voids the wall and is filled by an `IfcDoor` or `IfcWindow`, both
+placed at the center of the opening at the sill. The opening's body is the prism of the width and the
+height through the wall's thickness. The insert's body is one faceted B-rep of the frame bars and the
+leaf or pane (and a door's handle), the same solids the viewport draws; they are separate closed
+solids in one shell. The insert's placement has its y axis toward the side a door swings to, so a
+door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; windows are `SINGLE_PANEL`. IFC4 has no operation on the window itself, so the operation,
+hand and facing of a casement window are reported as approximated and a fixed window loses nothing.
+`OverallWidth` and `OverallHeight` come from `width` and `height`.
 
 Derived, never stored: the wall's solid is the joined solid with each opening cut through its whole
 thickness by the foundation's prism subtraction (the volume of the property grid and `inspect` is that
@@ -160,7 +169,7 @@ handle opposite the hinge on the facing side) or the glass pane (window), drawn 
 typed distance along the selected wall; the options width, height, sill, hand and facing; chains
 continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_hand` and
 `archbuilder.insert.flip_facing` flip the selected ones, and `archbuilder.object.delete` deletes the selected
-inserts. Known limits: no types or families, no room relations, no IFC writer yet,
+inserts. Known limits: no types or families, no room relations,
 arched or non-rectangular openings and double leaves are not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
 
 #### The floor of the first slice
@@ -205,13 +214,25 @@ wall inside a room is skipped when picking a loop by click. Collinear neighbors 
 two) make one straight edge, each part following its wall; their vertex stays at its authored
 position along the line. `archbuilder.wall.flip` keeps every floor edge where it is: the following
 associations swap face and offset in the same transaction. A refused finish keeps the sketch or the
-picks in the tool.
+picks in the tool. Escape steps out one level at a time: the first cancels only the segment that
+follows the pointer and keeps the placed points (`undo` still removes the last), the second discards
+the sketch or the picks and asks again, the third ends the tool.
 
-Planned IFC mapping (the writer is pending in the foundation, so nothing is exported yet): a floor
-maps to `IfcSlab` with `PredefinedType` `FLOOR`, contained in the `IfcBuildingStorey` of its storey;
-its body is an extruded area solid of the boundary (the holes as inner curves) with the thickness as
-depth, placed so that the top is at the storey's level plus `top_offset`; `NetArea` and `NetVolume`
-come from the same rule as the schedules.
+IFC mapping as implemented: a floor maps to `IfcSlab` with `PredefinedType` `FLOOR`, contained in the
+`IfcBuildingStorey` of its storey. Its body is an extruded area solid of the boundary (the holes as
+inner curves) hanging from the top: the profile lies at the storey's level plus `top_offset` and the
+extrusion runs down by the thickness. `Qto_SlabBaseQuantities` holds `Width` (the thickness),
+`GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
+the rule of `inspect`).
+
+Export: `archbuilder-io` writes the first building of the document with `arc-io-ifc`; `export_ifc`
+takes a snapshot and the caller's file name and time stamp (no clock in the crate) and returns the
+bytes, the number of walls, floors, doors and windows, and a loss report (`archbuilder-cli
+export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` prints it). Objects that cannot be read, a
+body that cannot be made, a left-out quantity and the casement window operation are report items;
+other buildings are reported as not exported. The command `archbuilder.file.export_ifc path=<file>`
+is File > Export > IFC; the shell has no request that asks for a file name for a product command, so
+the menu entry without a path says to type the command with its path.
 
 ### Types and families
 

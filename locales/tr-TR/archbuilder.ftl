@@ -7,6 +7,7 @@ ab-panel-properties = Özellikler
 ab-panel-outliner = Proje gezgini
 ab-panel-command-line = Komut satırı
 ab-menu-structure = Yapı
+ab-menu-export = Dışa Aktar
 
 ab-tool-new = Yeni
 ab-tool-new-hint = Yeni proje oluştur
@@ -111,3 +112,5 @@ ab-prop-floor-area = Alan
 ab-prop-floor-volume = Hacim
 ab-prop-floor-walls = Bağlı duvarlar
 ab-prop-floor-storey = Kat
+ab-notice-ifc-exported = { $name } dışa aktarıldı ({ $count } öğe)
+ab-notice-ifc-loss = Kayıp raporunda dosyada bulunmayan veya yalnızca yaklaşık yazılan { $count } kalem var.

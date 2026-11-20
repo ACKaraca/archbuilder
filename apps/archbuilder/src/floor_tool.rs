@@ -7,8 +7,11 @@
 //! inside a closed loop of joined walls, with nothing picked yet, picks the whole loop and makes
 //! the floor at once. The keyword `sketch` switches to the sketch mode, where points are clicked
 //! or typed and Enter (or `close`) closes the boundary; `walls` switches back. After a floor is
-//! made the tool asks for the next one, in the same mode; Escape ends it. A hole is a sketch of
-//! its own, in the selected floor.
+//! made the tool asks for the next one, in the same mode. Escape steps out one level at a time:
+//! the first one cancels only the segment that follows the pointer and keeps the points placed
+//! (they stay editable, `undo` still removes the last), the second discards the sketch or the
+//! picks and asks again, the third ends the tool. A hole is a sketch of its own, in the selected
+//! floor.
 
 use std::collections::BTreeMap;
 
@@ -27,6 +30,9 @@ pub struct FloorTool {
     line: CommandLine,
     state: Option<State>,
     error: Option<Error>,
+    /// The first Escape cancelled the segment that follows the pointer; the next answer brings
+    /// it back.
+    band_off: bool,
 }
 
 /// What the tool is doing.
@@ -70,6 +76,12 @@ impl FloorTool {
     #[must_use]
     pub fn state(&self) -> Option<&State> {
         self.state.as_ref()
+    }
+
+    /// Whether the segment that follows the pointer is cancelled (by Escape) until the next answer.
+    #[must_use]
+    pub fn band_off(&self) -> bool {
+        self.band_off
     }
 
     /// The error a click or a rejected answer left, taken once.
@@ -203,6 +215,7 @@ impl FloorTool {
     /// that crosses itself, walls that do not meet), the error is kept as the pending one and the
     /// prompts start again with the answers given before the step, so nothing sketched is lost.
     fn drive(&mut self, env: &Env<'_>, run: Runner<'_>, step: LineStep<'_>) -> Result<()> {
+        self.band_off = false;
         self.remember_mode();
         let before = self.answers();
         let localized = BTreeMap::new();
@@ -333,6 +346,7 @@ impl FloorTool {
         if !self.running() {
             return Ok(());
         }
+        self.band_off = false;
         let localized = BTreeMap::new();
         let result = self
             .line
@@ -340,8 +354,9 @@ impl FloorTool {
         self.follow(env, run, result)
     }
 
-    /// Escape: the first one drops the sketch or the picks in progress (floors already made stay)
-    /// and asks again; with nothing in progress it ends the tool.
+    /// Escape, one level at a time. With points or picks in progress the first one cancels the
+    /// segment that follows the pointer and keeps them; the second drops them (floors already
+    /// made stay) and asks again; with nothing in progress it ends the tool.
     ///
     /// # Errors
     /// The errors of the command line.
@@ -350,6 +365,11 @@ impl FloorTool {
             self.stop();
             return Ok(());
         }
+        if !self.band_off {
+            self.band_off = true;
+            return Ok(());
+        }
+        self.band_off = false;
         self.remember_mode();
         self.line.cancel();
         self.next(env, run)
@@ -359,6 +379,7 @@ impl FloorTool {
     pub fn stop(&mut self) {
         self.line.cancel();
         self.state = None;
+        self.band_off = false;
     }
 }
 

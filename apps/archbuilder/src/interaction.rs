@@ -20,7 +20,7 @@ use arc_app::shell::{Interaction, InteractionContext, InteractionOutput};
 use arc_base::math::{Point3, Vector3};
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::Accept;
-use arc_command::{Invocation, Registry, Session};
+use arc_command::{Invocation, Invoker, Registry, Roots, Session};
 use arc_ui::egui::PointerButton;
 use arc_ui::{
     DynamicEvent, Intent, LineAction, LineStatus, OptionControl, PointerEvent, PointerKind,
@@ -29,8 +29,10 @@ use arc_ui::{
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
+use archbuilder_io::command::EXPORT_IFC;
 use archbuilder_model::spatial;
 use archbuilder_model::wall::LocationLine;
+use std::path::PathBuf;
 
 use crate::floor_tool::FloorTool;
 use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_named};
@@ -44,6 +46,16 @@ struct Message {
 /// What a delete says when doors and windows went with their wall.
 const INSERTS_DELETED: Message = Message {
     message_id: "ab-notice-inserts-deleted",
+};
+
+/// What an export says when it wrote the file.
+const IFC_EXPORTED: Message = Message {
+    message_id: "ab-notice-ifc-exported",
+};
+
+/// What an export says when its loss report is not empty.
+const IFC_LOSS: Message = Message {
+    message_id: "ab-notice-ifc-loss",
 };
 
 /// What a delete says when floor edges lost their wall.
@@ -138,6 +150,34 @@ fn baselines(cx: &InteractionContext<'_>, storey: ObjectId) -> Vec<[[f64; 2]; 2]
         .collect()
 }
 
+/// The folder a relative export path is taken in: the user's documents folder, else the home
+/// folder, else the working directory. The shell gives a controller no path of the document, so
+/// a saved document's folder is not available here.
+fn export_base() -> PathBuf {
+    let home = ["HOME", "USERPROFILE"]
+        .iter()
+        .find_map(|n| std::env::var_os(n).filter(|v| !v.is_empty()))
+        .map(PathBuf::from);
+    home.map_or_else(PathBuf::new, |h| {
+        let documents = h.join("Documents");
+        if documents.is_dir() { documents } else { h }
+    })
+}
+
+/// The path a typed `archbuilder.file.export_ifc path=<file>` line names: `Some(None)` for the
+/// command without a path, `None` when the line is another command.
+fn export_line(text: &str) -> Option<Option<String>> {
+    let rest = text.trim().strip_prefix(EXPORT_IFC)?;
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let path = rest
+        .trim()
+        .strip_prefix("path=")
+        .map(|p| p.trim().trim_matches('"'));
+    Some(path.filter(|p| !p.is_empty()).map(str::to_owned))
+}
+
 /// Whether `text` asks to delete the selection.
 fn is_erase_word(text: &str) -> bool {
     ["erase", "delete", "sil"]
@@ -192,7 +232,9 @@ impl WallInteraction {
             highlight: Vec::new(),
             symbols: None,
             notices: Vec::new(),
-            registry: archbuilder_commands::registry().ok(),
+            registry: archbuilder_commands::registry()
+                .and_then(|mut r| archbuilder_io::register(&mut r).map(|()| r))
+                .ok(),
             seed: seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed),
             cursor: None,
             snap: None,
@@ -538,6 +580,10 @@ impl Interaction for WallInteraction {
                 self.with_inserts(cx, |tool, env, run| tool.back(env, run))
             }
             LineAction::Back => self.with_tool(cx, |tool, env, run| tool.back(env, run)),
+            LineAction::Submit(text) if export_line(&text).is_some() => {
+                self.stop_all();
+                self.export_ifc(cx, export_line(&text).flatten())
+            }
             LineAction::Submit(text)
                 if (inserting || flooring || self.tool.active()) && self.names_command(&text) =>
             {
@@ -661,6 +707,14 @@ impl WallInteraction {
     /// parameters. Shell commands never arrive here.
     fn intent(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
         let command = intent.command.as_str();
+        if command == EXPORT_IFC {
+            self.stop_all();
+            let path = intent
+                .params
+                .get("path")
+                .and_then(serde_json::Value::as_str);
+            return self.export_ifc(cx, path.map(str::to_owned));
+        }
         if command == WALL_CREATE && intent.params.is_empty() {
             self.inserts.stop();
             self.hover = None;
@@ -734,6 +788,62 @@ impl WallInteraction {
                 )
                 .text;
             self.push_notice(text);
+        }
+        Ok(())
+    }
+
+    /// Exports the document as an IFC4 file to `path` and says so in the history. The shell has no
+    /// request that asks for a file name for a product command, so without a path this is an
+    /// error that names the typed form. The file is written by the export command inside a
+    /// session whose only write root is the directory of the path, as the shell's save does.
+    fn export_ifc(&mut self, cx: &InteractionContext<'_>, path: Option<String>) -> Result<()> {
+        let path = path
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| Error::new(archbuilder_io::error::codes::PATH_REQUIRED))?;
+        let target = export_base().join(path.trim());
+        let target = std::path::absolute(target)
+            .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
+        let directory = target
+            .parent()
+            .map_or_else(|| target.clone(), PathBuf::from);
+        let mut session = Self::session(cx);
+        session.roots = Roots::new([&directory], [&directory])?;
+        let seed = self.next_seed();
+        let (Some(registry), document) = (self.registry.as_ref(), cx.document()?) else {
+            return Ok(());
+        };
+        let mut invocation = Invocation::new(
+            EXPORT_IFC.to_owned(),
+            serde_json::json!({ "path": target.display().to_string() }),
+        );
+        invocation.seed = seed;
+        let outcome = Invoker::new(registry).invoke(document, &session, invocation)?;
+        let number = |key: &str| outcome.value.get(key).and_then(serde_json::Value::as_i64);
+        // The full path, so a relative name still says where the file went.
+        let name = target.display().to_string();
+        let (count, loss) = (
+            number("elements").unwrap_or(0),
+            number("dropped").unwrap_or(0) + number("approximated").unwrap_or(0),
+        );
+        if let Some(localizer) = self.localizer(cx.language()) {
+            let said =
+                |id: &str, args: &[(&str, arc_base::error::Value)]| localizer.format(id, args).text;
+            let mut lines = vec![said(
+                IFC_EXPORTED.message_id,
+                &[
+                    ("name", name.into()),
+                    ("count", arc_base::error::Value::Int(count)),
+                ],
+            )];
+            if loss > 0 {
+                lines.push(said(
+                    IFC_LOSS.message_id,
+                    &[("count", arc_base::error::Value::Int(loss))],
+                ));
+            }
+            for line in lines {
+                self.push_notice(line);
+            }
         }
         Ok(())
     }
@@ -1179,7 +1289,7 @@ impl WallInteraction {
         if sketch && !points.is_empty() {
             let z = state.elevation;
             let mut line: Vec<Point3> = points.iter().map(|p| Point3::new(p[0], p[1], z)).collect();
-            if let Some(c) = self.cursor {
+            if let Some(c) = self.cursor.filter(|_| !self.floors.band_off()) {
                 line.push(Point3::new(c[0], c[1], z));
                 if points.len() >= 2 {
                     line.push(Point3::new(points[0][0], points[0][1], z));
@@ -1191,5 +1301,27 @@ impl WallInteraction {
             });
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::export_line;
+
+    #[test]
+    fn the_typed_export_line_names_its_path_or_none() {
+        let line = |t: &str| export_line(t);
+        assert_eq!(line("archbuilder.file.export_ifc"), Some(None));
+        assert_eq!(
+            line("archbuilder.file.export_ifc path=/tmp/a b.ifc"),
+            Some(Some("/tmp/a b.ifc".to_owned()))
+        );
+        assert_eq!(
+            line("archbuilder.file.export_ifc  path=\"C:\\x.ifc\""),
+            Some(Some("C:\\x.ifc".to_owned()))
+        );
+        assert_eq!(line("archbuilder.file.export_ifc path="), Some(None));
+        assert_eq!(line("archbuilder.file.export_ifcx"), None);
+        assert_eq!(line("wall"), None);
     }
 }

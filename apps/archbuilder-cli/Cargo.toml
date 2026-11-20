@@ -9,9 +9,11 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+arc-base = { workspace = true }
 arc-command = { workspace = true, features = ["headless"] }
 arc-doc = { workspace = true, features = ["package"] }
 archbuilder-commands = { path = "../../crates/archbuilder-commands" }
+archbuilder-io = { path = "../../crates/archbuilder-io" }
 archbuilder-model = { path = "../../crates/archbuilder-model" }
 serde_json = { workspace = true }
 

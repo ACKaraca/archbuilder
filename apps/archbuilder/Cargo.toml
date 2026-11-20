@@ -18,6 +18,7 @@ arc-gpu = { workspace = true }
 arc-mesh = { workspace = true }
 arc-ui = { workspace = true }
 archbuilder-commands = { path = "../../crates/archbuilder-commands" }
+archbuilder-io = { path = "../../crates/archbuilder-io" }
 archbuilder-model = { path = "../../crates/archbuilder-model" }
 schemars = { workspace = true }
 serde = { workspace = true }

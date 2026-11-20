@@ -225,14 +225,31 @@ fn a_refused_boundary_keeps_the_sketch_and_the_start_point_closes_it() {
 }
 
 #[test]
-fn escape_drops_the_sketch_first_and_ends_the_tool_second() {
+fn escape_cancels_the_band_first_drops_the_sketch_second_and_ends_the_tool_third() {
     let mut rig = Rig::new();
     rig.step(|t, env, run| t.begin(env, run, None));
     rig.step(|t, env, run| t.text(env, run, "sketch"));
     rig.step(|t, env, run| t.text(env, run, "1,1"));
     rig.step(|t, env, run| t.text(env, run, "2,1"));
+    // The first Escape cancels the segment that follows the pointer and keeps both points.
+    rig.step(|t, env, run| t.escape(env, run));
+    assert!(rig.tool.running() && rig.tool.band_off());
+    assert_eq!(rig.tool.progress().1, [[1.0, 1.0], [2.0, 1.0]]);
+    // The sketch stays editable: undo removes the last point, a new point brings the band back.
+    rig.step(|t, env, run| t.text(env, run, "undo"));
+    assert_eq!(rig.tool.progress().1, [[1.0, 1.0]]);
+    assert!(!rig.tool.band_off());
+    rig.step(|t, env, run| t.text(env, run, "3,1"));
+    rig.step(|t, env, run| t.escape(env, run));
+    rig.step(|t, env, run| t.text(env, run, "3,2"));
+    assert_eq!(rig.tool.progress().1.len(), 3);
+    assert!(!rig.tool.band_off());
+    // The second Escape (after the first again) discards the sketch and stays in the tool.
+    rig.step(|t, env, run| t.escape(env, run));
     rig.step(|t, env, run| t.escape(env, run));
     assert!(rig.tool.running() && rig.tool.progress().1.is_empty());
+    assert!(rig.floors().is_empty());
+    // The third leaves the tool.
     rig.step(|t, env, run| t.escape(env, run));
     assert!(!rig.tool.running());
 }

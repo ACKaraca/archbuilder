@@ -1,6 +1,7 @@
 # The layer table of ArchBuilder: the same rules and file format as arc-core's
 # xtask/layers.toml (ADR-0001 of arc-core). `cargo xtask layers` checks the workspace against it.
-# The layers are this repository's own: the document model, then the commands.
+# The layers are this repository's own: the document model, then the commands, then the format
+# mappings (archbuilder-io).
 
 # Crates that nothing in the headless layers may reach through normal dependencies.
 ui_deny = [
@@ -25,6 +26,8 @@ third_party = [
   "arc-draft",
   "arc-geom",
   "arc-gpu",
+  "arc-io-common",
+  "arc-io-ifc",
   "arc-mesh",
   "arc-ui",
   "schemars",
@@ -37,6 +40,7 @@ third_party = [
 [crates]
 archbuilder-model = "layer(0)"
 archbuilder-commands = "layer(1)"
+archbuilder-io = "layer(2)"
 archbuilder = "app"
 archbuilder-cli = "app"
 xtask = "tool"
