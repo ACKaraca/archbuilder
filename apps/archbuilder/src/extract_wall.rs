@@ -5,7 +5,8 @@
 //! single-precision display coordinates stay exact far from the project origin.
 //!
 //! The solid is that of the wall's joined footprint ([`archbuilder_model::join`]), derived from the
-//! walls of its storey. A change of the wall re-extracts it, and so does a change of its storey or
+//! walls of its storey, with the openings of the wall's doors and windows cut
+//! ([`archbuilder_model::insert::wall_solid`]). A change of the wall re-extracts it, and so does a change of its storey or
 //! of the level of its storey, or of any wall on its storey ([`dependents`]): the solid stands at
 //! the level's elevation and its ends follow the walls it meets.
 
@@ -17,9 +18,9 @@ use arc_doc::events::Changes;
 use arc_doc::{Object, Snapshot};
 use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
-use archbuilder_model::types::{LEVEL, STOREY, WALL};
+use archbuilder_model::spatial;
+use archbuilder_model::types::{DOOR, LEVEL, STOREY, WALL, WINDOW};
 use archbuilder_model::wall::Wall;
-use archbuilder_model::{join, spatial};
 
 /// The color of a wall (linear RGB).
 pub const COLOR: Color = Color {
@@ -33,6 +34,21 @@ pub const COLOR: Color = Color {
 /// holds, still names the storey whose other walls join differently now.
 static OWNERS: std::sync::Mutex<BTreeMap<ObjectId, ObjectId>> =
     std::sync::Mutex::new(BTreeMap::new());
+
+/// The wall of each door and window extracted, so that the deletion of an insert, which the
+/// snapshot no longer holds, still names the wall whose opening closes.
+static HOSTS: std::sync::Mutex<BTreeMap<ObjectId, ObjectId>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// Remembers the wall that hosts the insert `insert`.
+pub fn remember_host(insert: ObjectId, wall: ObjectId) {
+    if let Ok(mut hosts) = HOSTS.lock() {
+        if hosts.len() >= MAX_OWNERS {
+            hosts.clear();
+        }
+        hosts.insert(insert, wall);
+    }
+}
 
 /// The most walls whose storey is remembered.
 const MAX_OWNERS: usize = 1_000_000;
@@ -59,8 +75,10 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
         }
         owners.insert(object.id, owner);
     }
-    let footprint = join::footprint_of(snapshot, object).unwrap_or_else(|| wall.plain_footprint());
-    let solid = wall.solid_in(footprint, elevation)?;
+    let Some(solid) = archbuilder_model::insert::wall_solid(snapshot, object) else {
+        return Ok(Extraction::default());
+    };
+    let solid = solid?;
     let origin = Point3::new(wall.start[0], wall.start[1], elevation + wall.base_offset);
     let mesh = TriMesh::from_polyhedron(&solid, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
     let mut extraction = Extraction::default();
@@ -94,12 +112,22 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     };
     let touched: BTreeSet<ObjectId> = [LEVEL, STOREY].into_iter().flat_map(live).collect();
     let changed_walls = live(WALL);
-    let deleted: Vec<ObjectId> = by_type
-        .iter()
-        .filter(|(k, _)| k.as_str() == WALL)
-        .flat_map(|(_, g)| g.deleted.iter().copied())
-        .collect();
-    if touched.is_empty() && changed_walls.is_empty() && deleted.is_empty() {
+    let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW].into_iter().flat_map(live).collect();
+    let deleted_of = |keys: &[&str]| -> Vec<ObjectId> {
+        by_type
+            .iter()
+            .filter(|(k, _)| keys.contains(&k.as_str()))
+            .flat_map(|(_, g)| g.deleted.iter().copied())
+            .collect()
+    };
+    let deleted = deleted_of(&[WALL]);
+    let deleted_inserts = deleted_of(&[DOOR, WINDOW]);
+    if touched.is_empty()
+        && changed_walls.is_empty()
+        && deleted.is_empty()
+        && changed_inserts.is_empty()
+        && deleted_inserts.is_empty()
+    {
         return Vec::new();
     }
     let mut owners: BTreeSet<ObjectId> = changed_walls
@@ -132,6 +160,33 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let topped = spatial::objects(snapshot, WALL)
         .into_iter()
         .filter(|w| Wall::top_level(&w.values).is_some_and(|level| touched.contains(&level)));
-    let found: BTreeSet<ObjectId> = on_storey.chain(topped).map(|w| w.id).collect();
-    found.into_iter().collect()
+    // The wall of an insert that changed or went: its opening is cut or closed.
+    let hosts: Vec<ObjectId> = changed_inserts
+        .iter()
+        .filter_map(|i| spatial::get(snapshot, *i).and_then(|o| o.header.owner))
+        .chain(
+            HOSTS
+                .lock()
+                .map(|known| {
+                    deleted_inserts
+                        .iter()
+                        .filter_map(|i| known.get(i).copied())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )
+        .filter(|w| spatial::get(snapshot, *w).is_some())
+        .collect();
+    let walls: BTreeSet<ObjectId> = on_storey.chain(topped).map(|w| w.id).chain(hosts).collect();
+    // The inserts follow their wall: its ends, its base and its height place them.
+    let inserts: Vec<ObjectId> = walls
+        .iter()
+        .flat_map(|w| {
+            [DOOR, WINDOW]
+                .into_iter()
+                .flat_map(|key| spatial::children(snapshot, key, *w))
+        })
+        .map(|i| i.id)
+        .collect();
+    walls.into_iter().chain(inserts).collect()
 }

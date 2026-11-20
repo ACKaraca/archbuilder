@@ -4,6 +4,7 @@
 
 use arc_app::commands;
 use arc_app::shell::ToolItem;
+use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::structure::{STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::WALL_CREATE;
 
@@ -21,9 +22,10 @@ fn button(label: Message, hint: Message, line: &str) -> ToolItem {
     }
 }
 
-/// The toolbar: the file commands, the storey commands, the wall tool, undo and redo, and zoom to
+/// The toolbar: the file commands, the storey commands, the wall, door and window tools, undo and redo, and zoom to
 /// the extents.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one entry per toolbar button")]
 pub fn toolbar() -> Vec<ToolItem> {
     vec![
         button(
@@ -90,6 +92,24 @@ pub fn toolbar() -> Vec<ToolItem> {
                 message_id: "ab-tool-wall-hint",
             },
             WALL_CREATE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-door",
+            },
+            Message {
+                message_id: "ab-tool-door-hint",
+            },
+            DOOR_PLACE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-window",
+            },
+            Message {
+                message_id: "ab-tool-window-hint",
+            },
+            WINDOW_PLACE,
         ),
         ToolItem::Separator,
         button(

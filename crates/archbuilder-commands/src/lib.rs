@@ -7,12 +7,15 @@
 //! `archbuilder.object.select` (selection only, no transaction) and `archbuilder.property.set`;
 //! [`wall`]: `archbuilder.wall.create`, `archbuilder.wall.delete`, `archbuilder.wall.join_style`,
 //! `archbuilder.wall.disallow_join`, `archbuilder.wall.allow_join` and `archbuilder.object.delete`
-//! (the selected walls, else the selected storey). Every change reaches a document through one of them, in one
+//! (the selected walls and inserts, else the selected storey); [`insert`]: `archbuilder.door.place`,
+//! `archbuilder.window.place`, `archbuilder.insert.flip_hand` and `archbuilder.insert.flip_facing`.
+//! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
 //! No function in this crate panics.
 
 pub mod error;
+pub mod insert;
 pub mod structure;
 pub mod wall;
 
@@ -44,6 +47,7 @@ pub fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
     structure::register(&mut registry)?;
     wall::register(&mut registry)?;
+    insert::register(&mut registry)?;
     Ok(registry)
 }
 

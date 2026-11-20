@@ -240,8 +240,58 @@ fn selected_walls(ctx: &Context<'_>) -> Vec<ObjectId> {
         .collect()
 }
 
-/// Deletes walls in one transaction, so one undo step brings them all back.
-fn delete_walls(ctx: &mut Context<'_>, p: DeleteWalls) -> Result<()> {
+/// What a delete returns: the walls deleted, and the doors and windows deleted with them or by
+/// themselves.
+#[derive(Debug, Default, Serialize, JsonSchema)]
+pub struct Deleted {
+    /// The walls deleted.
+    pub walls: usize,
+    /// The doors and windows deleted: those of the deleted walls (they go with their host in the
+    /// same transaction) and those named themselves.
+    pub inserts: usize,
+}
+
+/// Deletes walls and inserts in one transaction, so one undo step brings them all back. The
+/// inserts of a deleted wall go with it by the deletion rules of their host.
+fn delete_set(
+    ctx: &mut Context<'_>,
+    walls: BTreeSet<ObjectId>,
+    inserts: BTreeSet<ObjectId>,
+) -> Result<Deleted> {
+    if walls.is_empty() && inserts.is_empty() {
+        return Err(Error::new(codes::NOTHING_SELECTED));
+    }
+    for id in &walls {
+        expect(ctx.snapshot(), *id, WALL)?;
+    }
+    // The inserts of a deleted wall go with it; the others named are deleted by themselves.
+    let mut cascaded = 0;
+    for wall in &walls {
+        cascaded += archbuilder_model::insert::hosted(ctx.snapshot(), *wall).len();
+    }
+    let alone: Vec<ObjectId> = inserts
+        .into_iter()
+        .filter(|id| {
+            !spatial::get(ctx.snapshot(), *id)
+                .is_some_and(|o| o.header.owner.is_some_and(|w| walls.contains(&w)))
+        })
+        .collect();
+    let count = cascaded + alone.len();
+    let limits = *ctx.limits();
+    let txn = ctx.txn()?;
+    for id in walls.iter().chain(&alone) {
+        txn.delete(*id)?;
+    }
+    txn.apply_delete_rules(&limits)?;
+    ensure_valid(ctx)?;
+    Ok(Deleted {
+        walls: walls.len(),
+        inserts: count,
+    })
+}
+
+/// Deletes walls (with their inserts) in one transaction.
+fn delete_walls(ctx: &mut Context<'_>, p: DeleteWalls) -> Result<Deleted> {
     let ids: BTreeSet<ObjectId> = match p.walls {
         Some(list) if list.len() > MAX_DELETED => {
             return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
@@ -249,19 +299,7 @@ fn delete_walls(ctx: &mut Context<'_>, p: DeleteWalls) -> Result<()> {
         Some(list) => list.into_iter().map(|IdParam(id)| id).collect(),
         None => selected_walls(ctx).into_iter().collect(),
     };
-    if ids.is_empty() {
-        return Err(Error::new(codes::NOTHING_SELECTED));
-    }
-    for id in &ids {
-        expect(ctx.snapshot(), *id, WALL)?;
-    }
-    let limits = *ctx.limits();
-    let txn = ctx.txn()?;
-    for id in ids {
-        txn.delete(id)?;
-    }
-    txn.apply_delete_rules(&limits)?;
-    ensure_valid(ctx)
+    delete_set(ctx, ids, BTreeSet::new())
 }
 
 /// Flips walls: the baseline is reversed (start and end swap) and the location line stays. The
@@ -287,7 +325,21 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
         else {
             continue;
         };
+        // The inserts keep their place and swing: distance from the new start, the other facing.
+        let hosted = archbuilder_model::insert::hosted(ctx.snapshot(), id);
         let txn = ctx.txn()?;
+        for (object, item) in hosted {
+            txn.modify(
+                object.id,
+                arc_doc::FieldPath::new("distance"),
+                Some(types::length((wall.length() - item.distance).max(0.0))),
+            )?;
+            txn.modify(
+                object.id,
+                arc_doc::FieldPath::new("facing"),
+                Some(Value::Enum(item.facing.flipped().code())),
+            )?;
+        }
         // The ends swap with the baseline, and so do their join styles.
         for (field, style) in [("start_join", wall.end_join), ("end_join", wall.start_join)] {
             txn.modify(
@@ -350,12 +402,21 @@ fn set_join(
     ensure_valid(ctx)
 }
 
-/// Deletes the selected walls; with no wall selected, the selected storey.
-fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<()> {
-    if selected_walls(ctx).is_empty() {
+/// Deletes the selected walls and inserts; with neither selected, the selected storey.
+fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted> {
+    let walls: BTreeSet<ObjectId> = selected_walls(ctx).into_iter().collect();
+    let snapshot = ctx.snapshot();
+    let inserts: BTreeSet<ObjectId> = ctx
+        .selection()
+        .iter()
+        .copied()
+        .filter(|id| crate::insert::is_insert(snapshot, *id))
+        .collect();
+    if walls.is_empty() && inserts.is_empty() {
         crate::structure::delete_storey(ctx, crate::structure::DeleteStorey::default())
+            .map(|()| Deleted::default())
     } else {
-        delete_walls(ctx, DeleteWalls::default())
+        delete_set(ctx, walls, inserts)
     }
 }
 

@@ -59,4 +59,16 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-wall-end-same",
     };
+    /// A door or window is placed and no wall is named, picked or selected.
+    pub const NO_WALL_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_wall_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-wall-selected",
+    };
+    /// An insert command names no door or window and the selection holds none.
+    pub const NO_INSERT_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_insert_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-insert-selected",
+    };
 }

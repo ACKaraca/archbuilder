@@ -11,20 +11,19 @@ Depends only on `arc-core` and third-party crates; never on other Arc products.
 ## Status and where to start
 
 The spatial structure exists as code: project, site, building, storey and level as `arc-doc` object
-types with their validation rules, the commands that create and change them (new project, add,
-rename and delete storey, level elevation, rename building, selection), a windowed application and a headless
+types with their validation rules, the commands that create and change them (new project, storey add, rename and delete, level elevation, rename building, selection), a windowed application and a headless
 CLI over them, on one pinned `arc-core`. The first wall slice exists too: the `wall` object type
 (storey, baseline, thickness, height or top level, base offset, location line), its solid derived with the
-foundation's planar solids, `archbuilder.wall.create` (chains of walls with the pointer or typed
-coordinates; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wall.flip` and `archbuilder.object.delete`
-(the Delete key: the selected walls, else the selected storey; one undo step), edits through
-`archbuilder.property.set`, shaded walls in the viewport that follow their storey's level
-elevation, the outliner and the property grid, and the wall list of `archbuilder-cli inspect`. Wall
+foundation's solids, `archbuilder.wall.create` (chains, pointer or typed; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wall.flip` and `archbuilder.object.delete`
+(the Delete key), edits through
+`archbuilder.property.set`, shaded walls following their storey's level, the outliner, the
+property grid, and the wall, door and window lists of `archbuilder-cli inspect`. Wall
 joins are derived from a storey's walls and never stored; only each end's style is authored
-(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`). The wall tool snaps in
-`apps/archbuilder/src/snap.rs`.
-Walls have no types, layers or hosted inserts yet. Families, views, exchange and the rest are still
-specifications. Read in this order: `docs/product/vision.md`,
+(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`). Wall snaps: `apps/archbuilder/src/snap.rs`.
+Doors and windows are built-in kinds hosted by a wall (`archbuilder.door.place`, `window.place`,
+`insert.flip_hand`, `flip_facing`); their openings are cut from the wall solid. Walls have no types
+or layers yet. Families, views, exchange and the rest are still specifications. Read in this order:
+`docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
 
@@ -35,7 +34,7 @@ Present:
 ```
 crates/archbuilder-model/     spatial structure and wall types, validation rules, wall solid, wall joins, readers, project length unit (headless)
 crates/archbuilder-commands/  type set and the commands of the structure and the wall (headless)
-apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, level and wall extractors, wall tool, labels
+apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall and insert tools, labels
 apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with the wall list
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages

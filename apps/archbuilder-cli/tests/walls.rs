@@ -146,3 +146,68 @@ fn inspect_counts_the_corners_of_a_closed_rectangle_once() {
     assert_eq!(walls[0]["start_join"], "auto");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn inspect_lists_doors_and_windows_and_the_wall_volume_without_their_openings() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-cli-inserts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("inserts.archb");
+    let (file, dir_text) = (file.to_str().unwrap(), dir.to_str().unwrap());
+    let run = |create: bool, command: &str, params: Value| {
+        let params = params.to_string();
+        let mut args = vec![
+            "run",
+            file,
+            "--save",
+            "--allow-edit",
+            "--write-root",
+            dir_text,
+        ];
+        if create {
+            args.push("--create");
+        }
+        args.extend(["--command", command, "--params", &params]);
+        assert_eq!(cli(&args).0, Exit::Success, "{command}");
+    };
+    run(true, "archbuilder.project.new", json!({}));
+    run(
+        false,
+        "archbuilder.wall.create",
+        json!({"start": [0.0, 0.0], "end": [10.0, 0.0], "height": 3.0}),
+    );
+    let (_, dump) = cli(&["inspect", file]);
+    let wall = dump["walls"][0]["id"].clone();
+    run(
+        false,
+        "archbuilder.door.place",
+        json!({"wall": wall, "distance": 2.0}),
+    );
+    run(
+        false,
+        "archbuilder.window.place",
+        json!({"wall": wall, "distance": 6.0, "width": 1.5, "flip_hand": true}),
+    );
+    let (exit, dump) = cli(&["inspect", file]);
+    assert_eq!(exit, Exit::Success);
+    let door = &dump["doors"][0];
+    assert_eq!(
+        (door["wall"].as_str(), door["name"].as_str()),
+        (Some("Wall 1"), Some("Door 1"))
+    );
+    assert_eq!(door["distance"].as_f64(), Some(2.0));
+    assert_eq!(door["width"].as_f64(), Some(0.9));
+    assert_eq!(door["height"].as_f64(), Some(2.1));
+    assert_eq!(door["sill"].as_f64(), Some(0.0));
+    let window = &dump["windows"][0];
+    assert_eq!(window["sill"].as_f64(), Some(0.9));
+    assert_eq!(window["width"].as_f64(), Some(1.5));
+    assert_eq!(window["hand"], "right");
+    let wall = &dump["walls"][0];
+    assert_eq!(wall["openings"].as_u64(), Some(2));
+    // 10 x 0.2 x 3, minus 0.9 x 2.1 x 0.2 and 1.5 x 1.2 x 0.2.
+    assert!((wall["gross_volume"].as_f64().unwrap() - 6.0).abs() < 1e-9);
+    let net = 6.0 - 0.9 * 2.1 * 0.2 - 1.5 * 1.2 * 0.2;
+    assert!((wall["volume"].as_f64().unwrap() - net).abs() < 1e-9);
+    let _ = std::fs::remove_dir_all(&dir);
+}

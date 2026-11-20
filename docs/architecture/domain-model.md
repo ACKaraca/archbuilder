@@ -105,7 +105,7 @@ that node stay square; the volume, the property grid and `inspect` use the joine
 closed rectangle counts each corner once. The viewport extracts the walls of a storey again when
 any of them is created, changed or deleted.
 
-Known limits: walls have no constraints, types, layers, curves or hosted inserts; a wall that
+Known limits: walls have no constraints, types, layers or curves, and the only inserts are the doors and windows below; a wall that
 crosses another without ending on it is not joined; a node of three or more walls without a
 straight run (a Y) leaves a small notch at its center; styles other than `auto` apply only at a
 corner of two walls and at a T. The viewport extracts a wall again when its storey or the level of its storey changes. A storey
@@ -114,6 +114,54 @@ baseline stays; a center line has no side), and `archbuilder.wall.delete`
 deletes walls (the named ones, else the selected ones) in one transaction, so one undo restores
 them; `archbuilder.object.delete`, the Delete key, deletes the selected walls, else the selected
 storey.
+
+#### The door and window of the first slice
+
+The first implemented `Insert` kinds are two reduced records, `archbuilder.door` and
+`archbuilder.window`, built-in parametric kinds rather than loadable families. The host wall is the
+header owner, so an insert is contained in its wall: deleting the wall deletes its inserts in the
+same transaction (the command result and the application name how many), and one undo brings wall and
+inserts back. Authored data only, lengths in meters, one layout for both kinds:
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | Unique among the doors (or windows) of the wall, `Door <n>` or `Window <n>` by default | Not blank |
+| `distance` | From the baseline's start to the center of the opening | 0 to 100 km; the opening lies in the clear span (below) |
+| `width`, `height` | Size of the opening | 0.1 m to 20 m; 0.9 by 2.1 m for a door, 1.2 by 1.2 m for a window by default |
+| `sill` | Bottom of the opening above the wall's base | 0 to 100 m; 0 for a door, 0.9 m for a window by default; the head stays 10 mm below the wall's top |
+| `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall (never more than the thickness) | 10 mm to 0.5 m and 10 mm to 2 m; 50 mm and 100 mm by default; the frame leaves at least 20 mm clear |
+| `operation` | `single_swing` for a door; `fixed` or `casement` for a window | The kind decides what is allowed |
+| `hand` | `left` or `right`: the hinge side seen from the side the leaf swings toward | `left` by default |
+| `facing` | `exterior` or `interior`: the side of the wall the leaf swings toward | `exterior` by default |
+
+Rules: the opening, with 10 mm of clearance, lies in the wall's clear span, the stretch of the
+baseline where the joined solid has both faces, so an insert cannot reach into a mitered corner or
+a T (a wall that would be created, joined or shortened over an insert is refused with the insert named; an opening may not open into the body of another wall that meets or crosses its wall,
+as is a level that moves a wall's top below one); two inserts of a wall keep 10 mm between their
+openings at any height; at most 1000 inserts stand in a wall. Moving a wall keeps its inserts at their
+distance along it; `archbuilder.wall.flip` reverses the baseline, so it also sets each distance to the
+wall's length minus the distance and flips each facing, which keeps every insert where it is and swinging
+the same way in the room.
+
+Planned IFC mapping (the writer is pending in the foundation, so nothing is exported yet): a wall
+maps to `IfcWall` with its body representation, contained in the `IfcBuildingStorey` of its storey; each
+door or window maps to `IfcDoor` or `IfcWindow` in the same storey, placed in an `IfcOpeningElement`
+that voids the wall (`IfcRelVoidsElement`) and is filled by the insert (`IfcRelFillsElement`); the
+opening's profile is the rectangle of the width and the height at the sill, through the thickness;
+`OverallWidth` and `OverallHeight` come from `width` and `height`; `OperationType` comes from the
+operation, the hand and the facing (single swing left or right, opening to the interior or exterior
+side); the sill height places the opening, and the quantities come from the same rule as the schedules.
+
+Derived, never stored: the wall's solid is the joined solid with each opening cut through its whole
+thickness by the foundation's prism subtraction (the volume of the property grid and `inspect` is that
+net volume); the insert's own solids are the four bars of the frame, the closed leaf (door, with a
+handle opposite the hinge on the facing side) or the glass pane (window), drawn in their own colors.
+`archbuilder.door.place` and `archbuilder.window.place` place one insert (a click on a wall, or a
+typed distance along the selected wall; the options width, height, sill, hand and facing; chains
+continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_hand` and
+`archbuilder.insert.flip_facing` flip the selected ones, and `archbuilder.object.delete` deletes the selected
+inserts. Known limits: no types or families, no room relations, no IFC writer yet,
+arched or non-rectangular openings and double leaves are not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
 
 ### Types and families
 

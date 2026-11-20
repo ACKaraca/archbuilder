@@ -7,12 +7,14 @@
 //! `archb`: `run <file> --create --save --allow-edit --write-root <dir> --command
 //! archbuilder.project.new` makes a project, and each further `run <file> --save --command ...`
 //! changes it. `inspect` adds a `walls` list to the shared dump: each wall with its storey, length,
-//! thickness, height and the volume of its derived solid.
+//! thickness, height and the volume of its derived solid minus its openings, and the `doors` and
+//! `windows` lists: each with its host wall, distance along it, width, height and sill.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 
 use arc_command::headless::{self, Exit, Product};
+use archbuilder_model::insert::Kind;
 
 pub mod walls;
 
@@ -84,7 +86,12 @@ where
     let enriched = text.lines().next().and_then(|line| {
         let mut dump: serde_json::Value = serde_json::from_str(line).ok()?;
         let walls = walls::summary(dump.get("objects")?.as_array()?);
-        dump.as_object_mut()?.insert("walls".into(), walls.into());
+        let doors = walls::inserts(dump.get("objects")?.as_array()?, Kind::Door);
+        let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
+        let map = dump.as_object_mut()?;
+        map.insert("walls".into(), walls.into());
+        map.insert("doors".into(), doors.into());
+        map.insert("windows".into(), windows.into());
         serde_json::to_string(&dump).ok()
     });
     // A dump that is not the expected JSON (an error report) goes out as it came.

@@ -4,7 +4,7 @@
 //! through the commands, and the viewport draws each level as a horizontal reference plane, with
 //! its name and elevation as a label that faces the screen, and each wall as a shaded solid. The
 //! wall tool ([`wall_tool`], [`interaction`]) places chains of walls with the pointer or typed
-//! coordinates. The binary builds this product and starts the event loop; tests drive the same
+//! coordinates, and the insert tool ([`insert_tool`]) places doors and windows in walls. The binary builds this product and starts the event loop; tests drive the same
 //! product headless.
 
 use std::sync::Arc;
@@ -19,13 +19,18 @@ use arc_command::Clock;
 use arc_doc::package::LockOwner;
 use arc_gpu::extract;
 use arc_ui::{Axis, Binding, Dock, DockLayout, Menu, MenuItem};
+use archbuilder_commands::insert::{
+    DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
+};
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
-use archbuilder_model::types::{LEVEL, WALL};
+use archbuilder_model::types::{DOOR, LEVEL, WALL, WINDOW};
 
 pub mod chrome;
+pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_wall;
+pub mod insert_tool;
 pub mod interaction;
 pub mod labels;
 pub mod outliner;
@@ -143,6 +148,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             })
         }),
     })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.insert".into(),
+        types: vec![DOOR.to_owned(), WINDOW.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_insert::extract_insert(snapshot, object, cancel)
+            })
+        }),
+    })?;
     builder.build(clock, owner)
 }
 
@@ -158,10 +172,18 @@ fn menu() -> Result<Menu> {
     let mut items = shell::default_menu()?.items().to_vec();
     items.push(MenuItem::Submenu {
         label: MENU_STRUCTURE.message_id.into(),
-        items: [STOREY_ADD, STOREY_DELETE, WALL_CREATE]
-            .into_iter()
-            .map(|c| MenuItem::Command { command: c.into() })
-            .collect(),
+        items: [
+            STOREY_ADD,
+            STOREY_DELETE,
+            WALL_CREATE,
+            DOOR_PLACE,
+            WINDOW_PLACE,
+            INSERT_FLIP_HAND,
+            INSERT_FLIP_FACING,
+        ]
+        .into_iter()
+        .map(|c| MenuItem::Command { command: c.into() })
+        .collect(),
     });
     Menu::new(items)
 }

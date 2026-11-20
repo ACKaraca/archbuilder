@@ -27,7 +27,7 @@ use arc_doc::{Change, Document, DocumentValidator, Finding, Object, Severity, Sn
 use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
-use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY, WALL};
+use crate::types::{self, BUILDING, DOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW};
 
 /// The key a name is compared by ([`crate::names::fold`]).
 fn folded(object: &Object) -> String {
@@ -41,6 +41,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         BUILDING => Some(SITE),
         STOREY | LEVEL => Some(BUILDING),
         WALL => Some(STOREY),
+        DOOR | WINDOW => Some(WALL),
         _ => None,
     }
 }
@@ -75,6 +76,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         if !top_is_above(candidate, object) {
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
+    }
+    if key == DOOR || key == WINDOW {
+        out.extend(crate::insert::problems(candidate, object));
     }
     let own = folded(object);
     if key != PROJECT
@@ -167,7 +171,55 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
         check_storey(candidate, storey, &mut out);
     }
     check_walls_of_levels(candidate, touched, &mut out);
+    check_inserts_of_walls(candidate, touched, &mut out);
     out
+}
+
+/// The inserts a change of other objects can break: those of every wall that changed or stands on
+/// a storey that has a changed wall (joins move the ends), and those of walls on a storey or a
+/// level that changed or whose top follows one (the base and the height move). An insert that
+/// changed is checked on its own.
+fn check_inserts_of_walls(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    let live = |id: &ObjectId| matches!(touched.get(id), Some(c) if *c != Change::Deleted);
+    let mut storeys: Vec<ObjectId> = Vec::new();
+    let mut walls: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(WALL) => storeys.extend(get(candidate, *id).and_then(|w| w.header.owner)),
+            Some(STOREY) => storeys.push(*id),
+            _ => {}
+        }
+    }
+    let level_moved = touched
+        .keys()
+        .any(|id| live(id) && type_of(candidate, *id).as_deref() == Some(LEVEL));
+    for wall in objects(candidate, WALL) {
+        let on_level = level_moved
+            && (crate::wall::Wall::top_level(&wall.values).is_some_and(|l| live(&l))
+                || wall
+                    .header
+                    .owner
+                    .and_then(|o| get(candidate, o))
+                    .and_then(|s| crate::spatial::level_of(candidate, &s))
+                    .is_some_and(|l| live(&l.id)));
+        if on_level || wall.header.owner.is_some_and(|o| storeys.contains(&o)) {
+            walls.push(wall);
+        }
+    }
+    for wall in walls {
+        for (insert, _) in crate::insert::hosted(candidate, wall.id) {
+            if !live(&insert.id) {
+                out.extend(crate::insert::problems(candidate, &insert));
+            }
+        }
+    }
 }
 
 /// A level that moved must stay above the base of every wall whose top follows it. The walls are

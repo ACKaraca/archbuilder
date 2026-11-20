@@ -4,7 +4,8 @@
 //! document at each frame, so they follow a rename, a new elevation and a change of unit or
 //! language at once. The viewport keeps labels that would cover each other apart (it steps the
 //! later one down), so the labels are given from the highest level to the lowest: seen from above,
-//! where every level projects to the same place, they stack in the order of the storeys.
+//! where every level projects to the same place, they stack in the order of the storeys. The plan
+//! symbols of doors and windows ([`symbols`]) are drawn by the interaction, in views from above.
 
 use arc_app::application::{Application, TabId};
 use arc_base::math::Point3;
@@ -49,6 +50,42 @@ pub fn of_snapshot(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
             text: label(l, unit, language),
         })
         .collect()
+}
+
+/// The most plan symbols drawn.
+const MAX_SYMBOLS: usize = 5_000;
+
+/// The plan symbol of each door and window: the opening across its wall, a door's open leaf and
+/// swing, a window's frame and glass line, at a cut 1 m above the wall's base, so that an insert
+/// shows in a view from above, where the wall's top hides it.
+#[must_use]
+pub fn symbols(snapshot: &Snapshot) -> Vec<ProductOverlay> {
+    let mut out = Vec::new();
+    for key in [types::DOOR, types::WINDOW] {
+        for object in spatial::objects(snapshot, key).iter().take(MAX_SYMBOLS) {
+            let Some(host) = object.header.owner.and_then(|w| spatial::get(snapshot, w)) else {
+                continue;
+            };
+            let (Some(item), Some(wall)) = (
+                archbuilder_model::insert::Insert::of(snapshot, object),
+                archbuilder_model::wall::Wall::of(snapshot, &host),
+            ) else {
+                continue;
+            };
+            let level = host
+                .header
+                .owner
+                .and_then(|s| spatial::get(snapshot, s))
+                .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
+            for line in archbuilder_model::insert::symbol(&wall, level, &item).unwrap_or_default() {
+                out.push(ProductOverlay::Path {
+                    points: line.iter().map(|p| Point3::new(p[0], p[1], p[2])).collect(),
+                    dashed: false,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// The overlay probe of the shell: the labels of the active tab's levels.

@@ -1,7 +1,7 @@
 //! The ArchBuilder document model, headless: the object types of the spatial structure
 //! ([`types`]) with their validation rules ([`validate`]), readers over a snapshot
-//! ([`spatial`]), the project length unit ([`units`]) and the wall with its derived solid
-//! ([`wall`]).
+//! ([`spatial`]), the project length unit ([`units`]), the wall with its derived solid
+//! ([`wall`]) and the doors and windows a wall hosts ([`insert`]).
 //!
 //! The structure follows the domain model document: a project contains a site, the site
 //! contains buildings, a building contains storeys, and the levels of a building are datums that
@@ -10,6 +10,7 @@
 //! No function in this crate panics.
 
 pub mod error;
+pub mod insert;
 pub mod join;
 pub mod names;
 pub mod spatial;
@@ -84,6 +85,17 @@ pub mod defaults {
             format!("Duvar {n}")
         } else {
             format!("Wall {n}")
+        }
+    }
+
+    /// The name of the door or window numbered `n` in `language`: `Door 3`, `Kapı 3`.
+    #[must_use]
+    pub fn insert(language: &str, window: bool, n: usize) -> String {
+        match (turkish(language), window) {
+            (true, false) => format!("Kapı {n}"),
+            (true, true) => format!("Pencere {n}"),
+            (false, false) => format!("Door {n}"),
+            (false, true) => format!("Window {n}"),
         }
     }
 

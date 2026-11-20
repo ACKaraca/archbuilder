@@ -56,4 +56,40 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-level-invalid",
     };
+    /// A door or window does not lie inside the clear length of its wall.
+    pub const INSERT_OUTSIDE: ErrorCode = ErrorCode {
+        code: "ab.model.insert_outside",
+        category: Category::Conflict,
+        message_id: "ab-model-insert-outside",
+    };
+    /// A door or window reaches the top of its wall or above it.
+    pub const INSERT_TOO_TALL: ErrorCode = ErrorCode {
+        code: "ab.model.insert_too_tall",
+        category: Category::Conflict,
+        message_id: "ab-model-insert-too-tall",
+    };
+    /// A door or window overlaps another one in the same wall.
+    pub const INSERT_OVERLAP: ErrorCode = ErrorCode {
+        code: "ab.model.insert_overlap",
+        category: Category::Conflict,
+        message_id: "ab-model-insert-overlap",
+    };
+    /// A door or window has an operation its kind does not have.
+    pub const INSERT_OPERATION: ErrorCode = ErrorCode {
+        code: "ab.model.insert_operation",
+        category: Category::InvalidInput,
+        message_id: "ab-model-insert-operation",
+    };
+    /// The frame of a door or window leaves no clear opening.
+    pub const INSERT_FRAME: ErrorCode = ErrorCode {
+        code: "ab.model.insert_frame",
+        category: Category::InvalidInput,
+        message_id: "ab-model-insert-frame",
+    };
+    /// A door or window would open into the body of another wall that meets or crosses its wall.
+    pub const INSERT_MEETS_WALL: ErrorCode = ErrorCode {
+        code: "ab.model.insert_meets_wall",
+        category: Category::Conflict,
+        message_id: "ab-model-insert-meets-wall",
+    };
 }

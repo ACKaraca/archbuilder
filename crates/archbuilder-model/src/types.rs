@@ -1,5 +1,6 @@
 //! The object types of the spatial structure, as the domain model document defines them:
-//! `Project`, `Site`, `Building`, `Storey` and `Level`, and the `Wall` that stands on a storey.
+//! `Project`, `Site`, `Building`, `Storey` and `Level`, the `Wall` that stands on a storey and the
+//! `Door` and `Window` that a wall hosts.
 //!
 //! Containment is the header owner of an object: a site is owned by the project, a building by
 //! the site, a storey and a level by their building, a wall by its storey. Lengths are stored in
@@ -34,8 +35,26 @@ pub const LEVEL: &str = "archbuilder.level";
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
+/// The type key of the door.
+pub const DOOR: &str = "archbuilder.door";
+/// The type key of the window.
+pub const WINDOW: &str = "archbuilder.window";
+
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 6] = [PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL];
+pub const KEYS: [&str; 8] = [PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW];
+
+/// The range of an insert's distance along its wall, in meters.
+pub const DISTANCE_RANGE: (f64, f64) = (0.0, 100_000.0);
+/// The range of an insert's width, in meters.
+pub const INSERT_WIDTH_RANGE: (f64, f64) = (0.1, 20.0);
+/// The range of an insert's height, in meters.
+pub const INSERT_HEIGHT_RANGE: (f64, f64) = (0.1, 20.0);
+/// The range of a window's sill height, in meters.
+pub const SILL_RANGE: (f64, f64) = (0.0, 100.0);
+/// The range of the width of an insert's frame bars, in meters.
+pub const FRAME_WIDTH_RANGE: (f64, f64) = (0.01, 0.5);
+/// The range of the depth of an insert's frame across the wall, in meters.
+pub const FRAME_DEPTH_RANGE: (f64, f64) = (0.01, 2.0);
 
 /// The range of a wall's baseline coordinates, in meters.
 pub const COORDINATE_RANGE: (f64, f64) = (-100_000.0, 100_000.0);
@@ -130,6 +149,30 @@ pub mod wall {
     pub const START_JOIN: usize = 10;
     /// How the end end joins ([`crate::wall::JoinStyle`] code); appended in schema 1.1.
     pub const END_JOIN: usize = 11;
+}
+
+/// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
+pub mod insert {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The distance from the wall's baseline start to the insert's center, in meters.
+    pub const DISTANCE: usize = 1;
+    /// The width of the opening, in meters.
+    pub const WIDTH: usize = 2;
+    /// The height of the opening, in meters.
+    pub const HEIGHT: usize = 3;
+    /// The sill height above the wall's base, in meters; zero for a door.
+    pub const SILL: usize = 4;
+    /// The width of the frame bars, in meters.
+    pub const FRAME_WIDTH: usize = 5;
+    /// The depth of the frame across the wall, in meters.
+    pub const FRAME_DEPTH: usize = 6;
+    /// The operation ([`crate::insert::Operation`] code).
+    pub const OPERATION: usize = 7;
+    /// The hand ([`crate::insert::Hand`] code).
+    pub const HAND: usize = 8;
+    /// The facing ([`crate::insert::Facing`] code).
+    pub const FACING: usize = 9;
 }
 
 /// The elevation base code of the project origin.
@@ -292,6 +335,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         join_field("end_join"),
     ];
     for (key, fields) in [
+        (DOOR, insert_fields()),
+        (WINDOW, insert_fields()),
         (PROJECT, project),
         (SITE, site),
         (BUILDING, building),
@@ -302,6 +347,51 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(declaration(key, fields)?)?;
     }
     Ok(())
+}
+
+/// The fields of a door or a window, which share one layout; the host is the header owner.
+fn insert_fields() -> Vec<FieldDecl> {
+    use crate::insert::{Facing, Hand, Operation};
+    let variants = |items: Vec<(&'static str, u32)>| {
+        ValueType::Enum(
+            items
+                .into_iter()
+                .map(|(n, c)| EnumVariant::new(n, c))
+                .collect(),
+        )
+    };
+    vec![
+        name_field("identity"),
+        length_field("distance", Some(real(DISTANCE_RANGE))),
+        length_field("width", Some(real(INSERT_WIDTH_RANGE))).with_default(length(0.9)),
+        length_field("height", Some(real(INSERT_HEIGHT_RANGE))).with_default(length(2.1)),
+        length_field("sill", Some(real(SILL_RANGE))),
+        length_field("frame_width", Some(real(FRAME_WIDTH_RANGE))).with_default(length(0.05)),
+        length_field("frame_depth", Some(real(FRAME_DEPTH_RANGE))).with_default(length(0.1)),
+        FieldDecl::new(
+            "operation",
+            variants(
+                Operation::ALL
+                    .iter()
+                    .map(|o| (o.name(), o.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(Operation::SingleSwing.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "hand",
+            variants(Hand::ALL.iter().map(|o| (o.name(), o.code())).collect()),
+        )
+        .with_default(Value::Enum(Hand::Left.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "facing",
+            variants(Facing::ALL.iter().map(|o| (o.name(), o.code())).collect()),
+        )
+        .with_default(Value::Enum(Facing::Exterior.code()))
+        .in_aspect("geometry"),
+    ]
 }
 
 /// The join style of one end of a wall, appended to the wall in schema 1.1.
@@ -352,7 +442,21 @@ mod tests {
     fn field_positions_match_the_declarations() {
         let mut registry = TypeRegistry::new();
         register(&mut registry).unwrap();
-        let expect: [(&str, &[(&str, usize)]); 6] = [
+        let insert_fields: &[(&str, usize)] = &[
+            ("name", insert::NAME),
+            ("distance", insert::DISTANCE),
+            ("width", insert::WIDTH),
+            ("height", insert::HEIGHT),
+            ("sill", insert::SILL),
+            ("frame_width", insert::FRAME_WIDTH),
+            ("frame_depth", insert::FRAME_DEPTH),
+            ("operation", insert::OPERATION),
+            ("hand", insert::HAND),
+            ("facing", insert::FACING),
+        ];
+        let expect: [(&str, &[(&str, usize)]); 8] = [
+            (DOOR, insert_fields),
+            (WINDOW, insert_fields),
             (
                 PROJECT,
                 &[

@@ -11,7 +11,8 @@ use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject}
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, ELEVATION_RANGE, LEVEL, PROJECT, SITE, STOREY, WALL, level, storey,
+    self, BUILDING, DOOR, ELEVATION_RANGE, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW, level,
+    storey,
 };
 
 /// A message of the application.
@@ -190,6 +191,90 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "distance",
+        Message {
+            message_id: "ab-prop-distance",
+        },
+    ),
+    (
+        "width",
+        Message {
+            message_id: "ab-prop-width",
+        },
+    ),
+    (
+        "sill",
+        Message {
+            message_id: "ab-prop-sill",
+        },
+    ),
+    (
+        "frame_width",
+        Message {
+            message_id: "ab-prop-frame-width",
+        },
+    ),
+    (
+        "frame_depth",
+        Message {
+            message_id: "ab-prop-frame-depth",
+        },
+    ),
+    (
+        "operation",
+        Message {
+            message_id: "ab-prop-operation",
+        },
+    ),
+    (
+        "hand",
+        Message {
+            message_id: "ab-prop-hand",
+        },
+    ),
+    (
+        "facing",
+        Message {
+            message_id: "ab-prop-facing",
+        },
+    ),
+    (
+        "insert_wall",
+        Message {
+            message_id: "ab-prop-insert-wall",
+        },
+    ),
+    (
+        "single_swing",
+        Message {
+            message_id: "ab-op-single-swing",
+        },
+    ),
+    (
+        "fixed",
+        Message {
+            message_id: "ab-op-fixed",
+        },
+    ),
+    (
+        "casement",
+        Message {
+            message_id: "ab-op-casement",
+        },
+    ),
+    (
+        "left",
+        Message {
+            message_id: "ab-hand-left",
+        },
+    ),
+    (
+        "right",
+        Message {
+            message_id: "ab-hand-right",
+        },
+    ),
+    (
         "center",
         Message {
             message_id: "ab-loc-center",
@@ -313,6 +398,18 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-wall",
         },
     ),
+    (
+        DOOR,
+        Message {
+            message_id: "ab-kind-door",
+        },
+    ),
+    (
+        WINDOW,
+        Message {
+            message_id: "ab-kind-window",
+        },
+    ),
 ];
 
 const EMPTY: Message = Message {
@@ -401,16 +498,11 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
             fields.push(text_field("wall_storey"));
             values.push(storey.map(Value::String));
             read_only.push("wall_storey".to_owned());
-            // The volume of the joined solid, which counts a corner once.
-            let volume = archbuilder_model::wall::Wall::of(snapshot, object).and_then(|w| {
-                let level = object
-                    .header
-                    .owner
-                    .and_then(|id| spatial::get(snapshot, id))
-                    .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
-                let footprint = archbuilder_model::join::footprint_of(snapshot, object)?;
-                w.solid_in(footprint, level).ok().map(|s| s.volume())
-            });
+            // The volume of the joined solid, which counts a corner once, minus the openings.
+            // Openings of the wall's doors and windows are subtracted.
+            let volume = archbuilder_model::insert::wall_solid(snapshot, object)
+                .and_then(Result::ok)
+                .map(|s| s.volume());
             fields.push(text_field("wall_volume"));
             values.push(volume.map(|v| Value::String(format!("{v:.3} m³"))));
             read_only.push("wall_volume".to_owned());
@@ -441,6 +533,20 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
             for (field, value) in joins {
                 fields.push(field);
                 values.push(value);
+            }
+        }
+        // A door or a window shows the wall that hosts it; a door's sill is the wall's base.
+        DOOR | WINDOW => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            fields.push(text_field("insert_wall"));
+            values.push(host.map(Value::String));
+            read_only.push("insert_wall".to_owned());
+            if key == DOOR {
+                read_only.push("sill".to_owned());
             }
         }
         // The building's base elevation has no effect yet: the levels carry the elevations.
