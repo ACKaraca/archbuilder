@@ -107,4 +107,5 @@ FreeCAD BIM workbench. It is an independent, open-source implementation built on
 | Spreadsheet round trips keyed by stable element identifiers | AB-SCHED-016 |
 | Space program comparison and design option comparison by metrics | AB-SPACE-013, AB-PHASE-009 |
 | Headroom and travel-path checks computed from actual geometry | AB-CIRC-007, AB-CIRC-016 |
+| Optional assistance whose proposals are previewed and checked by the product's own rule, area and interference engines, with cited answers and a deterministic layout option engine | [32](capabilities/32-assistance.md) |
 | Offline-first collaboration with conflict preservation that never discards work | AB-COLLAB-001, AB-COLLAB-013 |

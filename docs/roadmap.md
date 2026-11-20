@@ -5,6 +5,10 @@ have exit criteria stated as acceptance scenarios from [workflows.md](product/wo
 have no dates. Tier 3 capabilities listed in a phase may move to a later milestone without changing
 that milestone's exit criteria.
 
+Assistance rows ([32-assistance.md](product/capabilities/32-assistance.md)) never gate a milestone:
+each is offered when its task suite passes, and every exit criterion is met with no assistant
+configured ([suite assistance track](https://github.com/ACKaraca/arc-suite/blob/main/docs/roadmap.md#assistance-track)).
+
 | Milestone | Suite phase | Theme |
 |---|---|---|
 | M1 | 2 | Model core |
@@ -93,11 +97,15 @@ site, and collaborate through Arc Hub at file level.
 - AB-LINK-001 to AB-LINK-004, AB-LINK-006, AB-LINK-008 to AB-LINK-014
 - AB-COLLAB-001 to AB-COLLAB-006
 - AB-VIS-006
-- AB-AUTO-004 to AB-AUTO-006, AB-AUTO-009, AB-AUTO-011 to AB-AUTO-014
+- AB-AUTO-004 to AB-AUTO-006, AB-AUTO-009, AB-AUTO-011 to AB-AUTO-015
+- AB-ASSIST-001 to AB-ASSIST-012, AB-ASSIST-014, AB-ASSIST-016 to AB-ASSIST-018, AB-ASSIST-027,
+  AB-ASSIST-034: read-only questions, editing by intent, documentation proposals, rule drafting,
+  clash triage and exchange checks
 - AB-IO-008 to AB-IO-010, AB-IO-012, AB-IO-015
 
 **Dependencies.** `arc-hub-api` and Arc Hub Documents module (phase 2 of the suite); `arc-nodes`;
-`arc-io-bcf`, `arc-io-pointcloud`, `arc-io-geo`, `arc-io-step`; Arc Review for federated review of
+`arc-io-bcf`, `arc-io-pointcloud`, `arc-io-geo`, `arc-io-step`; the suite assistant host in
+`arc-app` for the assistance rows; Arc Review for federated review of
 BCF issues (runtime only); CivilBuilder surfaces through LandXML and IFC 4.3 (runtime only).
 
 **Exit criteria.**
@@ -122,6 +130,9 @@ and photoreal visualization.
 - AB-WALL-015, AB-SLAB-017, AB-FAM-020, AB-FAM-023
 - AB-VIS-007 to AB-VIS-012
 - AB-AUTO-010
+- AB-ASSIST-013, AB-ASSIST-015, AB-ASSIST-019 to AB-ASSIST-022, AB-ASSIST-024 to AB-ASSIST-026,
+  AB-ASSIST-028 to AB-ASSIST-030: the layout option engine, brief and massing options, findings
+  explained, analysis pre-checks, data sheets, estimates and drawing-to-model proposals
 - AB-IO-014, AB-IO-016
 
 **Dependencies.** RenderBuilder through the Arc Scene contract (`arc-scene`); MeshBuilder live link
@@ -147,14 +158,15 @@ connectors, browser and tablet builds for massing and review, and optional assis
 - [22-steel-detailing.md](product/capabilities/22-steel-detailing.md) and
   [27-fabrication-detailing.md](product/capabilities/27-fabrication-detailing.md), and rows of the
   other reserved files planned for phase 5
-- AB-AUTO-015
+- AB-ASSIST-023, AB-ASSIST-031 to AB-ASSIST-033: candidate to construction, scan to model, services
+  and structural layout options
 - [30-application-connectors.md](product/capabilities/30-application-connectors.md) and AB-IO-020:
   connectors, exchange package, round trips, licensed bridges and open readers
 - [31-web-and-tablet.md](product/capabilities/31-web-and-tablet.md): browser and tablet builds,
   touch and pen massing, on-site review, offline documents
 
 **Dependencies.** Arc Hub design collaboration module with change-set exchange; `arc-doc`
-change-set support; suite assistant panel in `arc-app`; the Arc exchange package specification in
+change-set support; the Arc exchange package specification in
 `arc-core` and the `arc-connectors` repository (runtime only; connectors are not linked into
 ArchBuilder); WebAssembly, iOS and Android targets of `arc-core`, `arc-gpu` and `arc-ui`; a
 user-installed open solver for AB-ANALYT-051.

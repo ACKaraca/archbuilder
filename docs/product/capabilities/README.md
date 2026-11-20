@@ -62,6 +62,7 @@ implement and test.
 | [29-building-performance-analysis.md](29-building-performance-analysis.md) | `PERF` | Solar, energy, daylight, wind and carbon analysis | 58 |
 | [30-application-connectors.md](30-application-connectors.md) | `CONNECT` | Connectors for native project and family files of other applications, exchange package, round trips, change detection, licensed bridges, open readers | 20 |
 | [31-web-and-tablet.md](31-web-and-tablet.md) | `TOUCH` | Browser and tablet builds, touch and pen massing, viewing and markup, on-site review, offline documents, Hub synchronization | 18 |
+| [32-assistance.md](32-assistance.md) | `ASSIST` | Optional assistance: model questions, editing by intent, documentation proposals, rule drafting and findings, clash triage, layout and massing options, content and data drafting, existing buildings, review of assisted content | 34 |
 
 ## Capabilities and issues
 

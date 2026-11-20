@@ -50,6 +50,7 @@ designers who automate models. See [the vision](docs/product/vision.md).
 | Building performance analysis | Solar, energy, daylight, wind, carbon | [29](docs/product/capabilities/29-building-performance-analysis.md) |
 | Application connectors | Exchange with native project and family files of other applications | [30](docs/product/capabilities/30-application-connectors.md) |
 | Web and tablet | Browser and tablet builds, touch and pen massing, on-site review | [31](docs/product/capabilities/31-web-and-tablet.md) |
+| Assistance | Optional assistance: model questions, documentation proposals, rule findings, clash triage, layout and massing options | [32](docs/product/capabilities/32-assistance.md) |
 
 ## How it fits in the suite
 
@@ -93,7 +94,7 @@ Details are in the [architecture overview](docs/architecture/overview.md).
 |---|---|---|
 | M1 | 2 | Model core: datum, walls, openings, floors, roofs, stairs, families, plans and 3D |
 | M2 | 2 | Documentation and exchange: views, annotation, schedules, sheets, IFC; first production release |
-| M3 | 3 | Coordination, phases, options, site, links, BCF, IDS, file-level Hub collaboration |
+| M3 | 3 | Coordination, phases, options, site, links, BCF, IDS, file-level Hub collaboration, first assistance |
 | M4 | 4 | Structure, building services, concept massing, photoreal visualization |
 | M5 | 5 | Multi-user editing, branch and merge, fabrication depth, assistant workflows |
 
