@@ -10,7 +10,7 @@
 //! the level's elevation and its ends follow the walls it meets.
 
 use arc_base::math::Point3;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use arc_base::{Cancel, Color, Limits, ObjectId, Result, Tolerance};
 use arc_doc::events::Changes;
@@ -29,6 +29,14 @@ pub const COLOR: Color = Color {
     a: 1.0,
 };
 
+/// The storey of each wall extracted, so that the deletion of a wall, which the snapshot no longer
+/// holds, still names the storey whose other walls join differently now.
+static OWNERS: std::sync::Mutex<BTreeMap<ObjectId, ObjectId>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// The most walls whose storey is remembered.
+const MAX_OWNERS: usize = 1_000_000;
+
 /// The extraction of a wall: its solid as one mesh.
 ///
 /// # Errors
@@ -45,6 +53,12 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
     let elevation = storey
         .as_ref()
         .map_or(0.0, |s| spatial::storey_elevation(snapshot, s));
+    if let (Some(owner), Ok(mut owners)) = (object.header.owner, OWNERS.lock()) {
+        if owners.len() >= MAX_OWNERS {
+            owners.clear();
+        }
+        owners.insert(object.id, owner);
+    }
     let footprint = join::footprint_of(snapshot, object).unwrap_or_else(|| wall.plain_footprint());
     let solid = wall.solid_in(footprint, elevation)?;
     let origin = Point3::new(wall.start[0], wall.start[1], elevation + wall.base_offset);
@@ -62,45 +76,53 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
 /// The walls to extract again after a commit: those of a storey that the commit changed or whose
 /// level it changed (the elevation of the level places the solid), those of the storeys of walls
 /// the commit created, changed or deleted (the ends of walls that meet follow each other), and
-/// the walls whose top follows a changed level. A deleted wall no longer names its storey, so its
-/// deletion extracts the walls of every storey again.
+/// the walls whose top follows a changed level. A deleted wall is gone from the snapshot, so its
+/// storey is the one remembered when it was extracted; a deleted wall never extracted extracts
+/// the walls of every storey again.
 #[must_use]
 pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let Changes::Listed(by_type) = changes else {
         return Vec::new();
     };
-    let ids = |key: &str, deleted: bool| -> BTreeSet<ObjectId> {
+    let live = |key: &str| -> BTreeSet<ObjectId> {
         by_type
             .iter()
             .filter(|(k, _)| k.as_str() == key)
-            .flat_map(|(_, g)| {
-                let live = g.created.iter().chain(&g.modified).chain(&g.recreated);
-                let gone = g.deleted.iter().filter(move |_| deleted);
-                live.chain(gone)
-            })
+            .flat_map(|(_, g)| g.created.iter().chain(&g.modified).chain(&g.recreated))
             .copied()
             .collect()
     };
-    let touched: BTreeSet<ObjectId> = [LEVEL, STOREY]
-        .into_iter()
-        .flat_map(|key| ids(key, false))
+    let touched: BTreeSet<ObjectId> = [LEVEL, STOREY].into_iter().flat_map(live).collect();
+    let changed_walls = live(WALL);
+    let deleted: Vec<ObjectId> = by_type
+        .iter()
+        .filter(|(k, _)| k.as_str() == WALL)
+        .flat_map(|(_, g)| g.deleted.iter().copied())
         .collect();
-    let changed_walls = ids(WALL, true);
-    if touched.is_empty() && changed_walls.is_empty() {
+    if touched.is_empty() && changed_walls.is_empty() && deleted.is_empty() {
         return Vec::new();
     }
-    // A wall that is gone from the snapshot leaves no storey to name.
-    let some_gone = changed_walls
-        .iter()
-        .any(|w| spatial::type_of(snapshot, *w).as_deref() != Some(WALL));
-    let owners: BTreeSet<ObjectId> = changed_walls
+    let mut owners: BTreeSet<ObjectId> = changed_walls
         .iter()
         .filter_map(|w| spatial::get(snapshot, *w).and_then(|o| o.header.owner))
         .collect();
+    let mut every_storey = false;
+    if let Ok(known) = OWNERS.lock() {
+        for id in &deleted {
+            match known.get(id) {
+                Some(owner) => {
+                    owners.insert(*owner);
+                }
+                None => every_storey = true,
+            }
+        }
+    } else {
+        every_storey = !deleted.is_empty();
+    }
     let on_storey = spatial::objects(snapshot, STOREY)
         .into_iter()
         .filter(|s| {
-            some_gone
+            every_storey
                 || touched.contains(&s.id)
                 || owners.contains(&s.id)
                 || spatial::level_of(snapshot, s).is_some_and(|l| touched.contains(&l.id))

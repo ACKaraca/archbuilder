@@ -34,7 +34,7 @@ use archbuilder_model::wall::LocationLine;
 use crate::wall_tool::{Env, Tool, storey_for};
 
 /// The snap step of the cursor on the level plane, in meters.
-const GRID: f64 = 0.01;
+pub const GRID: f64 = 0.01;
 
 /// The plane point input lands on: the level plane of the storey the wall tool draws on (the
 /// selection's storey, else the lowest), for [`arc_app::shell::ShellConfig::work_plane`].
@@ -48,31 +48,8 @@ pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Opti
     })
 }
 
-/// How far from the pointer an existing end point attracts it, in pixels.
-const APERTURE_PIXELS: f64 = 10.0;
-
-/// The pointer on the work plane: on the nearest `ends` point within the aperture, else on the
-/// grid. The flag says whether it snapped to an end point.
-fn snapped(event: &PointerEvent, ends: &[[f64; 2]]) -> Option<([f64; 2], bool)> {
-    let point = event.model?;
-    if !(point.x.is_finite() && point.y.is_finite()) {
-        return None;
-    }
-    let reach = event.pixels_per_unit.map_or(0.0, |p| APERTURE_PIXELS / p);
-    let near = ends
-        .iter()
-        .map(|e| ((e[0] - point.x).hypot(e[1] - point.y), *e))
-        .filter(|(d, _)| *d <= reach)
-        .min_by(|a, b| a.0.total_cmp(&b.0));
-    if let Some((_, end)) = near {
-        return Some((end, true));
-    }
-    let snap = |v: f64| (v / GRID).round() * GRID;
-    Some(([snap(point.x), snap(point.y)], false))
-}
-
 /// How far from a 15 degree step the pointer direction snaps, in degrees.
-const ANGLE_WINDOW: f64 = 4.0;
+const ANGLE_WINDOW: f64 = crate::snap::ANGLE_WINDOW;
 
 /// `to` moved onto the nearest 15 degree direction from `from` when the pointer is within the
 /// window of one (exactly horizontal or vertical for the four right angles), with the length
@@ -109,15 +86,15 @@ pub fn snap_direction(from: [f64; 2], to: [f64; 2]) -> Option<([f64; 2], i32)> {
     Some(([from[0] + c * length, from[1] + s * length], k * 15))
 }
 
-/// The end points of the walls of `storey`, which a new wall closes on.
-fn end_points(cx: &InteractionContext<'_>, storey: ObjectId) -> Vec<[f64; 2]> {
+/// The baselines of the walls of `storey`, which a new wall snaps to and closes on.
+fn baselines(cx: &InteractionContext<'_>, storey: ObjectId) -> Vec<[[f64; 2]; 2]> {
     let Ok(document) = cx.document() else {
         return Vec::new();
     };
     spatial::walls(&document.snapshot(), storey)
         .iter()
         .filter_map(|w| archbuilder_model::wall::Wall::from_values(&w.values))
-        .flat_map(|w| [w.start, w.end])
+        .map(|w| [w.start, w.end])
         .collect()
 }
 
@@ -138,7 +115,9 @@ pub struct WallInteraction {
     /// The pointer on the level plane, for the rubber band and the status bar.
     cursor: Option<[f64; 2]>,
     /// The end point the pointer snapped to, for its marker.
-    snap: Option<[f64; 2]>,
+    snap: Option<(arc_ui::SnapKind, [f64; 2])>,
+    /// The tracking lines to draw, each from the end point that tracks to the cursor.
+    guides: Vec<[[f64; 2]; 2]>,
     /// The point and the direction in degrees when the pointer snapped to a 15 degree direction.
     angle: Option<([f64; 2], i32)>,
     /// The messages of the interface language, for the keywords typed in it.
@@ -155,6 +134,7 @@ impl WallInteraction {
             seed: seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed),
             cursor: None,
             snap: None,
+            guides: Vec::new(),
             angle: None,
             messages: None,
         }
@@ -284,29 +264,43 @@ impl Interaction for WallInteraction {
         let Some(chain) = self.tool.chain().cloned() else {
             return false;
         };
-        let mut ends = end_points(cx, chain.storey);
+        let walls = baselines(cx, chain.storey);
+        // The origin, the start of the chain and the ends of the walls attract and track.
+        let mut ends = vec![[0.0, 0.0]];
         ends.extend(chain.start.filter(|_| chain.walls >= 1));
-        let mut hit = snapped(event, &ends);
-        // A pointer that is not on an end point follows the 15 degree directions from the
-        // segment's start, as a typed length does.
-        self.angle = None;
+        ends.extend(walls.iter().flatten().copied());
+        // The segment starts at the last point; the pointer follows the directions from it only
+        // while a prompt asks for a point.
         let from = self
             .tool
             .line()
             .base_point()
             .map(|p| [p.x, p.y])
-            .or(chain.end);
-        if let (Some((to, false)), Some(from)) = (hit, from)
-            && self.tool.line().active().is_some()
-            && let Some((snapped_to, degrees)) = snap_direction(from, to)
-        {
-            hit = Some((snapped_to, false));
-            self.angle = Some((snapped_to, degrees));
-        }
-        let at = hit.map(|(p, _)| p);
+            .or(chain.end)
+            .filter(|_| self.tool.line().active().is_some());
+        let hit = event.model.and_then(|m| {
+            crate::snap::snap(&crate::snap::Input {
+                pointer: [m.x, m.y],
+                pixels_per_unit: event.pixels_per_unit,
+                ends: &ends,
+                walls: &walls,
+                from,
+            })
+        });
+        self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
+        self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
+        let at = hit.as_ref().map(|h| h.point);
         match event.kind {
             PointerKind::Move => {
-                self.snap = hit.filter(|(_, on_end)| *on_end).map(|(p, _)| p);
+                self.snap = hit.as_ref().and_then(|h| {
+                    let kind = match h.kind {
+                        crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
+                        crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
+                        crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
+                        _ => return None,
+                    };
+                    Some((kind, h.point))
+                });
                 if at.is_some() {
                     self.cursor = at;
                 }
@@ -396,6 +390,7 @@ impl Interaction for WallInteraction {
                 .preview()
                 .into_iter()
                 .chain(self.marker())
+                .chain(self.tracking())
                 .chain(self.angle_label())
                 .collect(),
             cursor: self.tool.chain().and(self.cursor),
@@ -444,12 +439,26 @@ impl WallInteraction {
         })
     }
 
-    /// The marker of the end point the pointer snapped to.
+    /// The dashed tracking lines.
+    fn tracking(&self) -> Vec<ProductOverlay> {
+        let Some(z) = self.tool.chain().map(|c| c.elevation) else {
+            return Vec::new();
+        };
+        self.guides
+            .iter()
+            .map(|g| ProductOverlay::Path {
+                points: g.iter().map(|p| Point3::new(p[0], p[1], z)).collect(),
+                dashed: true,
+            })
+            .collect()
+    }
+
+    /// The marker of the point the pointer snapped to.
     fn marker(&self) -> Option<ProductOverlay> {
-        let at = self.snap?;
+        let (kind, at) = self.snap?;
         let z = self.tool.chain()?.elevation;
         Some(ProductOverlay::Snap {
-            kind: arc_ui::SnapKind::Endpoint,
+            kind,
             at: Point3::new(at[0], at[1], z),
         })
     }

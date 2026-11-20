@@ -446,6 +446,27 @@ fn a_changed_or_deleted_wall_extracts_the_walls_it_joins_again() {
     let mut found = archbuilder::extract_wall::dependents(&snapshot, &gone);
     found.sort();
     assert_eq!(found, both);
+    // A deleted wall that was extracted names its storey: only that storey's walls follow.
+    rig.invoke(
+        "archbuilder.wall.create",
+        json!({"start": [0.0, 0.0], "end": [2.0, 0.0], "height": 3.0,
+               "storey": spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1].storey.id}),
+    );
+    let snapshot = rig.document.snapshot();
+    let upper = spatial::objects(&snapshot, WALL)
+        .into_iter()
+        .find(|w| !ids.contains(&w.id))
+        .unwrap();
+    let _ = archbuilder::extract_wall::extract_wall(&snapshot, &upper, &arc_base::Cancel::new())
+        .unwrap();
+    let removed = group(ChangeGroups {
+        deleted: [upper.id].into(),
+        ..ChangeGroups::default()
+    });
+    assert_eq!(
+        archbuilder::extract_wall::dependents(&snapshot, &removed),
+        [upper.id]
+    );
 }
 
 #[test]

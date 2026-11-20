@@ -559,3 +559,38 @@ fn join_styles_are_set_per_end_swap_with_a_flip_and_undo() {
         "cmd.params.invalid"
     );
 }
+
+#[test]
+fn the_cached_footprints_of_a_storey_equal_the_uncached_ones() {
+    // 400 walls: 20 rows of 10 pieces and 20 columns of 10 pieces.
+    let env = Env::new();
+    for i in 0..20 {
+        for k in 0..10 {
+            let (a, b, c) = (f64::from(k), f64::from(k + 1), f64::from(i));
+            for (s, e) in [([a, c], [b, c]), ([c, a], [c, b])] {
+                env.run(
+                    "archbuilder.wall.create",
+                    json!({"start": s, "end": e, "height": 3.0}),
+                )
+                .unwrap();
+            }
+        }
+    }
+    let snapshot = env.snapshot();
+    let walls = spatial::objects(&snapshot, WALL);
+    assert_eq!(walls.len(), 400);
+    let started = std::time::Instant::now();
+    let plain: Vec<_> = walls
+        .iter()
+        .map(|w| archbuilder_model::join::footprint_uncached(&snapshot, w).unwrap())
+        .collect();
+    let uncached = started.elapsed();
+    let started = std::time::Instant::now();
+    let shared: Vec<_> = walls
+        .iter()
+        .map(|w| archbuilder_model::join::footprint_of(&snapshot, w).unwrap())
+        .collect();
+    let cached = started.elapsed();
+    assert_eq!(plain, shared);
+    let _ = (uncached, cached);
+}

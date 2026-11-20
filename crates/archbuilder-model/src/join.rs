@@ -543,26 +543,80 @@ pub fn footprints(walls: &[Wall]) -> Vec<[P; 4]> {
     out
 }
 
+/// The footprints of the walls of one storey at one snapshot, by wall.
+type Storey = std::collections::BTreeMap<arc_base::ObjectId, [P; 4]>;
+
+/// The most storeys whose footprints the cache keeps.
+const CACHE_STOREYS: usize = 64;
+
+/// The footprints of the storeys read last, each with the snapshot it was computed from: the
+/// extraction of every wall of a storey at one revision shares one pass over its walls.
+static CACHE: std::sync::Mutex<
+    Vec<(
+        arc_base::ObjectId,
+        arc_doc::Snapshot,
+        std::sync::Arc<Storey>,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
+
+/// The footprints of all the walls of `storey` at `snapshot`, in one pass.
+fn storey_footprints(snapshot: &arc_doc::Snapshot, storey: arc_base::ObjectId) -> Storey {
+    let mut ids = Vec::new();
+    let mut walls = Vec::new();
+    for w in crate::spatial::walls(snapshot, storey) {
+        if let Some(data) = Wall::from_values(&w.values) {
+            ids.push(w.id);
+            walls.push(data);
+        }
+    }
+    ids.into_iter().zip(footprints(&walls)).collect()
+}
+
 /// The joined footprint of one wall record: the corners of [`footprints`] over the walls of its
-/// storey. `None` when the record is not a readable wall.
+/// storey, computed once per storey and snapshot and shared by the walls of the storey. `None`
+/// when the record is not a readable wall.
 #[must_use]
 pub fn footprint_of(snapshot: &arc_doc::Snapshot, object: &arc_doc::Object) -> Option<[P; 4]> {
     let own = Wall::from_values(&object.values)?;
     let Some(storey) = object.header.owner else {
         return Some(own.plain_footprint());
     };
-    let mut walls = Vec::new();
-    let mut at = None;
-    for w in crate::spatial::walls(snapshot, storey) {
-        if w.id == object.id {
-            at = Some(walls.len());
+    let cached = CACHE.lock().ok().and_then(|cache| {
+        cache
+            .iter()
+            .find(|(s, snap, _)| *s == storey && snap.ptr_eq(snapshot))
+            .map(|(_, _, f)| std::sync::Arc::clone(f))
+    });
+    let feet = cached.unwrap_or_else(|| {
+        let feet = std::sync::Arc::new(storey_footprints(snapshot, storey));
+        if let Ok(mut cache) = CACHE.lock() {
+            // A newer snapshot of the storey replaces the older one.
+            cache.retain(|(s, snap, _)| *s != storey || snap.ptr_eq(snapshot));
+            if cache.len() >= CACHE_STOREYS {
+                cache.remove(0);
+            }
+            cache.push((storey, snapshot.clone(), std::sync::Arc::clone(&feet)));
         }
-        if let Some(data) = Wall::from_values(&w.values) {
-            walls.push(data);
-        }
-    }
-    let feet = footprints(&walls);
-    at.and_then(|k| feet.get(k).copied())
+        feet
+    });
+    Some(
+        feet.get(&object.id)
+            .copied()
+            .unwrap_or_else(|| own.plain_footprint()),
+    )
+}
+
+/// [`footprint_of`] without the cache: every call joins the whole storey again.
+#[must_use]
+pub fn footprint_uncached(
+    snapshot: &arc_doc::Snapshot,
+    object: &arc_doc::Object,
+) -> Option<[P; 4]> {
+    let own = Wall::from_values(&object.values)?;
+    let storey = object.header.owner?;
+    storey_footprints(snapshot, storey)
+        .get(&object.id)
+        .copied()
         .or_else(|| Some(own.plain_footprint()))
 }
 

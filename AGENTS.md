@@ -21,7 +21,8 @@ coordinates; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wa
 `archbuilder.property.set`, shaded walls in the viewport that follow their storey's level
 elevation, the outliner and the property grid, and the wall list of `archbuilder-cli inspect`. Wall
 joins are derived from a storey's walls and never stored; only each end's style is authored
-(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`).
+(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`). The wall tool snaps in
+`apps/archbuilder/src/snap.rs`.
 Walls have no types, layers or hosted inserts yet. Families, views, exchange and the rest are still
 specifications. Read in this order: `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,

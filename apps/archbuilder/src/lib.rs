@@ -30,6 +30,7 @@ pub mod interaction;
 pub mod labels;
 pub mod outliner;
 pub mod properties;
+pub mod snap;
 pub mod wall_tool;
 
 /// The viewport panel.
