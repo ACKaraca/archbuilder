@@ -1,0 +1,20 @@
+[package]
+name = "archbuilder-cli"
+description = "The headless CLI of ArchBuilder: the shared CLI subcommands over the ArchBuilder type set and commands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+arc-command = { workspace = true, features = ["headless"] }
+arc-doc = { workspace = true, features = ["package"] }
+archbuilder-commands = { path = "../../crates/archbuilder-commands" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

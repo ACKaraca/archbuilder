@@ -1,0 +1,253 @@
+//! The ArchBuilder desktop application (wiring only): the ArchBuilder type set and commands in the
+//! windowed shell of `arc-app`. The outliner shows the project, site, building and storeys, the
+//! property grid edits names and elevations through the commands, and the viewport draws each
+//! level as a horizontal reference plane, with its name and elevation as a label that faces the
+//! screen. The binary builds this product and starts the event loop; tests drive the same product
+//! headless.
+
+use std::sync::Arc;
+
+use arc_app::product::{Entry, Extractor, FileType, Product, ProductBuilder};
+use arc_app::shell::{
+    self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel,
+};
+use arc_base::{Error, Result};
+use arc_command::Clock;
+use arc_doc::package::LockOwner;
+use arc_gpu::extract;
+use arc_ui::{Axis, Binding, Dock, DockLayout, Menu, MenuItem};
+use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
+use archbuilder_model::types::LEVEL;
+
+pub mod chrome;
+pub mod extract_level;
+pub mod labels;
+pub mod outliner;
+pub mod properties;
+
+/// The viewport panel.
+pub const VIEWPORT: &str = "archbuilder.viewport";
+/// The property grid.
+pub const PROPERTIES: &str = "archbuilder.properties";
+/// The outliner.
+pub const OUTLINER: &str = "archbuilder.outliner";
+/// The command line.
+pub const COMMAND_LINE: &str = "archbuilder.command_line";
+
+/// A message of the application.
+struct Message {
+    message_id: &'static str,
+}
+
+const TITLE: Message = Message {
+    message_id: "ab-title",
+};
+const MENU_STRUCTURE: Message = Message {
+    message_id: "ab-menu-structure",
+};
+
+fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry {
+    Entry {
+        id: id.into(),
+        message_id: label.message_id.into(),
+        factory: Arc::new(make),
+    }
+}
+
+/// The product of the application: the type set and commands of `archbuilder-commands`, the shell
+/// commands and settings, the `archb` package, four panels and the level extractor.
+///
+/// # Errors
+/// The registries' errors; none occur for this set.
+pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
+    let mut builder = ProductBuilder::new("archbuilder", env!("CARGO_PKG_VERSION"))
+        .with_types(archbuilder_commands::types()?)
+        .with_commands(archbuilder_commands::registry()?);
+    arc_app::commands::register(builder.commands_mut())?;
+    shell::prefs::register_settings(&mut builder)?;
+    builder.package_extension("archb");
+    // A new document is created with its project in one step: the starting content is no undo
+    // step, and the document saves like any other.
+    builder.new_document_command(PROJECT_NEW);
+    builder.file_type(FileType {
+        extension: "archb".into(),
+        message_id: "ab-file-archb".into(),
+        open: true,
+        save: true,
+    })?;
+    let panels = [
+        entry(
+            VIEWPORT,
+            Message {
+                message_id: "ab-panel-viewport",
+            },
+            || {
+                // A click in the viewport selects through the product's command, so a level
+                // outline selects its storey.
+                let mut viewport = ViewportPanel::new();
+                viewport.commands.select = OBJECT_SELECT.into();
+                shell::panel(viewport)
+            },
+        ),
+        entry(
+            PROPERTIES,
+            Message {
+                message_id: "ab-panel-properties",
+            },
+            || shell::panel(properties::PropertiesPanel::default()),
+        ),
+        entry(
+            OUTLINER,
+            Message {
+                message_id: "ab-panel-outliner",
+            },
+            || shell::panel(outliner::OutlinerPanel::default()),
+        ),
+        entry(
+            COMMAND_LINE,
+            Message {
+                message_id: "ab-panel-command-line",
+            },
+            || shell::panel(CommandLinePanel),
+        ),
+    ];
+    for panel in panels {
+        builder.panel(panel)?;
+    }
+    builder.extractor(Extractor {
+        id: "archbuilder.level".into(),
+        types: vec![LEVEL.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|_, object, cancel| extract_level::extract_level(object, cancel))
+        }),
+    })?;
+    builder.build(clock, owner)
+}
+
+fn tabs(panels: &[&str]) -> Dock {
+    Dock::Tabs {
+        tabs: panels.iter().map(|p| (*p).to_owned()).collect(),
+        active: 0,
+    }
+}
+
+/// The menu bar: the shell's File and Edit menus and the Structure menu with the storey commands.
+fn menu() -> Result<Menu> {
+    let mut items = shell::default_menu()?.items().to_vec();
+    items.push(MenuItem::Submenu {
+        label: MENU_STRUCTURE.message_id.into(),
+        items: [STOREY_ADD, STOREY_DELETE]
+            .into_iter()
+            .map(|c| MenuItem::Command { command: c.into() })
+            .collect(),
+    });
+    Menu::new(items)
+}
+
+/// The shell configuration: the viewport in the middle, the outliner above the property grid on
+/// the right, the command line below; the menu bar and the toolbar; key bindings for the file
+/// commands and Delete for the storey; the level labels and the starting view. `seed` seeds the invocations (see [`ShellConfig::seed`]).
+///
+/// # Errors
+/// None for this layout and menu; their validation errors otherwise.
+pub fn config(seed: u64) -> Result<ShellConfig> {
+    let right = Dock::Split {
+        axis: Axis::Vertical,
+        fraction: 0.55,
+        first: Box::new(tabs(&[OUTLINER])),
+        second: Box::new(tabs(&[PROPERTIES])),
+    };
+    let top = Dock::Split {
+        axis: Axis::Horizontal,
+        fraction: 0.72,
+        first: Box::new(tabs(&[VIEWPORT])),
+        second: Box::new(right),
+    };
+    let root = Dock::Split {
+        axis: Axis::Vertical,
+        fraction: 0.78,
+        first: Box::new(top),
+        second: Box::new(tabs(&[COMMAND_LINE])),
+    };
+    let binding = |keys: &str, command: &str| Binding {
+        keys: keys.into(),
+        command: command.into(),
+    };
+    Ok(ShellConfig {
+        layout: DockLayout::new(root, Vec::new())?,
+        menu: menu()?,
+        bindings: vec![
+            binding("Ctrl+N", arc_app::commands::FILE_NEW),
+            binding("Ctrl+O", arc_app::commands::FILE_OPEN),
+            binding("Ctrl+S", arc_app::commands::FILE_SAVE),
+            binding("Ctrl+Shift+S", arc_app::commands::FILE_SAVE_AS),
+            binding("Ctrl+W", arc_app::commands::FILE_CLOSE),
+            binding("Ctrl+Q", arc_app::commands::APP_QUIT),
+            // Ctrl+Z and Ctrl+Y are the shell's: the command line handles them once.
+            binding("Delete", STOREY_DELETE),
+        ],
+        appearance: arc_ui::Appearance {
+            theme: arc_ui::ThemeId::Dark,
+            ..arc_ui::Appearance::default()
+        },
+        display: None,
+        overlays: Some(OverlayProbe(Arc::new(labels::overlays))),
+        // Seen from the front and the right, from above: the levels are told apart at once.
+        initial_view: Some(InitialView {
+            toward_camera: [1.0, -1.4, 0.9],
+        }),
+        toolbar: chrome::toolbar(),
+        status: Vec::new(),
+        seed,
+    })
+}
+
+/// The languages the operating system asks for, in the order the environment names them.
+#[must_use]
+pub fn os_locales() -> Vec<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|n| std::env::var(n).ok())
+        .collect()
+}
+
+/// The message catalogs the application formats with, for the requested languages: the shell's
+/// ([`arc_app::locale::shell_catalogs`]) with the English and Turkish messages of the application
+/// and its crates appended.
+///
+/// # Errors
+/// `app.locale.catalog_invalid` when a catalog does not parse.
+pub fn localizer(requested: &[String]) -> Result<arc_app::locale::Localizer> {
+    let mut catalogs = arc_app::locale::shell_catalogs()?;
+    let english = [
+        include_str!("../../../locales/en-US/archbuilder.ftl"),
+        include_str!("../../../locales/en-US/archbuilder-commands.ftl"),
+        include_str!("../../../locales/en-US/archbuilder-model.ftl"),
+    ]
+    .concat();
+    catalogs.append("en-US", &english)?;
+    let turkish = [
+        include_str!("../../../locales/tr-TR/archbuilder.ftl"),
+        include_str!("../../../locales/tr-TR/archbuilder-commands.ftl"),
+        include_str!("../../../locales/tr-TR/archbuilder-model.ftl"),
+    ]
+    .concat();
+    catalogs.append("tr-TR", &turkish)?;
+    arc_app::locale::Localizer::new(catalogs, requested)
+}
+
+/// The product part of the window title. The shell puts the active document's name and its
+/// modified mark before it (`*house.archb - ArchBuilder`).
+#[must_use]
+pub fn title(localizer: &arc_app::locale::Localizer) -> String {
+    localizer.format(TITLE.message_id, &[]).text
+}
+
+/// The error of a start-up step, for the report on standard error.
+#[must_use]
+pub fn describe(error: &Error, localizer: Option<&arc_app::locale::Localizer>) -> String {
+    match localizer {
+        Some(l) => format!("{}: {}", error.code(), l.format_error(error).text),
+        None => error.code().to_owned(),
+    }
+}

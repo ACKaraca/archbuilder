@@ -1,6 +1,6 @@
 # ArchBuilder
 
-> **Status: design phase.** No builds are available yet. This repository contains the product definition, architecture and roadmap that implementation follows.
+> **Status: foundation phase.** No release builds are available. This repository contains the product definition, architecture and roadmap that implementation follows, and the first code: the spatial structure (project, site, building, storeys and levels), which can be created, edited, saved and reopened in the desktop application and through the CLI ([AGENTS.md](AGENTS.md) lists what exists).
 
 ArchBuilder is an open-source building information modeling application for architecture,
 structure and building services, written in Rust as part of the Arc suite. One semantic model per

@@ -1,0 +1,52 @@
+name: build
+
+# Started by hand. Builds the Windows applications for manual testing and keeps them as a workflow
+# artifact. The five newest builds are kept; GitHub removes any artifact after 90 days at the latest.
+# It publishes nothing: no tag, no release, no package.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Deleting the artifacts of older builds.
+  actions: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: release build (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the pinned toolchain
+        run: rustup toolchain install || rustup show
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo build --release --locked -p archbuilder -p archbuilder-cli
+      - name: Collect the applications and the notices
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/archbuilder.exe target/release/archbuilder-cli.exe dist/
+          cp LICENSE NOTICE dist/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: archbuilder-windows-${{ github.sha }}
+          path: dist
+          retention-days: 90
+          if-no-files-found: error
+      - name: Keep the five newest builds
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name | startswith("archbuilder-windows-"))] | sort_by(.created_at) | reverse | .[5:] | .[].id' \
+            | tr -d '\r' | while read -r id; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+            done

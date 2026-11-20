@@ -1,0 +1,41 @@
+//! The error codes owned by `archbuilder-model`. Messages are in
+//! `locales/en-US/archbuilder-model.ftl`.
+
+/// The error codes owned by `archbuilder-model`.
+pub mod codes {
+    use arc_base::{Category, ErrorCode};
+
+    /// A name is empty or only white space.
+    pub const NAME_EMPTY: ErrorCode = ErrorCode {
+        code: "ab.model.name_empty",
+        category: Category::InvalidInput,
+        message_id: "ab-model-name-empty",
+    };
+    /// Another object of the same kind in the same scope has the name, compared by
+    /// [`crate::names::fold`] (case folded, `i`, `ı`, `İ` and `I` alike, surrounding white space
+    /// removed).
+    pub const NAME_TAKEN: ErrorCode = ErrorCode {
+        code: "ab.model.name_taken",
+        category: Category::Conflict,
+        message_id: "ab-model-name-taken",
+    };
+    /// An object is not contained in an object of the kind its type belongs to.
+    pub const PARENT_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.parent_invalid",
+        category: Category::Conflict,
+        message_id: "ab-model-parent-invalid",
+    };
+    /// A document holds more than one project.
+    pub const PROJECT_NOT_UNIQUE: ErrorCode = ErrorCode {
+        code: "ab.model.project_not_unique",
+        category: Category::Conflict,
+        message_id: "ab-model-project-not-unique",
+    };
+    /// A storey refers to a level of another building, to a level that is not flagged as a
+    /// storey level, or to a level that another storey already uses.
+    pub const LEVEL_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.level_invalid",
+        category: Category::Conflict,
+        message_id: "ab-model-level-invalid",
+    };
+}

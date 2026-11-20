@@ -10,31 +10,54 @@ Depends only on `arc-core` and third-party crates; never on other Arc products.
 
 ## Status and where to start
 
-Design phase: no code and no builds exist yet. Read in this order:
-`docs/product/vision.md`, `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
+The spatial structure exists as code: project, site, building, storey and level as `arc-doc` object
+types with their validation rules, the commands that create and change them (new project, add,
+rename and delete storey, level elevation, rename building, selection), a windowed application and a headless
+CLI over them, on one pinned `arc-core`. Walls, families, views, exchange and the rest are still
+specifications. Read in this order: `docs/product/vision.md`,
+`docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
 
-## Repository layout (target)
+## Repository layout
+
+Present:
 
 ```
-crates/archbuilder-model/     domain objects, families, generators, regeneration (headless)
-crates/archbuilder-commands/  user-level commands (headless)
-crates/archbuilder-io/        mapping to IFC, DWG/DXF, PDF, meshes, BCF and other formats (headless)
-crates/archbuilder-ui/        tools, panels, viewport interaction (egui)
-apps/archbuilder/             desktop application (wiring only)
-apps/archbuilder-cli/         headless CLI and automation protocol server
-docs/                         product, architecture, roadmap, ADRs
-xtask/                        workspace tasks
+crates/archbuilder-model/     spatial structure types, validation rules, readers, project length unit (headless)
+crates/archbuilder-commands/  type set and the commands of the structure (headless)
+apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, level extractor and labels
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite
+xtask/                        layers, catalogs, ci
+locales/en-US/                message catalogs, one per crate that has messages
+locales/tr-TR/                Turkish catalogs of the same crates
 ```
+
+Planned, not created yet:
+
+```
+crates/archbuilder-io/        mapping to IFC, DWG/DXF, PDF, meshes, BCF and other formats (headless)
+crates/archbuilder-ui/        tools, panels, viewport interaction (egui); until it exists the panels
+                              are in apps/archbuilder
+```
+
+The foundation is `arc-core`, pinned by revision in the workspace `Cargo.toml` (declared once in
+`[workspace.dependencies]`, never as a path). Toolchain, lint table and `deny.toml` follow
+`arc-core`; the layer table is `xtask/layers.toml`. Documents use the extension `.archb`.
 
 ## Commands
 
-No build exists yet. Once code lands these apply:
+The toolchain is pinned in `rust-toolchain.toml`; the gate also needs `cargo-nextest`,
+`cargo-deny` and `cargo-audit`.
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo nextest run --workspace`
-- `cargo xtask layers`
+- `cargo fmt --all --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo nextest run --workspace --all-features` (`cargo test --workspace --doc` for documentation tests)
+- `cargo xtask layers` and `cargo xtask catalogs` (single gates of `ci`)
+- `cargo xtask ci` runs all gates, including `cargo deny check` and `cargo audit`. CI runs it when
+  started by hand, once per batch of changes: on Windows by default, on Linux, Windows and macOS on
+  request.
+- `cargo run -p archbuilder` starts the application; `cargo run -p archbuilder-cli -- help` lists
+  the CLI subcommands.
 
 ## Suite rules
 

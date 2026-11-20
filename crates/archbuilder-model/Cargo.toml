@@ -1,0 +1,16 @@
+[package]
+name = "archbuilder-model"
+description = "The ArchBuilder document model: the spatial structure object types (project, site, building, storey, level) and their validation rules (headless)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+arc-base = { workspace = true }
+arc-doc = { workspace = true }
+
+[lints]
+workspace = true

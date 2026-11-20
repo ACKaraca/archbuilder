@@ -1,0 +1,60 @@
+# Messages owned by the ArchBuilder application: panel titles, the file type, the window title,
+# the toolbar and the property grid (apps/archbuilder/src).
+
+ab-title = ArchBuilder
+ab-file-archb = ArchBuilder project
+ab-panel-viewport = Viewport
+ab-panel-properties = Properties
+ab-panel-outliner = Outliner
+ab-panel-command-line = Command line
+ab-menu-structure = Structure
+
+ab-tool-new = New
+ab-tool-new-hint = Create a new project
+ab-tool-open = Open
+ab-tool-open-hint = Open a project file
+ab-tool-save = Save
+ab-tool-save-hint = Save the project
+ab-tool-save-as = Save As
+ab-tool-save-as-hint = Save the project under another name
+ab-tool-add-storey = Add Storey
+ab-tool-add-storey-hint = Add a storey above the highest one
+ab-tool-delete-storey = Delete Storey
+ab-tool-delete-storey-hint = Delete the selected storey and its level
+ab-tool-undo = Undo
+ab-tool-undo-hint = Undo the last change
+ab-tool-redo = Redo
+ab-tool-redo-hint = Redo the change that was undone
+ab-tool-zoom-extents = Zoom Extents
+
+ab-prop-empty = Select an item in the outliner to see its properties.
+ab-prop-not-editable = Base elevations and elevation references are stored for later use and change nothing yet, so they cannot be edited.
+ab-kind-project = Project
+ab-kind-site = Site
+ab-kind-building = Building
+ab-kind-storey = Storey
+ab-kind-level = Level
+ab-prop-name = Name
+ab-prop-number = Number
+ab-prop-client = Client
+ab-prop-address = Address
+ab-prop-length-unit = Length unit
+ab-prop-template = Template
+ab-prop-elevation = Elevation
+ab-prop-elevation-base = Elevation reference
+ab-prop-storey = Storey level
+ab-prop-level = Level
+ab-unit-meter = Meters
+ab-unit-millimeter = Millimeters
+ab-unit-centimeter = Centimeters
+ab-unit-foot = Feet
+ab-unit-inch = Inches
+ab-base-project = Project origin
+ab-base-survey = Survey point
+ab-aspect-identity = Identity
+ab-aspect-geometry = Position
+ab-aspect-units = Units
+ab-aspect-data = Relations
+
+ab-outliner-no-project = This document has no project.
+ab-outliner-create-project = Create Project

@@ -1,0 +1,23 @@
+[package]
+name = "archbuilder"
+description = "The ArchBuilder desktop application: the ArchBuilder document types in the Arc windowed shell (wiring only)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+arc-app = { workspace = true, features = ["window"] }
+arc-base = { workspace = true }
+arc-command = { workspace = true }
+arc-doc = { workspace = true }
+arc-gpu = { workspace = true }
+arc-ui = { workspace = true }
+archbuilder-commands = { path = "../../crates/archbuilder-commands" }
+archbuilder-model = { path = "../../crates/archbuilder-model" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

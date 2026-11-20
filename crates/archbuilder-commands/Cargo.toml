@@ -1,0 +1,21 @@
+[package]
+name = "archbuilder-commands"
+description = "The ArchBuilder commands and document type set: new project, add, rename and delete storey, level elevation (headless)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+arc-base = { workspace = true }
+arc-command = { workspace = true, features = ["headless"] }
+arc-doc = { workspace = true }
+archbuilder-model = { path = "../archbuilder-model" }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

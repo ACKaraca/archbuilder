@@ -1,0 +1,59 @@
+# ArchBuilder uygulamasının Türkçe iletileri. Tanımlayıcılar locales/en-US/archbuilder.ftl ile aynıdır.
+
+ab-title = ArchBuilder
+ab-file-archb = ArchBuilder projesi
+ab-panel-viewport = Görünüm
+ab-panel-properties = Özellikler
+ab-panel-outliner = Proje gezgini
+ab-panel-command-line = Komut satırı
+ab-menu-structure = Yapı
+
+ab-tool-new = Yeni
+ab-tool-new-hint = Yeni proje oluştur
+ab-tool-open = Aç
+ab-tool-open-hint = Proje dosyası aç
+ab-tool-save = Kaydet
+ab-tool-save-hint = Projeyi kaydet
+ab-tool-save-as = Farklı Kaydet
+ab-tool-save-as-hint = Projeyi başka bir adla kaydet
+ab-tool-add-storey = Kat Ekle
+ab-tool-add-storey-hint = En üst katın üzerine yeni bir kat ekle
+ab-tool-delete-storey = Katı Sil
+ab-tool-delete-storey-hint = Seçili katı ve seviyesini sil
+ab-tool-undo = Geri Al
+ab-tool-undo-hint = Son değişikliği geri al
+ab-tool-redo = Yinele
+ab-tool-redo-hint = Geri alınan değişikliği yinele
+ab-tool-zoom-extents = Tümünü Göster
+
+ab-prop-empty = Özelliklerini görmek için Proje gezgininden bir öğe seçin.
+ab-prop-not-editable = Taban kotları ve kot referansları ileride kullanılmak üzere saklanır, şimdilik bir şey değiştirmez; bu yüzden düzenlenemez.
+ab-kind-project = Proje
+ab-kind-site = Arsa
+ab-kind-building = Bina
+ab-kind-storey = Kat
+ab-kind-level = Seviye
+ab-prop-name = Ad
+ab-prop-number = Proje no
+ab-prop-client = İşveren
+ab-prop-address = Adres
+ab-prop-length-unit = Uzunluk birimi
+ab-prop-template = Şablon
+ab-prop-elevation = Kot
+ab-prop-elevation-base = Kot referansı
+ab-prop-storey = Kat seviyesi
+ab-prop-level = Seviye
+ab-unit-meter = Metre
+ab-unit-millimeter = Milimetre
+ab-unit-centimeter = Santimetre
+ab-unit-foot = Fit
+ab-unit-inch = İnç
+ab-base-project = Proje sıfır noktası
+ab-base-survey = Ölçüm noktası
+ab-aspect-identity = Kimlik
+ab-aspect-geometry = Konum
+ab-aspect-units = Birimler
+ab-aspect-data = Bağlantılar
+
+ab-outliner-no-project = Bu belgede proje yok.
+ab-outliner-create-project = Proje Oluştur
