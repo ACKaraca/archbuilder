@@ -8,7 +8,8 @@
 //! archbuilder.project.new` makes a project, and each further `run <file> --save --command ...`
 //! changes it. `inspect` adds a `walls` list to the shared dump: each wall with its storey, length,
 //! thickness, height and the volume of its derived solid minus its openings, and the `doors` and
-//! `windows` lists: each with its host wall, distance along it, width, height and sill.
+//! `windows` lists: each with its host wall, distance along it, width, height and sill, and the
+//! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
@@ -16,6 +17,7 @@ use std::io::{BufRead, Write};
 use arc_command::headless::{self, Exit, Product};
 use archbuilder_model::insert::Kind;
 
+pub mod floors;
 pub mod walls;
 
 pub use archbuilder_commands::product;
@@ -88,7 +90,9 @@ where
         let walls = walls::summary(dump.get("objects")?.as_array()?);
         let doors = walls::inserts(dump.get("objects")?.as_array()?, Kind::Door);
         let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
+        let floors = floors::summary(dump.get("objects")?.as_array()?);
         let map = dump.as_object_mut()?;
+        map.insert("floors".into(), floors.into());
         map.insert("walls".into(), walls.into());
         map.insert("doors".into(), doors.into());
         map.insert("windows".into(), windows.into());

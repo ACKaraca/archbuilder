@@ -82,6 +82,17 @@ impl<'a> Structure<'a> {
                                     .collect();
                             children.insert(Some(*wall), inserts);
                         }
+                        // The floors of the storey come after its walls.
+                        let mut floors: Vec<_> = spatial::children(
+                            snapshot,
+                            archbuilder_model::types::FLOOR,
+                            s.storey.id,
+                        )
+                        .iter()
+                        .map(|f| (f.id, name(f)))
+                        .collect();
+                        floors.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
+                        walls.extend(floors);
                         children.insert(Some(s.storey.id), walls);
                     }
                     children.insert(

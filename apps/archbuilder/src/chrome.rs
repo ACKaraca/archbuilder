@@ -4,6 +4,7 @@
 
 use arc_app::commands;
 use arc_app::shell::ToolItem;
+use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::structure::{STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::WALL_CREATE;
@@ -110,6 +111,15 @@ pub fn toolbar() -> Vec<ToolItem> {
                 message_id: "ab-tool-window-hint",
             },
             WINDOW_PLACE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-floor",
+            },
+            Message {
+                message_id: "ab-tool-floor-hint",
+            },
+            FLOOR_CREATE,
         ),
         ToolItem::Separator,
         button(

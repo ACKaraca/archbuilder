@@ -92,4 +92,40 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-insert-meets-wall",
     };
+    /// A floor's boundary is refused: malformed.
+    pub const FLOOR_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.floor_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-malformed",
+    };
+    /// A floor's boundary is refused: edge short.
+    pub const FLOOR_EDGE_SHORT: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_short",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-edge-short",
+    };
+    /// A floor's boundary is refused: self intersecting.
+    pub const FLOOR_SELF_INTERSECTING: ErrorCode = ErrorCode {
+        code: "ab.model.floor_self_intersecting",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-self-intersecting",
+    };
+    /// A floor's boundary is refused: area.
+    pub const FLOOR_AREA: ErrorCode = ErrorCode {
+        code: "ab.model.floor_area",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-area",
+    };
+    /// A floor's boundary is refused: hole outside.
+    pub const FLOOR_HOLE_OUTSIDE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_hole_outside",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-hole-outside",
+    };
+    /// A floor's boundary is refused: holes overlap.
+    pub const FLOOR_HOLES_OVERLAP: ErrorCode = ErrorCode {
+        code: "ab.model.floor_holes_overlap",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-holes-overlap",
+    };
 }

@@ -4,7 +4,7 @@
 //! through the commands, and the viewport draws each level as a horizontal reference plane, with
 //! its name and elevation as a label that faces the screen, and each wall as a shaded solid. The
 //! wall tool ([`wall_tool`], [`interaction`]) places chains of walls with the pointer or typed
-//! coordinates, and the insert tool ([`insert_tool`]) places doors and windows in walls. The binary builds this product and starts the event loop; tests drive the same
+//! coordinates, the floor tool ([`floor_tool`]) makes floors from picked walls or a sketch, and the insert tool ([`insert_tool`]) places doors and windows in walls. The binary builds this product and starts the event loop; tests drive the same
 //! product headless.
 
 use std::sync::Arc;
@@ -19,17 +19,20 @@ use arc_command::Clock;
 use arc_doc::package::LockOwner;
 use arc_gpu::extract;
 use arc_ui::{Axis, Binding, Dock, DockLayout, Menu, MenuItem};
+use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::insert::{
     DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
 };
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
-use archbuilder_model::types::{DOOR, LEVEL, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
 
 pub mod chrome;
+pub mod extract_floor;
 pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_wall;
+pub mod floor_tool;
 pub mod insert_tool;
 pub mod interaction;
 pub mod labels;
@@ -81,7 +84,11 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     builder.interaction(move || Box::new(interaction::WallInteraction::new(&seed)));
     // A wall's solid derives from the elevation of its storey's level: a change of the level or
     // the storey extracts the storey's walls again.
-    builder.extraction_dependents(extract_wall::dependents);
+    builder.extraction_dependents(|snapshot, changes| {
+        let mut out = extract_wall::dependents(snapshot, changes);
+        out.extend(extract_floor::dependents(snapshot, changes));
+        out
+    });
     shell::prefs::register_settings(&mut builder)?;
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
@@ -149,6 +156,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.floor".into(),
+        types: vec![FLOOR.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_floor::extract_floor(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.insert".into(),
         types: vec![DOOR.to_owned(), WINDOW.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -178,6 +194,8 @@ fn menu() -> Result<Menu> {
             WALL_CREATE,
             DOOR_PLACE,
             WINDOW_PLACE,
+            FLOOR_CREATE,
+            FLOOR_ADD_HOLE,
             INSERT_FLIP_HAND,
             INSERT_FLIP_FACING,
         ]

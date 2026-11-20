@@ -11,8 +11,8 @@ use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject}
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, DOOR, ELEVATION_RANGE, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW, level,
-    storey,
+    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW,
+    level, storey,
 };
 
 /// A message of the application.
@@ -146,6 +146,36 @@ const LABELS: &[(&str, Message)] = &[
         "end_join",
         Message {
             message_id: "ab-prop-end-join",
+        },
+    ),
+    (
+        "top_offset",
+        Message {
+            message_id: "ab-prop-top-offset",
+        },
+    ),
+    (
+        "floor_area",
+        Message {
+            message_id: "ab-prop-floor-area",
+        },
+    ),
+    (
+        "floor_volume",
+        Message {
+            message_id: "ab-prop-floor-volume",
+        },
+    ),
+    (
+        "floor_walls",
+        Message {
+            message_id: "ab-prop-floor-walls",
+        },
+    ),
+    (
+        "floor_storey",
+        Message {
+            message_id: "ab-prop-floor-storey",
         },
     ),
     (
@@ -399,6 +429,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        FLOOR,
+        Message {
+            message_id: "ab-kind-floor",
+        },
+    ),
+    (
         DOOR,
         Message {
             message_id: "ab-kind-door",
@@ -446,6 +482,7 @@ fn length_field() -> FieldDecl {
 
 /// The fields of `object` as the grid shows them. A storey's fields are its name and its level's
 /// name and elevation; a level's `storey` flag is shown and not editable.
+#[allow(clippy::too_many_lines, reason = "one arm per kind of object")]
 fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
     let decl = snapshot.registry().get(key)?;
     let mut fields = decl.schema.fields.clone();
@@ -533,6 +570,45 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
             for (field, value) in joins {
                 fields.push(field);
                 values.push(value);
+            }
+        }
+        // A floor shows its storey, the area and volume derived from its boundary, and the walls
+        // its edges follow; the boundary itself is edited by sketching.
+        FLOOR => {
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+            let derived = archbuilder_model::floor::Derived::of(snapshot, object);
+            let walls: Vec<String> = derived
+                .as_ref()
+                .map(|d| d.floor.walls())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|w| spatial::get(snapshot, w))
+                .filter_map(|w| types::text(&w.values, 0).map(str::to_owned))
+                .collect();
+            fields.truncate(types::floor::VERTICES);
+            values.truncate(types::floor::VERTICES);
+            for (name, value) in [
+                ("floor_storey", storey),
+                (
+                    "floor_area",
+                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                ),
+                (
+                    "floor_volume",
+                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+                (
+                    "floor_walls",
+                    Some(walls.join(", ")).filter(|w| !w.is_empty()),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
             }
         }
         // A door or a window shows the wall that hosts it; a door's sill is the wall's base.

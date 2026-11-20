@@ -1,0 +1,1139 @@
+//! The floor (slab): authored data read from a record, the boundary derived from it, and the solid.
+//!
+//! A floor record holds a thickness, a top offset from the level of its storey (the slab hangs
+//! down from its top) and the boundary as a list of vertices: the outer loop first, then the
+//! holes, each loop in order, straight edges only. The edge that starts at a vertex runs to the
+//! next vertex of its loop. Every vertex keeps its authored point; an edge may also be associated
+//! with a wall face ([`Association`]).
+//!
+//! Associated edges are derived each time ([`Floor::boundary`]): the edge lies on the line of the
+//! chosen face of the wall (the interior face, the exterior face or the center line, which is the
+//! core center while walls have no layers), moved across by the offset, and a vertex that touches
+//! an associated edge is the intersection of the two lines of its edges. So the floor follows when
+//! the wall moves or changes thickness. An edge that is not associated lies on the line through
+//! its two authored points. [`Floor::frozen`] gives the vertices after a wall is deleted: the
+//! edges that followed it keep their last derived position and lose the association.
+//!
+//! Nothing derived is stored: the area and the solid come from the boundary each time.
+
+use std::collections::BTreeSet;
+
+use arc_base::math::Point2;
+use arc_base::{Limits, ObjectId, Result, Tolerance};
+use arc_doc::{Snapshot, Value};
+use arc_geom::{Curve2, Loop2, Polyhedron, Region, RegionPart, Segment2, prism};
+
+use crate::types::{self, COORDINATE_RANGE, MIN_WALL_LENGTH, floor};
+use crate::wall::Wall;
+
+/// The most vertices in all loops of a floor.
+pub const MAX_VERTICES: usize = 1000;
+/// The most loops of a floor, the outer one included.
+pub const MAX_LOOPS: usize = 64;
+/// The least area of a floor, in square meters, and the largest.
+pub const AREA_RANGE: (f64, f64) = (1.0e-4, 1.0e9);
+/// The shortest edge of a floor, in meters: the model tolerance of a boundary.
+pub const MIN_EDGE: f64 = MIN_WALL_LENGTH;
+/// The most walls a click inside a closed loop of walls may pick, and the most pieces it searches.
+const MAX_PICKED: usize = 1000;
+/// How far from a wall's body a click still picks it, in meters.
+const PICK_MARGIN: f64 = 0.05;
+/// The slab's chord for the solid kernel; the boundary has no curves.
+const CHORD: f64 = 0.01;
+
+/// Which line of a wall an associated edge lies on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Face {
+    /// The interior face of the wall (the right of its baseline's direction).
+    #[default]
+    Interior,
+    /// The exterior face (the left of the baseline's direction).
+    Exterior,
+    /// The middle of the wall's thickness; the core center until walls have layers.
+    Center,
+}
+
+impl Face {
+    /// Every face, in code order.
+    pub const ALL: [Self; 3] = [Self::Interior, Self::Exterior, Self::Center];
+
+    /// The name in the record.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Interior => "interior",
+            Self::Exterior => "exterior",
+            Self::Center => "center",
+        }
+    }
+
+    /// The code stored in the record.
+    #[must_use]
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::Interior => 0,
+            Self::Exterior => 1,
+            Self::Center => 2,
+        }
+    }
+
+    /// The face of a stored code; the default for a code that names none.
+    #[must_use]
+    pub fn from_code(code: u32) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|f| f.code() == code)
+            .unwrap_or_default()
+    }
+
+    /// The offset of this face across the baseline of `wall`, toward the left of its direction.
+    #[must_use]
+    pub fn across(self, wall: &Wall) -> f64 {
+        let (low, high) = wall.extent();
+        match self {
+            Self::Interior => low,
+            Self::Exterior => high,
+            Self::Center => (low + high) / 2.0,
+        }
+    }
+}
+
+/// The association of an edge with a wall.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Association {
+    /// The wall.
+    pub wall: ObjectId,
+    /// The face of the wall the edge lies on.
+    pub face: Face,
+    /// The distance the edge is moved from that face toward the left of the wall's baseline
+    /// direction, in meters.
+    pub offset: f64,
+}
+
+/// One vertex of the boundary: its authored point and the association of the edge that starts
+/// there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vertex {
+    /// The loop: 0 for the outer loop, 1 and up for the holes.
+    pub loop_index: u32,
+    /// The authored point, in meters.
+    pub point: [f64; 2],
+    /// The wall the edge from this vertex follows, when it does.
+    pub edge: Option<Association>,
+}
+
+/// The authored data of a floor, lengths in meters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Floor {
+    /// The thickness of the slab.
+    pub thickness: f64,
+    /// The top's distance above the level of the storey.
+    pub top_offset: f64,
+    /// The vertices of all loops, loop by loop.
+    pub vertices: Vec<Vertex>,
+}
+
+/// The derived boundary: the points of each loop, the outer loop first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Boundary {
+    /// The loops; each lists its vertices once, without repeating the first.
+    pub loops: Vec<Vec<[f64; 2]>>,
+}
+
+/// Why a boundary is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// A loop has fewer than three vertices, the record is malformed, or a count or number is out
+    /// of its bounds.
+    Malformed,
+    /// An edge is shorter than the model tolerance.
+    EdgeTooShort,
+    /// A loop crosses or touches itself.
+    SelfIntersecting,
+    /// The outer loop has no area, or too much.
+    Area,
+    /// A hole is not inside the outer loop.
+    HoleOutside,
+    /// Two holes overlap, or a hole lies inside another.
+    HolesOverlap,
+}
+
+/// A line: a point and a unit direction.
+#[derive(Debug, Clone, Copy)]
+struct Line {
+    at: [f64; 2],
+    dir: [f64; 2],
+}
+
+fn sub(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] - b[0], a[1] - b[1]]
+}
+
+fn cross(a: [f64; 2], b: [f64; 2]) -> f64 {
+    a[0] * b[1] - a[1] * b[0]
+}
+
+fn dot(a: [f64; 2], b: [f64; 2]) -> f64 {
+    a[0] * b[0] + a[1] * b[1]
+}
+
+impl Line {
+    fn through(a: [f64; 2], b: [f64; 2]) -> Option<Self> {
+        let d = sub(b, a);
+        let length = d[0].hypot(d[1]);
+        (length.is_finite() && length > 0.0).then(|| Self {
+            at: a,
+            dir: [d[0] / length, d[1] / length],
+        })
+    }
+
+    /// The line of a wall's face, moved by `offset` toward the left of its direction.
+    fn of_face(wall: &Wall, face: Face, offset: f64) -> Option<Self> {
+        let base = Self::through(wall.start, wall.end)?;
+        let side = face.across(wall) + offset;
+        Some(Self {
+            at: [
+                base.at[0] - base.dir[1] * side,
+                base.at[1] + base.dir[0] * side,
+            ],
+            dir: base.dir,
+        })
+    }
+
+    /// The point where two lines meet; `None` for lines that are (nearly) parallel.
+    fn meet(&self, other: &Self) -> Option<[f64; 2]> {
+        let denominator = cross(self.dir, other.dir);
+        if denominator.abs() < 1.0e-9 {
+            return None;
+        }
+        let t = cross(sub(other.at, self.at), other.dir) / denominator;
+        Some([self.at[0] + self.dir[0] * t, self.at[1] + self.dir[1] * t])
+    }
+
+    /// The foot of the perpendicular from `p`.
+    fn project(&self, p: [f64; 2]) -> [f64; 2] {
+        let t = dot(sub(p, self.at), self.dir);
+        [self.at[0] + self.dir[0] * t, self.at[1] + self.dir[1] * t]
+    }
+}
+
+/// The index ranges of the loops of `vertices`, when the loop numbers run 0, 1, 2, ... in order.
+fn loop_ranges(vertices: &[Vertex]) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (at, v) in vertices.iter().enumerate() {
+        match ranges.len() {
+            n if u32::try_from(n).ok() == Some(v.loop_index) => ranges.push(at..at + 1),
+            n if u32::try_from(n.checked_sub(1)?).ok() == Some(v.loop_index) => {
+                ranges.last_mut()?.end = at + 1;
+            }
+            _ => return None,
+        }
+    }
+    (!ranges.is_empty()).then_some(ranges)
+}
+
+impl Floor {
+    /// The floor of a record's field values; `None` when a field is missing or malformed.
+    #[must_use]
+    pub fn from_values(values: &[Option<Value>]) -> Option<Self> {
+        let thickness = types::meters(values, floor::THICKNESS)?;
+        let top_offset = types::meters(values, floor::TOP_OFFSET)?;
+        let Some(Some(Value::List(items))) = values.get(floor::VERTICES) else {
+            return None;
+        };
+        let mut vertices = Vec::with_capacity(items.len().min(MAX_VERTICES));
+        for item in items.iter().take(MAX_VERTICES + 1) {
+            let Value::Record(fields) = item else {
+                return None;
+            };
+            let m = |at| types::meters(fields, at);
+            let loop_index = match fields.get(floor::vertex::LOOP)? {
+                Some(Value::I64(n)) => u32::try_from(*n).ok()?,
+                _ => return None,
+            };
+            let edge = match fields.get(floor::vertex::WALL) {
+                Some(Some(Value::Reference(wall))) => Some(Association {
+                    wall: *wall,
+                    face: match fields.get(floor::vertex::FACE) {
+                        Some(Some(Value::Enum(code))) => Face::from_code(*code),
+                        _ => Face::default(),
+                    },
+                    offset: m(floor::vertex::OFFSET).unwrap_or(0.0),
+                }),
+                _ => None,
+            };
+            vertices.push(Vertex {
+                loop_index,
+                point: [m(floor::vertex::X)?, m(floor::vertex::Y)?],
+                edge,
+            });
+        }
+        Some(Self {
+            thickness,
+            top_offset,
+            vertices,
+        })
+    }
+
+    /// The vertex records of `vertices`, for the record's list field.
+    #[must_use]
+    pub fn vertex_values(vertices: &[Vertex]) -> Value {
+        Value::List(
+            vertices
+                .iter()
+                .map(|v| {
+                    Value::Record(vec![
+                        Some(Value::I64(i64::from(v.loop_index))),
+                        Some(types::length(v.point[0])),
+                        Some(types::length(v.point[1])),
+                        v.edge.map(|e| Value::Reference(e.wall)),
+                        Some(Value::Enum(v.edge.map_or(0, |e| e.face.code()))),
+                        Some(types::length(v.edge.map_or(0.0, |e| e.offset))),
+                    ])
+                })
+                .collect(),
+        )
+    }
+
+    /// The walls the edges follow, each once, in the order of the vertices.
+    #[must_use]
+    pub fn walls(&self) -> Vec<ObjectId> {
+        let mut seen = Vec::new();
+        for id in self.vertices.iter().filter_map(|v| v.edge.map(|e| e.wall)) {
+            if !seen.contains(&id) {
+                seen.push(id);
+            }
+        }
+        seen
+    }
+
+    /// The line of the edge that starts at vertex `at` of the loop `range`.
+    fn edge_line(
+        &self,
+        range: &std::ops::Range<usize>,
+        at: usize,
+        wall_of: &dyn Fn(ObjectId) -> Option<Wall>,
+    ) -> Option<Line> {
+        let v = self.vertices.get(range.start + at)?;
+        if let Some(a) = v.edge
+            && let Some(wall) = wall_of(a.wall)
+        {
+            return Line::of_face(&wall, a.face, a.offset);
+        }
+        let next = self.vertices.get(range.start + (at + 1) % range.len())?;
+        Line::through(v.point, next.point)
+    }
+
+    /// Whether the edge that starts at vertex `at` follows a wall that `wall_of` finds.
+    fn follows(
+        &self,
+        range: &std::ops::Range<usize>,
+        at: usize,
+        wall_of: &dyn Fn(ObjectId) -> Option<Wall>,
+    ) -> bool {
+        self.vertices
+            .get(range.start + at)
+            .and_then(|v| v.edge)
+            .is_some_and(|a| wall_of(a.wall).is_some())
+    }
+
+    /// The boundary: the authored points, with the vertices of associated edges derived from the
+    /// walls `wall_of` finds (an association whose wall is missing counts as none). `None` for a
+    /// malformed record or an edge that has no line.
+    #[must_use]
+    pub fn boundary(&self, wall_of: &dyn Fn(ObjectId) -> Option<Wall>) -> Option<Boundary> {
+        let ranges = loop_ranges(&self.vertices)?;
+        let mut loops = Vec::with_capacity(ranges.len());
+        for range in &ranges {
+            let n = range.len();
+            let mut points = Vec::with_capacity(n);
+            for at in 0..n {
+                let own = self.vertices.get(range.start + at)?.point;
+                let before = (at + n - 1) % n;
+                let (a, b) = (
+                    self.follows(range, before, wall_of),
+                    self.follows(range, at, wall_of),
+                );
+                let point = if a || b {
+                    let (l0, l1) = (
+                        self.edge_line(range, before, wall_of)?,
+                        self.edge_line(range, at, wall_of)?,
+                    );
+                    // Parallel edges of a wall and its neighbor: stay on the wall's line.
+                    l0.meet(&l1)
+                        .unwrap_or_else(|| if b { l1.project(own) } else { l0.project(own) })
+                } else {
+                    own
+                };
+                points.push(point);
+            }
+            loops.push(points);
+        }
+        Some(Boundary { loops })
+    }
+
+    /// The boundary read from the record's own wall data in `snapshot`.
+    #[must_use]
+    pub fn boundary_in(&self, snapshot: &Snapshot) -> Option<Boundary> {
+        self.boundary(&|id| {
+            crate::spatial::get(snapshot, id).and_then(|o| Wall::from_values(&o.values))
+        })
+    }
+
+    /// The vertices after the walls `deleted` are gone: each edge that followed one keeps the
+    /// position it has now (`boundary`, derived while the wall still exists) and loses the
+    /// association. `None` when the boundary cannot be derived.
+    #[must_use]
+    pub fn frozen(&self, boundary: &Boundary, deleted: &BTreeSet<ObjectId>) -> Option<Vec<Vertex>> {
+        let ranges = loop_ranges(&self.vertices)?;
+        let mut out = self.vertices.clone();
+        for (range, points) in ranges.iter().zip(&boundary.loops) {
+            let n = range.len();
+            for at in 0..n {
+                let lost = self.vertices.get(range.start + at)?.edge;
+                if lost.is_some_and(|a| deleted.contains(&a.wall)) {
+                    // The line through both derived ends is the edge's last position.
+                    for k in [at, (at + 1) % n] {
+                        out.get_mut(range.start + k)?.point = *points.get(k)?;
+                    }
+                    out.get_mut(range.start + at)?.edge = None;
+                }
+            }
+        }
+        Some(out)
+    }
+}
+
+impl Floor {
+    /// The vertices after the walls in `flips` (each with its wall before and after) were flipped:
+    /// a flip reverses a baseline, so the left of its direction changes. Each association that
+    /// follows such a wall takes the face and offset that keep its line where it is, preferring
+    /// the swapped face (interior and exterior swap sides). `None` when nothing follows them.
+    #[must_use]
+    pub fn flipped(&self, flips: &[(ObjectId, Wall, Wall)]) -> Option<Vec<Vertex>> {
+        let mut out = self.vertices.clone();
+        let mut changed = false;
+        for v in &mut out {
+            let Some(a) = v.edge else { continue };
+            let Some((_, old, new)) = flips.iter().find(|(id, _, _)| *id == a.wall) else {
+                continue;
+            };
+            let target = -(a.face.across(old) + a.offset);
+            let swapped = match a.face {
+                Face::Interior => Face::Exterior,
+                Face::Exterior => Face::Interior,
+                Face::Center => Face::Center,
+            };
+            let mut best: Option<(f64, Face)> = None;
+            for f in [
+                swapped,
+                a.face,
+                Face::Interior,
+                Face::Exterior,
+                Face::Center,
+            ] {
+                let off = target - f.across(new);
+                if best.is_none_or(|(b, _)| off.abs() + 1.0e-12 < b.abs()) {
+                    best = Some((off, f));
+                }
+            }
+            if let Some((offset, face)) = best {
+                v.edge = Some(Association { face, offset, ..a });
+                changed = true;
+            }
+        }
+        changed.then_some(out)
+    }
+}
+
+fn segments_touch(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+    let eps = 1.0e-9;
+    let o = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        let v = cross(sub(q, p), sub(r, p));
+        if v.abs() <= eps {
+            0
+        } else if v > 0.0 {
+            1
+        } else {
+            -1
+        }
+    };
+    let on = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        r[0] >= p[0].min(q[0]) - eps
+            && r[0] <= p[0].max(q[0]) + eps
+            && r[1] >= p[1].min(q[1]) - eps
+            && r[1] <= p[1].max(q[1]) + eps
+    };
+    let (o1, o2, o3, o4) = (o(a, b, c), o(a, b, d), o(c, d, a), o(c, d, b));
+    (o1 != o2 && o3 != o4)
+        || (o1 == 0 && on(a, b, c))
+        || (o2 == 0 && on(a, b, d))
+        || (o3 == 0 && on(c, d, a))
+        || (o4 == 0 && on(c, d, b))
+}
+
+/// The signed area of a loop (positive counterclockwise).
+#[must_use]
+pub fn signed_area(points: &[[f64; 2]]) -> f64 {
+    let n = points.len();
+    (0..n)
+        .map(|k| cross(points[k], points[(k + 1) % n]))
+        .sum::<f64>()
+        / 2.0
+}
+
+fn inside(points: &[[f64; 2]], p: [f64; 2]) -> bool {
+    let n = points.len();
+    let mut result = false;
+    for k in 0..n {
+        let (a, b) = (points[k], points[(k + 1) % n]);
+        if (a[1] > p[1]) != (b[1] > p[1])
+            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
+        {
+            result = !result;
+        }
+    }
+    result
+}
+
+/// Whether two loops cross or touch each other.
+fn loops_touch(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
+    (0..a.len()).any(|i| {
+        (0..b.len()).any(|j| segments_touch(a[i], a[(i + 1) % a.len()], b[j], b[(j + 1) % b.len()]))
+    })
+}
+
+impl Boundary {
+    /// The area: the outer loop minus the holes, in square meters.
+    #[must_use]
+    pub fn area(&self) -> f64 {
+        self.loops
+            .iter()
+            .enumerate()
+            .map(|(k, l)| {
+                let a = signed_area(l).abs();
+                if k == 0 { a } else { -a }
+            })
+            .sum()
+    }
+
+    /// The perimeter of all loops, in meters.
+    #[must_use]
+    pub fn perimeter(&self) -> f64 {
+        self.loops
+            .iter()
+            .flat_map(|l| {
+                (0..l.len()).map(|k| {
+                    let d = sub(l[(k + 1) % l.len()], l[k]);
+                    d[0].hypot(d[1])
+                })
+            })
+            .sum()
+    }
+
+    /// Checks the boundary: each loop simple with edges of at least [`MIN_EDGE`], an outer loop
+    /// with an area in [`AREA_RANGE`], holes inside it and apart from each other.
+    ///
+    /// # Errors
+    /// The [`Refusal`] that names what is wrong.
+    pub fn check(&self) -> std::result::Result<(), Refusal> {
+        let count: usize = self.loops.iter().map(Vec::len).sum();
+        let (low, high) = COORDINATE_RANGE;
+        if self.loops.is_empty()
+            || self.loops.len() > MAX_LOOPS
+            || count > MAX_VERTICES
+            || self.loops.iter().any(|l| l.len() < 3)
+            || self
+                .loops
+                .iter()
+                .flatten()
+                .any(|p| p.iter().any(|c| !c.is_finite() || *c < low || *c > high))
+        {
+            return Err(Refusal::Malformed);
+        }
+        for points in &self.loops {
+            let n = points.len();
+            for k in 0..n {
+                let (a, b) = (points[k], points[(k + 1) % n]);
+                let d = sub(b, a);
+                if d[0].hypot(d[1]) < MIN_EDGE {
+                    return Err(Refusal::EdgeTooShort);
+                }
+                // The next edge may only share its start; folding back on itself is a crossing.
+                let e = sub(points[(k + 2) % n], b);
+                if cross(d, e).abs() <= 1.0e-12 * d[0].hypot(d[1]) * e[0].hypot(e[1])
+                    && dot(d, e) < 0.0
+                {
+                    return Err(Refusal::SelfIntersecting);
+                }
+                for j in k + 2..n {
+                    if k == 0 && j == n - 1 {
+                        continue;
+                    }
+                    if segments_touch(a, b, points[j], points[(j + 1) % n]) {
+                        return Err(Refusal::SelfIntersecting);
+                    }
+                }
+            }
+        }
+        let outer_area = signed_area(&self.loops[0]).abs();
+        if outer_area < AREA_RANGE.0 || outer_area > AREA_RANGE.1 {
+            return Err(Refusal::Area);
+        }
+        for (k, hole) in self.loops.iter().enumerate().skip(1) {
+            if loops_touch(&self.loops[0], hole) || !inside(&self.loops[0], hole[0]) {
+                return Err(Refusal::HoleOutside);
+            }
+            for other in self.loops.iter().skip(1).take(k - 1) {
+                if loops_touch(other, hole) || inside(other, hole[0]) || inside(hole, other[0]) {
+                    return Err(Refusal::HolesOverlap);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The solid: a prism of the boundary from `top - thickness` up to `top`, where `top` is the
+    /// elevation of the level plus the top offset.
+    ///
+    /// # Errors
+    /// The solid kernel's errors for a boundary it cannot make a solid of.
+    pub fn solid(&self, top: f64, thickness: f64) -> Result<Polyhedron> {
+        let tolerance = Tolerance::DEFAULT;
+        let mut parts = Vec::with_capacity(self.loops.len());
+        for points in &self.loops {
+            let pts: Vec<Point2> = points.iter().map(|p| Point2::new(p[0], p[1])).collect();
+            let mut curves = Vec::with_capacity(pts.len());
+            for k in 0..pts.len() {
+                curves.push(Curve2::Segment(Segment2::new(
+                    pts[k],
+                    pts[(k + 1) % pts.len()],
+                )?));
+            }
+            parts.push(Loop2::new(curves, &tolerance)?);
+        }
+        let mut loops = parts.into_iter();
+        let outer = loops
+            .next()
+            .ok_or_else(|| arc_base::Error::new(arc_geom::error::codes::REGION_EMPTY))?;
+        let region = Region::new(vec![RegionPart::new(outer, loops.collect())])?;
+        prism(
+            &region,
+            top - thickness,
+            thickness,
+            CHORD,
+            &tolerance,
+            &Limits::DEFAULT,
+        )
+    }
+}
+
+/// What a floor reads from a snapshot: its data, the elevation of the top and the boundary.
+#[derive(Debug, Clone)]
+pub struct Derived {
+    /// The authored data.
+    pub floor: Floor,
+    /// The elevation of the slab's top: the level plus the top offset, in meters.
+    pub top: f64,
+    /// The boundary, derived from the walls.
+    pub boundary: Boundary,
+}
+
+impl Derived {
+    /// Reads the floor `object` of `snapshot`; `None` when the record or its edges are unreadable.
+    #[must_use]
+    pub fn of(snapshot: &Snapshot, object: &arc_doc::Object) -> Option<Self> {
+        let floor = Floor::from_values(&object.values)?;
+        let level = object
+            .header
+            .owner
+            .and_then(|id| crate::spatial::get(snapshot, id))
+            .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
+        let boundary = floor.boundary_in(snapshot)?;
+        Some(Self {
+            top: level + floor.top_offset,
+            floor,
+            boundary,
+        })
+    }
+
+    /// The area in square meters.
+    #[must_use]
+    pub fn area(&self) -> f64 {
+        self.boundary.area()
+    }
+
+    /// The volume of the slab, in cubic meters: the area times the thickness.
+    #[must_use]
+    pub fn volume(&self) -> f64 {
+        self.area() * self.floor.thickness
+    }
+
+    /// The solid of the slab.
+    ///
+    /// # Errors
+    /// The solid kernel's errors.
+    pub fn solid(&self) -> Result<Polyhedron> {
+        self.boundary.solid(self.top, self.floor.thickness)
+    }
+}
+
+/// The walls of `storey` that have a readable baseline, in identifier order.
+#[must_use]
+pub fn storey_walls(snapshot: &Snapshot, storey: ObjectId) -> Vec<(ObjectId, Wall)> {
+    crate::spatial::walls(snapshot, storey)
+        .iter()
+        .filter_map(|o| Wall::from_values(&o.values).map(|w| (o.id, w)))
+        .filter(|(_, w)| w.length() >= MIN_WALL_LENGTH)
+        .collect()
+}
+
+/// Why walls cannot make a floor boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WallsRefusal {
+    /// Fewer than three walls, a wall named twice, or no closed loop around the point.
+    NoLoop,
+    /// Two walls that follow each other are parallel: they do not meet.
+    Parallel,
+}
+
+/// Where two collinear walls that follow each other meet: the middle of their nearest ends, on
+/// the line of the second; `None` when the lines are not the same line or run opposite ways.
+fn junction(w0: &Wall, w1: &Wall, a: &Line, b: &Line) -> Option<[f64; 2]> {
+    if dot(a.dir, b.dir) <= 0.0 || cross(sub(b.at, a.at), a.dir).abs() > 1.0e-3 {
+        return None;
+    }
+    let ends = |w: &Wall| [w.start, w.end];
+    let mut best: Option<(f64, [f64; 2])> = None;
+    for p in ends(w0) {
+        for q in ends(w1) {
+            let d = sub(q, p);
+            let gap = d[0].hypot(d[1]);
+            if best.is_none_or(|(g, _)| gap < g) {
+                best = Some((gap, [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0]));
+            }
+        }
+    }
+    best.map(|(_, m)| b.project(m))
+}
+
+/// The vertices of a floor over the closed chain `walls` (in order, each meeting the next and the
+/// last meeting the first), edges on the chosen `face`. For [`Face::Interior`] and
+/// [`Face::Exterior`] the face is the one that looks into, or away from, the area the chain
+/// encloses, whichever side of its baseline that is.
+///
+/// # Errors
+/// [`WallsRefusal`].
+pub fn vertices_of_walls(
+    walls: &[(ObjectId, Wall)],
+    face: Face,
+    offset: f64,
+) -> std::result::Result<Vec<Vertex>, WallsRefusal> {
+    let n = walls.len();
+    let unique: BTreeSet<ObjectId> = walls.iter().map(|(id, _)| *id).collect();
+    if !(3..=MAX_VERTICES).contains(&n) || unique.len() != n {
+        return Err(WallsRefusal::NoLoop);
+    }
+    let lines = |faces: &[Face]| -> std::result::Result<Vec<[f64; 2]>, WallsRefusal> {
+        (0..n)
+            .map(|k| {
+                let before = (k + n - 1) % n;
+                let a = Line::of_face(&walls[before].1, faces[before], offset);
+                let b = Line::of_face(&walls[k].1, faces[k], offset);
+                let (a, b) = a.zip(b).ok_or(WallsRefusal::Parallel)?;
+                // Collinear neighbors (a wall split in two) meet where their ends meet.
+                a.meet(&b)
+                    .or_else(|| junction(&walls[before].1, &walls[k].1, &a, &b))
+                    .ok_or(WallsRefusal::Parallel)
+            })
+            .collect()
+    };
+    // The center lines give the polygon whose direction says which side the area is on.
+    let polygon = lines(&vec![Face::Center; n])?;
+    let ccw = signed_area(&polygon) > 0.0;
+    let faces: Vec<Face> = (0..n)
+        .map(|k| {
+            if face == Face::Center {
+                return Face::Center;
+            }
+            // The wall runs from vertex k to vertex k+1 of the polygon; the area is on the left
+            // of that run when the polygon runs counterclockwise.
+            let run = sub(polygon[(k + 1) % n], polygon[k]);
+            let base = sub(walls[k].1.end, walls[k].1.start);
+            let same = dot(run, base) >= 0.0;
+            let area_on_left_of_baseline = ccw == same;
+            // The left of the baseline is the exterior face.
+            let toward_area = if area_on_left_of_baseline {
+                Face::Exterior
+            } else {
+                Face::Interior
+            };
+            let away = if toward_area == Face::Exterior {
+                Face::Interior
+            } else {
+                Face::Exterior
+            };
+            if face == Face::Interior {
+                toward_area
+            } else {
+                away
+            }
+        })
+        .collect();
+    let points = lines(&faces)?;
+    Ok((0..n)
+        .map(|k| Vertex {
+            loop_index: 0,
+            // Vertex k is where wall k-1 meets wall k; the edge from it follows wall k.
+            point: points[k],
+            edge: Some(Association {
+                wall: walls[k].0,
+                face: faces[k],
+                offset,
+            }),
+        })
+        .collect())
+}
+
+/// What a click picks among the walls of a storey.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pick {
+    /// The click is on this wall.
+    Wall(ObjectId),
+    /// The click is inside a closed loop of joined walls: the walls of the smallest such loop, in
+    /// order around it.
+    Loop(Vec<ObjectId>),
+}
+
+/// The wall whose body (with a small margin) holds `p`, the nearest one.
+#[must_use]
+pub fn wall_at(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<ObjectId> {
+    walls
+        .iter()
+        .filter_map(|(id, w)| {
+            let base = Line::through(w.start, w.end)?;
+            let rel = sub(p, w.start);
+            let along = dot(rel, base.dir);
+            let across = cross(base.dir, rel);
+            let (low, high) = w.extent();
+            let gap = (low - across).max(across - high).max(0.0);
+            let beyond = (-along).max(along - w.length()).max(0.0);
+            let miss = gap.hypot(beyond);
+            (miss <= PICK_MARGIN).then_some((miss, *id))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
+}
+
+/// The directed piece of a wall between two nodes.
+#[derive(Debug, Clone, Copy)]
+struct Piece {
+    from: usize,
+    to: usize,
+    wall: usize,
+}
+
+/// The walls of the smallest closed loop of walls around `p`, in order; walls are joined where
+/// their ends meet or an end lies on another wall (a T). `None` when no loop encloses the point,
+/// the loop uses a wall twice, or the search exceeds its bounds.
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one search: nodes, pieces, face walk, spur removal"
+)]
+pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<ObjectId>> {
+    if walls.is_empty() || walls.len() > MAX_PICKED {
+        return None;
+    }
+    let tol = 1.0e-3;
+    let mut nodes: Vec<[f64; 2]> = Vec::new();
+    let node_of = |q: [f64; 2], nodes: &mut Vec<[f64; 2]>| -> usize {
+        match nodes
+            .iter()
+            .position(|n| (n[0] - q[0]).hypot(n[1] - q[1]) < tol)
+        {
+            Some(k) => k,
+            None => {
+                nodes.push(q);
+                nodes.len() - 1
+            }
+        }
+    };
+    // Each wall's nodes along it: its ends, and the ends of other walls that lie on it.
+    let ends: Vec<[f64; 2]> = walls.iter().flat_map(|(_, w)| [w.start, w.end]).collect();
+    let mut pieces: Vec<Piece> = Vec::new();
+    for (k, (_, w)) in walls.iter().enumerate() {
+        let base = Line::through(w.start, w.end)?;
+        let length = w.length();
+        let mut along: Vec<(f64, [f64; 2])> = vec![(0.0, w.start), (length, w.end)];
+        for q in &ends {
+            let rel = sub(*q, w.start);
+            let t = dot(rel, base.dir);
+            if t > tol && t < length - tol && cross(base.dir, rel).abs() < tol {
+                along.push((t, *q));
+            }
+        }
+        along.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let ids: Vec<usize> = along.iter().map(|(_, q)| node_of(*q, &mut nodes)).collect();
+        for pair in ids.windows(2) {
+            if pair[0] != pair[1] {
+                pieces.push(Piece {
+                    from: pair[0],
+                    to: pair[1],
+                    wall: k,
+                });
+                pieces.push(Piece {
+                    from: pair[1],
+                    to: pair[0],
+                    wall: k,
+                });
+            }
+        }
+    }
+    // The next piece of the face on the left of a piece: at its end, the piece that turns most
+    // clockwise from the way back.
+    let angle = |piece: &Piece| {
+        let d = sub(nodes[piece.to], nodes[piece.from]);
+        d[1].atan2(d[0])
+    };
+    let next_of = |piece: &Piece| -> Option<usize> {
+        let back = angle(piece) + std::f64::consts::PI;
+        let mut best: Option<(f64, usize)> = None;
+        for (k, q) in pieces.iter().enumerate() {
+            if q.from != piece.to || (q.to == piece.from && q.wall == piece.wall) {
+                continue;
+            }
+            // Counterclockwise angle from the way back to the candidate, in (0, 2 pi].
+            let mut turn = (angle(q) - back).rem_euclid(std::f64::consts::TAU);
+            if turn <= 1.0e-12 {
+                turn = std::f64::consts::TAU;
+            }
+            if best.is_none_or(|(t, _)| turn > t) {
+                best = Some((turn, k));
+            }
+        }
+        // A dead end turns back along the same piece.
+        best.map(|(_, k)| k).or_else(|| {
+            pieces
+                .iter()
+                .position(|q| q.from == piece.to && q.to == piece.from && q.wall == piece.wall)
+        })
+    };
+    let mut seen = vec![false; pieces.len()];
+    let mut best: Option<(f64, Vec<usize>)> = None;
+    for start in 0..pieces.len() {
+        if seen[start] {
+            continue;
+        }
+        let mut cycle = Vec::new();
+        let mut at = start;
+        while !seen[at] && cycle.len() <= pieces.len() {
+            seen[at] = true;
+            cycle.push(at);
+            at = next_of(&pieces[at])?;
+        }
+        if at != start {
+            continue;
+        }
+        // Dead-end spurs walk out and back: drop each piece followed by its reverse.
+        let mut stack: Vec<usize> = Vec::new();
+        for &k in &cycle {
+            match stack.last() {
+                Some(&top)
+                    if pieces[top].from == pieces[k].to
+                        && pieces[top].to == pieces[k].from
+                        && pieces[top].wall == pieces[k].wall =>
+                {
+                    stack.pop();
+                }
+                _ => stack.push(k),
+            }
+        }
+        if stack.len() < 3 {
+            continue;
+        }
+        let polygon: Vec<[f64; 2]> = stack.iter().map(|&k| nodes[pieces[k].from]).collect();
+        let area = signed_area(&polygon);
+        if area > 0.0 && inside(&polygon, p) && best.as_ref().is_none_or(|(a, _)| area < *a) {
+            best = Some((area, stack));
+        }
+    }
+    let (_, cycle) = best?;
+    let mut order: Vec<usize> = Vec::new();
+    for k in cycle {
+        let wall = pieces[k].wall;
+        if order.last() != Some(&wall) {
+            order.push(wall);
+        }
+    }
+    // The loop closes: the last wall may be the first one continued.
+    if order.len() > 1 && order.first() == order.last() {
+        order.pop();
+    }
+    let unique: BTreeSet<usize> = order.iter().copied().collect();
+    (order.len() >= 3 && unique.len() == order.len())
+        .then(|| order.into_iter().map(|k| walls[k].0).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wall::{JoinStyle, LocationLine};
+    use arc_base::id::Identifier as _;
+
+    fn wall(start: [f64; 2], end: [f64; 2]) -> Wall {
+        Wall {
+            start,
+            end,
+            thickness: 0.2,
+            height: 3.0,
+            base_offset: 0.0,
+            location: LocationLine::Center,
+            start_join: JoinStyle::Auto,
+            end_join: JoinStyle::Auto,
+        }
+    }
+
+    fn id(n: u64) -> ObjectId {
+        ObjectId::from_u128(u128::from(n))
+    }
+
+    /// The 10 x 6 house, drawn clockwise: bottom-left, top-left, top-right, bottom-right.
+    fn house(clockwise: bool) -> Vec<(ObjectId, Wall)> {
+        let mut corners = [[0.0, 0.0], [0.0, 6.0], [10.0, 6.0], [10.0, 0.0]];
+        if !clockwise {
+            corners.reverse();
+        }
+        (0..4)
+            .map(|k| (id(k as u64 + 1), wall(corners[k], corners[(k + 1) % 4])))
+            .collect()
+    }
+
+    #[test]
+    fn the_interior_face_loop_of_the_house_has_the_clear_area_either_way_round() {
+        for clockwise in [true, false] {
+            let walls = house(clockwise);
+            let vertices = vertices_of_walls(&walls, Face::Interior, 0.0).unwrap();
+            let floor = Floor {
+                thickness: 0.2,
+                top_offset: 0.0,
+                vertices,
+            };
+            let lookup = |w: ObjectId| walls.iter().find(|(i, _)| *i == w).map(|(_, w)| *w);
+            let boundary = floor.boundary(&lookup).unwrap();
+            assert!((boundary.area() - 9.8 * 5.8).abs() < 1e-9, "{clockwise}");
+            boundary.check().unwrap();
+            let exterior = vertices_of_walls(&walls, Face::Exterior, 0.0).unwrap();
+            let f = Floor {
+                vertices: exterior,
+                ..floor
+            };
+            assert!((f.boundary(&lookup).unwrap().area() - 10.2 * 6.2).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_click_inside_picks_the_loop_and_a_click_on_a_wall_picks_the_wall() {
+        let mut walls = house(true);
+        // A stub wall inside the room that touches one wall only does not break the loop.
+        walls.push((id(9), wall([5.0, 0.0], [5.0, 2.0])));
+        let picked = loop_around(&walls, [5.0, 3.0]).unwrap();
+        assert_eq!(picked.len(), 4);
+        assert!(loop_around(&walls, [20.0, 3.0]).is_none());
+        assert_eq!(wall_at(&walls, [5.0, 1.0]), Some(id(9)));
+        assert_eq!(wall_at(&walls, [0.0, 3.0]), Some(id(1)));
+        assert_eq!(wall_at(&walls, [3.0, 3.0]), None);
+    }
+
+    #[test]
+    fn a_wall_that_divides_the_house_gives_the_smaller_room() {
+        let mut walls = house(true);
+        walls.push((id(9), wall([4.0, 0.0], [4.0, 6.0])));
+        let picked = loop_around(&walls, [2.0, 3.0]).unwrap();
+        assert!(picked.contains(&id(9)) && picked.contains(&id(1)));
+        assert_eq!(picked.len(), 4);
+    }
+
+    #[test]
+    fn refusals_name_what_is_wrong() {
+        let square = |s: f64, at: [f64; 2]| -> Vec<[f64; 2]> {
+            vec![
+                at,
+                [at[0] + s, at[1]],
+                [at[0] + s, at[1] + s],
+                [at[0], at[1] + s],
+            ]
+        };
+        let b = |loops: Vec<Vec<[f64; 2]>>| Boundary { loops };
+        assert_eq!(b(vec![square(4.0, [0.0, 0.0])]).check(), Ok(()));
+        // A bow tie.
+        let bow = vec![[0.0, 0.0], [4.0, 4.0], [4.0, 0.0], [0.0, 4.0]];
+        assert_eq!(b(vec![bow]).check(), Err(Refusal::SelfIntersecting));
+        assert!(
+            b(vec![vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]])
+                .check()
+                .is_err()
+        );
+        assert_eq!(
+            b(vec![vec![[0.0, 0.0], [1.0, 0.0]]]).check(),
+            Err(Refusal::Malformed)
+        );
+        assert_eq!(
+            b(vec![vec![
+                [0.0, 0.0],
+                [0.0005, 0.0],
+                [0.0005, 4.0],
+                [0.0, 4.0]
+            ]])
+            .check(),
+            Err(Refusal::EdgeTooShort)
+        );
+        let outer = square(10.0, [0.0, 0.0]);
+        assert_eq!(
+            b(vec![outer.clone(), square(2.0, [3.0, 3.0])]).check(),
+            Ok(())
+        );
+        assert_eq!(
+            b(vec![outer.clone(), square(2.0, [9.0, 3.0])]).check(),
+            Err(Refusal::HoleOutside)
+        );
+        assert_eq!(
+            b(vec![outer.clone(), square(2.0, [20.0, 3.0])]).check(),
+            Err(Refusal::HoleOutside)
+        );
+        assert_eq!(
+            b(vec![
+                outer.clone(),
+                square(3.0, [2.0, 2.0]),
+                square(3.0, [4.0, 3.0])
+            ])
+            .check(),
+            Err(Refusal::HolesOverlap)
+        );
+        assert_eq!(
+            b(vec![
+                outer.clone(),
+                square(6.0, [2.0, 2.0]),
+                square(2.0, [4.0, 4.0])
+            ])
+            .check(),
+            Err(Refusal::HolesOverlap)
+        );
+        let holed = b(vec![outer, square(2.0, [3.0, 3.0])]);
+        assert!((holed.area() - 96.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_solid_is_the_area_times_the_thickness() {
+        let b = Boundary {
+            loops: vec![
+                vec![[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]],
+                vec![[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]],
+            ],
+        };
+        let solid = b.solid(3.0, 0.2).unwrap();
+        assert!((solid.volume() - 59.0 * 0.2).abs() < 1e-9);
+        let bounds = solid.bounding_box();
+        assert!((bounds.min().z - 2.8).abs() < 1e-9 && (bounds.max().z - 3.0).abs() < 1e-9);
+    }
+}

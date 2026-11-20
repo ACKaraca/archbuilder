@@ -163,6 +163,56 @@ continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_ha
 inserts. Known limits: no types or families, no room relations, no IFC writer yet,
 arched or non-rectangular openings and double leaves are not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
 
+#### The floor of the first slice
+
+The first implemented `Floor` is a reduced record, `archbuilder.floor`, owned by its storey (a
+storey that has floors cannot be deleted). It has no type, layers, slope or shape points yet.
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | Unique within the storey, `Slab <n>` by default | Not blank |
+| `thickness` | The slab's thickness; the slab hangs down from its top | 1 mm to 5 m; 0.2 m by default |
+| `top_offset` | The top's distance above the storey's level | -1000 m to 1000 m; 0 by default |
+| `vertices` | The boundary: the outer loop, then the holes, each loop in order, straight edges only. Each vertex is a record of the loop number (0 outer), the authored point, and the optional association of the edge that starts there: `wall` (reference, cleared when the wall is deleted), `face` (`interior`, `exterior` or `center`) and `offset` | At most 1000 vertices and 64 loops |
+
+An edge associated with a wall lies on the line of the chosen face of that wall (the center face is
+the wall's center line, the core center once walls have layers), moved by the offset; a vertex that
+touches an associated edge is the meeting point of the lines of its two edges, so the floor follows
+a wall that moves or changes thickness. The interior and exterior faces are the ones that look into
+and away from the enclosed area, whichever way the wall was drawn. A free edge lies on the line
+through its two authored points. Deleting a wall (`archbuilder.wall.delete`,
+`archbuilder.object.delete`) first freezes the edges that followed it: they keep their last derived
+position, lose the association, and the command result and the window report how many (undo restores
+both). Rules, checked on every commit that touches the floor or a wall of its storey: each loop is
+simple (no crossing, touching or fold-back), no edge is shorter than 1 mm, the outer loop has an
+area of at least 1 cm², holes lie inside the outer loop and apart from each other.
+
+`archbuilder.floor.create` takes `points` (with optional `holes`), `walls` (a closed chain in order)
+or `picks` (points: each on a wall picks it; a single point inside a closed loop of joined walls,
+including walls that end on other walls, picks the smallest loop around it), with `face`,
+`thickness` and `offset`. `archbuilder.floor.add_hole` cuts a hole from a sketched loop. The
+property grid edits `thickness` and `top_offset` through `archbuilder.property.set` and shows the
+storey, the area, the volume and the associated walls; `inspect` lists each floor with the same
+numbers. Derived, never stored: the boundary, the area (outer loop minus holes), the volume (area
+times thickness) and the solid, a prism of the boundary from the top down by the thickness.
+
+Walls and floors in this slice: a floor by interior faces sits between the walls; a floor by exterior
+faces overlaps the wall bottoms by the slab thickness. Wall volumes are not reduced and the floor
+volume is the full prism. A wall whose base is on the storey's level is not cut by the floor, and
+join cleanup between floors and walls is not done yet. Known limits: no arcs, layers, slope or shape
+editing; consecutive walls that are parallel but not collinear do not make a boundary; a dead-end
+wall inside a room is skipped when picking a loop by click. Collinear neighbors (a wall split in
+two) make one straight edge, each part following its wall; their vertex stays at its authored
+position along the line. `archbuilder.wall.flip` keeps every floor edge where it is: the following
+associations swap face and offset in the same transaction. A refused finish keeps the sketch or the
+picks in the tool.
+
+Planned IFC mapping (the writer is pending in the foundation, so nothing is exported yet): a floor
+maps to `IfcSlab` with `PredefinedType` `FLOOR`, contained in the `IfcBuildingStorey` of its storey;
+its body is an extruded area solid of the boundary (the holes as inner curves) with the thickness as
+depth, placed so that the top is at the storey's level plus `top_offset`; `NetArea` and `NetVolume`
+come from the same rule as the schedules.
+
 ### Types and families
 
 | Type | Key properties | Relationships |

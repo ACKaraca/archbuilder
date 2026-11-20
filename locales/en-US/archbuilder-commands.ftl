@@ -28,7 +28,7 @@ ab-cmd-object-select-description = Selects objects; the outline of a level selec
 ab-cmd-property-set-label = Set Property
 ab-cmd-property-set-description = Sets a field of objects of the spatial structure; the command of the property grid.
 
-ab-cmd-storey-has-walls = The storey cannot be deleted because walls stand on it (count: { $count }). Delete the walls first.
+ab-cmd-storey-has-walls = The storey cannot be deleted because walls or floors stand on it (count: { $count }). Delete them first.
 ab-cmd-wall-end-same = The end point is the same as the start point. A wall needs a length.
 ab-cmd-wall-create-label = Wall
 ab-cmd-wall-create-description = Places a wall on a storey from a baseline of two points, with a thickness, a height above the storey's level and a location line.
@@ -86,3 +86,30 @@ ab-keyword-insert-height = Height
 ab-keyword-insert-sill = Sill height
 ab-keyword-insert-hand = Flip hand
 ab-keyword-insert-facing = Flip facing
+ab-cmd-floor-no-loop = These walls do not make a closed outline. Pick walls that meet end to end around the area, or click inside a closed loop of walls.
+ab-cmd-floor-walls-parallel = Two walls that follow each other in the outline are parallel and do not meet. Pick walls that meet at corners.
+ab-cmd-no-floor-selected = No floor is named or selected. Select a floor first.
+ab-cmd-floor-too-big = A floor takes at most { $loops } loops and { $points } points in all.
+ab-cmd-floor-create-label = Floor
+ab-cmd-floor-create-description = Creates a floor slab on a storey, from picked walls (edges follow the wall faces) or from a sketched boundary, with a thickness and an offset of its top from the storey's level.
+ab-cmd-floor-add-hole-label = Floor hole
+ab-cmd-floor-add-hole-description = Cuts a hole in a floor from a sketched closed boundary.
+ab-prompt-floor-pick = Floor on { $storey }: click a wall, or click inside a closed loop of walls ({ $face ->
+        [exterior] exterior face
+       *[interior] interior face
+    }, thickness { $thickness }, offset { $offset }). { $count } wall(s) picked; press Enter to finish.
+ab-prompt-floor-start = Floor on { $storey }: specify the first point of the boundary (thickness { $thickness }, offset { $offset }).
+ab-prompt-floor-next = Floor on { $storey }: specify the next point, or press Enter or choose Close to finish ({ $count } points, thickness { $thickness }, offset { $offset }).
+ab-prompt-floor-hole-start = Hole in { $floor }: specify the first point of the hole.
+ab-prompt-floor-hole-next = Hole in { $floor }: specify the next point, or press Enter or choose Close to finish ({ $count } points).
+ab-prompt-floor-thickness = Floor thickness (now { $thickness })
+ab-prompt-floor-offset = Top offset from the level (now { $offset })
+ab-keyword-floor-thickness = Thickness
+ab-keyword-floor-offset = Level offset
+ab-keyword-floor-interior = Interior face
+ab-keyword-floor-exterior = Exterior face
+ab-keyword-floor-sketch = Sketch
+ab-keyword-floor-walls = Pick walls
+ab-keyword-floor-done = Done
+ab-keyword-floor-close = Close
+ab-keyword-floor-undo = Undo point

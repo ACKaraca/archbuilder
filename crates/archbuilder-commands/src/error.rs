@@ -71,4 +71,28 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-no-insert-selected",
     };
+    /// The walls or the click do not make a closed outline for a floor.
+    pub const FLOOR_NO_LOOP: ErrorCode = ErrorCode {
+        code: "ab.cmd.floor_no_loop",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-floor-no-loop",
+    };
+    /// Two walls that follow each other in a floor outline are parallel and do not meet.
+    pub const FLOOR_WALLS_PARALLEL: ErrorCode = ErrorCode {
+        code: "ab.cmd.floor_walls_parallel",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-floor-walls-parallel",
+    };
+    /// A hole is added and no floor is named or selected.
+    pub const NO_FLOOR_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_floor_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-floor-selected",
+    };
+    /// A floor has too many loops or points.
+    pub const FLOOR_TOO_BIG: ErrorCode = ErrorCode {
+        code: "ab.cmd.floor_too_big",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-floor-too-big",
+    };
 }

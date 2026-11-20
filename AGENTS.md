@@ -10,19 +10,18 @@ Depends only on `arc-core` and third-party crates; never on other Arc products.
 
 ## Status and where to start
 
-The spatial structure exists as code: project, site, building, storey and level as `arc-doc` object
-types with their validation rules, the commands that create and change them (new project, storey add, rename and delete, level elevation, rename building, selection), a windowed application and a headless
-CLI over them, on one pinned `arc-core`. The first wall slice exists too: the `wall` object type
-(storey, baseline, thickness, height or top level, base offset, location line), its solid derived with the
-foundation's solids, `archbuilder.wall.create` (chains, pointer or typed; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wall.flip` and `archbuilder.object.delete`
-(the Delete key), edits through
-`archbuilder.property.set`, shaded walls following their storey's level, the outliner, the
-property grid, and the wall, door and window lists of `archbuilder-cli inspect`. Wall
-joins are derived from a storey's walls and never stored; only each end's style is authored
-(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`). Wall snaps: `apps/archbuilder/src/snap.rs`.
-Doors and windows are built-in kinds hosted by a wall (`archbuilder.door.place`, `window.place`,
-`insert.flip_hand`, `flip_facing`); their openings are cut from the wall solid. Walls have no types
-or layers yet. Families, views, exchange and the rest are still specifications. Read in this order:
+The spatial structure exists as code (project, site, building, storey, level as `arc-doc` object
+types with validation rules and commands), with a windowed application and a headless CLI on one
+pinned `arc-core`. Walls exist (`archbuilder.wall.create`, `delete`, `flip`, `archbuilder.object.delete`
+on the Delete key, edits through `archbuilder.property.set`, shaded solids, outliner, property grid,
+`inspect` lists). Joins are derived and never stored; only each end's style is authored
+(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`); snaps are in
+`apps/archbuilder/src/snap.rs`. Doors and windows are built-in kinds hosted by a wall
+(`archbuilder.door.place`, `window.place`, `insert.flip_hand`, `flip_facing`) that cut openings.
+Floors (`archbuilder.floor.create` by picked walls or sketch, `floor.add_hole`) have a boundary whose
+wall-associated edges are derived from the wall faces and freeze when the wall is deleted; no layers,
+slope or join cleanup yet. Walls have no types or layers either. Families, views, exchange and the
+rest are still specifications. Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
@@ -32,10 +31,10 @@ or layers yet. Families, views, exchange and the rest are still specifications. 
 Present:
 
 ```
-crates/archbuilder-model/     spatial structure and wall types, validation rules, wall solid, wall joins, readers, project length unit (headless)
-crates/archbuilder-commands/  type set and the commands of the structure and the wall (headless)
-apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall and insert tools, labels
-apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with the wall list
+crates/archbuilder-model/     spatial, wall, insert and floor types, validation rules, solids, wall joins, readers (headless)
+crates/archbuilder-commands/  type set and the commands of the structure, wall, insert and floor (headless)
+apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall, insert and floor tools
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window and floor lists
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages
 locales/tr-TR/                Turkish catalogs of the same crates

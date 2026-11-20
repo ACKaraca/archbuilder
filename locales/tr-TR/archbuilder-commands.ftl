@@ -27,7 +27,7 @@ ab-cmd-object-select-description = Nesneleri seçer; bir seviye çizgisi, katın
 ab-cmd-property-set-label = Özelliği değiştir
 ab-cmd-property-set-description = Mekânsal yapıdaki nesnelerin bir alanını değiştirir; Özellikler panelinin komutudur.
 
-ab-cmd-storey-has-walls = Kat silinemez, çünkü üzerinde duvar var (adet: { $count }). Önce duvarları silin.
+ab-cmd-storey-has-walls = Kat silinemez, çünkü üzerinde duvar ya da döşeme var (adet: { $count }). Önce onları silin.
 ab-cmd-wall-end-same = Bitiş noktası başlangıç noktasıyla aynı. Duvarın bir uzunluğu olmalı.
 ab-cmd-wall-create-label = Duvar
 ab-cmd-wall-create-description = Bir kata, iki noktalı bir eksen çizgisinden; kalınlık, kat seviyesinden başlayan yükseklik ve konum çizgisiyle duvar yerleştirir.
@@ -85,3 +85,30 @@ ab-keyword-insert-height = Yükseklik
 ab-keyword-insert-sill = Denizlik yüksekliği
 ab-keyword-insert-hand = Kanat yönü
 ab-keyword-insert-facing = Açılış yönü
+ab-cmd-floor-no-loop = Bu duvarlar kapalı bir sınır oluşturmuyor. Alanı çevreleyen, uç uca gelen duvarları seçin ya da kapalı bir duvar halkasının içine tıklayın.
+ab-cmd-floor-walls-parallel = Sınırda birbirini izleyen iki duvar paralel, kesişmiyorlar. Köşelerde buluşan duvarları seçin.
+ab-cmd-no-floor-selected = Adı verilmiş ya da seçili bir döşeme yok. Önce bir döşeme seçin.
+ab-cmd-floor-too-big = Bir döşeme en çok { $loops } halka ve toplam { $points } nokta alabilir.
+ab-cmd-floor-create-label = Döşeme
+ab-cmd-floor-create-description = Bir katta; seçilen duvarlardan (kenarlar duvar yüzlerini izler) ya da çizilen bir sınırdan; kalınlığı ve üst yüzünün kat seviyesine göre kot farkıyla döşeme oluşturur.
+ab-cmd-floor-add-hole-label = Döşeme boşluğu
+ab-cmd-floor-add-hole-description = Çizilen kapalı bir sınırdan döşemede boşluk açar.
+ab-prompt-floor-pick = { $storey } üzerinde döşeme: bir duvara ya da kapalı bir duvar halkasının içine tıklayın ({ $face ->
+        [exterior] dış yüz
+       *[interior] iç yüz
+    }, kalınlık { $thickness }, kot farkı { $offset }). { $count } duvar seçildi; bitirmek için Enter'a basın.
+ab-prompt-floor-start = { $storey } üzerinde döşeme: sınırın ilk noktasını belirtin (kalınlık { $thickness }, kot farkı { $offset }).
+ab-prompt-floor-next = { $storey } üzerinde döşeme: sonraki noktayı belirtin ya da bitirmek için Enter'a basın veya Kapat'ı seçin ({ $count } nokta, kalınlık { $thickness }, kot farkı { $offset }).
+ab-prompt-floor-hole-start = { $floor } içinde boşluk: boşluğun ilk noktasını belirtin.
+ab-prompt-floor-hole-next = { $floor } içinde boşluk: sonraki noktayı belirtin ya da bitirmek için Enter'a basın veya Kapat'ı seçin ({ $count } nokta).
+ab-prompt-floor-thickness = Döşeme kalınlığı (şimdi { $thickness })
+ab-prompt-floor-offset = Kat seviyesine göre üst kot farkı (şimdi { $offset })
+ab-keyword-floor-thickness = Kalınlık
+ab-keyword-floor-offset = Kot farkı
+ab-keyword-floor-interior = İç yüz
+ab-keyword-floor-exterior = Dış yüz
+ab-keyword-floor-sketch = Çiz
+ab-keyword-floor-walls = Duvar seç
+ab-keyword-floor-done = Bitir
+ab-keyword-floor-close = Kapat
+ab-keyword-floor-undo = Noktayı geri al

@@ -10,6 +10,7 @@
 //! No function in this crate panics.
 
 pub mod error;
+pub mod floor;
 pub mod insert;
 pub mod join;
 pub mod names;
@@ -96,6 +97,16 @@ pub mod defaults {
             (true, true) => format!("Pencere {n}"),
             (false, false) => format!("Door {n}"),
             (false, true) => format!("Window {n}"),
+        }
+    }
+
+    /// The name of the floor slab numbered `n` on a storey in `language`: `Slab 3`, `Döşeme 3`.
+    #[must_use]
+    pub fn slab(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Döşeme {n}")
+        } else {
+            format!("Slab {n}")
         }
     }
 

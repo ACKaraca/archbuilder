@@ -26,11 +26,13 @@ use arc_ui::{
     DynamicEvent, Intent, LineAction, LineStatus, OptionControl, PointerEvent, PointerKind,
     ProductOverlay, PromptControls, WorkPlane,
 };
+use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_model::spatial;
 use archbuilder_model::wall::LocationLine;
 
+use crate::floor_tool::FloorTool;
 use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_named};
 use crate::wall_tool::{Env, Tool, storey_for};
 
@@ -42,6 +44,11 @@ struct Message {
 /// What a delete says when doors and windows went with their wall.
 const INSERTS_DELETED: Message = Message {
     message_id: "ab-notice-inserts-deleted",
+};
+
+/// What a delete says when floor edges lost their wall.
+const FLOOR_EDGES_FROZEN: Message = Message {
+    message_id: "ab-notice-floor-edges-frozen",
 };
 
 /// The view ray through the pointer, given the point it has on the level plane: from the eye
@@ -143,6 +150,10 @@ pub struct WallInteraction {
     tool: Tool,
     /// The insert tool: doors and windows placed in walls.
     inserts: InsertTool,
+    /// The floor tool: floors made from picked walls or a sketch, and their holes.
+    floors: FloorTool,
+    /// What the pointer would pick for a floor, outlined while the floor tool runs.
+    floor_hover: Vec<ProductOverlay>,
     /// The wall under the pointer and the opening that follows it, while the insert tool runs.
     hover: Option<Hover>,
     /// The outlines of the selected doors and windows.
@@ -175,6 +186,8 @@ impl WallInteraction {
         Self {
             tool: Tool::new(),
             inserts: InsertTool::new(),
+            floors: FloorTool::new(),
+            floor_hover: Vec::new(),
             hover: None,
             highlight: Vec::new(),
             symbols: None,
@@ -268,9 +281,41 @@ impl WallInteraction {
         })
     }
 
+    /// Runs `step` of the floor tool with the pieces the context gives.
+    fn with_floors(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        step: impl FnOnce(
+            &mut FloorTool,
+            &Env<'_>,
+            &mut dyn FnMut(Invocation) -> Result<arc_command::Outcome>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let (Some(registry), Ok(document)) = (self.registry.as_ref(), cx.document()) else {
+            return Ok(());
+        };
+        if cx.read_only() {
+            return Ok(());
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let session = Self::session(cx);
+        let env = Env {
+            registry,
+            document,
+            session: &session,
+            selection: cx.selection(),
+            seed: self.seed,
+        };
+        step(&mut self.floors, &env, &mut |invocation| {
+            cx.invoke(invocation)
+        })
+    }
+
     /// The command line of the tool that runs.
     fn current_line(&self) -> &arc_command::CommandLine {
-        if self.inserts.running() {
+        if self.floors.running() {
+            self.floors.line()
+        } else if self.inserts.running() {
             self.inserts.line()
         } else {
             self.tool.line()
@@ -281,6 +326,8 @@ impl WallInteraction {
     fn stop_all(&mut self) {
         self.tool.stop();
         self.inserts.stop();
+        self.floors.stop();
+        self.floor_hover.clear();
         self.hover = None;
     }
 
@@ -335,7 +382,12 @@ impl WallInteraction {
 }
 
 /// The English shortcut letter of each keyword of the wall prompts.
-const ENGLISH_SHORTCUTS: [(&str, char); 12] = [
+const ENGLISH_SHORTCUTS: [(&str, char); 17] = [
+    ("offset", 'o'),
+    ("sketch", 's'),
+    ("walls", 'w'),
+    ("done", 'd'),
+    ("undo", 'u'),
     ("width", 'w'),
     ("sill", 's'),
     ("flip_hand", 'f'),
@@ -385,6 +437,9 @@ impl WallInteraction {
 impl Interaction for WallInteraction {
     fn pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         self.refresh_highlight(cx);
+        if self.floors.running() {
+            return self.floor_pointer(cx, event);
+        }
         if self.inserts.running() {
             return self.insert_pointer(cx, event);
         }
@@ -457,36 +512,56 @@ impl Interaction for WallInteraction {
 
     fn line(&mut self, cx: &InteractionContext<'_>, action: LineAction) -> Result<()> {
         // An error a click left comes first; one this action left (a rejected answer) is shown now.
-        let pending = self.tool.take_error().or_else(|| self.inserts.take_error());
+        let pending = self
+            .tool
+            .take_error()
+            .or_else(|| self.inserts.take_error())
+            .or_else(|| self.floors.take_error());
         self.notices.clear();
         self.refresh_highlight(cx);
         let inserting = self.inserts.running();
+        let flooring = self.floors.running();
         let result = match action {
             LineAction::ClearInput => Ok(()),
+            LineAction::Cancel if flooring => {
+                self.with_floors(cx, |tool, env, run| tool.escape(env, run))
+            }
             LineAction::Cancel if inserting => {
                 self.stop_all();
                 Ok(())
             }
             LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
+            LineAction::Back if flooring => {
+                self.with_floors(cx, |tool, env, run| tool.back(env, run))
+            }
             LineAction::Back if inserting => {
                 self.with_inserts(cx, |tool, env, run| tool.back(env, run))
             }
             LineAction::Back => self.with_tool(cx, |tool, env, run| tool.back(env, run)),
+            LineAction::Submit(text)
+                if (inserting || flooring || self.tool.active()) && self.names_command(&text) =>
+            {
+                self.stop_all();
+                self.intent(cx, &Intent::new(text.trim()))
+            }
+            LineAction::Submit(text) if flooring => {
+                let text = self.typed(cx, &text);
+                self.with_floors(cx, |tool, env, run| tool.text(env, run, &text))
+            }
             LineAction::Submit(text) if kind_named(&text).is_some() => {
                 let kind = kind_named(&text);
                 self.intent(cx, &Intent::new(kind.map_or(WALL_CREATE, insert_command)))
-            }
-            // A product command named at a prompt (a toolbar button) ends the running tool first.
-            LineAction::Submit(text)
-                if (inserting || self.tool.active()) && self.names_command(&text) =>
-            {
-                self.stop_all();
-                self.with_tool(cx, |tool, env, run| tool.text(env, run, &text))
             }
             LineAction::Submit(text) if inserting => {
                 let text = self.typed(cx, &text);
                 let under = self.hover.as_ref().map(|h| h.wall);
                 self.with_inserts(cx, |tool, env, run| tool.text(env, run, &text, under))
+            }
+            LineAction::Submit(text) if is_floor_word(&text) && !self.tool.active() => {
+                self.intent(cx, &Intent::new(FLOOR_CREATE))
+            }
+            LineAction::Submit(text) if text.trim() == FLOOR_ADD_HOLE => {
+                self.intent(cx, &Intent::new(FLOOR_ADD_HOLE))
             }
             LineAction::Submit(text) if !self.tool.active() && is_erase_word(text.trim()) => {
                 self.intent(cx, &Intent::new(OBJECT_DELETE))
@@ -505,7 +580,14 @@ impl Interaction for WallInteraction {
         if !self.inserts.running() {
             self.hover = None;
         }
-        let fresh = self.tool.take_error().or_else(|| self.inserts.take_error());
+        if !self.floors.running() {
+            self.floor_hover.clear();
+        }
+        let fresh = self
+            .tool
+            .take_error()
+            .or_else(|| self.inserts.take_error())
+            .or_else(|| self.floors.take_error());
         result
             .and(pending.map_or(Ok(()), Err))
             .and(fresh.map_or(Ok(()), Err))
@@ -530,7 +612,7 @@ impl Interaction for WallInteraction {
         // The selection is the tab's: the shell fills `has_selection` and the highlight from it.
         InteractionOutput {
             status: LineStatus {
-                active: self.tool.active() || self.inserts.running(),
+                active: self.tool.active() || self.inserts.running() || self.floors.running(),
                 answers: line.active().map_or(0, |s| s.answers().len()),
                 has_selection: false,
                 has_last: line.last().is_some(),
@@ -544,6 +626,7 @@ impl Interaction for WallInteraction {
                 .chain(self.tracking())
                 .chain(self.angle_label())
                 .chain(self.insert_overlays())
+                .chain(self.floor_overlays())
                 .chain(self.symbols.iter().flat_map(|(_, o)| o.iter().cloned()))
                 // Last, so that the selection's outline lies over the hover highlight of the wall.
                 .chain(self.highlight.iter().cloned())
@@ -553,10 +636,13 @@ impl Interaction for WallInteraction {
                 .chain()
                 .map(|_| ())
                 .or(self.inserts.running().then_some(()))
+                .or(self.floors.running().then_some(()))
                 .and(self.cursor),
             history: self.notices.clone(),
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
-            inline_arguments: !self.tool.active() && !self.inserts.running(),
+            inline_arguments: !self.tool.active()
+                && !self.inserts.running()
+                && !self.floors.running(),
             ..InteractionOutput::default()
         }
     }
@@ -580,8 +666,30 @@ impl WallInteraction {
             self.hover = None;
             return self.with_tool(cx, |tool, env, run| tool.begin(env, run));
         }
+        if command == FLOOR_CREATE && intent.params.is_empty() {
+            self.tool.stop();
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_floors(cx, |tool, env, run| tool.begin(env, run, None));
+        }
+        if command == FLOOR_ADD_HOLE && intent.params.is_empty() {
+            self.tool.stop();
+            self.inserts.stop();
+            self.hover = None;
+            let snapshot = cx.document()?.snapshot();
+            let floor = cx.selection().iter().copied().find(|id| {
+                spatial::type_of(&snapshot, *id).as_deref() == Some(archbuilder_model::types::FLOOR)
+            });
+            let Some(floor) = floor else {
+                return Err(Error::new(
+                    archbuilder_commands::error::codes::NO_FLOOR_SELECTED,
+                ));
+            };
+            return self.with_floors(cx, |tool, env, run| tool.begin(env, run, Some(floor)));
+        }
         if let Some(kind) = kind_named(command).filter(|_| intent.params.is_empty()) {
             self.tool.stop();
+            self.floors.stop();
             return self.with_inserts(cx, |tool, env, run| tool.begin(env, run, kind));
         }
         if !self.names_command(command) {
@@ -594,6 +702,22 @@ impl WallInteraction {
         );
         invocation.seed = self.next_seed();
         let outcome = cx.invoke(invocation)?;
+        // Floor edges that followed a deleted wall stay put: say so.
+        let frozen = outcome
+            .value
+            .get("frozen_edges")
+            .and_then(serde_json::Value::as_i64);
+        if let Some(count) = frozen.filter(|c| *c > 0)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let text = localizer
+                .format(
+                    FLOOR_EDGES_FROZEN.message_id,
+                    &[("count", arc_base::error::Value::Int(count))],
+                )
+                .text;
+            self.push_notice(text);
+        }
         // A wall goes with its doors and windows: say so.
         let inserts = outcome
             .value
@@ -916,5 +1040,156 @@ impl WallInteraction {
             });
         }
         overlays
+    }
+}
+
+/// Whether `text` asks for the floor tool.
+fn is_floor_word(text: &str) -> bool {
+    let t = text.trim();
+    [FLOOR_CREATE, "floor", "slab", "döşeme", "doseme"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
+}
+
+impl WallInteraction {
+    /// The pointer while the floor tool runs. In the sketch mode it snaps like the wall tool (to
+    /// wall corners and ends, the points of the sketch, tracking lines and the grid) and a click
+    /// is the next point; in the walls mode it outlines what a click would pick and a click picks.
+    fn floor_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        let Some(state) = self.floors.state().cloned() else {
+            return false;
+        };
+        let (sketch, points) = self.floors.progress();
+        let walls = cx
+            .document()
+            .map(|d| archbuilder_model::floor::storey_walls(&d.snapshot(), state.storey))
+            .unwrap_or_default();
+        let at = if sketch {
+            let baselines: Vec<[[f64; 2]; 2]> =
+                walls.iter().map(|(_, w)| [w.start, w.end]).collect();
+            let mut ends = vec![[0.0, 0.0]];
+            ends.extend(points.iter().copied());
+            ends.extend(walls.iter().flat_map(|(_, w)| w.plain_footprint()));
+            let hit = event.model.and_then(|m| {
+                crate::snap::snap(&crate::snap::Input {
+                    pointer: [m.x, m.y],
+                    pixels_per_unit: event.pixels_per_unit,
+                    ends: &ends,
+                    walls: &baselines,
+                    from: points.last().copied(),
+                })
+            });
+            self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
+            self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
+            self.snap = hit.as_ref().and_then(|h| {
+                let kind = match h.kind {
+                    crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
+                    crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
+                    crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
+                    _ => return None,
+                };
+                Some((kind, h.point))
+            });
+            hit.map(|h| h.point)
+        } else {
+            self.snap = None;
+            self.guides.clear();
+            self.angle = None;
+            event.model.map(|m| [m.x, m.y])
+        };
+        if let Some(at) = at {
+            self.cursor = Some(at);
+        }
+        match event.kind {
+            PointerKind::Move => {
+                self.floor_hover = match (sketch, at) {
+                    (false, Some(at)) => Self::pick_outline(&walls, &points, at, state.elevation),
+                    _ => Vec::new(),
+                };
+                false
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                if let Some(at) = at {
+                    let _ = self.with_floors(cx, |tool, env, run| tool.click(env, run, at));
+                    if let Some(error) = self.floors.take_error() {
+                        self.notice_error(cx, &error);
+                    }
+                }
+                true
+            }
+            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
+                // Enter: the floor is made when it has enough points or picks.
+                let _ = self.with_floors(cx, |tool, env, run| tool.text(env, run, ""));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The outline of what a click at `at` would pick: the wall under it, or the loop around it.
+    fn pick_outline(
+        walls: &[(ObjectId, archbuilder_model::wall::Wall)],
+        picked: &[[f64; 2]],
+        at: [f64; 2],
+        z: f64,
+    ) -> Vec<ProductOverlay> {
+        let path = |points: &[[f64; 2]]| ProductOverlay::Path {
+            points: points
+                .iter()
+                .chain(points.first())
+                .map(|p| Point3::new(p[0], p[1], z))
+                .collect(),
+            dashed: true,
+        };
+        let by_id = |id: ObjectId| walls.iter().find(|(w, _)| *w == id).map(|(_, w)| *w);
+        let mut out: Vec<ProductOverlay> = picked
+            .iter()
+            .filter_map(|p| archbuilder_model::floor::wall_at(walls, *p).and_then(by_id))
+            .map(|w| path(&w.plain_footprint()))
+            .collect();
+        if let Some(wall) = archbuilder_model::floor::wall_at(walls, at).and_then(by_id) {
+            out.push(path(&wall.plain_footprint()));
+        } else if picked.is_empty()
+            && let Some(ids) = archbuilder_model::floor::loop_around(walls, at)
+        {
+            let chain: Vec<_> = ids
+                .iter()
+                .filter_map(|id| walls.iter().find(|(w, _)| w == id).copied())
+                .collect();
+            if let Ok(vertices) = archbuilder_model::floor::vertices_of_walls(
+                &chain,
+                archbuilder_model::floor::Face::Interior,
+                0.0,
+            ) {
+                let points: Vec<[f64; 2]> = vertices.iter().map(|v| v.point).collect();
+                out.push(path(&points));
+            }
+        }
+        out
+    }
+
+    /// The overlays of the floor tool: the outline of what a click would pick, and the sketch with
+    /// its rubber band.
+    fn floor_overlays(&self) -> Vec<ProductOverlay> {
+        let (Some(state), true) = (self.floors.state(), self.floors.running()) else {
+            return Vec::new();
+        };
+        let (sketch, points) = self.floors.progress();
+        let mut out = self.floor_hover.clone();
+        if sketch && !points.is_empty() {
+            let z = state.elevation;
+            let mut line: Vec<Point3> = points.iter().map(|p| Point3::new(p[0], p[1], z)).collect();
+            if let Some(c) = self.cursor {
+                line.push(Point3::new(c[0], c[1], z));
+                if points.len() >= 2 {
+                    line.push(Point3::new(points[0][0], points[0][1], z));
+                }
+            }
+            out.push(ProductOverlay::Path {
+                points: line,
+                dashed: true,
+            });
+        }
+        out
     }
 }

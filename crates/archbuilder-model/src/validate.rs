@@ -27,7 +27,7 @@ use arc_doc::{Change, Document, DocumentValidator, Finding, Object, Severity, Sn
 use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
-use crate::types::{self, BUILDING, DOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW};
+use crate::types::{self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW};
 
 /// The key a name is compared by ([`crate::names::fold`]).
 fn folded(object: &Object) -> String {
@@ -40,7 +40,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         SITE => Some(PROJECT),
         BUILDING => Some(SITE),
         STOREY | LEVEL => Some(BUILDING),
-        WALL => Some(STOREY),
+        WALL | FLOOR => Some(STOREY),
         DOOR | WINDOW => Some(WALL),
         _ => None,
     }
@@ -172,7 +172,54 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     }
     check_walls_of_levels(candidate, touched, &mut out);
     check_inserts_of_walls(candidate, touched, &mut out);
+    check_floors(candidate, touched, &mut out);
     out
+}
+
+/// The floors a change can break: those that changed, and those on the storey of a wall that
+/// changed (their associated edges follow the wall). Each boundary is checked as derived.
+fn check_floors(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>, out: &mut Vec<Error>) {
+    let mut storeys: Vec<ObjectId> = Vec::new();
+    let mut floors: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(WALL) => storeys.extend(get(candidate, *id).and_then(|w| w.header.owner)),
+            Some(FLOOR) => floors.extend(get(candidate, *id)),
+            _ => {}
+        }
+    }
+    for storey in storeys {
+        floors.extend(crate::spatial::children(candidate, FLOOR, storey));
+    }
+    floors.sort_by_key(|f| f.id);
+    floors.dedup_by_key(|f| f.id);
+    for floor in floors {
+        let error = match crate::floor::Derived::of(candidate, &floor) {
+            None => codes::FLOOR_MALFORMED,
+            Some(d) => match d.boundary.check() {
+                Ok(()) => continue,
+                Err(r) => refusal_code(r),
+            },
+        };
+        out.push(Error::new(error).with_arg("name", display_name(&floor)));
+    }
+}
+
+/// The error code of a boundary refusal.
+#[must_use]
+pub fn refusal_code(refusal: crate::floor::Refusal) -> arc_base::ErrorCode {
+    use crate::floor::Refusal;
+    match refusal {
+        Refusal::Malformed => codes::FLOOR_MALFORMED,
+        Refusal::EdgeTooShort => codes::FLOOR_EDGE_SHORT,
+        Refusal::SelfIntersecting => codes::FLOOR_SELF_INTERSECTING,
+        Refusal::Area => codes::FLOOR_AREA,
+        Refusal::HoleOutside => codes::FLOOR_HOLE_OUTSIDE,
+        Refusal::HolesOverlap => codes::FLOOR_HOLES_OVERLAP,
+    }
 }
 
 /// The inserts a change of other objects can break: those of every wall that changed or stands on

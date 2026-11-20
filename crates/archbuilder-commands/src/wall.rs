@@ -24,8 +24,8 @@ use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{Object, Snapshot, Value};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, DEFAULT_THICKNESS, HEIGHT_RANGE, LEVEL, MIN_WALL_LENGTH, STOREY, THICKNESS_RANGE, WALL,
-    storey,
+    self, DEFAULT_THICKNESS, FLOOR, HEIGHT_RANGE, LEVEL, MIN_WALL_LENGTH, STOREY, THICKNESS_RANGE,
+    WALL, storey,
 };
 use archbuilder_model::units::{decimal_separator, length_text};
 use archbuilder_model::wall::{JoinStyle, LocationLine};
@@ -249,6 +249,12 @@ pub struct Deleted {
     /// The doors and windows deleted: those of the deleted walls (they go with their host in the
     /// same transaction) and those named themselves.
     pub inserts: usize,
+    /// The floors deleted by themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub floors: Option<usize>,
+    /// The floor edges that followed a deleted wall and now stay where they were.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frozen_edges: Option<usize>,
 }
 
 /// Deletes walls and inserts in one transaction, so one undo step brings them all back. The
@@ -257,13 +263,19 @@ fn delete_set(
     ctx: &mut Context<'_>,
     walls: BTreeSet<ObjectId>,
     inserts: BTreeSet<ObjectId>,
+    floors: BTreeSet<ObjectId>,
 ) -> Result<Deleted> {
-    if walls.is_empty() && inserts.is_empty() {
+    if walls.is_empty() && inserts.is_empty() && floors.is_empty() {
         return Err(Error::new(codes::NOTHING_SELECTED));
     }
     for id in &walls {
         expect(ctx.snapshot(), *id, WALL)?;
     }
+    for id in &floors {
+        expect(ctx.snapshot(), *id, FLOOR)?;
+    }
+    // Floor edges that follow a deleted wall keep their last position.
+    let frozen_edges = crate::floor::freeze_edges(ctx, &walls)?;
     // The inserts of a deleted wall go with it; the others named are deleted by themselves.
     let mut cascaded = 0;
     for wall in &walls {
@@ -279,7 +291,7 @@ fn delete_set(
     let count = cascaded + alone.len();
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
-    for id in walls.iter().chain(&alone) {
+    for id in walls.iter().chain(&alone).chain(&floors) {
         txn.delete(*id)?;
     }
     txn.apply_delete_rules(&limits)?;
@@ -287,6 +299,8 @@ fn delete_set(
     Ok(Deleted {
         walls: walls.len(),
         inserts: count,
+        floors: Some(floors.len()).filter(|n| *n > 0),
+        frozen_edges: Some(frozen_edges).filter(|n| *n > 0),
     })
 }
 
@@ -299,7 +313,7 @@ fn delete_walls(ctx: &mut Context<'_>, p: DeleteWalls) -> Result<Deleted> {
         Some(list) => list.into_iter().map(|IdParam(id)| id).collect(),
         None => selected_walls(ctx).into_iter().collect(),
     };
-    delete_set(ctx, ids, BTreeSet::new())
+    delete_set(ctx, ids, BTreeSet::new(), BTreeSet::new())
 }
 
 /// Flips walls: the baseline is reversed (start and end swap) and the location line stays. The
@@ -318,6 +332,41 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
     }
     for id in &ids {
         expect(ctx.snapshot(), *id, WALL)?;
+    }
+    // Floors keep their edges where they are: the left of a reversed baseline is the other side.
+    let flips: Vec<(
+        ObjectId,
+        archbuilder_model::wall::Wall,
+        archbuilder_model::wall::Wall,
+    )> = ids
+        .iter()
+        .filter_map(|id| {
+            let w = spatial::get(ctx.snapshot(), *id)
+                .and_then(|o| archbuilder_model::wall::Wall::from_values(&o.values))?;
+            let new = archbuilder_model::wall::Wall {
+                start: w.end,
+                end: w.start,
+                start_join: w.end_join,
+                end_join: w.start_join,
+                ..w
+            };
+            Some((*id, w, new))
+        })
+        .collect();
+    let mut retargeted = Vec::new();
+    for object in spatial::objects(ctx.snapshot(), FLOOR) {
+        if let Some(vertices) = archbuilder_model::floor::Floor::from_values(&object.values)
+            .and_then(|f| f.flipped(&flips))
+        {
+            retargeted.push((
+                object.id,
+                archbuilder_model::floor::Floor::vertex_values(&vertices),
+            ));
+        }
+    }
+    for (floor, vertices) in retargeted {
+        ctx.txn()?
+            .modify(floor, arc_doc::FieldPath::new("vertices"), Some(vertices))?;
     }
     for id in ids {
         let Some(wall) = spatial::get(ctx.snapshot(), id)
@@ -412,16 +461,22 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
         .copied()
         .filter(|id| crate::insert::is_insert(snapshot, *id))
         .collect();
-    if walls.is_empty() && inserts.is_empty() {
+    let floors: BTreeSet<ObjectId> = ctx
+        .selection()
+        .iter()
+        .copied()
+        .filter(|id| spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(FLOOR))
+        .collect();
+    if walls.is_empty() && inserts.is_empty() && floors.is_empty() {
         crate::structure::delete_storey(ctx, crate::structure::DeleteStorey::default())
             .map(|()| Deleted::default())
     } else {
-        delete_set(ctx, walls, inserts)
+        delete_set(ctx, walls, inserts, floors)
     }
 }
 
 /// The storey a wall goes on: the given one, the selection's, else the lowest.
-fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Object> {
+pub(crate) fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Object> {
     let snapshot = ctx.snapshot();
     if let Some(IdParam(id)) = given {
         return expect(snapshot, id, STOREY);
@@ -429,7 +484,7 @@ fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Object> {
     for id in ctx.selection() {
         let found = match spatial::type_of(snapshot, *id).as_deref() {
             Some(STOREY) => spatial::get(snapshot, *id),
-            Some(WALL) => spatial::get(snapshot, *id)
+            Some(WALL | FLOOR) => spatial::get(snapshot, *id)
                 .and_then(|w| w.header.owner)
                 .and_then(|owner| spatial::get(snapshot, owner)),
             Some(LEVEL) => spatial::objects(snapshot, STOREY)

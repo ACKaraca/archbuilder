@@ -511,7 +511,8 @@ pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()
         None => storey_in_selection(ctx).ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?,
     };
     let object = expect(ctx.snapshot(), id, STOREY)?;
-    let walls = spatial::walls(ctx.snapshot(), id).len();
+    let walls = spatial::walls(ctx.snapshot(), id).len()
+        + spatial::children(ctx.snapshot(), types::FLOOR, id).len();
     if walls > 0 {
         return Err(Error::new(codes::STOREY_HAS_WALLS).with_arg("count", walls.to_string()));
     }

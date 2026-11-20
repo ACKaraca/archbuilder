@@ -35,13 +35,18 @@ pub const LEVEL: &str = "archbuilder.level";
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
+/// The type key of the floor (slab).
+pub const FLOOR: &str = "archbuilder.floor";
+
 /// The type key of the door.
 pub const DOOR: &str = "archbuilder.door";
 /// The type key of the window.
 pub const WINDOW: &str = "archbuilder.window";
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 8] = [PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW];
+pub const KEYS: [&str; 9] = [
+    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR,
+];
 
 /// The range of an insert's distance along its wall, in meters.
 pub const DISTANCE_RANGE: (f64, f64) = (0.0, 100_000.0);
@@ -174,6 +179,39 @@ pub mod insert {
     /// The facing ([`crate::insert::Facing`] code).
     pub const FACING: usize = 9;
 }
+
+/// Field positions of `archbuilder.floor`.
+pub mod floor {
+    /// The floor name.
+    pub const NAME: usize = 0;
+    /// The thickness of the slab, in meters.
+    pub const THICKNESS: usize = 1;
+    /// The top's distance above the storey's level, in meters.
+    pub const TOP_OFFSET: usize = 2;
+    /// The boundary vertices of all loops ([`crate::floor::Vertex`] records).
+    pub const VERTICES: usize = 3;
+
+    /// Field positions of one vertex record.
+    pub mod vertex {
+        /// The loop: 0 outer, 1 and up holes.
+        pub const LOOP: usize = 0;
+        /// The x coordinate, in meters.
+        pub const X: usize = 1;
+        /// The y coordinate, in meters.
+        pub const Y: usize = 2;
+        /// The wall the edge from this vertex follows; absent for a free edge.
+        pub const WALL: usize = 3;
+        /// The face of that wall ([`crate::floor::Face`] code).
+        pub const FACE: usize = 4;
+        /// The offset from that face, in meters.
+        pub const OFFSET: usize = 5;
+    }
+}
+
+/// The range of a floor's thickness, in meters.
+pub const FLOOR_THICKNESS_RANGE: (f64, f64) = (0.001, 5.0);
+/// The thickness of a floor created without one, in meters.
+pub const DEFAULT_FLOOR_THICKNESS: f64 = 0.2;
 
 /// The elevation base code of the project origin.
 pub const ELEVATION_BASE_PROJECT: u32 = 0;
@@ -334,7 +372,19 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         join_field("start_join"),
         join_field("end_join"),
     ];
+    let floor = vec![
+        name_field("identity"),
+        length_field("thickness", Some(real(FLOOR_THICKNESS_RANGE)))
+            .with_default(length(DEFAULT_FLOOR_THICKNESS)),
+        length_field("top_offset", Some(real(BASE_OFFSET_RANGE))),
+        FieldDecl::new("vertices", ValueType::List(Box::new(vertex_type())))
+            .with_bound(Bound::Length {
+                max: crate::floor::MAX_VERTICES as u64,
+            })
+            .in_aspect("geometry"),
+    ];
     for (key, fields) in [
+        (FLOOR, floor),
         (DOOR, insert_fields()),
         (WINDOW, insert_fields()),
         (PROJECT, project),
@@ -347,6 +397,31 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(declaration(key, fields)?)?;
     }
     Ok(())
+}
+
+/// One boundary vertex of a floor: the loop, the authored point and the optional wall face the
+/// edge that starts there follows.
+fn vertex_type() -> ValueType {
+    let mut wall = reference_to(WALL);
+    wall.rule.on_delete = OnDelete::Clear;
+    wall.rule.cardinality = Cardinality::Optional;
+    ValueType::Record(vec![
+        FieldDecl::new("loop", ValueType::I64).with_default(Value::I64(0)),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("wall", ValueType::Reference(wall)).optional(),
+        FieldDecl::new(
+            "face",
+            ValueType::Enum(
+                crate::floor::Face::ALL
+                    .iter()
+                    .map(|f| EnumVariant::new(f.name(), f.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(crate::floor::Face::Interior.code())),
+        length_field("offset", Some(real(BASE_OFFSET_RANGE))),
+    ])
 }
 
 /// The fields of a door or a window, which share one layout; the host is the header owner.
@@ -454,7 +529,16 @@ mod tests {
             ("hand", insert::HAND),
             ("facing", insert::FACING),
         ];
-        let expect: [(&str, &[(&str, usize)]); 8] = [
+        let expect: [(&str, &[(&str, usize)]); 9] = [
+            (
+                FLOOR,
+                &[
+                    ("name", floor::NAME),
+                    ("thickness", floor::THICKNESS),
+                    ("top_offset", floor::TOP_OFFSET),
+                    ("vertices", floor::VERTICES),
+                ],
+            ),
             (DOOR, insert_fields),
             (WINDOW, insert_fields),
             (
