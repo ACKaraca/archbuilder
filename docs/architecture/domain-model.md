@@ -60,6 +60,43 @@ All physical elements share: `id`, `category`, `type_id` (where applicable), `st
 | `ServiceSegment`, `ServiceFitting`, `ServiceEquipment`, `ServiceSystem`, `ServiceSpace` | Size, route, connectors, system classification, flow | Systems connect through `Connector` records of family instances |
 | `Mass`, `MassFloor`, `DividedSurface` | Forms, levels, UV grids | Faces referenced by face-based walls, roofs and curtain systems |
 
+#### The wall of the first slice
+
+The first implemented `Wall` is a reduced record, `archbuilder.wall`, owned by its storey (the wall
+stands on the storey's level; the storey must exist). It stores authored data only, lengths in
+meters:
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | Unique within the storey, `Wall <n>` by default | Not blank |
+| `start_x`, `start_y`, `end_x`, `end_y` | The baseline's two points, project coordinates | Within 100 km of the origin; the baseline is at least 1 mm long |
+| `thickness` | Distance between the two faces | 1 mm to 5 m; 0.2 m by default |
+| `height` | Height above the base of an unconnected wall; the fallback of a constrained one | 10 mm to 1000 m; 3 m by default |
+| `top_level` | The level the top is constrained to; absent for an unconnected wall | Optional reference to a level, cleared when the level is deleted; by default the level of the next higher storey, when there is one |
+| `base_offset` | The base's distance above the storey's level | -1000 m to 1000 m; 0 by default |
+| `location_line` | Which line of the wall the baseline is: `center`, `exterior` (the exterior face) or `interior` (the interior face) | `center` by default; changing it keeps the wall's physical position: the stored baseline moves across by the difference of the offsets |
+
+The solid is derived, never stored: a prism over the rectangle of the baseline and the thickness,
+from the storey's level elevation plus the base offset, up by the height. With a `top_level` the
+height is derived: that level's elevation minus the base, so raising the level raises the wall; a
+level that is not above the base is refused. Setting the height of a wall, or giving one when it is
+created, leaves it unconnected. The side of a wall is
+named from the baseline's direction: the face on the left of the direction from the start point to
+the end point is the exterior face, the right one the interior face, so `exterior` puts the body to
+the right of the baseline and `interior` to the left. Faces keep their identity through the solid
+kernel's face tags (`Side` of the footprint loop: the exterior face is curve 2 and the interior
+face is curve 0 of the loop that runs start-right, end-right, end-left, start-left; the two ends
+are curves 1 and 3; the caps are `Top` and `Bottom`).
+
+Known limits of this slice: walls have no joins (two walls that meet at a corner overlap, and
+each keeps the volume of its own prism), no constraints, types, layers, curves or hosted inserts.
+The viewport extracts a wall again when its storey or the level of its storey changes. A storey
+that has walls cannot be deleted; the walls are never deleted with it. `archbuilder.wall.flip` moves a wall's body to the other side of its location line (the
+baseline stays; a center line has no side), and `archbuilder.wall.delete`
+deletes walls (the named ones, else the selected ones) in one transaction, so one undo restores
+them; `archbuilder.object.delete`, the Delete key, deletes the selected walls, else the selected
+storey.
+
 ### Types and families
 
 | Type | Key properties | Relationships |

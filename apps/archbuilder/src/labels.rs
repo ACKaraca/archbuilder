@@ -8,7 +8,6 @@
 
 use arc_app::application::{Application, TabId};
 use arc_base::math::Point3;
-use arc_base::{Dimension, Quantity};
 use arc_doc::{Object, Snapshot};
 use arc_ui::ProductOverlay;
 use archbuilder_model::spatial;
@@ -17,21 +16,12 @@ use archbuilder_model::units::LengthUnit;
 
 use crate::extract_level::HALF;
 
-/// The decimal separator of the interface language `language` (a tag such as `tr` or `en-US`).
-#[must_use]
-pub fn decimal_separator(language: &str) -> char {
-    if language.starts_with("tr") { ',' } else { '.' }
-}
+pub use archbuilder_model::units::decimal_separator;
 
 /// `meters` in `unit` with the decimal separator `separator`.
 #[must_use]
 pub fn elevation_text(meters: f64, unit: LengthUnit, separator: char) -> String {
-    unit.format()
-        .and_then(|f| {
-            f.format(Quantity::new(meters, Dimension::LENGTH), separator)
-                .ok()
-        })
-        .unwrap_or_default()
+    archbuilder_model::units::length_text(meters, unit, separator)
 }
 
 /// The text of a level's label: its name, then its elevation.

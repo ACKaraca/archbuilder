@@ -1,15 +1,18 @@
 //! The ArchBuilder desktop application (wiring only): the ArchBuilder type set and commands in the
-//! windowed shell of `arc-app`. The outliner shows the project, site, building and storeys, the
-//! property grid edits names and elevations through the commands, and the viewport draws each
-//! level as a horizontal reference plane, with its name and elevation as a label that faces the
-//! screen. The binary builds this product and starts the event loop; tests drive the same product
-//! headless.
+//! windowed shell of `arc-app`. The outliner shows the project, site, building, storeys and the
+//! walls of each storey, the property grid edits names, elevations and the fields of a wall
+//! through the commands, and the viewport draws each level as a horizontal reference plane, with
+//! its name and elevation as a label that faces the screen, and each wall as a shaded solid. The
+//! wall tool ([`wall_tool`], [`interaction`]) places chains of walls with the pointer or typed
+//! coordinates. The binary builds this product and starts the event loop; tests drive the same
+//! product headless.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use arc_app::product::{Entry, Extractor, FileType, Product, ProductBuilder};
 use arc_app::shell::{
-    self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel,
+    self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel, WorkPlaneProbe,
 };
 use arc_base::{Error, Result};
 use arc_command::Clock;
@@ -17,13 +20,17 @@ use arc_doc::package::LockOwner;
 use arc_gpu::extract;
 use arc_ui::{Axis, Binding, Dock, DockLayout, Menu, MenuItem};
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
-use archbuilder_model::types::LEVEL;
+use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
+use archbuilder_model::types::{LEVEL, WALL};
 
 pub mod chrome;
 pub mod extract_level;
+pub mod extract_wall;
+pub mod interaction;
 pub mod labels;
 pub mod outliner;
 pub mod properties;
+pub mod wall_tool;
 
 /// The viewport panel.
 pub const VIEWPORT: &str = "archbuilder.viewport";
@@ -64,6 +71,11 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         .with_types(archbuilder_commands::types()?)
         .with_commands(archbuilder_commands::registry()?);
     arc_app::commands::register(builder.commands_mut())?;
+    let seed = Arc::new(AtomicU64::new(clock.now_unix_millis()));
+    builder.interaction(move || Box::new(interaction::WallInteraction::new(&seed)));
+    // A wall's solid derives from the elevation of its storey's level: a change of the level or
+    // the storey extracts the storey's walls again.
+    builder.extraction_dependents(extract_wall::dependents);
     shell::prefs::register_settings(&mut builder)?;
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
@@ -121,6 +133,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             shell::extractor(|_, object, cancel| extract_level::extract_level(object, cancel))
         }),
     })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.wall".into(),
+        types: vec![WALL.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_wall::extract_wall(snapshot, object, cancel)
+            })
+        }),
+    })?;
     builder.build(clock, owner)
 }
 
@@ -136,7 +157,7 @@ fn menu() -> Result<Menu> {
     let mut items = shell::default_menu()?.items().to_vec();
     items.push(MenuItem::Submenu {
         label: MENU_STRUCTURE.message_id.into(),
-        items: [STOREY_ADD, STOREY_DELETE]
+        items: [STOREY_ADD, STOREY_DELETE, WALL_CREATE]
             .into_iter()
             .map(|c| MenuItem::Command { command: c.into() })
             .collect(),
@@ -184,7 +205,8 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
             binding("Ctrl+W", arc_app::commands::FILE_CLOSE),
             binding("Ctrl+Q", arc_app::commands::APP_QUIT),
             // Ctrl+Z and Ctrl+Y are the shell's: the command line handles them once.
-            binding("Delete", STOREY_DELETE),
+            // Delete removes the selected walls, else the selected storey.
+            binding("Delete", OBJECT_DELETE),
         ],
         appearance: arc_ui::Appearance {
             theme: arc_ui::ThemeId::Dark,
@@ -192,6 +214,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         },
         display: None,
         overlays: Some(OverlayProbe(Arc::new(labels::overlays))),
+        work_plane: Some(WorkPlaneProbe(Arc::new(interaction::work_plane))),
         // Seen from the front and the right, from above: the levels are told apart at once.
         initial_view: Some(InitialView {
             toward_camera: [1.0, -1.4, 0.9],

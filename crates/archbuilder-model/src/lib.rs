@@ -1,6 +1,7 @@
 //! The ArchBuilder document model, headless: the object types of the spatial structure
 //! ([`types`]) with their validation rules ([`validate`]), readers over a snapshot
-//! ([`spatial`]) and the project length unit ([`units`]).
+//! ([`spatial`]), the project length unit ([`units`]) and the wall with its derived solid
+//! ([`wall`]).
 //!
 //! The structure follows the domain model document: a project contains a site, the site
 //! contains buildings, a building contains storeys, and the levels of a building are datums that
@@ -14,6 +15,7 @@ pub mod spatial;
 pub mod types;
 pub mod units;
 pub mod validate;
+pub mod wall;
 
 use arc_base::Result;
 use arc_doc::TypeRegistry;
@@ -72,6 +74,16 @@ pub mod defaults {
     #[must_use]
     pub fn names(language: &str) -> Names {
         if turkish(language) { TURKISH } else { ENGLISH }
+    }
+
+    /// The name of the wall numbered `n` on a storey in `language`: `Wall 3`, `Duvar 3`.
+    #[must_use]
+    pub fn wall(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Duvar {n}")
+        } else {
+            format!("Wall {n}")
+        }
     }
 
     /// The name of the storey numbered `n` above the ground floor in `language`: `Floor 3`,

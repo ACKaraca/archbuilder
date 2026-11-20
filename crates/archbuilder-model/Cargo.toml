@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 arc-base = { workspace = true }
 arc-doc = { workspace = true }
+arc-geom = { workspace = true }
 
 [lints]
 workspace = true

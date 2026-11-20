@@ -4,13 +4,16 @@
 //! [`registry`] is the command set ([`structure`]): `archbuilder.project.new`,
 //! `archbuilder.storey.add`, `archbuilder.storey.rename`, `archbuilder.storey.delete`,
 //! `archbuilder.building.rename`, `archbuilder.level.set_elevation`, `archbuilder.object.rename`,
-//! `archbuilder.object.select` (selection only, no transaction) and `archbuilder.property.set`. Every change reaches a document through one of them, in one
+//! `archbuilder.object.select` (selection only, no transaction) and `archbuilder.property.set`;
+//! [`wall`]: `archbuilder.wall.create`, `archbuilder.wall.delete` and `archbuilder.object.delete`
+//! (the selected walls, else the selected storey). Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
 //! No function in this crate panics.
 
 pub mod error;
 pub mod structure;
+pub mod wall;
 
 use std::sync::Arc;
 
@@ -39,6 +42,7 @@ pub fn types() -> Result<TypeRegistry> {
 pub fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
     structure::register(&mut registry)?;
+    wall::register(&mut registry)?;
     Ok(registry)
 }
 

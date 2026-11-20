@@ -13,7 +13,14 @@ Depends only on `arc-core` and third-party crates; never on other Arc products.
 The spatial structure exists as code: project, site, building, storey and level as `arc-doc` object
 types with their validation rules, the commands that create and change them (new project, add,
 rename and delete storey, level elevation, rename building, selection), a windowed application and a headless
-CLI over them, on one pinned `arc-core`. Walls, families, views, exchange and the rest are still
+CLI over them, on one pinned `arc-core`. The first wall slice exists too: the `wall` object type
+(storey, baseline, thickness, height or top level, base offset, location line), its solid derived with the
+foundation's planar solids, `archbuilder.wall.create` (chains of walls with the pointer or typed
+coordinates; one undo step per wall), `archbuilder.wall.delete`, `archbuilder.wall.flip` and `archbuilder.object.delete`
+(the Delete key: the selected walls, else the selected storey; one undo step), edits through
+`archbuilder.property.set`, shaded walls in the viewport that follow their storey's level
+elevation, the outliner and the property grid, and the wall list of `archbuilder-cli inspect`. Walls
+have no joins, types, layers or hosted inserts yet. Families, views, exchange and the rest are still
 specifications. Read in this order: `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
@@ -23,10 +30,10 @@ specifications. Read in this order: `docs/product/vision.md`,
 Present:
 
 ```
-crates/archbuilder-model/     spatial structure types, validation rules, readers, project length unit (headless)
-crates/archbuilder-commands/  type set and the commands of the structure (headless)
-apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, level extractor and labels
-apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite
+crates/archbuilder-model/     spatial structure and wall types, validation rules, wall solid, readers, project length unit (headless)
+crates/archbuilder-commands/  type set and the commands of the structure and the wall (headless)
+apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, level and wall extractors, wall tool, labels
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with the wall list
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages
 locales/tr-TR/                Turkish catalogs of the same crates

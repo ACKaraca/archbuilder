@@ -13,10 +13,14 @@ arc-app = { workspace = true, features = ["window"] }
 arc-base = { workspace = true }
 arc-command = { workspace = true }
 arc-doc = { workspace = true }
+arc-geom = { workspace = true }
 arc-gpu = { workspace = true }
+arc-mesh = { workspace = true }
 arc-ui = { workspace = true }
 archbuilder-commands = { path = "../../crates/archbuilder-commands" }
 archbuilder-model = { path = "../../crates/archbuilder-model" }
+schemars = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

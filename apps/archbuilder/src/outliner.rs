@@ -1,5 +1,5 @@
-//! The outliner: the project, its site, the buildings of the site and the storeys of each
-//! building as a tree labelled with the names the user gave, the highest storey at the top as in
+//! The outliner: the project, its site, the buildings of the site, the storeys of each
+//! building and the walls of each storey as a tree labelled with the names the user gave, the highest storey at the top as in
 //! an elevation drawing. Selecting a row runs `archbuilder.object.select`, which selects a storey
 //! with its level; renaming a row runs `archbuilder.object.rename`.
 
@@ -65,12 +65,24 @@ impl<'a> Structure<'a> {
                 );
                 for building in buildings {
                     // `storeys` lists from the lowest level up; the outliner lists the highest first.
-                    let storeys = spatial::storeys(snapshot, building.id)
-                        .into_iter()
-                        .rev()
-                        .map(|s| (s.storey.id, name(&s.storey)))
-                        .collect();
-                    children.insert(Some(building.id), storeys);
+                    let storeys = spatial::storeys(snapshot, building.id);
+                    for s in &storeys {
+                        // "Wall 2" before "Wall 10": by length of the name, then by name.
+                        let mut walls: Vec<_> = spatial::walls(snapshot, s.storey.id)
+                            .iter()
+                            .map(|w| (w.id, name(w)))
+                            .collect();
+                        walls.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
+                        children.insert(Some(s.storey.id), walls);
+                    }
+                    children.insert(
+                        Some(building.id),
+                        storeys
+                            .into_iter()
+                            .rev()
+                            .map(|s| (s.storey.id, name(&s.storey)))
+                            .collect(),
+                    );
                 }
             }
         }

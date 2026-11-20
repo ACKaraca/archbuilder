@@ -31,6 +31,24 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-project-not-unique",
     };
+    /// A wall's baseline is shorter than [`crate::types::MIN_WALL_LENGTH`].
+    pub const WALL_TOO_SHORT: ErrorCode = ErrorCode {
+        code: "ab.model.wall_too_short",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-too-short",
+    };
+    /// The level a wall's top refers to is not above the wall's base.
+    pub const WALL_TOP_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_top_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-top-invalid",
+    };
+    /// A level moved to or below the base of walls whose top follows it.
+    pub const LEVEL_BELOW_WALLS: ErrorCode = ErrorCode {
+        code: "ab.model.level_below_walls",
+        category: Category::Conflict,
+        message_id: "ab-model-level-below-walls",
+    };
     /// A storey refers to a level of another building, to a level that is not flagged as a
     /// storey level, or to a level that another storey already uses.
     pub const LEVEL_INVALID: ErrorCode = ErrorCode {

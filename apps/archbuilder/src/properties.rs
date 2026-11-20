@@ -11,7 +11,7 @@ use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject}
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, ELEVATION_RANGE, LEVEL, PROJECT, SITE, STOREY, level, storey,
+    self, BUILDING, ELEVATION_RANGE, LEVEL, PROJECT, SITE, STOREY, WALL, level, storey,
 };
 
 /// A message of the application.
@@ -79,6 +79,90 @@ const LABELS: &[(&str, Message)] = &[
         "level",
         Message {
             message_id: "ab-prop-level",
+        },
+    ),
+    (
+        "start_x",
+        Message {
+            message_id: "ab-prop-start-x",
+        },
+    ),
+    (
+        "start_y",
+        Message {
+            message_id: "ab-prop-start-y",
+        },
+    ),
+    (
+        "end_x",
+        Message {
+            message_id: "ab-prop-end-x",
+        },
+    ),
+    (
+        "end_y",
+        Message {
+            message_id: "ab-prop-end-y",
+        },
+    ),
+    (
+        "thickness",
+        Message {
+            message_id: "ab-prop-thickness",
+        },
+    ),
+    (
+        "height",
+        Message {
+            message_id: "ab-prop-height",
+        },
+    ),
+    (
+        "base_offset",
+        Message {
+            message_id: "ab-prop-base-offset",
+        },
+    ),
+    (
+        "location_line",
+        Message {
+            message_id: "ab-prop-location-line",
+        },
+    ),
+    (
+        "top_constraint",
+        Message {
+            message_id: "ab-prop-top-constraint",
+        },
+    ),
+    (
+        "unconnected",
+        Message {
+            message_id: "ab-top-unconnected",
+        },
+    ),
+    (
+        "wall_storey",
+        Message {
+            message_id: "ab-prop-wall-storey",
+        },
+    ),
+    (
+        "center",
+        Message {
+            message_id: "ab-loc-center",
+        },
+    ),
+    (
+        "exterior",
+        Message {
+            message_id: "ab-loc-exterior",
+        },
+    ),
+    (
+        "interior",
+        Message {
+            message_id: "ab-loc-interior",
         },
     ),
     (
@@ -181,6 +265,12 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-level",
         },
     ),
+    (
+        WALL,
+        Message {
+            message_id: "ab-kind-wall",
+        },
+    ),
 ];
 
 const EMPTY: Message = Message {
@@ -250,6 +340,43 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
             fields.truncate(level::STOREY);
             values.truncate(level::STOREY);
             read_only.push("elevation_base".to_owned());
+        }
+        // A wall shows the storey it stands on, which only moving the wall could change.
+        WALL => {
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+            fields.truncate(types::wall::TOP_LEVEL);
+            values.truncate(types::wall::TOP_LEVEL);
+            fields.push(text_field("wall_storey"));
+            values.push(storey.map(Value::String));
+            read_only.push("wall_storey".to_owned());
+            // The top level is a choice below; editing the height disconnects the top.
+            // A constrained wall shows the height its level gives.
+            if let Some(wall) = archbuilder_model::wall::Wall::of(snapshot, object)
+                && let Some(slot) = values.get_mut(types::wall::HEIGHT)
+            {
+                *slot = Some(types::length(wall.height));
+            }
+            // The top constraint is a choice: unconnected, or one of the levels above the base.
+            let above = archbuilder_model::wall::Wall::levels_above(snapshot, object);
+            let mut variants = vec![arc_doc::EnumVariant::new("unconnected", 0)];
+            let mut current = 0;
+            let top = archbuilder_model::wall::Wall::top_level(&object.values);
+            for (code, l) in (1_u32..).zip(&above) {
+                if let Some(name) = types::text(&l.values, level::NAME) {
+                    variants.push(arc_doc::EnumVariant::new(name, code));
+                    if top == Some(l.id) {
+                        current = code;
+                    }
+                }
+            }
+            fields.push(
+                FieldDecl::new("top_constraint", ValueType::Enum(variants)).in_aspect("geometry"),
+            );
+            values.push(Some(Value::Enum(current)));
         }
         // The building's base elevation has no effect yet: the levels carry the elevations.
         BUILDING => read_only.push("elevation".to_owned()),

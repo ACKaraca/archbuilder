@@ -6,12 +6,15 @@
 //! installed on every document. The working file is a document package with the extension
 //! `archb`: `run <file> --create --save --allow-edit --write-root <dir> --command
 //! archbuilder.project.new` makes a project, and each further `run <file> --save --command ...`
-//! changes it.
+//! changes it. `inspect` adds a `walls` list to the shared dump: each wall with its storey, length,
+//! thickness, height and the volume of its derived solid.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 
 use arc_command::headless::{self, Exit, Product};
+
+pub mod walls;
 
 pub use archbuilder_commands::product;
 
@@ -55,5 +58,39 @@ where
         archbuilder_commands::install(document);
         Ok(())
     };
+    if args.first().and_then(|a| a.to_str()) == Some("inspect") {
+        return inspect(args, product, &setup, stdin, stdout, stderr);
+    }
     headless::run_with_setup(args, product, None, Some(&setup), stdin, stdout, stderr)
+}
+
+/// The shared `inspect`, with the `walls` list added to its JSON line.
+fn inspect<R, W, E>(
+    args: Vec<OsString>,
+    product: &Product,
+    setup: &headless::DocumentSetup,
+    stdin: R,
+    mut stdout: W,
+    stderr: E,
+) -> Exit
+where
+    R: BufRead,
+    W: Write + Send,
+    E: Write + Send,
+{
+    let mut out = Vec::new();
+    let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
+    let text = String::from_utf8_lossy(&out);
+    let enriched = text.lines().next().and_then(|line| {
+        let mut dump: serde_json::Value = serde_json::from_str(line).ok()?;
+        let walls = walls::summary(dump.get("objects")?.as_array()?);
+        dump.as_object_mut()?.insert("walls".into(), walls.into());
+        serde_json::to_string(&dump).ok()
+    });
+    // A dump that is not the expected JSON (an error report) goes out as it came.
+    let _ = match enriched {
+        Some(line) => writeln!(stdout, "{line}"),
+        None => stdout.write_all(&out),
+    };
+    exit
 }

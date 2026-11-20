@@ -3,7 +3,7 @@
 ab-cmd-document-not-empty = Zaten projesi olan bir belgede yeni proje oluşturulamaz.
 ab-cmd-kind-mismatch = Bu komut, bu türdeki bir nesne üzerinde çalışmaz.
 ab-cmd-no-building = Belgede kat eklenecek bir bina yok.
-ab-cmd-nothing-selected = Önce bir kat seçin.
+ab-cmd-nothing-selected = Önce bir kat ya da duvar seçin.
 ab-cmd-field-unknown = "{ $field }" alanı değiştirilemez.
 ab-cmd-value-invalid = Değer bu alana uygun değil.
 ab-cmd-last-storey = Binanın son katı silinemez. Bir binada en az bir kat bulunur.
@@ -26,3 +26,36 @@ ab-cmd-object-select-label = Seç
 ab-cmd-object-select-description = Nesneleri seçer; bir seviye çizgisi, katını seçer.
 ab-cmd-property-set-label = Özelliği değiştir
 ab-cmd-property-set-description = Mekânsal yapıdaki nesnelerin bir alanını değiştirir; Özellikler panelinin komutudur.
+
+ab-cmd-storey-has-walls = Kat silinemez, çünkü üzerinde duvar var (adet: { $count }). Önce duvarları silin.
+ab-cmd-wall-end-same = Bitiş noktası başlangıç noktasıyla aynı. Duvarın bir uzunluğu olmalı.
+ab-cmd-wall-create-label = Duvar
+ab-cmd-wall-create-description = Bir kata, iki noktalı bir eksen çizgisinden; kalınlık, kat seviyesinden başlayan yükseklik ve konum çizgisiyle duvar yerleştirir.
+ab-cmd-wall-delete-label = Duvarı Sil
+ab-cmd-wall-delete-description = Duvarları siler; duvar belirtilmezse seçili olanları.
+ab-cmd-wall-flip-label = Duvarı Çevir
+ab-cmd-wall-flip-description = Duvarları çevirir: eksen çizgisi ters çevrilir, dış taraf yer değiştirir; konum çizgisi aynı kalır.
+ab-cmd-object-delete-label = Sil
+ab-cmd-object-delete-description = Seçili duvarları siler; duvar seçili değilse seçili katı siler.
+
+ab-prompt-wall-start = { $storey } üzerinde duvar: başlangıç noktasını belirtin (kalınlık { $thickness }, yükseklik { $height }, çizgi { $location ->
+        [exterior] dış yüz
+        [interior] iç yüz
+       *[other] eksen
+    })
+ab-prompt-wall-end = { $storey } üzerinde duvar: sonraki noktayı belirtin ya da bitirmek için Enter'a basın (kalınlık { $thickness }, yükseklik { $height }, çizgi { $location ->
+        [exterior] dış yüz
+        [interior] iç yüz
+       *[other] eksen
+    })
+ab-prompt-wall-thickness = Duvar kalınlığı (şimdi { $thickness })
+ab-prompt-wall-height = Duvar yüksekliği (şimdi { $height })
+ab-prompt-wall-location = Konum çizgisi
+ab-keyword-wall-thickness = Kalınlık
+ab-keyword-wall-height = Yükseklik
+ab-keyword-wall-location = Konum çizgisi
+ab-keyword-wall-flip = Çevir
+ab-keyword-wall-close = Kapat
+ab-keyword-wall-center = Eksen
+ab-keyword-wall-exterior = Dış yüz
+ab-keyword-wall-interior = İç yüz

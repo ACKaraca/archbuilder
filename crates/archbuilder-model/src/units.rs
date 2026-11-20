@@ -83,6 +83,26 @@ impl LengthUnit {
     }
 }
 
+/// The decimal separator of the interface language `language` (a tag such as `tr` or `en-US`).
+#[must_use]
+pub fn decimal_separator(language: &str) -> char {
+    if language.starts_with("tr") { ',' } else { '.' }
+}
+
+/// `meters` in `unit` with the decimal separator `separator`; empty when the unit has no format.
+#[must_use]
+pub fn length_text(meters: f64, unit: LengthUnit, separator: char) -> String {
+    unit.format()
+        .and_then(|f| {
+            f.format(
+                arc_base::Quantity::new(meters, arc_base::Dimension::LENGTH),
+                separator,
+            )
+            .ok()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

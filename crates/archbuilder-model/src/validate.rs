@@ -11,6 +11,7 @@
 //!   building;
 //! - a site is contained in the project, a building in a site, a storey and a level in a
 //!   building, and a document holds one project;
+//! - a wall is contained in a storey and its baseline is at least [`types::MIN_WALL_LENGTH`] long;
 //! - a storey refers to a level of its own building that is flagged as a storey level, and no
 //!   two storeys share a level.
 //!
@@ -26,7 +27,7 @@ use arc_doc::{Change, Document, DocumentValidator, Finding, Object, Severity, Sn
 use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
-use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY};
+use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY, WALL};
 
 /// The key a name is compared by ([`crate::names::fold`]).
 fn folded(object: &Object) -> String {
@@ -39,6 +40,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         SITE => Some(PROJECT),
         BUILDING => Some(SITE),
         STOREY | LEVEL => Some(BUILDING),
+        WALL => Some(STOREY),
         _ => None,
     }
 }
@@ -64,6 +66,16 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == PROJECT && objects(candidate, PROJECT).len() > 1 {
         out.push(Error::new(codes::PROJECT_NOT_UNIQUE));
     }
+    if key == WALL {
+        if !crate::wall::Wall::from_values(&object.values)
+            .is_some_and(|w| w.length() >= types::MIN_WALL_LENGTH)
+        {
+            out.push(Error::new(codes::WALL_TOO_SHORT).with_arg("name", display_name(object)));
+        }
+        if !top_is_above(candidate, object) {
+            out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
+        }
+    }
     let own = folded(object);
     if key != PROJECT
         && objects(candidate, key)
@@ -72,6 +84,29 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     {
         out.push(name_taken(object));
     }
+}
+
+/// The name of an object as written.
+fn display_name(object: &Object) -> String {
+    types::text(&object.values, 0)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Whether the level a wall's top refers to is above the wall's base by at least the least height.
+fn top_is_above(snapshot: &Snapshot, wall: &Object) -> bool {
+    let Some(top) = crate::wall::Wall::top_level(&wall.values).and_then(|id| get(snapshot, id))
+    else {
+        return true;
+    };
+    let base = wall
+        .header
+        .owner
+        .and_then(|id| get(snapshot, id))
+        .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s))
+        + types::meters(&wall.values, types::wall::BASE_OFFSET).unwrap_or(0.0);
+    types::meters(&top.values, types::level::ELEVATION)
+        .is_some_and(|e| e - base >= types::HEIGHT_RANGE.0)
 }
 
 fn check_storey(candidate: &Snapshot, storey: &Object, out: &mut Vec<Error>) {
@@ -131,7 +166,46 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     for storey in &storeys {
         check_storey(candidate, storey, &mut out);
     }
+    check_walls_of_levels(candidate, touched, &mut out);
     out
+}
+
+/// A level that moved must stay above the base of every wall whose top follows it. The walls are
+/// not touched by the change, so they are found from the level: the walls whose top refers to
+/// it, and the walls standing on the storey whose level it is. One error names the count.
+fn check_walls_of_levels(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    let moved = |id: &ObjectId| {
+        matches!(touched.get(id), Some(c) if *c != Change::Deleted)
+            && type_of(candidate, *id).as_deref() == Some(LEVEL)
+    };
+    if !touched.keys().any(moved) {
+        return;
+    }
+    let mut broken: Vec<String> = Vec::new();
+    for wall in objects(candidate, WALL) {
+        let on_moved = crate::wall::Wall::top_level(&wall.values).is_some_and(|l| moved(&l))
+            || wall
+                .header
+                .owner
+                .and_then(|o| get(candidate, o))
+                .and_then(|s| crate::spatial::level_of(candidate, &s))
+                .is_some_and(|l| moved(&l.id));
+        // Walls that changed themselves are checked on their own.
+        if on_moved && !touched.contains_key(&wall.id) && !top_is_above(candidate, &wall) {
+            broken.push(display_name(&wall));
+        }
+    }
+    if let Some(first) = broken.first() {
+        out.push(
+            Error::new(codes::LEVEL_BELOW_WALLS)
+                .with_arg("count", broken.len().to_string())
+                .with_arg("name", first.clone()),
+        );
+    }
 }
 
 /// The commit validator of the structure: every violation of [`check`] is an error.

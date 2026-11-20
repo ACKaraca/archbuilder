@@ -7,7 +7,7 @@ use std::sync::Arc;
 use arc_base::ObjectId;
 use arc_doc::{Object, Snapshot, Value};
 
-use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY};
+use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY, WALL};
 use crate::units::LengthUnit;
 
 /// A storey with its level, when the reference resolves.
@@ -123,6 +123,56 @@ pub fn levels(snapshot: &Snapshot, building: ObjectId) -> Vec<Arc<Object>> {
         at(a).partial_cmp(&at(b)).unwrap_or(Ordering::Equal)
     });
     found
+}
+
+/// The walls standing on `storey`, in identifier order.
+#[must_use]
+pub fn walls(snapshot: &Snapshot, storey: ObjectId) -> Vec<Arc<Object>> {
+    children(snapshot, WALL, storey)
+}
+
+/// The elevation of the level of `storey` in meters; zero without a level.
+#[must_use]
+pub fn storey_elevation(snapshot: &Snapshot, storey: &Object) -> f64 {
+    level_of(snapshot, storey)
+        .and_then(|l| types::meters(&l.values, types::level::ELEVATION))
+        .unwrap_or(0.0)
+}
+
+/// The default height of a wall on `storey`: the distance from its level to the next higher
+/// level of a storey of the same building, else [`crate::defaults::STOREY_HEIGHT`].
+#[must_use]
+pub fn default_wall_height(snapshot: &Snapshot, storey: &Object) -> f64 {
+    let own = storey_elevation(snapshot, storey);
+    storey
+        .header
+        .owner
+        .into_iter()
+        .flat_map(|building| storeys(snapshot, building))
+        .map(|s| s.elevation())
+        .find(|e| *e > own + types::HEIGHT_RANGE.0)
+        .map_or(crate::defaults::STOREY_HEIGHT, |next| next - own)
+}
+
+/// The level of the next higher storey of the building of `storey` (the lowest one above its
+/// level by more than the least wall height); `None` for the highest storey.
+#[must_use]
+pub fn level_above(snapshot: &Snapshot, storey: &Object) -> Option<Arc<Object>> {
+    let own = storey_elevation(snapshot, storey);
+    storeys(snapshot, storey.header.owner?)
+        .into_iter()
+        .find(|s| s.elevation() > own + types::HEIGHT_RANGE.0)
+        .and_then(|s| s.level)
+}
+
+/// The lowest storey of the first building.
+#[must_use]
+pub fn lowest_storey(snapshot: &Snapshot) -> Option<Arc<Object>> {
+    let building = buildings(snapshot).into_iter().next()?;
+    storeys(snapshot, building.id)
+        .into_iter()
+        .next()
+        .map(|s| s.storey)
 }
 
 /// The length unit of the project; meters without one.

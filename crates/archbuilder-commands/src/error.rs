@@ -47,4 +47,16 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-last-storey",
     };
+    /// A storey that walls stand on is deleted. The walls are not deleted with it.
+    pub const STOREY_HAS_WALLS: ErrorCode = ErrorCode {
+        code: "ab.cmd.storey_has_walls",
+        category: Category::Conflict,
+        message_id: "ab-cmd-storey-has-walls",
+    };
+    /// The end point of a wall is the start point.
+    pub const WALL_END_SAME: ErrorCode = ErrorCode {
+        code: "ab.cmd.wall_end_same",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-wall-end-same",
+    };
 }

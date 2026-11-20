@@ -15,7 +15,7 @@ use arc_command::{
 use arc_doc::{FieldPath, Header, Object, Snapshot, Value, ValueType};
 use archbuilder_model::spatial::{self, StoreyLevel};
 use archbuilder_model::types::{
-    self, BUILDING, ELEVATION_BASE_PROJECT, LEVEL, PROJECT, SITE, STOREY, level, storey,
+    self, BUILDING, ELEVATION_BASE_PROJECT, LEVEL, PROJECT, SITE, STOREY, WALL, level, storey,
 };
 use archbuilder_model::units::LengthUnit;
 use archbuilder_model::{defaults, names, validate};
@@ -224,19 +224,21 @@ pub struct SetProperty {
     #[schemars(length(min = 1, max = 1000))]
     pub objects: Vec<IdParam>,
     /// The field: `name` of any object, `elevation` of a level, a storey (its level's) or a
-    /// building, `number`, `client`, `address`, `length_unit` or `template` of the project.
+    /// building, `number`, `client`, `address`, `length_unit` or `template` of the project,
+    /// `start_x`, `start_y`, `end_x`, `end_y`, `thickness`, `height`, `base_offset` (lengths) or
+    /// `location_line` (`center`, `exterior`, `interior`) of a wall.
     pub field: String,
     /// The value in canonical JSON form: a text, a number in meters, an enum name or code, or a
     /// truth value.
     pub value: serde_json::Value,
 }
 
-fn named(name: &str) -> Value {
+pub(crate) fn named(name: &str) -> Value {
     Value::String(name.trim().to_owned())
 }
 
 /// Runs the model's rules on the open transaction.
-fn ensure_valid(ctx: &mut Context<'_>) -> Result<()> {
+pub(crate) fn ensure_valid(ctx: &mut Context<'_>) -> Result<()> {
     let txn = ctx.txn()?;
     match validate::check(txn.snapshot(), txn.touched())
         .into_iter()
@@ -247,7 +249,7 @@ fn ensure_valid(ctx: &mut Context<'_>) -> Result<()> {
     }
 }
 
-fn create(
+pub(crate) fn create(
     ctx: &mut Context<'_>,
     key: &str,
     owner: Option<ObjectId>,
@@ -361,7 +363,7 @@ fn building_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
         .ok_or_else(|| Error::new(codes::NO_BUILDING))
 }
 
-fn expect(snapshot: &Snapshot, id: ObjectId, key: &str) -> Result<Object> {
+pub(crate) fn expect(snapshot: &Snapshot, id: ObjectId, key: &str) -> Result<Object> {
     match (spatial::type_of(snapshot, id), spatial::get(snapshot, id)) {
         (Some(found), Some(object)) if found == key => Ok((*object).clone()),
         _ => Err(Error::new(codes::KIND_MISMATCH).with_arg("expected", key)),
@@ -369,7 +371,7 @@ fn expect(snapshot: &Snapshot, id: ObjectId, key: &str) -> Result<Object> {
 }
 
 /// The interface language the application told this session (`app.language`); empty without one.
-fn language(ctx: &Context<'_>) -> String {
+pub(crate) fn language(ctx: &Context<'_>) -> String {
     ctx.setting(LANGUAGE_SETTING)
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_default()
@@ -503,20 +505,42 @@ fn storey_in_selection(ctx: &Context<'_>) -> Option<ObjectId> {
         })
 }
 
-fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()> {
+pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()> {
     let id = match p.storey {
         Some(IdParam(id)) => id,
         None => storey_in_selection(ctx).ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?,
     };
     let object = expect(ctx.snapshot(), id, STOREY)?;
+    let walls = spatial::walls(ctx.snapshot(), id).len();
+    if walls > 0 {
+        return Err(Error::new(codes::STOREY_HAS_WALLS).with_arg("count", walls.to_string()));
+    }
     if let Some(building) = object.header.owner
         && spatial::storeys(ctx.snapshot(), building).len() <= 1
     {
         return Err(Error::new(codes::LAST_STOREY));
     }
     let level = spatial::level_of(ctx.snapshot(), &object);
+    // Walls whose top follows the level that goes keep the height they have now.
+    let detached: Vec<(ObjectId, f64)> = level
+        .as_ref()
+        .map(|l| {
+            let snapshot = ctx.snapshot();
+            spatial::objects(snapshot, WALL)
+                .iter()
+                .filter(|w| archbuilder_model::wall::Wall::top_level(&w.values) == Some(l.id))
+                .filter_map(|w| {
+                    archbuilder_model::wall::Wall::of(snapshot, w).map(|d| (w.id, d.height))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
+    for (wall, height) in detached {
+        txn.modify(wall, FieldPath::new("height"), Some(types::length(height)))?;
+        txn.modify(wall, FieldPath::new("top_level"), None)?;
+    }
     txn.delete(id)?;
     // The storey's own level goes with it; a level flagged as no storey level stays.
     if let Some(level) = level
@@ -603,6 +627,10 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per special field of the property command"
+)]
 fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
     for IdParam(id) in p.objects {
         let snapshot = ctx.snapshot();
@@ -614,6 +642,100 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
                     .as_str()
                     .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
                 rename(ctx, id, name)?;
+            }
+            (WALL, "location_line") => {
+                let code = match decode(
+                    ctx,
+                    &ValueType::Enum(
+                        archbuilder_model::wall::LocationLine::ALL
+                            .iter()
+                            .map(|l| arc_doc::EnumVariant::new(l.name(), l.code()))
+                            .collect(),
+                    ),
+                    &p.value,
+                ) {
+                    Some(Value::Enum(code)) => code,
+                    _ => return Err(Error::new(codes::VALUE_INVALID)),
+                };
+                // The body stays where it is: the baseline moves by the difference of the offsets.
+                let object =
+                    spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let wall = archbuilder_model::wall::Wall::from_values(&object.values)
+                    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let moved =
+                    wall.with_location(archbuilder_model::wall::LocationLine::from_code(code));
+                let txn = ctx.txn()?;
+                for (field, value) in [
+                    ("start_x", moved.start[0]),
+                    ("start_y", moved.start[1]),
+                    ("end_x", moved.end[0]),
+                    ("end_y", moved.end[1]),
+                ] {
+                    txn.modify(id, FieldPath::new(field), Some(types::length(value)))?;
+                }
+                txn.modify(id, FieldPath::new("location_line"), Some(Value::Enum(code)))?;
+                ensure_valid(ctx)?;
+            }
+            (WALL, "top_constraint") => {
+                let object =
+                    spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let wall = archbuilder_model::wall::Wall::of(snapshot, &object)
+                    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let above = archbuilder_model::wall::Wall::levels_above(snapshot, &object);
+                // The grid sends the number of its choice (0 is unconnected, then the levels
+                // above in order); a level name or `unconnected` also does.
+                let top = match &p.value {
+                    serde_json::Value::Number(n) => match n.as_u64() {
+                        Some(0) => None,
+                        Some(k) => Some(
+                            usize::try_from(k - 1)
+                                .ok()
+                                .and_then(|k| above.get(k))
+                                .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                                .id,
+                        ),
+                        None => return Err(Error::new(codes::VALUE_INVALID)),
+                    },
+                    serde_json::Value::String(name) if name == "unconnected" => None,
+                    serde_json::Value::String(name) => Some(
+                        above
+                            .iter()
+                            .find(|l| types::text(&l.values, level::NAME) == Some(name.as_str()))
+                            .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                            .id,
+                    ),
+                    _ => return Err(Error::new(codes::VALUE_INVALID)),
+                };
+                let height = match top.and_then(|t| spatial::get(snapshot, t)) {
+                    Some(l) => {
+                        let base = spatial::get(snapshot, object.header.owner.unwrap_or(id))
+                            .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s))
+                            + wall.base_offset;
+                        types::meters(&l.values, level::ELEVATION).map_or(wall.height, |e| e - base)
+                    }
+                    None => wall.height,
+                };
+                let txn = ctx.txn()?;
+                txn.modify(
+                    id,
+                    FieldPath::new("height"),
+                    Some(types::length(height.max(types::HEIGHT_RANGE.0))),
+                )?;
+                txn.modify(id, FieldPath::new("top_level"), top.map(Value::Reference))?;
+                ensure_valid(ctx)?;
+            }
+            (WALL, "height") => {
+                // A height leaves the top unconnected; the wall keeps the stored value.
+                let value = decode(
+                    ctx,
+                    &ValueType::Quantity(arc_base::Dimension::LENGTH),
+                    &p.value,
+                )
+                .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
+                let txn = ctx.txn()?;
+                txn.modify(id, FieldPath::new("height"), Some(value))?;
+                txn.modify(id, FieldPath::new("top_level"), None)?;
+                ensure_valid(ctx)?;
             }
             (LEVEL | STOREY, "elevation") => {
                 let param: QuantityParam = serde_json::from_value(p.value.clone())
