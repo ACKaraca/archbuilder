@@ -168,6 +168,13 @@ A transaction that would violate an invariant is rejected; the document is uncha
 | Names are unique within their scope (level names per building, view names per document, sheet numbers per document) | Named records |
 | Every viewport shows a view that exists; a model view appears on at most one sheet | Sheets |
 
+## Name comparison
+
+Names are stored exactly as entered. Comparing and searching names, including the uniqueness checks
+above, uses Unicode case folding in which the four letters i, ı, İ and I form one equivalence class.
+The comparison is independent of the interface language and of the machine's locale, so a document
+behaves the same on every machine.
+
 ## Regeneration and dependency rules
 
 The dependency graph is maintained by `arc-doc`. Nodes are element records and derived products;

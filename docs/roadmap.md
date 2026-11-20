@@ -73,8 +73,11 @@ hidden lines, `arc-io-ifc`, `arc-io-dxf`, `arc-io-dwg` (read in phase 1, write i
 - IFC 4.3 export of fixture A passes independent validation and contains no unreported proxy; the
   same export re-imported into an empty document reproduces the spatial structure, element counts
   by entity, types and quantities.
-- PDF and DWG sets of fixture A pass the validation rules in
-  [interoperability.md](architecture/interoperability.md).
+- PDF and DXF sets of fixture A pass the validation rules in
+  [interoperability.md](architecture/interoperability.md), as does the DWG set; if DWG writing does
+  not pass independent validation, the release ships with PDF and DXF sheet output and DWG reading,
+  states DWG writing as not available, and DWG writing follows in the next release
+  ([ADR-0008](adr/0008-dwg-writing-in-the-first-production-release.md)).
 - **First production release** of ArchBuilder for architectural use.
 
 ## M3 Coordination, depth and site (phase 3)

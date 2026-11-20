@@ -147,6 +147,10 @@ Targets are acceptance criteria measured on housing fixture A and on a synthetic
 | Publishing a 100-sheet PDF set | Under 2 min, scaling with core count | Views regenerate in parallel |
 | Regeneration scaling | At least 70 percent parallel efficiency on 8 cores for full regeneration | Multi-threaded regeneration is a stated product property |
 
+The first housing fixture is measured from the first build onward, on every batch of changes, and the
+numbers are recorded, so that a miss is visible long before the milestone exit. The exit criterion
+of a milestone is the target as written; changing it requires an ADR.
+
 ## Automation surface
 
 | Surface | Built on | Notes |

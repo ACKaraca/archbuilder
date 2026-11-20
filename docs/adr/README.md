@@ -15,6 +15,7 @@ are not restated here.
 | [0005](0005-housing-acceptance-and-independent-validation.md) | Housing fixtures and independent validation as release gates | Accepted |
 | [0006](0006-canonical-text-form.md) | Canonical text form for comparison and merge | Accepted |
 | [0007](0007-exchange-identifiers.md) | Exchange identifiers independent of the other application's identifiers | Accepted |
+| [0008](0008-dwg-writing-in-the-first-production-release.md) | DWG writing in the first production release | Accepted |
 
 ## Template
 
