@@ -288,3 +288,28 @@ The reference fixtures are synthetic documents created with the product's own co
 - Everything done offline is present after synchronization; a conflicting edit keeps both states
   (AB-TOUCH-016).
 - The issues open in the desktop build with viewpoints, photos and markup (AB-TOUCH-011).
+
+## WF-17 Reuse units and check a scheme against site rules
+
+1. Save the apartment and core groups of fixture A to a unit library (AB-PHASE-016) and place them
+   in a new document on a site with property lines and setbacks (AB-SITE-007, AB-SITE-008).
+2. Load area counting rules, development limits, a room rule table and requirement tables from the
+   regional template (AB-DATUM-001, AB-SPACE-017, AB-SPACE-016, AB-SPACE-019).
+3. Lay out parking stalls (AB-SITE-010) and create the counted-area scheme with its area plans
+   (AB-SPACE-010).
+4. Add required adjacencies to the space program and place clearance zones in the accessible units
+   (AB-SPACE-018, AB-OPEN-019).
+5. Run the scheme's rule set (AB-AUTO-013), then move one apartment wall so that a bedroom becomes
+   narrower than its minimum clear width.
+
+**Acceptance**
+
+- Placed units keep their library identity and version; saving changed content under the same
+  version is refused.
+- Coverage and floor area ratio equal a hand calculation from the counted areas within the quantity
+  tolerance, and a ratio over its limit names the limit and its source.
+- Required and provided parking stalls and shelter area are listed per building.
+- After the wall move, the bedroom's clear width, the rule finding and both ratios update in the
+  same revision; one undo restores all of them.
+- Overlapping clearance zones list the elements involved, and no zone appears in quantities or in
+  the IFC export.

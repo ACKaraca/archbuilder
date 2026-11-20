@@ -16,6 +16,8 @@ capability here is additive; a document without a Hub connection keeps every oth
 | Element ownership | Element, owner, borrow state | Multi-user editing session state |
 | Work area | Name, members or rule, default owner | Partition for loading, visibility and ownership |
 | Comparison result | Added, removed and modified elements with changed parameters and geometry | Derived from two document states |
+| Checkpoint | Name, document revision, timestamp, content hash | Local to a document; restorable only as a new document |
+| Document archive | Manifest with checksums, document, linked documents and files, underlays | Portable transfer of a document with its sources |
 
 ## File-level collaboration
 
@@ -27,6 +29,8 @@ capability here is additive; a document without a Hub connection keeps every oth
 | AB-COLLAB-004 | Model comparison | Compares two versions or two documents element by element and reports added, removed and modified elements with changed parameters and geometry, in a table and as color-coded views. | T1 | 3 |
 | AB-COLLAB-005 | Canonical text form | Writes a document's semantic content as a canonical text form (one record per element, stable ordering, stable formatting) from the command line, so general-purpose diff and review tools show meaningful differences. | T3 | 3 |
 | AB-COLLAB-006 | Exchange packages | Shares a frozen set of document versions and sheets with another team as a package; the receiving team links the package's documents and is notified of newer packages. | T2 | 3 |
+| AB-COLLAB-017 | Local checkpoints | Saves named checkpoints of a document locally without Arc Hub, kept until the user deletes them. A checkpoint opens read-only, compares with the current state (AB-COLLAB-004) and restores only as a new document, never by overwriting the current one. | T2 | 3 |
+| AB-COLLAB-018 | Document archive | Writes one file holding a document, its linked documents and files, underlays and a manifest with checksums, after listing any source that is missing; opening the archive restores the links with relative paths and verifies every checksum. | T2 | 3 |
 
 ## Branches and multi-user editing
 

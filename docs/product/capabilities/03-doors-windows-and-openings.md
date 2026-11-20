@@ -15,6 +15,7 @@ and freestanding components. Inserts depend on hosts from
 | Opening | Kind (wall, shaft, face, vertical, dormer), profile, base and top constraints | Cuts one or more hosts |
 | Component | Family type, level and offset or work plane, mirror state | Freestanding; may be face-based or line-based |
 | Host cut | Void solid, host layers affected, wrapping result | Derived from the insert or opening |
+| Clearance zone | Source (family declaration, door or window operation, user placement), shape, height | Diagnostic; checked against elements and other zones, never part of quantities or exports |
 
 ## Hosted inserts
 
@@ -48,3 +49,4 @@ and freestanding components. Inserts depend on hosts from
 | AB-OPEN-016 | Line-based components | Places components defined along a picked or drawn line, such as counters and rails, whose length follows the line. | T2 | 2 |
 | AB-OPEN-017 | Face-based components | Places components on any face, including faces of linked documents, and keeps them on the face when it moves. A component on a linked face reports when the face no longer exists. | T2 | 3 |
 | AB-OPEN-018 | Bounding alignment | Aligns a component to wall faces or other components using its actual geometry bounds in the storey's axes, moving only that component. | T2 | 2 |
+| AB-OPEN-019 | Component clearance zones | Generates the use zones that component families declare (the space in front of fixtures, appliances and cabinets, a wheelchair turning circle) and user zones placed in plans, and reports where a zone overlaps an element or another zone. A zone that meets only mesh geometry without a closed volume is reported as uncertain, never as clear. Zones are diagnostic and excluded from quantities and exports. | T3 | 3 |

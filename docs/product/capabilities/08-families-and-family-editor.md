@@ -50,6 +50,7 @@ language and package format are described in
 | AB-FAM-021 | Hosting and behavior flags | Sets hosting kind, cut-host-with-voids, always vertical, work-plane based, shared, room calculation point and plan representation behavior per family. | T1 | 2 |
 | AB-FAM-022 | Node-graph geometry recipes | Lets a recipe include a node graph restricted to pure geometry nodes, evaluated under the same step and depth limits as expressions, for forms that sketches cannot express. | T3 | 3 |
 | AB-FAM-023 | Adaptive point families | Defines families placed by picking a fixed number of points, with geometry rigged to those points. | T3 | 4 |
+| AB-FAM-034 | Mesh-based families | Creates a loadable family from a glTF or OBJ mesh with its source, license, units and up axis recorded, a category and an optional plan symbol. Meshes that reference external resources are refused and element and triangle counts are checked before loading; a mesh that is not a closed volume reports no volume, and exports write it as tessellated geometry under the family's IFC assignment (AB-FAM-024). | T2 | 3 |
 | AB-FAM-024 | IFC classification per family | Assigns an IFC entity and predefined type per family and per type, defaulting from the category. Exports use this assignment and never substitute a proxy silently. | T1 | 2 |
 
 ## Annotation, profile and detail families

@@ -15,6 +15,7 @@ buildings, assemblies, and parts. Branches of a whole document through Arc Hub a
 | Design option | Name, primary flag | Owns elements |
 | Group definition | Name, member records, source frame | Instances share its content |
 | Group instance | Definition, placement, level mapping, exclusions, permitted exceptions, identity map | Places a definition |
+| Unit library entry | Identity, version, group content with types, materials and pinned families, source, license, placement rules, derived descriptors | Placed into documents as group instances |
 | Assembly | Name, members, main member, assembly type | Owns assembly views |
 | Part | Source element and layer, division geometry, independent flag | Derived from a layered element |
 
@@ -45,6 +46,7 @@ buildings, assemblies, and parts. Branches of a whole document through Arc Hub a
 | AB-PHASE-011 | Cross-storey group placement | Places a group instance by mapping each source level to a target level of the same building, so a repeated apartment or core adapts to each storey's elevation. Removing a mapped level is rejected until the instance is separated. | T1 | 2 |
 | AB-PHASE-012 | Permitted instance exceptions | Allows defined per-instance exceptions (room numbers and names, furniture offsets, marks) without breaking the instance's link to its definition. Exceptions are listed per instance and can be cleared. | T2 | 2 |
 | AB-PHASE-013 | Group separation and reuse | Separates an instance into ordinary elements, saves groups to packages and documents, and loads them into other documents. | T2 | 2 |
+| AB-PHASE-016 | Unit and core library | Saves a group (an apartment, a core) with its dependency closure, types, materials and pinned families as a versioned library entry with source, license and placement rules (allowed rotations, permitted exceptions), and places entries into other documents by level mapping as one undoable command. An entry is immutable per version: different content under the same identity and version is refused. Each entry carries derived descriptors (footprint per storey, net room areas and counts, named shaft axes) for placement checks. | T2 | 3 |
 
 ## Assemblies and parts
 

@@ -43,4 +43,6 @@ DWG, DXF, images, printers and Arc Hub. Sheets use the same sheet and plot pipel
 | AB-SHEET-013 | Image export | Exports views and sheets as raster images at a chosen resolution. | T1 | 2 |
 | AB-SHEET-014 | Printing | Prints sheet sets to system printers with paper size and placement options. | T2 | 2 |
 | AB-SHEET-015 | Headless publishing | Publishes a sheet set with a publish profile from the command-line interface without opening a window, returning a nonzero exit status on failure. | T1 | 2 |
+| AB-SHEET-017 | Mixed publish jobs | Publishes, in one job from one recorded revision, any combination of sheet sets, views, model exports (IFC, mesh, 3D DWG), schedules as spreadsheets and a document archive (AB-COLLAB-018), with a status per item (succeeded, partial, failed, cancelled). Cancelling never leaves a file under its final name, and retrying rebuilds failed items from the same revision rather than the current one. | T2 | 3 |
+| AB-SHEET-018 | SVG export | Exports views and sheets as vector SVG at true scale with line weights, patterns and searchable text, from the same drafting output as PDF publishing. | T2 | 3 |
 | AB-SHEET-016 | Publishing to Arc Hub | Publishes sheets and views as versions to an Arc Hub project for web viewing and markup; returned markups are imported as issues linked to the sheet. | T2 | 3 |

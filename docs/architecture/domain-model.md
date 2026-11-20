@@ -77,8 +77,12 @@ All physical elements share: `id`, `category`, `type_id` (where applicable), `st
 |---|---|---|
 | `Room` | Seed or profile, level, limits, data | Derived boundary from bounding elements |
 | `SeparationLine` | Curve, level, kind (room or area) | Room or area boundary input |
-| `AreaScheme`, `Area`, `AreaBoundary` | Scheme rules, area type | Area plans |
+| `AreaScheme`, `Area`, `AreaBoundary` | Scheme rules, area types with counting flag or factor | Area plans; counted areas feed development ratios |
 | `Zone` | Kind, member rooms | Rooms |
+| `ClearanceZone` | Source (family declaration, insert operation, user), shape, height | Diagnostic; never in quantities or exports |
+| `RoomRuleTable`, `RequirementTable`, `DevelopmentLimits` | Rows by use and basis, limits, source and edition | Compared with rooms, area schemes and provided counts |
+| `WorkItemCatalog`, `WorkItemMapping` | Item code, unit, measurement rule, rate; mapping from types, layers and materials | Feed bills of quantities through the quantity rules |
+| `UnitLibraryEntry` | Identity, version, group content, placement rules, derived descriptors | Stored in library packages and immutable per version; a group definition placed from it records its identity and version |
 | `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories | Values on elements and types |
 | `DocumentVariable` | Name, value or expression | Drives parameters |
 | `Constraint` | Kind, references (persistent references), value | Solved in transactions |

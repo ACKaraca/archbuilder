@@ -31,22 +31,22 @@ implement and test.
 
 | File | Area token | Scope | Rows |
 |---|---|---|---|
-| [01-project-setup-and-datum.md](01-project-setup-and-datum.md) | `DATUM` | Templates, spatial structure, units, levels, grids, reference planes, coordinates, modify and selection tools, model health | 34 |
+| [01-project-setup-and-datum.md](01-project-setup-and-datum.md) | `DATUM` | Templates, spatial structure, units, levels, grids, reference planes, coordinates, modify and selection tools, numeric entry, save integrity, model health | 37 |
 | [02-walls-and-curtain-systems.md](02-walls-and-curtain-systems.md) | `WALL` | Layered, stacked and lining walls, joins, profiles, bands, curtain walls and systems | 27 |
-| [03-doors-windows-and-openings.md](03-doors-windows-and-openings.md) | `OPEN` | Hosted inserts, opening recipes, openings, freestanding components | 18 |
+| [03-doors-windows-and-openings.md](03-doors-windows-and-openings.md) | `OPEN` | Hosted inserts, opening recipes, openings, freestanding components, clearance zones | 19 |
 | [04-floors-roofs-and-ceilings.md](04-floors-roofs-and-ceilings.md) | `SLAB` | Floors, roofs, roof edges, dormers, ceilings | 20 |
 | [05-circulation.md](05-circulation.md) | `CIRC` | Stairs, ramps, railings, elevators, moving walks, headroom and travel paths | 16 |
-| [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md) | `SPACE` | Rooms, area schemes, space programs, color schemes, architectural zones | 15 |
+| [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md) | `SPACE` | Rooms, area schemes, space programs, development ratios, requirement tables, color schemes, architectural zones | 19 |
 | [07-site-and-context.md](07-site-and-context.md) | `SITE` | Terrain, pads, cut and fill, property lines, site components, GIS and civil context | 13 |
-| [08-families-and-family-editor.md](08-families-and-family-editor.md) | `FAM` | Family kinds, family editor, geometry recipes, nesting, annotation families, libraries and versions | 33 |
+| [08-families-and-family-editor.md](08-families-and-family-editor.md) | `FAM` | Family kinds, family editor, geometry recipes, nesting, annotation families, mesh-based families, libraries and versions | 34 |
 | [09-parameters-and-constraints.md](09-parameters-and-constraints.md) | `PARAM` | Typed parameters, expression language, properties, numbering, classification, constraints | 23 |
 | [10-views-and-graphics.md](10-views-and-graphics.md) | `VIEW` | View kinds, visibility and graphics, templates, graphic standards, materials, navigation | 26 |
 | [11-annotation-detailing-and-drawings.md](11-annotation-detailing-and-drawings.md) | `ANNO` | Dimensions, text, tags, keynotes, detail layers, drafting views, detached drawings | 26 |
-| [12-schedules-and-quantities.md](12-schedules-and-quantities.md) | `SCHED` | Schedules, quantity rules, material takeoff, carbon, cost, spreadsheet exchange | 16 |
-| [13-sheets-and-publishing.md](13-sheets-and-publishing.md) | `SHEET` | Sheets, viewports, revisions, sheet sets, PDF, DWG, DXF and Hub publishing | 16 |
-| [14-phases-options-groups-and-assemblies.md](14-phases-options-groups-and-assemblies.md) | `PHASE` | Phases, design options, model groups, assemblies, parts | 15 |
+| [12-schedules-and-quantities.md](12-schedules-and-quantities.md) | `SCHED` | Schedules, quantity rules, material takeoff, carbon, cost, bills of quantities, spreadsheet exchange | 17 |
+| [13-sheets-and-publishing.md](13-sheets-and-publishing.md) | `SHEET` | Sheets, viewports, revisions, sheet sets, PDF, DWG, DXF, SVG, mixed publish jobs and Hub publishing | 18 |
+| [14-phases-options-groups-and-assemblies.md](14-phases-options-groups-and-assemblies.md) | `PHASE` | Phases, design options, model groups, unit and core libraries, assemblies, parts | 16 |
 | [15-links-and-coordination.md](15-links-and-coordination.md) | `LINK` | Links, underlays, point clouds, monitored elements, interference checks, BCF | 14 |
-| [16-collaboration.md](16-collaboration.md) | `COLLAB` | Hub versions, locks, comparison, packages, branches, multi-user editing | 16 |
+| [16-collaboration.md](16-collaboration.md) | `COLLAB` | Hub versions, locks, comparison, packages, local checkpoints, document archives, branches, multi-user editing | 18 |
 | [17-visualization.md](17-visualization.md) | `VIS` | Viewport, sun and shadows, cameras, walkthroughs, rendering through RenderBuilder | 12 |
 | [18-automation-and-extensibility.md](18-automation-and-extensibility.md) | `AUTO` | Commands, automation protocol, CLI, scripting, node graphs, plug-ins, model checking, assistant | 15 |
 | [19-interoperability.md](19-interoperability.md) | `IO` | Native document, IFC, IDS, COBie, DWG and DXF, meshes, OpenUSD, STEP, exchange package, loss reports | 20 |

@@ -14,6 +14,7 @@ editing a cell edits the element.
 | Quantity rule | Element kind, measure (length, net and gross area, volume, count), method | Read by schedules, takeoffs and IFC quantities |
 | Carbon factor | Material, unit basis, value, source reference | Attached to a material |
 | Cost item | Type or material, unit, rate | Attached to types or materials |
+| Work item | Code, description, unit, measurement rule, rate, catalog and edition | Mapped from types, layers and materials; groups bill of quantities rows |
 
 ## Schedules
 
@@ -39,4 +40,5 @@ editing a cell edits the element.
 | AB-SCHED-013 | Material takeoff | Lists areas and volumes per material, including the individual layers of compound elements and parts, with material parameters as fields. | T1 | 2 |
 | AB-SCHED-014 | Embodied carbon | Attaches carbon factors (per mass, volume or area, with source reference) to materials, computes totals per element, material and group in takeoffs, and keeps factors editable and schedulable. | T2 | 3 |
 | AB-SCHED-015 | Cost data | Attaches unit rates to types and materials and computes cost totals in schedules and takeoffs. | T2 | 3 |
+| AB-SCHED-017 | Bill of quantities | Maps types, layers and materials to work items of a loaded item catalog and lists quantities grouped by item code, computed by the quantity rules (AB-SCHED-012); one element can feed several items, such as a wall's masonry, plaster on each side and paint. Quantities without an item are listed as unmapped, and the bill exports through spreadsheet exchange (AB-SCHED-016). | T2 | 3 |
 | AB-SCHED-016 | Spreadsheet exchange | Exports schedules to CSV and XLSX with stable element IDs, and imports edited files back with a preview of changed values, rejected cells and conflicts with edits made since export. | T2 | 2 |

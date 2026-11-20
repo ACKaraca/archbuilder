@@ -109,8 +109,8 @@ sequenceDiagram
 |---|---|---|
 | Element generators | `archbuilder-model` | Pure functions from element record, type, hosts and context to solids with per-face provenance (element, layer, source edge) |
 | Join resolver | `archbuilder-model` | Computes wall-wall, wall-floor and roof joins by layer priority; outputs trim operations consumed by generators |
-| Roof solver | `archbuilder-model` | Weighted straight-skeleton style plane solve for footprints, courtyards and unequal pitches with explicit failure locations |
-| Room engine | `archbuilder-model` | Boundary detection from room-bounding elements and separation lines on a spatial index; area, perimeter and volume |
+| Roof solver | `archbuilder-model` | Weighted straight-skeleton style plane solve for footprints, courtyards and unequal pitches with explicit failure locations; a solve is accepted only when its faces cover the footprint without gaps or overlaps and adjacent faces meet at equal heights, and a configuration that fails is rejected rather than patched with vertical faces |
+| Room engine | `archbuilder-model` | Boundary detection from room-bounding elements and separation lines on a spatial index, with openings in bounding walls evaluated as closed at the boundary-rule face so that jamb geometry never makes a room leak; area, perimeter, volume and clear dimensions |
 | Family evaluator | `archbuilder-model` | Parameter resolution, expression evaluation, sketch solving, form generation; see [families.md](families.md) |
 | View pipeline | `archbuilder-model` with `arc-view` | View definition to drafting geometry; see [views-and-documentation.md](views-and-documentation.md) |
 | Quantity rules | `archbuilder-model` | One measurement implementation for schedules, takeoffs and IFC quantity sets |
