@@ -501,7 +501,7 @@ pub(crate) fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Ob
         .ok_or_else(|| Error::new(codes::NO_BUILDING))
 }
 
-fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &str) -> String {
+pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &str) -> String {
     let used = spatial::walls(snapshot, storey);
     let taken = |name: &str| {
         used.iter().any(|w| {

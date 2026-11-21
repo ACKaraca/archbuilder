@@ -405,6 +405,52 @@ impl Floor {
 }
 
 impl Floor {
+    /// The walls whose associated edge no longer lies along them: the derived edge runs past
+    /// either end of the wall by more than the wall's thickness plus the edge's offset. A floor
+    /// whose boundary cannot be read has none.
+    #[must_use]
+    pub fn unsupported_edges(
+        &self,
+        boundary: &Boundary,
+        wall_of: &dyn Fn(ObjectId) -> Option<Wall>,
+    ) -> Vec<ObjectId> {
+        let mut out = Vec::new();
+        let Some(ranges) = loop_ranges(&self.vertices) else {
+            return out;
+        };
+        for (range, points) in ranges.iter().zip(&boundary.loops) {
+            let n = range.len();
+            for at in 0..n {
+                let Some(a) = self.vertices.get(range.start + at).and_then(|v| v.edge) else {
+                    continue;
+                };
+                let (Some(wall), Some(p), Some(q)) =
+                    (wall_of(a.wall), points.get(at), points.get((at + 1) % n))
+                else {
+                    continue;
+                };
+                let length = wall.length();
+                if length <= 0.0 {
+                    continue;
+                }
+                let u = [
+                    (wall.end[0] - wall.start[0]) / length,
+                    (wall.end[1] - wall.start[1]) / length,
+                ];
+                let s =
+                    |pt: &[f64; 2]| (pt[0] - wall.start[0]) * u[0] + (pt[1] - wall.start[1]) * u[1];
+                let margin = wall.thickness + a.offset.abs() + 0.05;
+                let (lo, hi) = (s(p).min(s(q)), s(p).max(s(q)));
+                if (lo < -margin || hi > length + margin) && !out.contains(&a.wall) {
+                    out.push(a.wall);
+                }
+            }
+        }
+        out
+    }
+}
+
+impl Floor {
     /// The vertices after the walls in `flips` (each with its wall before and after) were flipped:
     /// a flip reverses a baseline, so the left of its direction changes. Each association that
     /// follows such a wall takes the face and offset that keep its line where it is, preferring

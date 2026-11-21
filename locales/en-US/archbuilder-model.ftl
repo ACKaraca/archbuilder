@@ -20,3 +20,5 @@ ab-model-floor-self-intersecting = The boundary of the floor "{ $name }" crosses
 ab-model-floor-area = The floor "{ $name }" has no usable area. Its outer boundary must enclose at least 1 cm² and at most 1 000 km².
 ab-model-floor-hole-outside = A hole of the floor "{ $name }" is not inside its outer boundary, or touches it. Keep the hole clear of the edges.
 ab-model-floor-holes-overlap = Two holes of the floor "{ $name }" overlap or lie inside each other. Keep the holes apart.
+ab-model-wall-corner-open = The ends of "{ $name }" and "{ $other }" are close together but not joined: the corner is open.
+ab-model-floor-edge-unsupported = An edge of the floor "{ $name }" follows the wall "{ $wall }" but runs past its ends: the wall no longer bounds the floor there.

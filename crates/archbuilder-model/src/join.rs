@@ -34,6 +34,10 @@ use crate::wall::{JoinStyle, Wall};
 pub const JOIN_TOLERANCE: f64 = 1e-4;
 /// The most a corner may reach past its end, in thicknesses of the walls that meet.
 pub const MITER_LIMIT: f64 = 2.0;
+/// Ends of two walls closer than this, but not joined, are an open corner (see [`open_corners`]).
+pub const OPEN_CORNER: f64 = 0.5;
+/// The most walls [`open_corners`] compares.
+const MAX_COMPARED: usize = 2000;
 /// A corner must stay this share of the wall's length from the other end.
 const MAX_REACH: f64 = 0.45;
 /// Two unit directions whose cross product is smaller are parallel.
@@ -618,6 +622,82 @@ pub fn footprint_uncached(
         .get(&object.id)
         .copied()
         .or_else(|| Some(own.plain_footprint()))
+}
+
+/// The distance from `p` to the segment `a`-`b`.
+fn segment_distance(p: P, a: P, b: P) -> f64 {
+    let ab = sub(b, a);
+    let len2 = dot(ab, ab);
+    let t = if len2 > 0.0 {
+        (dot(sub(p, a), ab) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let q = along(a, ab, t);
+    (p[0] - q[0]).hypot(p[1] - q[1])
+}
+
+/// The pairs of walls (by index, `i < j`) that have an open corner: an end of each lies within
+/// [`OPEN_CORNER`] of the other but not within [`JOIN_TOLERANCE`], neither end lies on the other's
+/// baseline, and the walls are not parallel. Such walls look joined and are not.
+#[must_use]
+pub fn open_corners(walls: &[Wall]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let n = walls.len().min(MAX_COMPARED);
+    for i in 0..n {
+        for j in i + 1..n {
+            let (a, b) = (&walls[i], &walls[j]);
+            let (da, db) = (sub(a.end, a.start), sub(b.end, b.start));
+            let (la, lb) = (da[0].hypot(da[1]), db[0].hypot(db[1]));
+            if la <= 0.0 || lb <= 0.0 || (cross(da, db) / (la * lb)).abs() < 1e-3 {
+                continue;
+            }
+            let open = [a.start, a.end].iter().any(|&pa| {
+                [b.start, b.end].iter().any(|&pb| {
+                    let d = (pa[0] - pb[0]).hypot(pa[1] - pb[1]);
+                    d > JOIN_TOLERANCE
+                        && d <= OPEN_CORNER
+                        && segment_distance(pa, b.start, b.end) > JOIN_TOLERANCE
+                        && segment_distance(pb, a.start, a.end) > JOIN_TOLERANCE
+                })
+            });
+            if open {
+                out.push((i, j));
+            }
+        }
+    }
+    out
+}
+
+/// Where the baseline of `wall` meets the infinite line through `from` with direction `dir`:
+/// the point and its signed distance along `wall`'s direction from `wall.start`; `None` when
+/// they are parallel.
+#[must_use]
+pub fn line_hit(wall: &Wall, from: P, dir: P) -> Option<(P, f64)> {
+    let d = sub(wall.end, wall.start);
+    let len = d[0].hypot(d[1]);
+    if len <= 0.0 {
+        return None;
+    }
+    let u = [d[0] / len, d[1] / len];
+    let dl = dir[0].hypot(dir[1]);
+    if dl <= 0.0 {
+        return None;
+    }
+    let v = [dir[0] / dl, dir[1] / dl];
+    let c = cross(u, v);
+    if c.abs() < 1e-9 {
+        return None;
+    }
+    // wall.start + u*s lies on the line: cross(start + u s - from, v) = 0.
+    let s = cross(sub(from, wall.start), v) / c;
+    Some((along(wall.start, u, s), s))
+}
+
+/// The distance from `p` to the baseline of `wall`.
+#[must_use]
+pub fn baseline_distance(wall: &Wall, p: P) -> f64 {
+    segment_distance(p, wall.start, wall.end)
 }
 
 #[cfg(test)]

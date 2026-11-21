@@ -20,7 +20,7 @@ on the Delete key, edits through `archbuilder.property.set`, shaded solids, outl
 (`archbuilder.door.place`, `window.place`, `insert.flip_hand`, `flip_facing`) that cut openings.
 Floors (`archbuilder.floor.create` by picked walls or sketch, `floor.add_hole`) have a boundary whose
 wall-associated edges are derived from the wall faces and freeze when the wall is deleted; no layers,
-slope or join cleanup yet. Walls have no types or layers either. IFC4 export of these kinds exists; families, views and the
+slope or join cleanup yet. `archbuilder.modify.move|copy|rotate|mirror` act on walls, floors, inserts. Walls have no types or layers either. IFC4 export of these kinds exists; families, views and the
 rest are still specifications. Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,

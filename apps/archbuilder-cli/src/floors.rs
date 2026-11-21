@@ -13,7 +13,7 @@ fn number(values: &Value, field: &str) -> Option<f64> {
     values.get(field)?.as_f64()
 }
 
-fn wall_of(object: &Value) -> Option<Wall> {
+pub(crate) fn wall_of(object: &Value) -> Option<Wall> {
     let v = &object["values"];
     Some(Wall {
         start: [number(v, "start_x")?, number(v, "start_y")?],
@@ -39,7 +39,7 @@ fn named(value: &Value, code: u32, name: &str) -> bool {
     }
 }
 
-fn floor_of(values: &Value, objects: &[Value]) -> Option<Floor> {
+pub(crate) fn floor_of(values: &Value, objects: &[Value]) -> Option<Floor> {
     let mut vertices = Vec::new();
     // A vertex is stored as its fields in order: loop, x, y, wall, face, offset.
     for item in values.get("vertices")?.as_array()? {

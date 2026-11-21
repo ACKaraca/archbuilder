@@ -89,3 +89,68 @@ fn inspect_lists_a_floor_by_interior_faces_with_its_area_volume_and_walls() {
     assert!(sketched["walls"].as_array().unwrap().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn inspect_check_reports_an_open_corner_and_a_floor_edge_past_its_wall() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-cli-check-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("room.archb");
+    let (file, dir_text) = (file.to_str().unwrap(), dir.to_str().unwrap());
+    let run = |create: bool, command: &str, params: Value| {
+        let params = params.to_string();
+        let mut args = vec![
+            "run",
+            file,
+            "--save",
+            "--allow-edit",
+            "--write-root",
+            dir_text,
+        ];
+        if create {
+            args.push("--create");
+        }
+        args.extend(["--command", command, "--params", &params]);
+        cli(&args)
+    };
+    run(true, "archbuilder.project.new", json!({}));
+    let c = [[0.0, 0.0], [0.0, 4.0], [6.0, 4.0], [6.0, 0.0]];
+    let mut right = Value::Null;
+    for k in 0..4 {
+        let (_, made) = run(
+            false,
+            "archbuilder.wall.create",
+            json!({"start": c[k], "end": c[(k + 1) % 4]}),
+        );
+        if k == 2 {
+            right = made["value"]["wall"].clone();
+        }
+    }
+    run(
+        false,
+        "archbuilder.floor.create",
+        json!({"picks": [[3.0, 2.0]]}),
+    );
+    let (_, clean) = cli(&["inspect", file, "--check"]);
+    assert_eq!(clean["findings"].as_array().unwrap().len(), 0);
+    // One wall edited alone: the corners open and the floor runs past the walls that bound it.
+    for field in ["start_x", "end_x"] {
+        let (exit, _) = run(
+            false,
+            "archbuilder.property.set",
+            json!({"objects": [right], "field": field, "value": 8.0}),
+        );
+        assert_eq!(exit, Exit::Success);
+    }
+    let (_, dump) = cli(&["inspect", file, "--check"]);
+    let codes: Vec<&str> = dump["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["code"].as_str())
+        .collect();
+    assert!(
+        codes.contains(&"ab.model.floor_edge_unsupported"),
+        "{codes:?}"
+    );
+}

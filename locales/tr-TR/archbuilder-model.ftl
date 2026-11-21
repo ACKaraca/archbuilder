@@ -20,3 +20,5 @@ ab-model-floor-self-intersecting = "{ $name }" döşemesinin sınırı kendini k
 ab-model-floor-area = "{ $name }" döşemesinin kullanılabilir bir alanı yok. Dış sınır en az 1 cm² ve en çok 1 000 km² kapsamalı.
 ab-model-floor-hole-outside = "{ $name }" döşemesinin bir boşluğu dış sınırın içinde değil ya da sınıra değiyor. Boşluğu kenarlardan uzak tutun.
 ab-model-floor-holes-overlap = "{ $name }" döşemesinin iki boşluğu çakışıyor ya da biri ötekinin içinde. Boşlukları birbirinden ayırın.
+ab-model-wall-corner-open = "{ $name }" ile "{ $other }" duvarlarının uçları birbirine yakın ama birleşik değil: köşe açık.
+ab-model-floor-edge-unsupported = "{ $name }" döşemesinin bir kenarı "{ $wall }" duvarını izliyor ama uçlarının ötesine taşıyor: duvar döşemeyi orada artık sınırlamıyor.

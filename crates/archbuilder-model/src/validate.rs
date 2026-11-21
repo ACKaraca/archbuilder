@@ -307,16 +307,94 @@ fn check_walls_of_levels(
     }
 }
 
-/// The commit validator of the structure: every violation of [`check`] is an error.
+/// The findings that are not errors: an open corner (the ends of two walls close together and not
+/// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
+/// would open into another wall. They concern the touched walls and the floors of their storeys.
+#[must_use]
+pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut out = Vec::new();
+    let mut storeys: Vec<ObjectId> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        if matches!(type_of(candidate, *id).as_deref(), Some(WALL | FLOOR)) {
+            storeys.extend(get(candidate, *id).and_then(|o| o.header.owner));
+        }
+    }
+    storeys.sort();
+    storeys.dedup();
+    for storey in storeys {
+        let walls = crate::spatial::walls(candidate, storey);
+        let data: Vec<(usize, crate::wall::Wall)> = walls
+            .iter()
+            .enumerate()
+            .filter_map(|(k, o)| crate::wall::Wall::from_values(&o.values).map(|w| (k, w)))
+            .collect();
+        let plain: Vec<crate::wall::Wall> = data.iter().map(|(_, w)| *w).collect();
+        for (i, j) in crate::join::open_corners(&plain) {
+            let (a, b) = (&walls[data[i].0], &walls[data[j].0]);
+            if touched.contains_key(&a.id) || touched.contains_key(&b.id) {
+                out.push(
+                    Error::new(codes::WALL_CORNER_OPEN)
+                        .with_arg("name", display_name(a))
+                        .with_arg("other", display_name(b)),
+                );
+            }
+        }
+        for floor in crate::spatial::children(candidate, FLOOR, storey) {
+            let Some(derived) = crate::floor::Derived::of(candidate, &floor) else {
+                continue;
+            };
+            let wall_of = |id: ObjectId| {
+                get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values))
+            };
+            for wall in derived.floor.unsupported_edges(&derived.boundary, &wall_of) {
+                out.push(
+                    Error::new(codes::FLOOR_EDGE_UNSUPPORTED)
+                        .with_arg("name", display_name(&floor))
+                        .with_arg(
+                            "wall",
+                            get(candidate, wall)
+                                .map(|w| display_name(&w))
+                                .unwrap_or_default(),
+                        ),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Whether `error` is a warning of the structure: it is reported, never refused.
+#[must_use]
+pub fn is_warning(error: &Error) -> bool {
+    error.code() == codes::INSERT_MEETS_WALL.code
+}
+
+/// The commit validator of the structure: every violation of [`check`] is an error, except the
+/// warnings ([`is_warning`]), which are findings of the lower severity.
 #[must_use]
 pub fn validator() -> DocumentValidator {
     Arc::new(|_, candidate, touched| {
         check(candidate, touched)
             .into_iter()
             .map(|error| Finding {
-                severity: Severity::Error,
+                severity: if is_warning(&error) {
+                    Severity::Warning
+                } else {
+                    Severity::Error
+                },
                 error,
             })
+            .chain(
+                warnings(candidate, touched)
+                    .into_iter()
+                    .map(|error| Finding {
+                        severity: Severity::Warning,
+                        error,
+                    }),
+            )
             .collect()
     })
 }

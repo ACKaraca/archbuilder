@@ -15,6 +15,7 @@ pub mod insert;
 pub mod join;
 pub mod names;
 pub mod spatial;
+pub mod transform;
 pub mod types;
 pub mod units;
 pub mod validate;

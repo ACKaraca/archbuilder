@@ -602,6 +602,23 @@ fn select_objects(ctx: &mut Context<'_>, p: SelectObjects) -> Result<()> {
             }
         }
     }
+    // A band that takes a wall takes the doors and windows in it: they lie inside the wall.
+    if matches!(p.gesture.as_deref(), Some("window" | "crossing"))
+        && !matches!(p.mode, SelectMode::Toggle)
+    {
+        let walls: Vec<ObjectId> = chosen
+            .iter()
+            .copied()
+            .filter(|id| spatial::type_of(snapshot, *id).as_deref() == Some(WALL))
+            .collect();
+        for wall in walls {
+            for (object, _) in archbuilder_model::insert::hosted(snapshot, wall) {
+                if !chosen.contains(&object.id) {
+                    chosen.push(object.id);
+                }
+            }
+        }
+    }
     ctx.set_selection(chosen)
 }
 

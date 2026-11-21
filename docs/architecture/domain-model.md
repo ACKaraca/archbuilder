@@ -205,6 +205,34 @@ storey, the area, the volume and the associated walls; `inspect` lists each floo
 numbers. Derived, never stored: the boundary, the area (outer loop minus holes), the volume (area
 times thickness) and the solid, a prism of the boundary from the top down by the thickness.
 
+## Selection and modify commands
+
+Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles
+(removes an object already selected); a window dragged left to right takes the objects that lie
+fully inside, a crossing dragged right to left those it touches, with the same modifiers; Escape
+clears. A band that takes a wall also takes the doors and windows in it. The property grid shows the
+fields the selected objects share and "(mixed)" where their values differ; one edit applies to all
+of them as one undo step.
+
+`archbuilder.modify.move`, `copy`, `rotate` and `mirror` (rotate's `angle`: a JSON number is radians, a text with a unit such as `"90 deg"` says its own, a bare text number is degrees; typed `m`, `co`, `ro`, `mi`, or the
+Turkish `taşı`, `kopyala`, `döndür`, `aynala`) work on the selection, or ask for objects first and
+take the selection on Enter. Each run is one transaction. Walls move by their baselines and their
+joins re-derive. A wall outside the selection whose end met a moved wall (at its end or on its
+baseline) stretches or shrinks along its own line to the moved wall's new line in the same
+transaction, and the moved wall's own end goes to the same corner point, and its doors and windows keep their place; a moved wall whose end stood on another
+wall slides along it. A join that cannot be kept (parallel lines, a corner more than 100 lengths
+away) is left open and named in the command line. Doors and windows follow their host wall; one
+that would now open into another wall is allowed with a warning. `inspect --check` and the
+validator warn of an open corner (two wall ends within 0.5 m, not joined) and of a floor edge that
+runs past the wall it follows. A copy makes new walls (with their doors and windows), floors and inserts
+with new identifiers and the next free names, and selects them; copy repeats from one base point
+until Enter. A reflection stores a mirrored wall with its baseline reversed, so its exterior face
+stays exterior, and swaps the hand of its doors and windows. A floor keeps an edge associated with a
+wall only when that wall moves or is copied with it; every other edge is dissociated and stays
+where the motion puts it (the result and a notice say how many). A door or window moved alone slides
+along its wall by the displacement projected onto the baseline and is refused outside the clear span
+or on another opening; rotating or mirroring one alone is refused. Storeys and levels are skipped.
+
 Walls and floors in this slice: a floor by interior faces sits between the walls; a floor by exterior
 faces overlaps the wall bottoms by the slab thickness. Wall volumes are not reduced and the floor
 volume is the full prism. A wall whose base is on the storey's level is not cut by the floor, and

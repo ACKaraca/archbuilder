@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 
 use crate::floor_tool::FloorTool;
 use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_named};
+use crate::modify_tool::{ModifyTool, command_named};
 use crate::wall_tool::{Env, Tool, storey_for};
 
 /// A message of the application, named by identifier.
@@ -46,6 +47,26 @@ struct Message {
 /// What a delete says when doors and windows went with their wall.
 const INSERTS_DELETED: Message = Message {
     message_id: "ab-notice-inserts-deleted",
+};
+
+/// What a modify command says of the walls it could not reconnect.
+const MODIFY_UNJOINED: Message = Message {
+    message_id: "ab-notice-modify-unjoined",
+};
+
+/// What a modify command says of a door or window that now opens into another wall.
+const MODIFY_MEETS: Message = Message {
+    message_id: "ab-notice-modify-meets",
+};
+
+/// The point a click picked, echoed in the history.
+const PICKED_POINT: Message = Message {
+    message_id: "ab-notice-picked-point",
+};
+
+/// What a move or copy says when floor edges stopped following a wall.
+const MODIFY_DISSOCIATED: Message = Message {
+    message_id: "ab-notice-modify-dissociated",
 };
 
 /// What an export says when it wrote the file.
@@ -209,6 +230,15 @@ pub struct WallInteraction {
     inserts: InsertTool,
     /// The floor tool: floors made from picked walls or a sketch, and their holes.
     floors: FloorTool,
+    /// The modify tool: move, copy, rotate and mirror.
+    modify: ModifyTool,
+    /// The walls the wall chain had when it last changed, to say once when it ends.
+    chain_walls: usize,
+    /// Whether the last call said a chain ended: the shell then adds no line of its own for the
+    /// command that closed it.
+    just_reported: bool,
+    /// The copies the copy command had when it last changed, to say once when it ends.
+    copy_count: usize,
     /// What the pointer would pick for a floor, outlined while the floor tool runs.
     floor_hover: Vec<ProductOverlay>,
     /// The wall under the pointer and the opening that follows it, while the insert tool runs.
@@ -235,6 +265,10 @@ pub struct WallInteraction {
     guides: Vec<[[f64; 2]; 2]>,
     /// The point and the direction in degrees when the pointer snapped to a 15 degree direction.
     angle: Option<([f64; 2], i32)>,
+    /// The ghost of what the modify tool would leave.
+    ghost: Vec<ProductOverlay>,
+    /// The elevation of the modify tool's plane, while it runs.
+    plane: Option<f64>,
     /// The messages of the interface language, for the keywords typed in it.
     messages: Option<(String, arc_app::locale::Localizer)>,
 }
@@ -247,6 +281,10 @@ impl WallInteraction {
             tool: Tool::new(),
             inserts: InsertTool::new(),
             floors: FloorTool::new(),
+            modify: ModifyTool::new(),
+            chain_walls: 0,
+            just_reported: false,
+            copy_count: 0,
             floor_hover: Vec::new(),
             hover: None,
             highlight: Vec::new(),
@@ -261,6 +299,8 @@ impl WallInteraction {
             snap: None,
             guides: Vec::new(),
             angle: None,
+            plane: None,
+            ghost: Vec::new(),
             messages: None,
         }
     }
@@ -374,9 +414,41 @@ impl WallInteraction {
         })
     }
 
+    /// Runs `step` of the modify tool with the pieces the context gives.
+    fn with_modify(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        step: impl FnOnce(
+            &mut ModifyTool,
+            &Env<'_>,
+            &mut dyn FnMut(Invocation) -> Result<arc_command::Outcome>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let (Some(registry), Ok(document)) = (self.registry.as_ref(), cx.document()) else {
+            return Ok(());
+        };
+        if cx.read_only() {
+            return Ok(());
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let session = Self::session(cx);
+        let env = Env {
+            registry,
+            document,
+            session: &session,
+            selection: cx.selection(),
+            seed: self.seed,
+        };
+        step(&mut self.modify, &env, &mut |invocation| {
+            cx.invoke(invocation)
+        })
+    }
+
     /// The command line of the tool that runs.
     fn current_line(&self) -> &arc_command::CommandLine {
-        if self.floors.running() {
+        if self.modify.running() {
+            self.modify.line()
+        } else if self.floors.running() {
             self.floors.line()
         } else if self.inserts.running() {
             self.inserts.line()
@@ -390,8 +462,119 @@ impl WallInteraction {
         self.tool.stop();
         self.inserts.stop();
         self.floors.stop();
+        self.modify.stop();
         self.floor_hover.clear();
         self.hover = None;
+    }
+
+    /// The elevation of the plane the running tool works on.
+    fn elevation(&self) -> Option<f64> {
+        self.tool.chain().map(|c| c.elevation).or(self.plane)
+    }
+
+    /// Says `Done: <command>` once when a chain of walls or of copies ends after placing some.
+    fn report_chains(&mut self, cx: &InteractionContext<'_>) {
+        let walls = self.tool.chain().map_or(0, |c| c.walls);
+        let copies = self.modify.copies();
+        for (now, before, label) in [
+            (walls, self.chain_walls, "ab-cmd-wall-create-label"),
+            (copies, self.copy_count, "ab-cmd-modify-copy-label"),
+        ] {
+            if now < before
+                && let Some(l) = self.localizer(cx.language())
+            {
+                let name = l.format(label, &[]).text;
+                let text = l
+                    .format("app-history-ran", &[("command", name.into())])
+                    .text;
+                self.push_notice(text);
+                self.just_reported = true;
+            }
+        }
+        self.chain_walls = walls;
+        self.copy_count = copies;
+        if self.modify.take_cancelled()
+            && let Some(l) = self.localizer(cx.language())
+        {
+            let text = l.format("app-history-cancel", &[]).text;
+            self.push_notice(text);
+        }
+        for (command, done) in self.modify.take_ran() {
+            // The new objects of a copy are selected, as the command's own selection says. A
+            // mirror keeps what was selected: the originals when they stay, else the mirrored
+            // objects themselves.
+            let created: Vec<String> = done
+                .get("created")
+                .and_then(serde_json::Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !created.is_empty() && command != archbuilder_commands::modify::MODIFY_MIRROR {
+                let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
+                intent.params = serde_json::json!({"objects": created, "mode": "replace"})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                cx.ask(intent);
+            }
+            let mut lines: Vec<(&str, Vec<(&str, arc_base::error::Value)>)> = Vec::new();
+            if let Some(count) = done
+                .get("dissociated_edges")
+                .and_then(serde_json::Value::as_i64)
+                .filter(|c| *c > 0)
+            {
+                lines.push((
+                    MODIFY_DISSOCIATED.message_id,
+                    vec![("count", arc_base::error::Value::Int(count))],
+                ));
+            }
+            let strings = |key: &str| -> Vec<String> {
+                done.get(key)
+                    .and_then(serde_json::Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let unjoined = strings("unjoined");
+            if !unjoined.is_empty() {
+                lines.push((
+                    MODIFY_UNJOINED.message_id,
+                    vec![("names", unjoined.join(", ").into())],
+                ));
+            }
+            for pair in done
+                .get("meets")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(20)
+            {
+                let at = |k: usize| {
+                    pair.get(k)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                };
+                lines.push((
+                    MODIFY_MEETS.message_id,
+                    vec![("name", at(0).into()), ("other", at(1).into())],
+                ));
+            }
+            if let Some(l) = self.localizer(cx.language()) {
+                let texts: Vec<String> = lines
+                    .iter()
+                    .map(|(id, args)| l.format(id, args).text)
+                    .collect();
+                for text in texts {
+                    self.push_notice(text);
+                }
+            }
+        }
     }
 
     /// The messages of the interface language.
@@ -441,7 +624,11 @@ impl WallInteraction {
 }
 
 /// The English shortcut letter of each keyword of the wall prompts.
-const ENGLISH_SHORTCUTS: [(&str, char); 17] = [
+const ENGLISH_SHORTCUTS: [(&str, char); 21] = [
+    ("displacement", 'd'),
+    ("reference", 'r'),
+    ("yes", 'y'),
+    ("no", 'n'),
     ("offset", 'o'),
     ("sketch", 's'),
     ("walls", 'w'),
@@ -495,7 +682,209 @@ impl WallInteraction {
 
 impl Interaction for WallInteraction {
     fn pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        self.just_reported = false;
+        let handled = self.pointer_inner(cx, event);
+        self.report_chains(cx);
+        handled
+    }
+
+    fn dynamic(&mut self, _: &InteractionContext<'_>, _: &DynamicEvent) {}
+
+    #[allow(clippy::too_many_lines, reason = "one arm per line action and tool")]
+    fn line(&mut self, cx: &InteractionContext<'_>, action: LineAction) -> Result<()> {
+        self.just_reported = false;
+        // An error a click left comes first; one this action left (a rejected answer) is shown now.
+        let pending = self
+            .tool
+            .take_error()
+            .or_else(|| self.inserts.take_error())
+            .or_else(|| self.floors.take_error())
+            .or_else(|| self.modify.take_error());
         self.refresh_highlight(cx);
+        let inserting = self.inserts.running();
+        let flooring = self.floors.running();
+        let modifying = self.modify.running();
+        let result = match action {
+            LineAction::ClearInput => Ok(()),
+            LineAction::Cancel if flooring => {
+                self.with_floors(cx, |tool, env, run| tool.escape(env, run))
+            }
+            LineAction::Cancel if modifying => {
+                self.modify.stop();
+                Ok(())
+            }
+            LineAction::Cancel if inserting => {
+                self.stop_all();
+                Ok(())
+            }
+            LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
+            LineAction::Back if flooring => {
+                self.with_floors(cx, |tool, env, run| tool.back(env, run))
+            }
+            LineAction::Back if modifying => {
+                self.with_modify(cx, |tool, env, run| tool.back(env, run))
+            }
+            LineAction::Back if inserting => {
+                self.with_inserts(cx, |tool, env, run| tool.back(env, run))
+            }
+            LineAction::Back => self.with_tool(cx, |tool, env, run| tool.back(env, run)),
+            LineAction::Submit(text) if export_line(&text).is_some() => {
+                self.stop_all();
+                self.export_ifc(cx, export_line(&text).flatten())
+            }
+            LineAction::Submit(text)
+                if (inserting || flooring || modifying || self.tool.active())
+                    && self.names_command(&text) =>
+            {
+                self.stop_all();
+                self.intent(cx, &Intent::new(text.trim()))
+            }
+            LineAction::Submit(text) if modifying => {
+                let text = self.typed(cx, &text);
+                self.with_modify(cx, |tool, env, run| tool.text(env, run, &text))
+            }
+            LineAction::Submit(text)
+                if !inserting
+                    && !flooring
+                    && !self.tool.active()
+                    && command_named(&text).is_some() =>
+            {
+                self.intent(
+                    cx,
+                    &Intent::new(command_named(&text).unwrap_or(WALL_CREATE)),
+                )
+            }
+            LineAction::Submit(text) if flooring => {
+                let text = self.typed(cx, &text);
+                self.with_floors(cx, |tool, env, run| tool.text(env, run, &text))
+            }
+            LineAction::Submit(text) if kind_named(&text).is_some() => {
+                let kind = kind_named(&text);
+                self.intent(cx, &Intent::new(kind.map_or(WALL_CREATE, insert_command)))
+            }
+            LineAction::Submit(text) if inserting => {
+                let text = self.typed(cx, &text);
+                let under = self.hover.as_ref().map(|h| h.wall);
+                self.with_inserts(cx, |tool, env, run| tool.text(env, run, &text, under))
+            }
+            LineAction::Submit(text) if is_floor_word(&text) && !self.tool.active() => {
+                self.intent(cx, &Intent::new(FLOOR_CREATE))
+            }
+            LineAction::Submit(text) if text.trim() == FLOOR_ADD_HOLE => {
+                self.intent(cx, &Intent::new(FLOOR_ADD_HOLE))
+            }
+            LineAction::Submit(text) if !self.tool.active() && is_erase_word(text.trim()) => {
+                self.intent(cx, &Intent::new(OBJECT_DELETE))
+            }
+            LineAction::Submit(text) => {
+                let text = self.typed(cx, &text);
+                self.with_tool(cx, |tool, env, run| tool.text(env, run, &text))
+            }
+            LineAction::Repeat => self.with_tool(cx, |tool, env, run| tool.text(env, run, "wall")),
+            LineAction::Invoke(intent) => self.intent(cx, &intent),
+            LineAction::CancelThen(intent) => {
+                self.stop_all();
+                self.intent(cx, &intent)
+            }
+        };
+        if !self.inserts.running() {
+            self.hover = None;
+        }
+        if !self.floors.running() {
+            self.floor_hover.clear();
+        }
+        self.report_chains(cx);
+        if !self.modify.running() {
+            self.ghost.clear();
+            self.plane = None;
+        }
+        let fresh = self
+            .tool
+            .take_error()
+            .or_else(|| self.inserts.take_error())
+            .or_else(|| self.floors.take_error())
+            .or_else(|| self.modify.take_error());
+        result
+            .and(pending.map_or(Ok(()), Err))
+            .and(fresh.map_or(Ok(()), Err))
+    }
+
+    fn output(&self) -> InteractionOutput {
+        let line = self.current_line();
+        let prompt = line.active().and_then(|s| s.prompt()).cloned().or_else(|| {
+            self.modify
+                .gathering()
+                .then(archbuilder_commands::modify::select_prompt)
+        });
+        let options = prompt
+            .as_ref()
+            .map_or_else(PromptControls::default, |p| PromptControls {
+                options: p
+                    .keyword_options()
+                    .map(|o| OptionControl {
+                        id: o.id.clone(),
+                        label: o.label.clone(),
+                        shortcut: o.shortcut,
+                    })
+                    .collect(),
+                parameters: Vec::new(),
+            });
+        // The selection is the tab's: the shell fills `has_selection` and the highlight from it.
+        InteractionOutput {
+            status: LineStatus {
+                active: self.tool.active()
+                    || self.inserts.running()
+                    || self.floors.running()
+                    || self.modify.running(),
+                answers: line.active().map_or(0, |s| s.answers().len()),
+                has_selection: false,
+                has_last: line.last().is_some(),
+            },
+            prompt,
+            options,
+            overlays: self
+                .preview()
+                .into_iter()
+                .chain(self.marker())
+                .chain(self.tracking())
+                .chain(self.angle_label())
+                .chain(self.insert_overlays())
+                .chain(self.floor_overlays())
+                .chain(self.ghost.iter().cloned())
+                .chain(self.symbols.iter().flat_map(|(_, o)| o.iter().cloned()))
+                // Last, so that the selection's outline lies over the hover highlight of the wall.
+                .chain(self.highlight.iter().cloned())
+                .collect(),
+            cursor: self
+                .tool
+                .chain()
+                .map(|_| ())
+                .or(self.inserts.running().then_some(()))
+                .or(self.floors.running().then_some(()))
+                .or(self.modify.prompting().then_some(()))
+                .and(self.cursor),
+            history: self.notices.clone(),
+            history_first: self.notices_first,
+            // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
+            inline_arguments: !self.tool.active()
+                && !self.inserts.running()
+                && !self.floors.running()
+                && !self.modify.running(),
+            // A chain of walls or of copies says once when it ends, not after each wall or copy.
+            reports_results: self.just_reported
+                || self.tool.chain().is_some_and(|c| c.walls > 0)
+                || self.modify.copies() > 0,
+            ..InteractionOutput::default()
+        }
+    }
+}
+
+impl WallInteraction {
+    fn pointer_inner(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        self.refresh_highlight(cx);
+        if self.modify.prompting() {
+            return self.modify_pointer(cx, event);
+        }
         if self.floors.running() {
             return self.floor_pointer(cx, event);
         }
@@ -567,147 +956,183 @@ impl Interaction for WallInteraction {
         }
     }
 
-    fn dynamic(&mut self, _: &InteractionContext<'_>, _: &DynamicEvent) {}
-
-    fn line(&mut self, cx: &InteractionContext<'_>, action: LineAction) -> Result<()> {
-        // An error a click left comes first; one this action left (a rejected answer) is shown now.
-        let pending = self
-            .tool
-            .take_error()
-            .or_else(|| self.inserts.take_error())
-            .or_else(|| self.floors.take_error());
-        self.refresh_highlight(cx);
-        let inserting = self.inserts.running();
-        let flooring = self.floors.running();
-        let result = match action {
-            LineAction::ClearInput => Ok(()),
-            LineAction::Cancel if flooring => {
-                self.with_floors(cx, |tool, env, run| tool.escape(env, run))
-            }
-            LineAction::Cancel if inserting => {
-                self.stop_all();
-                Ok(())
-            }
-            LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
-            LineAction::Back if flooring => {
-                self.with_floors(cx, |tool, env, run| tool.back(env, run))
-            }
-            LineAction::Back if inserting => {
-                self.with_inserts(cx, |tool, env, run| tool.back(env, run))
-            }
-            LineAction::Back => self.with_tool(cx, |tool, env, run| tool.back(env, run)),
-            LineAction::Submit(text) if export_line(&text).is_some() => {
-                self.stop_all();
-                self.export_ifc(cx, export_line(&text).flatten())
-            }
-            LineAction::Submit(text)
-                if (inserting || flooring || self.tool.active()) && self.names_command(&text) =>
-            {
-                self.stop_all();
-                self.intent(cx, &Intent::new(text.trim()))
-            }
-            LineAction::Submit(text) if flooring => {
-                let text = self.typed(cx, &text);
-                self.with_floors(cx, |tool, env, run| tool.text(env, run, &text))
-            }
-            LineAction::Submit(text) if kind_named(&text).is_some() => {
-                let kind = kind_named(&text);
-                self.intent(cx, &Intent::new(kind.map_or(WALL_CREATE, insert_command)))
-            }
-            LineAction::Submit(text) if inserting => {
-                let text = self.typed(cx, &text);
-                let under = self.hover.as_ref().map(|h| h.wall);
-                self.with_inserts(cx, |tool, env, run| tool.text(env, run, &text, under))
-            }
-            LineAction::Submit(text) if is_floor_word(&text) && !self.tool.active() => {
-                self.intent(cx, &Intent::new(FLOOR_CREATE))
-            }
-            LineAction::Submit(text) if text.trim() == FLOOR_ADD_HOLE => {
-                self.intent(cx, &Intent::new(FLOOR_ADD_HOLE))
-            }
-            LineAction::Submit(text) if !self.tool.active() && is_erase_word(text.trim()) => {
-                self.intent(cx, &Intent::new(OBJECT_DELETE))
-            }
-            LineAction::Submit(text) => {
-                let text = self.typed(cx, &text);
-                self.with_tool(cx, |tool, env, run| tool.text(env, run, &text))
-            }
-            LineAction::Repeat => self.with_tool(cx, |tool, env, run| tool.text(env, run, "wall")),
-            LineAction::Invoke(intent) => self.intent(cx, &intent),
-            LineAction::CancelThen(intent) => {
-                self.stop_all();
-                self.intent(cx, &intent)
-            }
+    /// The pointer while the modify tool asks for points: it snaps like the wall tool, a click is
+    /// the next point and the secondary button is Enter.
+    fn modify_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        let Some(snapshot) = cx.document().ok().map(arc_doc::Document::snapshot) else {
+            return false;
         };
-        if !self.inserts.running() {
-            self.hover = None;
+        let objects = self
+            .modify
+            .current()
+            .map(|r| r.objects.clone())
+            .unwrap_or_default();
+        let Some((storey, z)) = storey_for(&snapshot, &objects) else {
+            return false;
+        };
+        self.plane = Some(z);
+        let walls = baselines(cx, storey);
+        let mut ends = vec![[0.0, 0.0]];
+        ends.extend(walls.iter().flatten().copied());
+        let from = self.modify.line().base_point().map(|p| [p.x, p.y]);
+        let hit = event.model.and_then(|m| {
+            crate::snap::snap(&crate::snap::Input {
+                pointer: [m.x, m.y],
+                pixels_per_unit: event.pixels_per_unit,
+                ends: &ends,
+                walls: &walls,
+                from,
+            })
+        });
+        self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
+        self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
+        let at = hit.as_ref().map(|h| h.point);
+        match event.kind {
+            PointerKind::Move => {
+                self.snap = hit.as_ref().and_then(|h| {
+                    let kind = match h.kind {
+                        crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
+                        crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
+                        crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
+                        _ => return None,
+                    };
+                    Some((kind, h.point))
+                });
+                if let Some(at) = at {
+                    self.cursor = Some(at);
+                    self.modify.aim(at);
+                    self.ghost = self.make_ghost(&snapshot, &objects, at, z);
+                }
+                false
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                if let Some(at) = at {
+                    self.cursor = Some(at);
+                    let _ = self.with_modify(cx, |tool, env, run| tool.click(env, run, at));
+                    if let Some(error) = self.modify.take_error() {
+                        self.notice_error(cx, &error);
+                    } else {
+                        self.echo_point(cx, at);
+                    }
+                }
+                true
+            }
+            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
+                let _ = self.with_modify(cx, |tool, env, run| tool.text(env, run, ""));
+                if let Some(error) = self.modify.take_error() {
+                    self.notice_error(cx, &error);
+                }
+                true
+            }
+            _ => false,
         }
-        if !self.floors.running() {
-            self.floor_hover.clear();
-        }
-        let fresh = self
-            .tool
-            .take_error()
-            .or_else(|| self.inserts.take_error())
-            .or_else(|| self.floors.take_error());
-        result
-            .and(pending.map_or(Ok(()), Err))
-            .and(fresh.map_or(Ok(()), Err))
     }
 
-    fn output(&self) -> InteractionOutput {
-        let line = self.current_line();
-        let prompt = line.active().and_then(|s| s.prompt()).cloned();
-        let options = prompt
-            .as_ref()
-            .map_or_else(PromptControls::default, |p| PromptControls {
-                options: p
-                    .keyword_options()
-                    .map(|o| OptionControl {
-                        id: o.id.clone(),
-                        label: o.label.clone(),
-                        shortcut: o.shortcut,
-                    })
-                    .collect(),
-                parameters: Vec::new(),
-            });
-        // The selection is the tab's: the shell fills `has_selection` and the highlight from it.
-        InteractionOutput {
-            status: LineStatus {
-                active: self.tool.active() || self.inserts.running() || self.floors.running(),
-                answers: line.active().map_or(0, |s| s.answers().len()),
-                has_selection: false,
-                has_last: line.last().is_some(),
-            },
-            prompt,
-            options,
-            overlays: self
-                .preview()
-                .into_iter()
-                .chain(self.marker())
-                .chain(self.tracking())
-                .chain(self.angle_label())
-                .chain(self.insert_overlays())
-                .chain(self.floor_overlays())
-                .chain(self.symbols.iter().flat_map(|(_, o)| o.iter().cloned()))
-                // Last, so that the selection's outline lies over the hover highlight of the wall.
-                .chain(self.highlight.iter().cloned())
-                .collect(),
-            cursor: self
-                .tool
-                .chain()
-                .map(|_| ())
-                .or(self.inserts.running().then_some(()))
-                .or(self.floors.running().then_some(()))
-                .and(self.cursor),
-            history: self.notices.clone(),
-            history_first: self.notices_first,
-            // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
-            inline_arguments: !self.tool.active()
-                && !self.inserts.running()
-                && !self.floors.running(),
-            ..InteractionOutput::default()
+    /// Says the point a click picked, in the project's unit, in the history.
+    fn echo_point(&mut self, cx: &InteractionContext<'_>, at: [f64; 2]) {
+        let Some(unit) = cx
+            .document()
+            .ok()
+            .map(|d| archbuilder_model::spatial::length_unit(&d.snapshot()))
+        else {
+            return;
+        };
+        let separator = cx.decimal_separator();
+        let text = |v: f64| archbuilder_model::units::length_text(v, unit, separator);
+        let (x, y) = (text(at[0]), text(at[1]));
+        if let Some(l) = self.localizer(cx.language()) {
+            let line = l
+                .format(PICKED_POINT.message_id, &[("x", x.into()), ("y", y.into())])
+                .text;
+            self.push_notice(line);
         }
+    }
+
+    /// The outline of the objects as the command would leave them with the pointer at `at`, and
+    /// the line from the base point.
+    fn make_ghost(
+        &self,
+        snapshot: &arc_doc::Snapshot,
+        objects: &[ObjectId],
+        at: [f64; 2],
+        z: f64,
+    ) -> Vec<ProductOverlay> {
+        use archbuilder_model::transform::Xform;
+        let (Some(run), Some(base)) = (self.modify.current(), self.modify.line().base_point())
+        else {
+            return Vec::new();
+        };
+        let base = [base.x, base.y];
+        let key = self
+            .modify
+            .line()
+            .active()
+            .and_then(|s| s.prompt())
+            .map(|p| p.key.clone())
+            .unwrap_or_default();
+        let xf = if run.command == archbuilder_commands::modify::MODIFY_ROTATE {
+            ["angle", "reference", "new"]
+                .iter()
+                .any(|k| key.starts_with(k))
+                .then(|| Xform::Rotate {
+                    base,
+                    angle: (at[1] - base[1]).atan2(at[0] - base[0]),
+                })
+        } else if run.command == archbuilder_commands::modify::MODIFY_MIRROR {
+            key.starts_with("second")
+                .then(|| Xform::mirror(base, at))
+                .flatten()
+        } else {
+            key.starts_with("second")
+                .then(|| Xform::Translate([at[0] - base[0], at[1] - base[1]]))
+        };
+        let at3 = |p: [f64; 2]| Point3::new(p[0], p[1], z);
+        let mut out = vec![ProductOverlay::Line {
+            from: at3(base),
+            to: at3(at),
+        }];
+        let Some(xf) = xf else {
+            return out;
+        };
+        let path = |points: &[[f64; 2]]| ProductOverlay::Path {
+            points: points
+                .iter()
+                .chain(points.first())
+                .map(|p| at3(xf.point(*p)))
+                .collect(),
+            dashed: true,
+        };
+        // Walls as they would stand, the neighbors that stretch to keep their joins included.
+        let copying = run.command == archbuilder_commands::modify::MODIFY_COPY;
+        if !copying {
+            for wall in archbuilder_commands::modify::preview(snapshot, objects, &xf) {
+                out.push(ProductOverlay::Path {
+                    points: wall
+                        .plain_footprint()
+                        .iter()
+                        .chain(std::iter::once(&wall.plain_footprint()[0]))
+                        .map(|p| at3(*p))
+                        .collect(),
+                    dashed: true,
+                });
+            }
+        }
+        for id in objects.iter().take(2000) {
+            let Some(object) = spatial::get(snapshot, *id) else {
+                continue;
+            };
+            if let Some(wall) = archbuilder_model::wall::Wall::from_values(&object.values) {
+                if copying {
+                    out.push(path(&wall.plain_footprint()));
+                }
+            } else if let Some(boundary) =
+                archbuilder_model::floor::Floor::from_values(&object.values)
+                    .and_then(|f| f.boundary_in(snapshot))
+            {
+                out.extend(boundary.loops.iter().map(|l| path(l)));
+            }
+        }
+        out
     }
 }
 
@@ -757,6 +1182,10 @@ impl WallInteraction {
                 ));
             };
             return self.with_floors(cx, |tool, env, run| tool.begin(env, run, Some(floor)));
+        }
+        if let Some(id) = modify_id(command).filter(|_| intent.params.is_empty()) {
+            self.stop_all();
+            return self.with_modify(cx, |tool, env, run| tool.begin(env, run, id));
         }
         if let Some(kind) = kind_named(command).filter(|_| intent.params.is_empty()) {
             self.tool.stop();
@@ -1071,7 +1500,7 @@ impl WallInteraction {
     /// The angle of the snapped direction, beside the rubber band's end.
     fn angle_label(&self) -> Option<ProductOverlay> {
         let ([x, y], degrees) = self.angle?;
-        let z = self.tool.chain()?.elevation;
+        let z = self.elevation()?;
         Some(ProductOverlay::Label {
             at: Point3::new(x, y, z),
             text: format!("{degrees}\u{b0}"),
@@ -1080,7 +1509,7 @@ impl WallInteraction {
 
     /// The dashed tracking lines.
     fn tracking(&self) -> Vec<ProductOverlay> {
-        let Some(z) = self.tool.chain().map(|c| c.elevation) else {
+        let Some(z) = self.elevation() else {
             return Vec::new();
         };
         self.guides
@@ -1095,7 +1524,7 @@ impl WallInteraction {
     /// The marker of the point the pointer snapped to.
     fn marker(&self) -> Option<ProductOverlay> {
         let (kind, at) = self.snap?;
-        let z = self.tool.chain()?.elevation;
+        let z = self.elevation()?;
         Some(ProductOverlay::Snap {
             kind,
             at: Point3::new(at[0], at[1], z),
@@ -1173,6 +1602,14 @@ impl WallInteraction {
         }
         overlays
     }
+}
+
+/// The identifier of a modify command, as `'static`.
+fn modify_id(command: &str) -> Option<&'static str> {
+    use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
+    [MODIFY_MOVE, MODIFY_COPY, MODIFY_ROTATE, MODIFY_MIRROR]
+        .into_iter()
+        .find(|c| *c == command)
 }
 
 /// Whether `text` asks for the floor tool.

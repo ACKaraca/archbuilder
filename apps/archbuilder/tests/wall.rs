@@ -192,7 +192,7 @@ fn options_carry_along_the_chain_and_enter_or_escape_end_it_keeping_the_placed_w
 }
 
 #[test]
-fn enter_at_a_value_prompt_keeps_the_value_a_length_follows_the_pointer_and_escape_leaves_in_two_steps()
+fn enter_at_a_value_prompt_keeps_the_value_a_length_follows_the_pointer_and_escape_ends_the_tool_at_once_after_a_wall_and_in_two_steps_after_a_start()
  {
     let mut rig = Rig::new();
     rig.text("wall");
@@ -210,7 +210,12 @@ fn enter_at_a_value_prompt_keeps_the_value_a_length_follows_the_pointer_and_esca
     let walls = rig.walls();
     assert_eq!(walls.len(), 1);
     assert!(near(walls[0].2, [2.5, 0.0]), "{walls:?}");
-    // The first Escape drops the segment and waits for a start point; the second ends the tool.
+    // No segment is in progress after a wall: one Escape ends the tool, the wall stays.
+    rig.step(|tool, env, run| tool.escape(env, run));
+    assert!(!rig.tool.active());
+    // With a start point clicked, the first Escape drops the segment and the second ends the tool.
+    rig.text("wall");
+    rig.text("5,5");
     rig.step(|tool, env, run| tool.escape(env, run));
     assert!(rig.tool.active() && rig.tool.chain().is_some_and(|c| c.walls == 0));
     rig.step(|tool, env, run| tool.escape(env, run));

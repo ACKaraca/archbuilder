@@ -95,4 +95,28 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-floor-too-big",
     };
+    /// A modify command names only objects it cannot move (storeys, levels).
+    pub const NOT_MOVABLE: ErrorCode = ErrorCode {
+        code: "ab.cmd.not_movable",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-not-movable",
+    };
+    /// A door or window alone is rotated or mirrored.
+    pub const INSERT_ALONE: ErrorCode = ErrorCode {
+        code: "ab.cmd.insert_alone",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-insert-alone",
+    };
+    /// The two points of a mirror line coincide.
+    pub const MIRROR_AXIS: ErrorCode = ErrorCode {
+        code: "ab.cmd.mirror_axis",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-mirror-axis",
+    };
+    /// A point or value is typed while a modify command still waits for its objects.
+    pub const SELECT_BEFORE_POINTS: ErrorCode = ErrorCode {
+        code: "ab.cmd.select_before_points",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-select-before-points",
+    };
 }

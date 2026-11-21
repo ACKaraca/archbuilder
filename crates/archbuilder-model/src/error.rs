@@ -92,6 +92,18 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-insert-meets-wall",
     };
+    /// The ends of two walls lie close together but are not joined (a warning).
+    pub const WALL_CORNER_OPEN: ErrorCode = ErrorCode {
+        code: "ab.model.wall_corner_open",
+        category: Category::Conflict,
+        message_id: "ab-model-wall-corner-open",
+    };
+    /// An edge of a floor follows a wall that does not bound it any more (a warning).
+    pub const FLOOR_EDGE_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_unsupported",
+        category: Category::Conflict,
+        message_id: "ab-model-floor-edge-unsupported",
+    };
     /// A floor's boundary is refused: malformed.
     pub const FLOOR_MALFORMED: ErrorCode = ErrorCode {
         code: "ab.model.floor_malformed",

@@ -25,6 +25,7 @@ use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::insert::{
     DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
 };
+use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
@@ -38,6 +39,7 @@ pub mod floor_tool;
 pub mod insert_tool;
 pub mod interaction;
 pub mod labels;
+pub mod modify_tool;
 pub mod outliner;
 pub mod properties;
 pub mod snap;
@@ -62,6 +64,9 @@ const TITLE: Message = Message {
 };
 const MENU_STRUCTURE: Message = Message {
     message_id: "ab-menu-structure",
+};
+const MENU_MODIFY: Message = Message {
+    message_id: "ab-menu-modify",
 };
 const MENU_EXPORT: Message = Message {
     message_id: "ab-menu-export",
@@ -240,6 +245,19 @@ fn menu() -> Result<Menu> {
             FLOOR_ADD_HOLE,
             INSERT_FLIP_HAND,
             INSERT_FLIP_FACING,
+        ]
+        .into_iter()
+        .map(|c| MenuItem::Command { command: c.into() })
+        .collect(),
+    });
+    items.push(MenuItem::Submenu {
+        label: MENU_MODIFY.message_id.into(),
+        items: [
+            MODIFY_MOVE,
+            MODIFY_COPY,
+            MODIFY_ROTATE,
+            MODIFY_MIRROR,
+            OBJECT_DELETE,
         ]
         .into_iter()
         .map(|c| MenuItem::Command { command: c.into() })

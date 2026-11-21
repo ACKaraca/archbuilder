@@ -20,7 +20,9 @@ use arc_command::{
 use arc_doc::{Document, Snapshot};
 use archbuilder_commands::wall::WALL_CREATE;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DEFAULT_THICKNESS, MIN_WALL_LENGTH, STOREY, WALL};
+use archbuilder_model::types::{
+    DEFAULT_THICKNESS, DOOR, FLOOR, MIN_WALL_LENGTH, STOREY, WALL, WINDOW,
+};
 use serde_json::{Map, Value};
 
 /// What the tool reads from the outside: the commands, the document, the session (with the
@@ -74,7 +76,7 @@ pub struct Tool {
     error: Option<Error>,
 }
 
-fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
+pub(crate) fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
     Target {
         registry: env.registry,
         document: env.document,
@@ -93,7 +95,11 @@ pub fn storey_for(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Object
         let object = spatial::get(snapshot, *id)?;
         match spatial::type_of(snapshot, *id)?.as_str() {
             STOREY => Some(object),
-            WALL => spatial::get(snapshot, object.header.owner?),
+            WALL | FLOOR => spatial::get(snapshot, object.header.owner?),
+            DOOR | WINDOW => spatial::get(
+                snapshot,
+                spatial::get(snapshot, object.header.owner?)?.header.owner?,
+            ),
             _ => spatial::objects(snapshot, STOREY)
                 .into_iter()
                 .find(|s| spatial::level_of(snapshot, s).is_some_and(|l| l.id == *id)),
@@ -366,25 +372,23 @@ impl Tool {
         let _ = self.line.set_pointer_direction(direction);
     }
 
-    /// Escape: the first one drops the segment in progress and waits for a new start point (the
-    /// walls placed stay); with no segment in progress it ends the tool.
+    /// Escape: with a start point clicked and no wall placed after it, drops that segment and
+    /// waits for a new start point; otherwise it ends the tool at once (the walls placed stay).
     ///
     /// # Errors
     /// The errors of the command line.
     pub fn escape(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
-        let mid_chain = self.chain.as_ref().is_some_and(|c| c.end.is_some());
-        if !mid_chain {
+        let started = self.chain.as_ref().is_some_and(|c| c.end.is_none())
+            && self.line.active().is_some_and(|s| {
+                s.answers()
+                    .iter()
+                    .any(|a| matches!(a.input, PromptInput::Point(_)))
+            });
+        if !started {
             self.stop();
             return Ok(());
         }
-        let options = self.chain.clone();
         self.line.cancel();
-        self.chain = options.map(|c| Chain {
-            start: None,
-            end: None,
-            walls: 0,
-            ..c
-        });
         self.line.set_last_point(None)?;
         self.next(env, run)
     }

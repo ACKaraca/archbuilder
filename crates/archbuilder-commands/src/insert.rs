@@ -163,7 +163,7 @@ fn wall_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<arc_doc::Object
     Err(Error::new(codes::NO_WALL_SELECTED))
 }
 
-fn next_name(snapshot: &Snapshot, kind: Kind, wall: ObjectId, language: &str) -> String {
+pub(crate) fn next_name(snapshot: &Snapshot, kind: Kind, wall: ObjectId, language: &str) -> String {
     let used = spatial::children(snapshot, kind.key(), wall);
     let taken = |name: &str| {
         used.iter().any(|o| {

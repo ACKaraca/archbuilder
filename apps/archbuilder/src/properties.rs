@@ -448,6 +448,10 @@ const KINDS: &[(&str, Message)] = &[
     ),
 ];
 
+/// The heading of a selection of several kinds of object.
+const OBJECTS: Message = Message {
+    message_id: "ab-prop-objects",
+};
 const EMPTY: Message = Message {
     message_id: "ab-prop-empty",
 };
@@ -650,6 +654,10 @@ pub struct PropertiesPanel {
 }
 
 impl Panel for PropertiesPanel {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass over the selection and the grid"
+    )]
     fn show(&mut self, ui: &mut Ui, cx: &mut PanelContext<'_>) {
         let (Some(view), Some(tab)) = (cx.view.as_deref(), cx.tab) else {
             return;
@@ -689,7 +697,18 @@ impl Panel for PropertiesPanel {
             .find(|(k, _)| *k == first.key)
             .map(|(_, m)| say(cx.localize, m))
             .unwrap_or_default();
-        let heading = if items.len() > 1 {
+        let mixed = items.iter().any(|(s, _)| s.key != first_key);
+        let heading = if mixed {
+            cx.localize
+                .message(
+                    OBJECTS.message_id,
+                    &[(
+                        "count",
+                        arc_base::error::Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX)),
+                    )],
+                )
+                .unwrap_or_else(|| items.len().to_string())
+        } else if items.len() > 1 {
             format!("{kind} ({})", items.len())
         } else {
             kind

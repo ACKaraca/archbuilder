@@ -175,7 +175,7 @@ fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
     crate::wall::storey_for(ctx, given).map(|s| s.id)
 }
 
-fn next_floor_name(snapshot: &Snapshot, storey: ObjectId, language: &str) -> String {
+pub(crate) fn next_floor_name(snapshot: &Snapshot, storey: ObjectId, language: &str) -> String {
     let used = spatial::children(snapshot, FLOOR, storey);
     let taken = |name: &str| {
         used.iter()

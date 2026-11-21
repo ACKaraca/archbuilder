@@ -117,3 +117,22 @@ ab-notice-ifc-exported = Exported { $name } ({ $count } elements)
 ab-notice-ifc-loss = The loss report lists { $count } item(s) that are missing from the file or only approximated.
 ab-export-ifc-title = Export IFC
 ab-export-ifc-filter = IFC files (*.ifc)
+
+ab-notice-modify-dissociated = { $count ->
+    [one] One floor edge no longer follows a wall and stays where it is.
+   *[other] { $count } floor edges no longer follow a wall and stay where they are.
+}
+
+ab-menu-modify = Modify
+ab-tool-move = Move
+ab-tool-move-hint = Move the selected objects (M); select first, or pick the command and then select and press Enter
+ab-tool-copy = Copy
+ab-tool-copy-hint = Copy the selected objects, as many times as you like (CO); Enter ends
+ab-tool-rotate = Rotate
+ab-tool-rotate-hint = Rotate the selected objects about a base point (RO)
+ab-tool-mirror = Mirror
+ab-tool-mirror-hint = Mirror the selected objects across a line (MI)
+ab-prop-objects = { $count } objects
+ab-notice-modify-unjoined = { $names } could not be reconnected to the moved wall and stay open.
+ab-notice-modify-meets = "{ $name }" now opens into the wall "{ $other }".
+ab-notice-picked-point = Point: { $x }, { $y }

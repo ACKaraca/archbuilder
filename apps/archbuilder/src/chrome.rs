@@ -6,6 +6,7 @@ use arc_app::commands;
 use arc_app::shell::ToolItem;
 use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
+use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
 use archbuilder_commands::structure::{STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::WALL_CREATE;
 
@@ -120,6 +121,43 @@ pub fn toolbar() -> Vec<ToolItem> {
                 message_id: "ab-tool-floor-hint",
             },
             FLOOR_CREATE,
+        ),
+        ToolItem::Separator,
+        button(
+            Message {
+                message_id: "ab-tool-move",
+            },
+            Message {
+                message_id: "ab-tool-move-hint",
+            },
+            MODIFY_MOVE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-copy",
+            },
+            Message {
+                message_id: "ab-tool-copy-hint",
+            },
+            MODIFY_COPY,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-rotate",
+            },
+            Message {
+                message_id: "ab-tool-rotate-hint",
+            },
+            MODIFY_ROTATE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-mirror",
+            },
+            Message {
+                message_id: "ab-tool-mirror-hint",
+            },
+            MODIFY_MIRROR,
         ),
         ToolItem::Separator,
         button(

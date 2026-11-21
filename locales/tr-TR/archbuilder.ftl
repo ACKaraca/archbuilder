@@ -116,3 +116,22 @@ ab-notice-ifc-exported = { $name } dışa aktarıldı ({ $count } öğe)
 ab-notice-ifc-loss = Kayıp raporunda dosyada bulunmayan veya yalnızca yaklaşık yazılan { $count } kalem var.
 ab-export-ifc-title = IFC olarak dışa aktar
 ab-export-ifc-filter = IFC dosyaları (*.ifc)
+
+ab-notice-modify-dissociated = { $count ->
+    [one] Bir döşeme kenarı artık bir duvarı izlemiyor ve olduğu yerde kalıyor.
+   *[other] { $count } döşeme kenarı artık bir duvarı izlemiyor ve olduğu yerde kalıyor.
+}
+
+ab-menu-modify = Değiştir
+ab-tool-move = Taşı
+ab-tool-move-hint = Seçili nesneleri taşı (M); önce seçin ya da komutu seçip nesneleri seçtikten sonra Enter'a basın
+ab-tool-copy = Kopyala
+ab-tool-copy-hint = Seçili nesneleri istediğiniz kadar kopyala (CO); Enter bitirir
+ab-tool-rotate = Döndür
+ab-tool-rotate-hint = Seçili nesneleri bir taban noktası çevresinde döndür (RO)
+ab-tool-mirror = Aynala
+ab-tool-mirror-hint = Seçili nesneleri bir çizgiye göre aynala (MI)
+ab-prop-objects = { $count } nesne
+ab-notice-modify-unjoined = { $names } taşınan duvara yeniden bağlanamadı ve açık kaldı.
+ab-notice-modify-meets = "{ $name }" artık "{ $other }" duvarının içine açılıyor.
+ab-notice-picked-point = Nokta: { $x }, { $y }
