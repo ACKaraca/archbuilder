@@ -43,6 +43,13 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-quantity-not-exported",
     };
+    /// A room: the IFC writer has no space element yet, so rooms are not written.
+    pub const ROOM_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.room_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-room-not-written",
+    };
     /// A casement window: IFC4 has no operation attribute on the window itself.
     pub const WINDOW_OPERATION: Reason = Reason {
         code: "ab.io.ifc.window_operation_approximated",

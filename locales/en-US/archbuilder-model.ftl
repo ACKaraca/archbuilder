@@ -22,3 +22,7 @@ ab-model-floor-hole-outside = A hole of the floor "{ $name }" is not inside its 
 ab-model-floor-holes-overlap = Two holes of the floor "{ $name }" overlap or lie inside each other. Keep the holes apart.
 ab-model-wall-corner-open = The ends of "{ $name }" and "{ $other }" are close together but not joined: the corner is open.
 ab-model-floor-edge-unsupported = An edge of the floor "{ $name }" follows the wall "{ $wall }" but runs past its ends: the wall no longer bounds the floor there.
+
+ab-model-room-unenclosed = The room "{ $name }" ({ $number }) is not inside a closed loop of walls: it has no area until its walls close.
+ab-model-room-redundant = The room "{ $name }" ({ $number }) shares its region with a room that has a lower number, which keeps the region: this one has no area until the other is removed or this one is moved.
+ab-model-room-number-duplicate = The number { $number } of the room "{ $name }" is used by another room on the same storey.

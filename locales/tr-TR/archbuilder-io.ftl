@@ -9,3 +9,4 @@ ab-io-loss-body-not-exported = Bir öğe IFC dosyasında şekli olmadan yer alı
 ab-io-loss-quantity-not-exported = Bir öğenin bir miktarı IFC dosyasına yazılmadı.
 ab-io-loss-window-operation = Açılır pencere tek panel olarak yazıldı: IFC4'te pencerenin kendisinde açılma bilgisi yok, bu yüzden açılma türü, menteşe tarafı ve yönü dosyada yer almıyor.
 ab-io-path-required = Dosya adı verilmedi. Komut satırına archbuilder.file.export_ifc path=<dosya> yazın.
+ab-io-loss-room-not-written = Bir oda IFC dosyasında yok: IFC yazıcısında henüz mekan öğesi bulunmadığından odalar yazılmıyor.

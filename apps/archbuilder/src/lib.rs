@@ -26,6 +26,7 @@ use archbuilder_commands::insert::{
     DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
 };
 use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
+use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
@@ -41,7 +42,10 @@ pub mod interaction;
 pub mod labels;
 pub mod modify_tool;
 pub mod outliner;
+pub mod picker;
 pub mod properties;
+pub mod room_tool;
+pub mod room_view;
 pub mod snap;
 pub mod wall_tool;
 
@@ -243,6 +247,8 @@ fn menu() -> Result<Menu> {
             WINDOW_PLACE,
             FLOOR_CREATE,
             FLOOR_ADD_HOLE,
+            ROOM_PLACE,
+            ROOM_PLACE_ALL,
             INSERT_FLIP_HAND,
             INSERT_FLIP_FACING,
         ]
@@ -314,7 +320,15 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
             ..arc_ui::Appearance::default()
         },
         display: None,
-        overlays: Some(OverlayProbe(Arc::new(labels::overlays))),
+        // The rooms' tags and hatch follow the level labels; the shared room view learns the
+        // selection and the active storey from the work-plane probe.
+        overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
+            let mut out = labels::overlays(app, tab, language);
+            if let Ok(t) = app.tab(tab) {
+                out.extend(room_view::shared().overlays(&t.document().snapshot(), language));
+            }
+            out
+        }))),
         work_plane: Some(WorkPlaneProbe(Arc::new(interaction::work_plane))),
         // Seen from the front and the right, from above: the levels are told apart at once.
         initial_view: Some(InitialView {

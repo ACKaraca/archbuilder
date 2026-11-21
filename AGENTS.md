@@ -10,18 +10,15 @@ Depends only on `arc-core` and third-party crates; never on other Arc products.
 
 ## Status and where to start
 
-The spatial structure exists as code (project, site, building, storey, level as `arc-doc` object
-types with validation rules and commands), with a windowed application and a headless CLI on one
-pinned `arc-core`. Walls exist (`archbuilder.wall.create`, `delete`, `flip`, `archbuilder.object.delete`
-on the Delete key, edits through `archbuilder.property.set`, shaded solids, outliner, property grid,
-`inspect` lists). Joins are derived and never stored; only each end's style is authored
-(`archbuilder.wall.join_style`, `disallow_join`, `allow_join`); snaps are in
-`apps/archbuilder/src/snap.rs`. Doors and windows are built-in kinds hosted by a wall
-(`archbuilder.door.place`, `window.place`, `insert.flip_hand`, `flip_facing`) that cut openings.
-Floors (`archbuilder.floor.create` by picked walls or sketch, `floor.add_hole`) have a boundary whose
-wall-associated edges are derived from the wall faces and freeze when the wall is deleted; no layers,
-slope or join cleanup yet. `archbuilder.modify.move|copy|rotate|mirror` act on walls, floors, inserts. Walls have no types or layers either. IFC4 export of these kinds exists; families, views and the
-rest are still specifications. Read in this order:
+The spatial structure (project, site, building, storey, level) exists as code, with a windowed
+application and a headless CLI on one pinned `arc-core`. Built so far: walls (create, delete, flip,
+joins derived with authored end styles, `snap.rs`), doors and windows hosted by walls, floors
+(picked walls or sketch, holes; wall-associated edges follow the wall faces), rooms
+(`archbuilder.room.place`, `place_all`: derived from the walls around a placement point, warnings
+for unenclosed, redundant and duplicate numbers), `archbuilder.modify.move|copy|rotate|mirror`,
+Delete, `archbuilder.property.set`, outliner, property grid, `inspect` lists, IFC4 export (not
+rooms). No layers, types or slope yet; families, views and the rest are still specifications.
+Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
 `docs/architecture/domain-model.md`, `docs/roadmap.md`, `docs/adr/README.md`.
@@ -31,7 +28,7 @@ rest are still specifications. Read in this order:
 Present:
 
 ```
-crates/archbuilder-model/     spatial, wall, insert and floor types, validation rules, solids, wall joins, readers (headless)
+crates/archbuilder-model/     spatial, wall, insert, floor and room types, picking order, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands of the structure, wall, insert and floor (headless)
 crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors with a loss report; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall, insert and floor tools

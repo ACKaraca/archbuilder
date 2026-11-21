@@ -563,6 +563,15 @@ impl Boundary {
             .sum()
     }
 
+    /// Whether `p` is inside the outer loop and outside every hole.
+    #[must_use]
+    pub fn contains(&self, p: [f64; 2]) -> bool {
+        self.loops
+            .iter()
+            .enumerate()
+            .all(|(k, l)| inside(l, p) == (k == 0))
+    }
+
     /// The perimeter of all loops, in meters.
     #[must_use]
     pub fn perimeter(&self) -> f64 {
@@ -879,15 +888,71 @@ struct Piece {
     wall: usize,
 }
 
+/// Where the center lines of two walls cross strictly inside both; `None` for parallel walls and
+/// for walls that only meet at an end (the ends are nodes already).
+fn crossing(a: &Wall, b: &Wall, tol: f64) -> Option<[f64; 2]> {
+    let (r, s) = (sub(a.end, a.start), sub(b.end, b.start));
+    let denom = cross(r, s);
+    let (la, lb) = (a.length(), b.length());
+    if denom.abs() <= 1.0e-12 * la * lb {
+        return None;
+    }
+    let q = sub(b.start, a.start);
+    let t = cross(q, s) / denom;
+    let u = cross(q, r) / denom;
+    let (ta, tb) = (tol / la, tol / lb);
+    ((ta..=1.0 - ta).contains(&t) && (tb..=1.0 - tb).contains(&u))
+        .then(|| [a.start[0] + r[0] * t, a.start[1] + r[1] * t])
+}
+
+/// One closed region of a storey's walls: a face of the plan the walls make.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WallRegion {
+    /// The area inside the center lines of the walls, in square meters.
+    pub area: f64,
+    /// The corners of the loop on the center lines, counterclockwise.
+    pub polygon: Vec<[f64; 2]>,
+    /// The walls around the region in order, each once; `None` when the loop uses a wall twice
+    /// or has fewer than three walls.
+    pub walls: Option<Vec<ObjectId>>,
+}
+
+impl WallRegion {
+    /// Whether `p` is inside the loop on the center lines.
+    #[must_use]
+    pub fn contains(&self, p: [f64; 2]) -> bool {
+        inside(&self.polygon, p)
+    }
+}
+
+/// The smallest of `regions` that holds `p`.
+#[must_use]
+pub fn smallest_around(regions: &[WallRegion], p: [f64; 2]) -> Option<usize> {
+    regions
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.contains(p))
+        .min_by(|a, b| a.1.area.total_cmp(&b.1.area))
+        .map(|(k, _)| k)
+}
+
 /// The walls of the smallest closed loop of walls around `p`, in order; walls are joined where
 /// their ends meet or an end lies on another wall (a T). `None` when no loop encloses the point,
 /// the loop uses a wall twice, or the search exceeds its bounds.
+#[must_use]
+pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<ObjectId>> {
+    let regions = regions(walls)?;
+    regions.get(smallest_around(&regions, p)?)?.walls.clone()
+}
+
+/// Every closed region of the plan the walls make, found once: walls are joined where their ends
+/// meet or an end lies on another wall (a T). `None` when the search exceeds its bounds.
 #[must_use]
 #[allow(
     clippy::too_many_lines,
     reason = "one search: nodes, pieces, face walk, spur removal"
 )]
-pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<ObjectId>> {
+pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
     if walls.is_empty() || walls.len() > MAX_PICKED {
         return None;
     }
@@ -905,7 +970,8 @@ pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<Object
             }
         }
     };
-    // Each wall's nodes along it: its ends, and the ends of other walls that lie on it.
+    // Each wall's nodes along it: its ends, the ends of other walls that lie on it, and the
+    // points where other walls cross it.
     let ends: Vec<[f64; 2]> = walls.iter().flat_map(|(_, w)| [w.start, w.end]).collect();
     let mut pieces: Vec<Piece> = Vec::new();
     for (k, (_, w)) in walls.iter().enumerate() {
@@ -917,6 +983,15 @@ pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<Object
             let t = dot(rel, base.dir);
             if t > tol && t < length - tol && cross(base.dir, rel).abs() < tol {
                 along.push((t, *q));
+            }
+        }
+        // Walls that cross this one split it too, whether or not they end beyond it.
+        for (j, (_, other)) in walls.iter().enumerate() {
+            if j == k {
+                continue;
+            }
+            if let Some(at) = crossing(w, other, tol) {
+                along.push((dot(sub(at, w.start), base.dir), at));
             }
         }
         along.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -966,7 +1041,7 @@ pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<Object
         })
     };
     let mut seen = vec![false; pieces.len()];
-    let mut best: Option<(f64, Vec<usize>)> = None;
+    let mut found: Vec<WallRegion> = Vec::new();
     for start in 0..pieces.len() {
         if seen[start] {
             continue;
@@ -1000,25 +1075,29 @@ pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<Object
         }
         let polygon: Vec<[f64; 2]> = stack.iter().map(|&k| nodes[pieces[k].from]).collect();
         let area = signed_area(&polygon);
-        if area > 0.0 && inside(&polygon, p) && best.as_ref().is_none_or(|(a, _)| area < *a) {
-            best = Some((area, stack));
+        if area <= 0.0 {
+            continue;
         }
-    }
-    let (_, cycle) = best?;
-    let mut order: Vec<usize> = Vec::new();
-    for k in cycle {
-        let wall = pieces[k].wall;
-        if order.last() != Some(&wall) {
-            order.push(wall);
+        let mut order: Vec<usize> = Vec::new();
+        for &k in &stack {
+            let wall = pieces[k].wall;
+            if order.last() != Some(&wall) {
+                order.push(wall);
+            }
         }
+        // The loop closes: the last wall may be the first one continued.
+        if order.len() > 1 && order.first() == order.last() {
+            order.pop();
+        }
+        let unique: BTreeSet<usize> = order.iter().copied().collect();
+        found.push(WallRegion {
+            area,
+            polygon,
+            walls: (order.len() >= 3 && unique.len() == order.len())
+                .then(|| order.into_iter().map(|k| walls[k].0).collect()),
+        });
     }
-    // The loop closes: the last wall may be the first one continued.
-    if order.len() > 1 && order.first() == order.last() {
-        order.pop();
-    }
-    let unique: BTreeSet<usize> = order.iter().copied().collect();
-    (order.len() >= 3 && unique.len() == order.len())
-        .then(|| order.into_iter().map(|k| walls[k].0).collect())
+    Some(found)
 }
 
 #[cfg(test)]

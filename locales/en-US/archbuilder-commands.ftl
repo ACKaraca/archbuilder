@@ -142,3 +142,12 @@ ab-keyword-yes = Yes
 ab-keyword-no = No
 ab-prompt-modify-select = Select objects (click, window left to right, crossing right to left), then press Enter:
 ab-cmd-select-before-points = Select the objects first (click or drag a window), then press Enter, before giving points.
+
+ab-cmd-room-no-region = This point is not inside a closed loop of walls. Click inside walls that enclose an area.
+ab-cmd-room-region-taken = This region already has a room.
+ab-cmd-room-none-missing = Every enclosed region of this storey already has a room.
+ab-cmd-room-place-label = Room
+ab-cmd-room-place-description = Places a room on a storey at a point inside a region closed by walls. The boundary, area, perimeter and volume follow the walls; the room gets the next number of the storey.
+ab-cmd-room-place-all-label = Place all rooms
+ab-cmd-room-place-all-description = Places a room in every enclosed region of a storey that has none.
+ab-prompt-room-place = Room on { $storey }: click inside a region closed by walls, Escape to finish.

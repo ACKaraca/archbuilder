@@ -155,6 +155,10 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.floor(&floor, storey);
         }
+        // The writer has no IfcSpace yet: rooms are named in the loss report.
+        for room in spatial::children(self.snapshot, archbuilder_model::types::ROOM, storey) {
+            self.lose(reasons::ROOM_NOT_WRITTEN, "IFCSPACE", &room);
+        }
         Ok(())
     }
 

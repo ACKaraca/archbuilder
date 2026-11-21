@@ -141,3 +141,12 @@ ab-keyword-yes = Evet
 ab-keyword-no = Hayır
 ab-prompt-modify-select = Nesneleri seçin (tıklayın, soldan sağa pencere, sağdan sola kesen pencere), sonra Enter'a basın:
 ab-cmd-select-before-points = Nokta vermeden önce nesneleri seçin (tıklayın ya da pencere sürükleyin) ve Enter'a basın.
+
+ab-cmd-room-no-region = Bu nokta kapalı bir duvar halkasının içinde değil. Bir alanı çevreleyen duvarların içine tıklayın.
+ab-cmd-room-region-taken = Bu bölgede zaten bir oda var.
+ab-cmd-room-none-missing = Bu katta kapalı her bölgede zaten bir oda var.
+ab-cmd-room-place-label = Oda
+ab-cmd-room-place-description = Bir katta, duvarlarla kapanan bir bölgenin içindeki noktaya oda yerleştirir. Sınır, alan, çevre ve hacim duvarları izler; oda katın sıradaki numarasını alır.
+ab-cmd-room-place-all-label = Tüm odaları yerleştir
+ab-cmd-room-place-all-description = Bir katta, odası olmayan kapalı her bölgeye oda yerleştirir.
+ab-prompt-room-place = { $storey } üzerinde oda: duvarlarla kapanan bir bölgenin içine tıklayın, bitirmek için Esc.

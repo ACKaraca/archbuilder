@@ -14,6 +14,8 @@ pub mod floor;
 pub mod insert;
 pub mod join;
 pub mod names;
+pub mod pick;
+pub mod room;
 pub mod spatial;
 pub mod transform;
 pub mod types;
@@ -109,6 +111,12 @@ pub mod defaults {
         } else {
             format!("Slab {n}")
         }
+    }
+
+    /// The name of a room in `language`: `Room`, `Oda`. Rooms are told apart by number.
+    #[must_use]
+    pub fn room(language: &str) -> &'static str {
+        if turkish(language) { "Oda" } else { "Room" }
     }
 
     /// The name of the storey numbered `n` above the ground floor in `language`: `Floor 3`,

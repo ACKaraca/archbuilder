@@ -104,6 +104,24 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-floor-edge-unsupported",
     };
+    /// A room's point is in no closed loop of walls (a warning).
+    pub const ROOM_UNENCLOSED: ErrorCode = ErrorCode {
+        code: "ab.model.room_unenclosed",
+        category: Category::Conflict,
+        message_id: "ab-model-room-unenclosed",
+    };
+    /// Two rooms are in one region (a warning).
+    pub const ROOM_REDUNDANT: ErrorCode = ErrorCode {
+        code: "ab.model.room_redundant",
+        category: Category::Conflict,
+        message_id: "ab-model-room-redundant",
+    };
+    /// Two rooms of a storey have the same number (a warning).
+    pub const ROOM_NUMBER_DUPLICATE: ErrorCode = ErrorCode {
+        code: "ab.model.room_number_duplicate",
+        category: Category::Conflict,
+        message_id: "ab-model-room-number-duplicate",
+    };
     /// A floor's boundary is refused: malformed.
     pub const FLOOR_MALFORMED: ErrorCode = ErrorCode {
         code: "ab.model.floor_malformed",

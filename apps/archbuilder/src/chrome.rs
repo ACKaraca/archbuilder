@@ -7,6 +7,7 @@ use arc_app::shell::ToolItem;
 use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
+use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
 use archbuilder_commands::structure::{STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::WALL_CREATE;
 
@@ -24,7 +25,7 @@ fn button(label: Message, hint: Message, line: &str) -> ToolItem {
     }
 }
 
-/// The toolbar: the file commands, the storey commands, the wall, door and window tools, undo and redo, and zoom to
+/// The toolbar: the file commands, undo, redo and zoom first (so a wrap never moves them), the storey commands, the wall, door and window tools, undo and redo, and zoom to
 /// the extents.
 #[must_use]
 #[allow(clippy::too_many_lines, reason = "one entry per toolbar button")]
@@ -66,6 +67,33 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             commands::FILE_SAVE_AS,
         ),
+        ToolItem::Separator,
+        button(
+            Message {
+                message_id: "ab-tool-undo",
+            },
+            Message {
+                message_id: "ab-tool-undo-hint",
+            },
+            commands::EDIT_UNDO,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-redo",
+            },
+            Message {
+                message_id: "ab-tool-redo-hint",
+            },
+            commands::EDIT_REDO,
+        ),
+        ToolItem::Separator,
+        ToolItem::ZoomExtents {
+            label: Message {
+                message_id: "ab-tool-zoom-extents",
+            }
+            .message_id
+            .to_owned(),
+        },
         ToolItem::Separator,
         button(
             Message {
@@ -122,6 +150,24 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             FLOOR_CREATE,
         ),
+        button(
+            Message {
+                message_id: "ab-tool-room",
+            },
+            Message {
+                message_id: "ab-tool-room-hint",
+            },
+            ROOM_PLACE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-room-all",
+            },
+            Message {
+                message_id: "ab-tool-room-all-hint",
+            },
+            ROOM_PLACE_ALL,
+        ),
         ToolItem::Separator,
         button(
             Message {
@@ -159,32 +205,5 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             MODIFY_MIRROR,
         ),
-        ToolItem::Separator,
-        button(
-            Message {
-                message_id: "ab-tool-undo",
-            },
-            Message {
-                message_id: "ab-tool-undo-hint",
-            },
-            commands::EDIT_UNDO,
-        ),
-        button(
-            Message {
-                message_id: "ab-tool-redo",
-            },
-            Message {
-                message_id: "ab-tool-redo-hint",
-            },
-            commands::EDIT_REDO,
-        ),
-        ToolItem::Separator,
-        ToolItem::ZoomExtents {
-            label: Message {
-                message_id: "ab-tool-zoom-extents",
-            }
-            .message_id
-            .to_owned(),
-        },
     ]
 }

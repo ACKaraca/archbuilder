@@ -9,7 +9,8 @@
 //! changes it. `inspect` adds a `walls` list to the shared dump: each wall with its storey, length,
 //! thickness, height and the volume of its derived solid minus its openings, and the `doors` and
 //! `windows` lists: each with its host wall, distance along it, width, height and sill, and the
-//! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow.
+//! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow, and the
+//! `rooms` list: each with its storey, number, name, state, area, perimeter and volume.
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`.
@@ -24,6 +25,7 @@ use serde_json::Value;
 pub mod check;
 pub mod export;
 pub mod floors;
+pub mod rooms;
 pub mod walls;
 
 /// The product of the CLI: the commands of `archbuilder-commands` and the export command.
@@ -128,13 +130,16 @@ where
         let doors = walls::inserts(dump.get("objects")?.as_array()?, Kind::Door);
         let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
         let floors = floors::summary(dump.get("objects")?.as_array()?);
-        let found = check::findings(dump.get("objects")?.as_array()?);
+        let rooms = rooms::summary(dump.get("objects")?.as_array()?);
+        let mut found = check::findings(dump.get("objects")?.as_array()?);
+        found.extend(rooms::findings(dump.get("objects")?.as_array()?));
         let map = dump.as_object_mut()?;
         // The product's findings join the shared ones only when the check was asked for.
         if checked && let Some(list) = map.get_mut("findings").and_then(Value::as_array_mut) {
             list.extend(found);
         }
         map.insert("floors".into(), floors.into());
+        map.insert("rooms".into(), rooms.into());
         map.insert("walls".into(), walls.into());
         map.insert("doors".into(), doors.into());
         map.insert("windows".into(), windows.into());

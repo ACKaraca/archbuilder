@@ -16,6 +16,9 @@ use archbuilder_model::types::{self, level};
 use archbuilder_model::units::LengthUnit;
 
 use crate::extract_level::HALF;
+use crate::room_view::{PixelRect, ViewRect, label_size};
+
+const LINE_PX: f64 = 17.0;
 
 pub use archbuilder_model::units::decimal_separator;
 
@@ -36,18 +39,102 @@ pub fn label(level_object: &Object, unit: LengthUnit, language: &str) -> String 
     )
 }
 
-/// The labels of every level of `snapshot`, highest level first.
-#[must_use]
-pub fn of_snapshot(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
+/// One level label: where it is anchored (project coordinates), its text, and the pixels it
+/// takes in a view from above.
+struct Placed {
+    at: Point3,
+    text: String,
+    rect: Option<PixelRect>,
+}
+
+/// The view cube's width and the gap beside it: labels in the top strip keep clear of it, in
+/// pixels.
+const CUBE_PX: f64 = 112.0;
+const EDGE_PX: f64 = 4.0;
+
+/// The labels of every level, highest first. In a view from above the shared anchor (the corner
+/// of the level outlines) moves in so that the labels stay inside the image and out of the view
+/// cube's corner; they stack downward from there, as the viewport steps overlapping labels down.
+fn placed(snapshot: &Snapshot, language: &str, view: Option<&ViewRect>) -> Vec<Placed> {
     let unit = spatial::length_unit(snapshot);
     let mut levels = spatial::objects(snapshot, types::LEVEL);
     let elevation = |o: &Object| types::meters(&o.values, level::ELEVATION).unwrap_or(0.0);
     levels.sort_by(|a, b| elevation(b).total_cmp(&elevation(a)));
+    let texts: Vec<String> = levels.iter().map(|l| label(l, unit, language)).collect();
+    let anchor = HALF;
+    let mut shift = [0.0_f64, 0.0_f64];
+    let mut origin = [0.0_f64, 0.0_f64];
+    if let Some(v) = view {
+        let ap = v.to_pixel(anchor);
+        let widest = texts
+            .iter()
+            .map(|t| label_size(t)[0])
+            .fold(0.0_f64, f64::max);
+        let h = texts.first().map_or(LINE_PX, |t| label_size(t)[1]);
+        // The first label's rectangle, as the viewport places it beside its anchor.
+        let (left, top) = (ap[0] + 8.0, ap[1] - 8.0 - h);
+        let right_limit = if top < CUBE_PX {
+            v.size[0] - CUBE_PX
+        } else {
+            v.size[0] - EDGE_PX
+        };
+        shift[0] = (right_limit - (left + widest)).min(0.0);
+        shift[0] += (EDGE_PX - (left + shift[0])).max(0.0);
+        shift[1] = (EDGE_PX - top).max(0.0);
+        origin = [left + shift[0], top + shift[1]];
+    }
     levels
         .iter()
-        .map(|l| ProductOverlay::Label {
-            at: Point3::new(HALF[0], HALF[1], elevation(l)),
-            text: label(l, unit, language),
+        .zip(texts)
+        .enumerate()
+        .map(|(k, (l, text))| {
+            let at = view.map_or([anchor[0], anchor[1]], |v| {
+                let ap = v.to_pixel(anchor);
+                v.to_model([ap[0] + shift[0], ap[1] + shift[1]])
+            });
+            let size = label_size(&text);
+            let rect = view.map(|_| {
+                let top = origin[1] + k as f64 * (size[1] + 2.0);
+                [origin[0], top, origin[0] + size[0], top + size[1]]
+            });
+            Placed {
+                at: Point3::new(at[0], at[1], elevation(l)),
+                text,
+                rect,
+            }
+        })
+        .collect()
+}
+
+/// The pixels the level labels take in a view from above; none for other views.
+#[must_use]
+pub fn level_rects(snapshot: &Snapshot, language: &str, view: Option<ViewRect>) -> Vec<PixelRect> {
+    view.map_or_else(Vec::new, |v| {
+        placed(snapshot, language, Some(&v))
+            .into_iter()
+            .filter_map(|p| p.rect)
+            .collect()
+    })
+}
+
+/// The labels of every level of `snapshot`, highest level first.
+#[must_use]
+pub fn of_snapshot(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
+    of_snapshot_in(snapshot, language, None)
+}
+
+/// The labels of every level, kept inside the visible area of a view from above.
+#[must_use]
+pub fn of_snapshot_in(
+    snapshot: &Snapshot,
+    language: &str,
+    view: Option<&ViewRect>,
+) -> Vec<ProductOverlay> {
+    placed(snapshot, language, view)
+        .into_iter()
+        .map(|p| ProductOverlay::Label {
+            at: p.at,
+            text: p.text,
         })
         .collect()
 }
@@ -93,6 +180,12 @@ pub fn symbols(snapshot: &Snapshot) -> Vec<ProductOverlay> {
 pub fn overlays(app: &Application, tab: TabId, language: &str) -> Vec<ProductOverlay> {
     app.tab(tab).map_or_else(
         |_| Vec::new(),
-        |t| of_snapshot(&t.document().snapshot(), language),
+        |t| {
+            of_snapshot_in(
+                &t.document().snapshot(),
+                language,
+                crate::room_view::shared().view().as_ref(),
+            )
+        },
     )
 }

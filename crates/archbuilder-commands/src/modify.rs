@@ -135,6 +135,8 @@ struct Set {
     walls: Vec<ObjectId>,
     /// The floors.
     floors: Vec<ObjectId>,
+    /// The rooms (their placement points move).
+    rooms: Vec<ObjectId>,
     /// The doors and windows whose wall is not in the set.
     inserts: Vec<ObjectId>,
 }
@@ -171,6 +173,7 @@ fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
         match spatial::type_of(snapshot, id).as_deref() {
             Some(WALL) => set.walls.push(id),
             Some(FLOOR) => set.floors.push(id),
+            Some(types::ROOM) => set.rooms.push(id),
             Some(DOOR | WINDOW) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -183,7 +186,11 @@ fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
             set.inserts.push(id);
         }
     }
-    if set.walls.is_empty() && set.floors.is_empty() && set.inserts.is_empty() {
+    if set.walls.is_empty()
+        && set.floors.is_empty()
+        && set.rooms.is_empty()
+        && set.inserts.is_empty()
+    {
         return Err(Error::new(if skipped {
             codes::NOT_MOVABLE
         } else {
@@ -565,7 +572,7 @@ fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String; 2]>> {
 fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
     let snapshot = ctx.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
-    let mut count = set.walls.len() + set.floors.len() + set.inserts.len();
+    let mut count = set.walls.len() + set.floors.len() + set.rooms.len() + set.inserts.len();
     // Everything is read before the first write.
     let joined = reconnect(&snapshot, set, xf)?;
     let mut wall_changes = Vec::new();
@@ -638,6 +645,14 @@ fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Mo
     for (id, distance) in slides {
         set_length(ctx, id, "distance", distance)?;
     }
+    for id in &set.rooms {
+        let room = spatial::get(&snapshot, *id)
+            .and_then(|o| archbuilder_model::room::Room::from_values(&o.values))
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let at = xf.point(room.point);
+        set_length(ctx, *id, "x", at[0])?;
+        set_length(ctx, *id, "y", at[1])?;
+    }
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -655,7 +670,7 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
     let tongue = language(ctx);
     let mut created: Vec<ObjectId> = Vec::new();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
-    let mut count = set.walls.len() + set.floors.len() + set.inserts.len();
+    let mut count = set.walls.len() + set.floors.len() + set.rooms.len() + set.inserts.len();
     for id in &set.walls {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -738,6 +753,9 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
         }
         created.push(create(ctx, FLOOR, storey, values)?);
     }
+    for id in &set.rooms {
+        created.push(copy_room(ctx, &snapshot, *id, xf)?);
+    }
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
     Ok(Modified {
@@ -747,6 +765,41 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
         meets,
         ..Modified::default()
     })
+}
+
+/// A copy of the room `id` with its point under `xf` and the next free number of its storey.
+fn copy_room(
+    ctx: &mut Context<'_>,
+    snapshot: &Snapshot,
+    id: ObjectId,
+    xf: &Xform,
+) -> Result<ObjectId> {
+    let object = spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let room = archbuilder_model::room::Room::from_values(&object.values)
+        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let storey = object.header.owner;
+    let at = xf.point(room.point);
+    let mut values = object.values.clone();
+    let number = {
+        let seen = ctx.txn()?.snapshot().clone();
+        let rooms = storey.map(|s| spatial::children(&seen, types::ROOM, s));
+        archbuilder_model::room::next_number(
+            rooms
+                .iter()
+                .flatten()
+                .filter_map(|r| types::text(&r.values, types::room::NUMBER)),
+        )
+    };
+    for (slot, value) in [
+        (types::room::NUMBER, Value::String(number)),
+        (types::room::X, types::length(at[0])),
+        (types::room::Y, types::length(at[1])),
+    ] {
+        if let Some(v) = values.get_mut(slot) {
+            *v = Some(value);
+        }
+    }
+    create(ctx, types::ROOM, storey, values)
 }
 
 /// A copy of the insert `source` on the wall `host` at `distance`, with the next free name and,

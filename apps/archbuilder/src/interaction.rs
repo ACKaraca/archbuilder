@@ -27,6 +27,7 @@ use arc_ui::{
     ProductOverlay, PromptControls, WorkPlane,
 };
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::room::ROOM_PLACE;
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_io::command::EXPORT_IFC;
@@ -37,6 +38,8 @@ use std::path::{Path, PathBuf};
 use crate::floor_tool::FloorTool;
 use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_named};
 use crate::modify_tool::{ModifyTool, command_named};
+use crate::picker::Picker;
+use crate::room_tool::RoomTool;
 use crate::wall_tool::{Env, Tool, storey_for};
 
 /// A message of the application, named by identifier.
@@ -106,6 +109,9 @@ fn view_ray(cx: &InteractionContext<'_>, m: Point3) -> Option<crate::insert_tool
     })
 }
 
+/// How far from an object a point of a plan view still picks it, in pixels.
+const PICK_PIXELS: f64 = 5.0;
+
 /// The snap step of the cursor on the level plane, in meters.
 pub const GRID: f64 = 0.01;
 
@@ -114,7 +120,11 @@ pub const GRID: f64 = 0.01;
 #[must_use]
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
-    let (_, elevation) = storey_for(&snapshot, selection)?;
+    let (storey, elevation) = storey_for(&snapshot, selection)?;
+    // The room drawing follows the storey the viewport works on and the selection.
+    let rooms = crate::room_view::shared();
+    rooms.set_active(Some(storey));
+    rooms.set_selection(selection);
     Some(WorkPlane {
         origin: Point3::new(0.0, 0.0, elevation),
         normal: Vector3::z(),
@@ -232,6 +242,16 @@ pub struct WallInteraction {
     floors: FloorTool,
     /// The modify tool: move, copy, rotate and mirror.
     modify: ModifyTool,
+    /// The room tool: rooms placed by clicking inside regions closed by walls.
+    rooms: RoomTool,
+    /// The size of the viewport's image in pixels, once a pointer event has shown it.
+    view_size: Option<[f64; 2]>,
+    /// What a click in a plan view picks, shared by the hover and the click.
+    picker: Picker,
+    /// The outline of what a click would pick, in a plan view.
+    pick_hover: Vec<ProductOverlay>,
+    /// The outline of the region under the pointer while the room tool runs.
+    room_hover: Vec<ProductOverlay>,
     /// The walls the wall chain had when it last changed, to say once when it ends.
     chain_walls: usize,
     /// Whether the last call said a chain ended: the shell then adds no line of its own for the
@@ -248,6 +268,8 @@ pub struct WallInteraction {
     /// The plan symbols of the doors and windows, while the camera looks (nearly) straight down,
     /// with the snapshot they were made from.
     symbols: Option<(arc_doc::Snapshot, Vec<ProductOverlay>)>,
+    /// The room warnings the history last showed, so a command says only what changed.
+    room_warnings: Vec<String>,
     /// Lines the interface shows above the command line: refusals of clicks and what a delete took.
     notices: Vec<String>,
     /// The number of notices dropped from the front of `notices`: the sequence number of its
@@ -282,6 +304,11 @@ impl WallInteraction {
             inserts: InsertTool::new(),
             floors: FloorTool::new(),
             modify: ModifyTool::new(),
+            rooms: RoomTool::new(),
+            view_size: None,
+            picker: Picker::default(),
+            pick_hover: Vec::new(),
+            room_hover: Vec::new(),
             chain_walls: 0,
             just_reported: false,
             copy_count: 0,
@@ -289,6 +316,7 @@ impl WallInteraction {
             hover: None,
             highlight: Vec::new(),
             symbols: None,
+            room_warnings: Vec::new(),
             notices: Vec::new(),
             notices_first: 0,
             registry: archbuilder_commands::registry()
@@ -414,6 +442,36 @@ impl WallInteraction {
         })
     }
 
+    /// Runs `step` of the room tool with the pieces the context gives.
+    fn with_rooms(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        step: impl FnOnce(
+            &mut RoomTool,
+            &Env<'_>,
+            &mut dyn FnMut(Invocation) -> Result<arc_command::Outcome>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let (Some(registry), Ok(document)) = (self.registry.as_ref(), cx.document()) else {
+            return Ok(());
+        };
+        if cx.read_only() {
+            return Ok(());
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let session = Self::session(cx);
+        let env = Env {
+            registry,
+            document,
+            session: &session,
+            selection: cx.selection(),
+            seed: self.seed,
+        };
+        step(&mut self.rooms, &env, &mut |invocation| {
+            cx.invoke(invocation)
+        })
+    }
+
     /// Runs `step` of the modify tool with the pieces the context gives.
     fn with_modify(
         &mut self,
@@ -448,6 +506,8 @@ impl WallInteraction {
     fn current_line(&self) -> &arc_command::CommandLine {
         if self.modify.running() {
             self.modify.line()
+        } else if self.rooms.running() {
+            self.rooms.line()
         } else if self.floors.running() {
             self.floors.line()
         } else if self.inserts.running() {
@@ -463,6 +523,8 @@ impl WallInteraction {
         self.inserts.stop();
         self.floors.stop();
         self.modify.stop();
+        self.rooms.stop();
+        self.room_hover.clear();
         self.floor_hover.clear();
         self.hover = None;
     }
@@ -690,7 +752,11 @@ impl Interaction for WallInteraction {
 
     fn dynamic(&mut self, _: &InteractionContext<'_>, _: &DynamicEvent) {}
 
-    #[allow(clippy::too_many_lines, reason = "one arm per line action and tool")]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
+        reason = "one arm per line action and tool"
+    )]
     fn line(&mut self, cx: &InteractionContext<'_>, action: LineAction) -> Result<()> {
         self.just_reported = false;
         // An error a click left comes first; one this action left (a rejected answer) is shown now.
@@ -699,13 +765,23 @@ impl Interaction for WallInteraction {
             .take_error()
             .or_else(|| self.inserts.take_error())
             .or_else(|| self.floors.take_error())
+            .or_else(|| self.rooms.take_error())
             .or_else(|| self.modify.take_error());
         self.refresh_highlight(cx);
+        self.update_view(cx, None);
+        if matches!(action, LineAction::Cancel | LineAction::ClearInput) {
+            self.picker.reset();
+        }
+        let rooming = self.rooms.running();
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
         let modifying = self.modify.running();
         let result = match action {
             LineAction::ClearInput => Ok(()),
+            LineAction::Cancel if rooming => {
+                self.stop_all();
+                Ok(())
+            }
             LineAction::Cancel if flooring => {
                 self.with_floors(cx, |tool, env, run| tool.escape(env, run))
             }
@@ -718,6 +794,7 @@ impl Interaction for WallInteraction {
                 Ok(())
             }
             LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
+            LineAction::Back if rooming => Ok(()),
             LineAction::Back if flooring => {
                 self.with_floors(cx, |tool, env, run| tool.back(env, run))
             }
@@ -733,11 +810,18 @@ impl Interaction for WallInteraction {
                 self.export_ifc(cx, export_line(&text).flatten())
             }
             LineAction::Submit(text)
-                if (inserting || flooring || modifying || self.tool.active())
+                if (inserting || flooring || modifying || rooming || self.tool.active())
                     && self.names_command(&text) =>
             {
                 self.stop_all();
                 self.intent(cx, &Intent::new(text.trim()))
+            }
+            LineAction::Submit(text) if rooming => {
+                let text = self.typed(cx, &text);
+                self.with_rooms(cx, |tool, env, run| tool.text(env, run, &text))
+            }
+            LineAction::Submit(text) if is_room_word(&text) && !self.tool.active() => {
+                self.intent(cx, &Intent::new(ROOM_PLACE))
             }
             LineAction::Submit(text) if modifying => {
                 let text = self.typed(cx, &text);
@@ -793,6 +877,9 @@ impl Interaction for WallInteraction {
         if !self.floors.running() {
             self.floor_hover.clear();
         }
+        if !self.rooms.running() {
+            self.room_hover.clear();
+        }
         self.report_chains(cx);
         if !self.modify.running() {
             self.ghost.clear();
@@ -803,6 +890,7 @@ impl Interaction for WallInteraction {
             .take_error()
             .or_else(|| self.inserts.take_error())
             .or_else(|| self.floors.take_error())
+            .or_else(|| self.rooms.take_error())
             .or_else(|| self.modify.take_error());
         result
             .and(pending.map_or(Ok(()), Err))
@@ -835,6 +923,7 @@ impl Interaction for WallInteraction {
                 active: self.tool.active()
                     || self.inserts.running()
                     || self.floors.running()
+                    || self.rooms.running()
                     || self.modify.running(),
                 answers: line.active().map_or(0, |s| s.answers().len()),
                 has_selection: false,
@@ -850,6 +939,8 @@ impl Interaction for WallInteraction {
                 .chain(self.angle_label())
                 .chain(self.insert_overlays())
                 .chain(self.floor_overlays())
+                .chain(self.room_hover.iter().cloned())
+                .chain(self.pick_hover.iter().cloned())
                 .chain(self.ghost.iter().cloned())
                 .chain(self.symbols.iter().flat_map(|(_, o)| o.iter().cloned()))
                 // Last, so that the selection's outline lies over the hover highlight of the wall.
@@ -861,6 +952,7 @@ impl Interaction for WallInteraction {
                 .map(|_| ())
                 .or(self.inserts.running().then_some(()))
                 .or(self.floors.running().then_some(()))
+                .or(self.rooms.running().then_some(()))
                 .or(self.modify.prompting().then_some(()))
                 .and(self.cursor),
             history: self.notices.clone(),
@@ -869,6 +961,7 @@ impl Interaction for WallInteraction {
             inline_arguments: !self.tool.active()
                 && !self.inserts.running()
                 && !self.floors.running()
+                && !self.rooms.running()
                 && !self.modify.running(),
             // A chain of walls or of copies says once when it ends, not after each wall or copy.
             reports_results: self.just_reported
@@ -882,8 +975,12 @@ impl Interaction for WallInteraction {
 impl WallInteraction {
     fn pointer_inner(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         self.refresh_highlight(cx);
+        self.update_view(cx, Some(event));
         if self.modify.prompting() {
             return self.modify_pointer(cx, event);
+        }
+        if self.rooms.running() {
+            return self.room_pointer(cx, event);
         }
         if self.floors.running() {
             return self.floor_pointer(cx, event);
@@ -892,7 +989,7 @@ impl WallInteraction {
             return self.insert_pointer(cx, event);
         }
         let Some(chain) = self.tool.chain().cloned() else {
-            return self.pick_insert(cx, event);
+            return self.pick_idle(cx, event);
         };
         let walls = baselines(cx, chain.storey);
         // The origin, the start of the chain and the ends of the walls attract and track.
@@ -1168,6 +1265,10 @@ impl WallInteraction {
             self.hover = None;
             return self.with_floors(cx, |tool, env, run| tool.begin(env, run, None));
         }
+        if command == ROOM_PLACE && intent.params.is_empty() {
+            self.stop_all();
+            return self.with_rooms(cx, |tool, env, run| tool.begin(env, run));
+        }
         if command == FLOOR_ADD_HOLE && intent.params.is_empty() {
             self.tool.stop();
             self.inserts.stop();
@@ -1202,6 +1303,7 @@ impl WallInteraction {
         );
         invocation.seed = self.next_seed();
         let outcome = cx.invoke(invocation)?;
+        self.say_room_warnings(cx);
         // Floor edges that followed a deleted wall stay put: say so.
         let frozen = outcome
             .value
@@ -1236,6 +1338,32 @@ impl WallInteraction {
             self.push_notice(text);
         }
         Ok(())
+    }
+
+    /// Says in the history which rooms a command left unenclosed, redundant or with a duplicate
+    /// number, once for each change of the set.
+    fn say_room_warnings(&mut self, cx: &InteractionContext<'_>) {
+        let Ok(document) = cx.document() else {
+            return;
+        };
+        let snapshot = document.snapshot();
+        let Some(localizer) = self.localizer(cx.language()) else {
+            return;
+        };
+        let found: Vec<String> = spatial::objects(&snapshot, archbuilder_model::types::STOREY)
+            .iter()
+            .flat_map(|s| archbuilder_model::validate::room_findings(&snapshot, s.id))
+            .map(|e| localizer.format_error(&e).text)
+            .collect();
+        let fresh: Vec<String> = found
+            .iter()
+            .filter(|t| !self.room_warnings.contains(t))
+            .cloned()
+            .collect();
+        self.room_warnings = found;
+        for text in fresh.into_iter().take(8) {
+            self.push_notice(text);
+        }
     }
 
     /// Exports the document as an IFC4 file to `path` and says so in the history. Without a path
@@ -1612,6 +1740,14 @@ fn modify_id(command: &str) -> Option<&'static str> {
         .find(|c| *c == command)
 }
 
+/// Whether `text` asks for the room tool.
+fn is_room_word(text: &str) -> bool {
+    let t = text.trim();
+    [ROOM_PLACE, "room", "oda"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
+}
+
 /// Whether `text` asks for the floor tool.
 fn is_floor_word(text: &str) -> bool {
     let t = text.trim();
@@ -1621,6 +1757,172 @@ fn is_floor_word(text: &str) -> bool {
 }
 
 impl WallInteraction {
+    /// The pointer while the room tool runs: it outlines the region under it, a click places a
+    /// room there, the secondary button ends the tool.
+    fn room_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        let Some(storey) = self.rooms.storey() else {
+            return false;
+        };
+        let at = event.model.map(|m| [m.x, m.y]);
+        if let Some(at) = at {
+            self.cursor = Some(at);
+        }
+        match event.kind {
+            PointerKind::Move => {
+                self.room_hover = match (at, cx.document()) {
+                    (Some(at), Ok(document)) => {
+                        let snapshot = document.snapshot();
+                        let z = spatial::get(&snapshot, storey)
+                            .map_or(0.0, |s| spatial::storey_elevation(&snapshot, &s));
+                        let walls = archbuilder_model::floor::storey_walls(&snapshot, storey);
+                        archbuilder_model::room::footprints(&walls, &[at])
+                            .into_iter()
+                            .filter(|f| !f.polygon.is_empty())
+                            .map(|f| ProductOverlay::Path {
+                                points: f
+                                    .polygon
+                                    .iter()
+                                    .chain(f.polygon.first())
+                                    .map(|p| Point3::new(p[0], p[1], z))
+                                    .collect(),
+                                dashed: true,
+                            })
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
+                false
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                if let Some(at) = at {
+                    let _ = self.with_rooms(cx, |tool, env, run| tool.click(env, run, at));
+                    if let Some(error) = self.rooms.take_error() {
+                        self.notice_error(cx, &error);
+                    }
+                }
+                true
+            }
+            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
+                self.stop_all();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Tells the room drawing what a view from above shows: the image size is learned from a
+    /// pointer event (the pointer's pixel and model point fix the image's middle), the scale and
+    /// middle come from the camera each time. Other views clear it.
+    fn update_view(&mut self, cx: &InteractionContext<'_>, event: Option<&PointerEvent>) {
+        let camera = cx.camera();
+        let arc_geom::Projection::Orthographic { height } = camera.projection() else {
+            crate::room_view::shared().set_view(None);
+            return;
+        };
+        if camera.forward().z >= -0.98 || height <= 0.0 {
+            crate::room_view::shared().set_view(None);
+            return;
+        }
+        let (t, r, u) = (camera.target(), camera.right(), camera.up());
+        if let Some(e) = event
+            && let (Some(m), Some(ppu)) = (e.model, e.pixels_per_unit)
+        {
+            let along = (m.x - t.x) * r.x + (m.y - t.y) * r.y;
+            let (w, h) = (2.0 * (e.pixel[0] - along * ppu), height * ppu);
+            if w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0 {
+                self.view_size = Some([w, h]);
+            }
+        }
+        let view = self.view_size.map(|[w, h]| {
+            let norm = |x: f64, y: f64| {
+                let n = x.hypot(y);
+                if n > 0.0 { [x / n, y / n] } else { [x, y] }
+            };
+            crate::room_view::ViewRect {
+                center: [t.x, t.y],
+                right: norm(r.x, r.y),
+                up: norm(u.x, u.y),
+                ppu: h / height,
+                size: [w, h],
+            }
+        });
+        crate::room_view::shared().set_view(view);
+    }
+
+    /// With no tool running: in a view from above one ordered list ([`Picker`]) decides what the
+    /// hover outlines and what a click selects; in other views a click picks the door or window
+    /// first and the rest is left to the viewport.
+    fn pick_idle(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        if cx.camera().forward().z >= -0.98 {
+            self.pick_hover.clear();
+            return self.pick_insert(cx, event);
+        }
+        let (Some(model), Ok(document)) = (event.model, cx.document()) else {
+            self.pick_hover.clear();
+            return false;
+        };
+        let snapshot = document.snapshot();
+        let aperture = event
+            .pixels_per_unit
+            .filter(|p| *p > 0.0)
+            .map_or(0.05, |p| PICK_PIXELS / p);
+        let target = self.picker.target(
+            &snapshot,
+            event.pixel,
+            [model.x, model.y],
+            aperture,
+            view_ray(cx, model),
+            std::time::Instant::now(),
+        );
+        match event.kind {
+            PointerKind::Move => {
+                self.pick_hover = target
+                    .as_ref()
+                    .map(|t| {
+                        self.picker
+                            .outline(&snapshot, t.id)
+                            .into_iter()
+                            .map(|loop_| ProductOverlay::Path {
+                                points: loop_
+                                    .iter()
+                                    .map(|p| Point3::new(p[0], p[1], p[2]))
+                                    .collect(),
+                                dashed: false,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                target.is_some()
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                let Some(target) = target else {
+                    return false;
+                };
+                self.picker
+                    .commit(&snapshot, event.pixel, &target, std::time::Instant::now());
+                // The outline shows what a click would pick; after one it waits for the next move.
+                self.pick_hover.clear();
+                let mode = if event.modifiers.shift {
+                    "add"
+                } else if event.modifiers.command {
+                    "toggle"
+                } else {
+                    "replace"
+                };
+                let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
+                intent.params = serde_json::json!({
+                    "objects": [target.id.to_string()], "mode": mode, "gesture": "click"
+                })
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+                cx.ask(intent);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The pointer while the floor tool runs. In the sketch mode it snaps like the wall tool (to
     /// wall corners and ends, the points of the sketch, tracking lines and the grid) and a click
     /// is the next point; in the walls mode it outlines what a click would pick and a click picks.

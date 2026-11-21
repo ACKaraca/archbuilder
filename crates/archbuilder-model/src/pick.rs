@@ -1,0 +1,197 @@
+//! What is under a point of a plan view, as one ordered list: doors and windows first, then
+//! walls, rooms, floors and levels. The application hovers the first one and a click selects it
+//! (a repeated click steps down the list), so the highlighted object is the one picked.
+//!
+//! Within a kind the object of the higher storey comes first, as it is the one a view from above
+//! sees; walls and levels further from the point come later.
+
+use arc_base::ObjectId;
+use arc_doc::Snapshot;
+
+use crate::floor::Derived;
+use crate::room::{self, Entry};
+use crate::spatial;
+use crate::types::{FLOOR, LEVEL, WALL, level};
+use crate::wall::Wall;
+
+/// Half the width and depth of the level outline, in meters (the viewport draws it).
+pub const LEVEL_HALF: [f64; 2] = [12.0, 8.0];
+/// The most objects of one kind that are looked at.
+const MAX_PER_KIND: usize = 20_000;
+
+/// The rooms of every storey with their derived data, for [`stack`] and [`outline`].
+#[must_use]
+pub fn all_rooms(snapshot: &Snapshot) -> Vec<Entry> {
+    spatial::objects(snapshot, crate::types::STOREY)
+        .iter()
+        .flat_map(|s| room::of_storey(snapshot, s.id))
+        .collect()
+}
+
+fn storey_elevation(snapshot: &Snapshot, owner: Option<ObjectId>) -> f64 {
+    owner
+        .and_then(|s| spatial::get(snapshot, s))
+        .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s))
+}
+
+/// The objects under `at` (project coordinates, meters) in picking order. `aperture` is how far
+/// from a wall or level outline a point still counts, in meters; `ray` is the view ray, which
+/// finds the door or window whose opening it enters first (a vertical ray through `at` without
+/// one).
+#[must_use]
+pub fn stack(
+    snapshot: &Snapshot,
+    rooms: &[Entry],
+    at: [f64; 2],
+    aperture: f64,
+    ray: Option<([f64; 3], [f64; 3])>,
+) -> Vec<ObjectId> {
+    let mut out: Vec<ObjectId> = Vec::new();
+    let ray = ray.unwrap_or(([at[0], at[1], 1.0e4], [0.0, 0.0, -1.0]));
+    out.extend(crate::insert::pick(snapshot, ray));
+    let mut walls: Vec<(f64, f64, ObjectId)> = spatial::objects(snapshot, WALL)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let w = Wall::from_values(&o.values)?;
+            let miss = distance_to_body(&w, at);
+            (miss <= aperture).then(|| (-storey_elevation(snapshot, o.header.owner), miss, o.id))
+        })
+        .collect();
+    walls.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    out.extend(walls.into_iter().map(|(_, _, id)| id));
+    let mut hit_rooms: Vec<(f64, ObjectId)> = rooms
+        .iter()
+        .filter(|e| {
+            let p = e.room.point;
+            match e.state() {
+                room::State::Unenclosed => (p[0] - at[0]).hypot(p[1] - at[1]) <= aperture * 2.0,
+                _ => crate::floor::Boundary {
+                    loops: vec![e.footprint.polygon.clone()],
+                }
+                .contains(at),
+            }
+        })
+        .map(|e| (-e.base, e.id))
+        .collect();
+    hit_rooms.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(hit_rooms.into_iter().map(|(_, id)| id));
+    let mut floors: Vec<(f64, ObjectId)> = spatial::objects(snapshot, FLOOR)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let d = Derived::of(snapshot, o)?;
+            d.boundary.contains(at).then_some((-d.top, o.id))
+        })
+        .collect();
+    floors.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(floors.into_iter().map(|(_, id)| id));
+    let mut levels: Vec<(f64, ObjectId)> = spatial::objects(snapshot, LEVEL)
+        .iter()
+        .filter(|_| near_level_outline(at, aperture))
+        .map(|o| {
+            (
+                -crate::types::meters(&o.values, level::ELEVATION).unwrap_or(0.0),
+                o.id,
+            )
+        })
+        .collect();
+    levels.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(levels.into_iter().map(|(_, id)| id));
+    out.dedup();
+    let mut seen = std::collections::BTreeSet::new();
+    out.retain(|id| seen.insert(*id));
+    out
+}
+
+fn near_level_outline(at: [f64; 2], aperture: f64) -> bool {
+    let (hx, hy) = (LEVEL_HALF[0], LEVEL_HALF[1]);
+    let inside_outer = at[0].abs() <= hx + aperture && at[1].abs() <= hy + aperture;
+    let inside_inner = at[0].abs() < hx - aperture && at[1].abs() < hy - aperture;
+    inside_outer && !inside_inner
+}
+
+/// The distance from `p` to the body of `wall` (0 inside), in meters.
+fn distance_to_body(wall: &Wall, p: [f64; 2]) -> f64 {
+    let length = wall.length();
+    if length <= 0.0 {
+        return f64::MAX;
+    }
+    let (ux, uy) = (
+        (wall.end[0] - wall.start[0]) / length,
+        (wall.end[1] - wall.start[1]) / length,
+    );
+    let rel = [p[0] - wall.start[0], p[1] - wall.start[1]];
+    let along = rel[0] * ux + rel[1] * uy;
+    let across = ux * rel[1] - uy * rel[0];
+    let (low, high) = wall.extent();
+    let gap = (low - across).max(across - high).max(0.0);
+    let beyond = (-along).max(along - length).max(0.0);
+    gap.hypot(beyond)
+}
+
+/// The closed outlines that mark `id` for the hover: the loops of its plan shape as 3D points.
+#[must_use]
+pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f64; 3]>> {
+    let Some(object) = spatial::get(snapshot, id) else {
+        return Vec::new();
+    };
+    let close = |points: &[[f64; 2]], z: f64| -> Vec<[f64; 3]> {
+        points
+            .iter()
+            .chain(points.first())
+            .map(|p| [p[0], p[1], z])
+            .collect()
+    };
+    match spatial::type_of(snapshot, id).as_deref() {
+        Some(WALL) => {
+            let Some(w) = Wall::of(snapshot, &object) else {
+                return Vec::new();
+            };
+            let z = storey_elevation(snapshot, object.header.owner) + w.base_offset + w.height;
+            vec![close(&w.plain_footprint(), z)]
+        }
+        Some(FLOOR) => Derived::of(snapshot, &object)
+            .map(|d| d.boundary.loops.iter().map(|l| close(l, d.top)).collect())
+            .unwrap_or_default(),
+        Some(LEVEL) => {
+            let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);
+            let (hx, hy) = (LEVEL_HALF[0], LEVEL_HALF[1]);
+            vec![close(&[[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]], z)]
+        }
+        Some(crate::types::ROOM) => rooms
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| {
+                if e.footprint.polygon.is_empty() {
+                    let (p, r) = (e.room.point, 0.3);
+                    vec![close(
+                        &[
+                            [p[0] - r, p[1] - r],
+                            [p[0] + r, p[1] - r],
+                            [p[0] + r, p[1] + r],
+                            [p[0] - r, p[1] + r],
+                        ],
+                        e.base,
+                    )]
+                } else {
+                    vec![close(&e.footprint.polygon, e.base)]
+                }
+            })
+            .unwrap_or_default(),
+        Some(crate::types::DOOR | crate::types::WINDOW) => {
+            let item = crate::insert::Insert::of(snapshot, &object);
+            let host = object.header.owner.and_then(|w| spatial::get(snapshot, w));
+            match (item, host.as_ref().and_then(|h| Wall::of(snapshot, h))) {
+                (Some(item), Some(wall)) => crate::insert::outline(
+                    &wall,
+                    storey_elevation(snapshot, host.and_then(|h| h.header.owner)),
+                    &item,
+                )
+                .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}

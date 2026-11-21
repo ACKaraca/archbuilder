@@ -11,7 +11,7 @@ use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject}
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW,
+    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOM, SITE, STOREY, WALL, WINDOW,
     level, storey,
 };
 
@@ -182,6 +182,108 @@ const LABELS: &[(&str, Message)] = &[
         "wall_volume",
         Message {
             message_id: "ab-prop-wall-volume",
+        },
+    ),
+    (
+        "department",
+        Message {
+            message_id: "ab-prop-department",
+        },
+    ),
+    (
+        "floor_finish",
+        Message {
+            message_id: "ab-prop-floor-finish",
+        },
+    ),
+    (
+        "wall_finish",
+        Message {
+            message_id: "ab-prop-wall-finish",
+        },
+    ),
+    (
+        "ceiling_finish",
+        Message {
+            message_id: "ab-prop-ceiling-finish",
+        },
+    ),
+    (
+        "base_finish",
+        Message {
+            message_id: "ab-prop-base-finish",
+        },
+    ),
+    (
+        "upper_constraint",
+        Message {
+            message_id: "ab-prop-upper-constraint",
+        },
+    ),
+    (
+        "upper_offset",
+        Message {
+            message_id: "ab-prop-upper-offset",
+        },
+    ),
+    (
+        "x",
+        Message {
+            message_id: "ab-prop-point-x",
+        },
+    ),
+    (
+        "y",
+        Message {
+            message_id: "ab-prop-point-y",
+        },
+    ),
+    (
+        "room_area",
+        Message {
+            message_id: "ab-prop-room-area",
+        },
+    ),
+    (
+        "room_perimeter",
+        Message {
+            message_id: "ab-prop-room-perimeter",
+        },
+    ),
+    (
+        "room_volume",
+        Message {
+            message_id: "ab-prop-room-volume",
+        },
+    ),
+    (
+        "room_state",
+        Message {
+            message_id: "ab-prop-room-state",
+        },
+    ),
+    (
+        "enclosed",
+        Message {
+            message_id: "ab-room-state-enclosed",
+        },
+    ),
+    (
+        "unenclosed",
+        Message {
+            message_id: "ab-room-state-unenclosed",
+        },
+    ),
+    (
+        "redundant",
+        Message {
+            message_id: "ab-room-state-redundant",
+        },
+    ),
+    (
+        "level_above",
+        Message {
+            message_id: "ab-room-upper-default",
         },
     ),
     (
@@ -435,6 +537,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        ROOM,
+        Message {
+            message_id: "ab-kind-room",
+        },
+    ),
+    (
         DOOR,
         Message {
             message_id: "ab-kind-door",
@@ -614,6 +722,104 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());
             }
+        }
+        // A room shows its record, the upper limit as a choice, and what the walls make of it.
+        ROOM => {
+            use archbuilder_model::types::room as r;
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id));
+            let above = storey
+                .as_ref()
+                .map(|s| archbuilder_model::room::levels_above(snapshot, s))
+                .unwrap_or_default();
+            let mut variants = vec![arc_doc::EnumVariant::new("level_above", 0)];
+            let mut current = 0;
+            let upper = match values.get(r::UPPER_LEVEL) {
+                Some(Some(Value::Reference(id))) => Some(*id),
+                _ => None,
+            };
+            for (code, l) in (1_u32..).zip(&above) {
+                if let Some(name) = types::text(&l.values, level::NAME) {
+                    variants.push(arc_doc::EnumVariant::new(name, code));
+                    if upper == Some(l.id) {
+                        current = code;
+                    }
+                }
+            }
+            let entry = object.header.owner.and_then(|owner| {
+                archbuilder_model::room::of_storey(snapshot, owner)
+                    .into_iter()
+                    .find(|e| e.id == object.id)
+            });
+            let order = [
+                r::NAME,
+                r::NUMBER,
+                r::DEPARTMENT,
+                r::FLOOR_FINISH,
+                r::WALL_FINISH,
+                r::CEILING_FINISH,
+                r::BASE_FINISH,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            fields.push(
+                FieldDecl::new("upper_constraint", ValueType::Enum(variants)).in_aspect("geometry"),
+            );
+            values.push(Some(Value::Enum(current)));
+            for k in [r::UPPER_OFFSET, r::BASE_OFFSET, r::X, r::Y] {
+                fields.extend(decls.get(k).cloned());
+                values.push(vals.get(k).cloned().flatten());
+            }
+            let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, unit: &str| {
+                entry
+                    .as_ref()
+                    .and_then(f)
+                    .map(|v| Value::String(format!("{v:.3} {unit}")))
+            };
+            for (name, value) in [
+                (
+                    "room_area",
+                    derived(archbuilder_model::room::Entry::area, "m²"),
+                ),
+                (
+                    "room_perimeter",
+                    derived(archbuilder_model::room::Entry::perimeter, "m"),
+                ),
+                (
+                    "room_volume",
+                    derived(archbuilder_model::room::Entry::volume, "m³"),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value);
+                read_only.push(name.to_owned());
+            }
+            let state = entry.as_ref().map(|e| e.state());
+            fields.push(
+                FieldDecl::new(
+                    "room_state",
+                    ValueType::Enum(vec![
+                        arc_doc::EnumVariant::new("enclosed", 0),
+                        arc_doc::EnumVariant::new("unenclosed", 1),
+                        arc_doc::EnumVariant::new("redundant", 2),
+                    ]),
+                )
+                .in_aspect("data"),
+            );
+            values.push(state.map(|s| {
+                Value::Enum(match s {
+                    archbuilder_model::room::State::Enclosed => 0,
+                    archbuilder_model::room::State::Unenclosed => 1,
+                    archbuilder_model::room::State::Redundant => 2,
+                })
+            }));
+            read_only.push("room_state".to_owned());
         }
         // A door or a window shows the wall that hosts it; a door's sill is the wall's base.
         DOOR | WINDOW => {

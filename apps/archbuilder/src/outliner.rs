@@ -93,6 +93,22 @@ impl<'a> Structure<'a> {
                         .collect();
                         floors.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
                         walls.extend(floors);
+                        // The rooms come last, by number.
+                        let mut rooms = spatial::children(
+                            snapshot,
+                            archbuilder_model::types::ROOM,
+                            s.storey.id,
+                        );
+                        rooms.sort_by_key(|r| {
+                            types::text(&r.values, archbuilder_model::types::room::NUMBER)
+                                .map(|n| (n.len(), n.to_owned()))
+                        });
+                        walls.extend(rooms.iter().map(|r| {
+                            let number =
+                                types::text(&r.values, archbuilder_model::types::room::NUMBER)
+                                    .unwrap_or_default();
+                            (r.id, format!("{number} {}", name(r)).trim().to_owned())
+                        }));
                         children.insert(Some(s.storey.id), walls);
                     }
                     children.insert(

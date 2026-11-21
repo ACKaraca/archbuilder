@@ -205,6 +205,63 @@ storey, the area, the volume and the associated walls; `inspect` lists each floo
 numbers. Derived, never stored: the boundary, the area (outer loop minus holes), the volume (area
 times thickness) and the solid, a prism of the boundary from the top down by the thickness.
 
+#### The room of the first slice
+
+`archbuilder.room` is owned by its storey (a storey that has rooms cannot be deleted). A room is
+its placement point; everything else is derived from the walls around it. Every wall bounds rooms
+in this slice; there are no separation lines, openings do not split a boundary, and linked documents
+do not bound.
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | `Room` (`Oda`) by default; not unique | Not blank |
+| `number` | `101`, `102`, ... per storey by default | A duplicate on one storey is a warning, not refused |
+| `x`, `y` | The placement point, authored | Within the coordinate range |
+| `department`, `floor_finish`, `wall_finish`, `ceiling_finish`, `base_finish` | Text | Optional |
+| `upper_level`, `upper_offset` | The top: the named level, else the level above the storey, else 3 m above the storey's level; plus the offset | The reference is cleared when the level is deleted |
+| `base_offset` | The base's distance above the storey's level | -1000 m to 1000 m; 0 by default |
+
+The boundary is the smallest closed loop of walls around the point (the floor's loop finding: walls
+are split where an end lies on another wall and where two walls cross, so a wall that runs past
+another still bounds on both sides, and a stub beyond a crossing is ignored), taken at the interior wall faces; the point must
+also lie inside that boundary, not in a wall's thickness. Area, perimeter and volume (area times the
+height from base to top) are derived and never stored. States: *enclosed*; *unenclosed* (no closed
+loop around the point: warning, no area, perimeter or volume); *redundant* (another room's point is
+in the same region: the room with the lowest number keeps the region and its area, each other one
+gets a warning and no area until it is removed or moved). A duplicate
+number is a third warning. The warnings come from `archbuilder_model::validate::room_findings`, are
+shown in the command history after a command that causes them, are listed by `inspect --check`, and
+never refuse a change. Moving a wall re-derives every room at once; a room whose point ends in
+another region is bounded by that region.
+
+`archbuilder.room.place` takes `points` (each inside a closed loop of walls that has no room yet,
+else it is refused), optional `name`, `number` and `department`; `archbuilder.room.place_all` puts a
+room at a point inside every enclosed region of the storey that has none. Each call is one undo step.
+The Room tool chains clicks until Escape or Enter. The property grid edits the text fields, the upper
+limit (a choice of the levels above), the offsets and the point, and shows area, perimeter, volume
+and state read-only; Delete removes selected rooms; move, copy, rotate and mirror move the point (a
+copy takes the next free number). `inspect` lists number, name, storey, state, area, perimeter and
+volume.
+
+In a view from above, a room is drawn as a tag at the point (name, number, area in m² with the
+language's decimal separator, or the state), a diagonal hatch of its region and, when selected, its
+outline at the base and top with the corner edges (the wireframe volume, also in 3D). Rooms have no
+mesh: unselected rooms are not drawn as solids in 3D. Only the active storey's rooms are drawn, and in
+a view from above only those whose point is in the visible area. A tag is centered on its point and never moved or led away: it is shown only when it lies inside the image and inside its room's region, clear of the notice, the view cube and the level labels, and clear of the tag of a larger room. Every other tag is counted in a notice at the top left ("N room tags not shown, zoom in"), never dropped silently. The hatch is a set of strokes clipped to the region, split among the tagged rooms within the overlay budget (and off, with a notice, when too many rooms are tagged). The level labels stay inside the view and clear of the view cube. Known limits: label sizes are estimated from the text (a high-density display may place a tag a little off); no openings that join
+rooms, no sloped tops, no separation lines.
+
+Picking in a view from above uses one ordered list for the hover and the click: doors and windows,
+walls, rooms, floors, levels; a repeated click at the same spot steps down it (within a few pixels and
+about 1.5 s of the last click; Escape and moving the pointer start again), and the hover shows what
+the click would pick. Other views leave the pick to the viewport, with the door or window first.
+
+IFC mapping, planned (the writer has no space element yet, so rooms are not written and the loss
+report names each room as `IFCSPACE` not written): a room maps to `IfcSpace` aggregated to its
+`IfcBuildingStorey` with `IfcRelAggregates`, with a body of an extruded area solid of its boundary
+from the base up by the height, `PredefinedType` `INTERNAL`, `Name` the name, `LongName` the
+department, and `Qto_SpaceBaseQuantities` holding `Height`, `GrossFloorArea`, `NetFloorArea`,
+`GrossPerimeter` and `GrossVolume`, `NetVolume` from the same derivation `inspect` uses.
+
 ## Selection and modify commands
 
 Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles

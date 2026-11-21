@@ -71,6 +71,24 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-no-insert-selected",
     };
+    /// A click or point for a room is in no closed loop of walls.
+    pub const ROOM_NO_REGION: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_no_region",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-room-no-region",
+    };
+    /// The region of a click or point already has a room.
+    pub const ROOM_REGION_TAKEN: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_region_taken",
+        category: Category::Conflict,
+        message_id: "ab-cmd-room-region-taken",
+    };
+    /// No enclosed region of the storey is without a room.
+    pub const ROOM_NONE_MISSING: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_none_missing",
+        category: Category::Conflict,
+        message_id: "ab-cmd-room-none-missing",
+    };
     /// The walls or the click do not make a closed outline for a floor.
     pub const FLOOR_NO_LOOP: ErrorCode = ErrorCode {
         code: "ab.cmd.floor_no_loop",

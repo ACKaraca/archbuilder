@@ -43,9 +43,12 @@ pub const DOOR: &str = "archbuilder.door";
 /// The type key of the window.
 pub const WINDOW: &str = "archbuilder.window";
 
+/// The type key of the room.
+pub const ROOM: &str = "archbuilder.room";
+
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 9] = [
-    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR,
+pub const KEYS: [&str; 10] = [
+    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR, ROOM,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -206,6 +209,34 @@ pub mod floor {
         /// The offset from that face, in meters.
         pub const OFFSET: usize = 5;
     }
+}
+
+/// Field positions of `archbuilder.room`.
+pub mod room {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The number.
+    pub const NUMBER: usize = 1;
+    /// The x coordinate of the placement point, in meters.
+    pub const X: usize = 2;
+    /// The y coordinate of the placement point, in meters.
+    pub const Y: usize = 3;
+    /// The department.
+    pub const DEPARTMENT: usize = 4;
+    /// The floor finish.
+    pub const FLOOR_FINISH: usize = 5;
+    /// The wall finish.
+    pub const WALL_FINISH: usize = 6;
+    /// The ceiling finish.
+    pub const CEILING_FINISH: usize = 7;
+    /// The base finish.
+    pub const BASE_FINISH: usize = 8;
+    /// The level that limits the room above; absent for the level above its storey.
+    pub const UPPER_LEVEL: usize = 9;
+    /// The offset of the top from that level, in meters.
+    pub const UPPER_OFFSET: usize = 10;
+    /// The offset of the base from the level of the storey, in meters.
+    pub const BASE_OFFSET: usize = 11;
 }
 
 /// The range of a floor's thickness, in meters.
@@ -384,6 +415,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .in_aspect("geometry"),
     ];
     for (key, fields) in [
+        (ROOM, room_fields()),
         (FLOOR, floor),
         (DOOR, insert_fields()),
         (WINDOW, insert_fields()),
@@ -397,6 +429,25 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(declaration(key, fields)?)?;
     }
     Ok(())
+}
+
+fn room_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        text_field("number", 64),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        text_field("department", NAME_BYTES),
+        text_field("floor_finish", NAME_BYTES),
+        text_field("wall_finish", NAME_BYTES),
+        text_field("ceiling_finish", NAME_BYTES),
+        text_field("base_finish", NAME_BYTES),
+        FieldDecl::new("upper_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+        length_field("upper_offset", Some(real(BASE_OFFSET_RANGE))),
+        length_field("base_offset", Some(real(BASE_OFFSET_RANGE))),
+    ]
 }
 
 /// One boundary vertex of a floor: the loop, the authored point and the optional wall face the
@@ -529,7 +580,24 @@ mod tests {
             ("hand", insert::HAND),
             ("facing", insert::FACING),
         ];
-        let expect: [(&str, &[(&str, usize)]); 9] = [
+        let expect: [(&str, &[(&str, usize)]); 10] = [
+            (
+                ROOM,
+                &[
+                    ("name", room::NAME),
+                    ("number", room::NUMBER),
+                    ("x", room::X),
+                    ("y", room::Y),
+                    ("department", room::DEPARTMENT),
+                    ("floor_finish", room::FLOOR_FINISH),
+                    ("wall_finish", room::WALL_FINISH),
+                    ("ceiling_finish", room::CEILING_FINISH),
+                    ("base_finish", room::BASE_FINISH),
+                    ("upper_level", room::UPPER_LEVEL),
+                    ("upper_offset", room::UPPER_OFFSET),
+                    ("base_offset", room::BASE_OFFSET),
+                ],
+            ),
             (
                 FLOOR,
                 &[

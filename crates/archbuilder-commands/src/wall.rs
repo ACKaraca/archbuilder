@@ -252,6 +252,9 @@ pub struct Deleted {
     /// The floors deleted by themselves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floors: Option<usize>,
+    /// The rooms deleted by themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rooms: Option<usize>,
     /// The floor edges that followed a deleted wall and now stay where they were.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frozen_edges: Option<usize>,
@@ -271,8 +274,15 @@ fn delete_set(
     for id in &walls {
         expect(ctx.snapshot(), *id, WALL)?;
     }
+    // The third set holds floors and rooms, which nothing else depends on.
+    let mut room_count = 0;
     for id in &floors {
-        expect(ctx.snapshot(), *id, FLOOR)?;
+        if spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(archbuilder_model::types::ROOM)
+        {
+            room_count += 1;
+        } else {
+            expect(ctx.snapshot(), *id, FLOOR)?;
+        }
     }
     // Floor edges that follow a deleted wall keep their last position.
     let frozen_edges = crate::floor::freeze_edges(ctx, &walls)?;
@@ -299,7 +309,8 @@ fn delete_set(
     Ok(Deleted {
         walls: walls.len(),
         inserts: count,
-        floors: Some(floors.len()).filter(|n| *n > 0),
+        floors: Some(floors.len() - room_count).filter(|n| *n > 0),
+        rooms: Some(room_count).filter(|n| *n > 0),
         frozen_edges: Some(frozen_edges).filter(|n| *n > 0),
     })
 }
@@ -465,7 +476,12 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
         .selection()
         .iter()
         .copied()
-        .filter(|id| spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(FLOOR))
+        .filter(|id| {
+            matches!(
+                spatial::type_of(ctx.snapshot(), *id).as_deref(),
+                Some(FLOOR | archbuilder_model::types::ROOM)
+            )
+        })
         .collect();
     if walls.is_empty() && inserts.is_empty() && floors.is_empty() {
         crate::structure::delete_storey(ctx, crate::structure::DeleteStorey::default())
@@ -484,7 +500,7 @@ pub(crate) fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Ob
     for id in ctx.selection() {
         let found = match spatial::type_of(snapshot, *id).as_deref() {
             Some(STOREY) => spatial::get(snapshot, *id),
-            Some(WALL | FLOOR) => spatial::get(snapshot, *id)
+            Some(WALL | FLOOR | archbuilder_model::types::ROOM) => spatial::get(snapshot, *id)
                 .and_then(|w| w.header.owner)
                 .and_then(|owner| spatial::get(snapshot, owner)),
             Some(LEVEL) => spatial::objects(snapshot, STOREY)

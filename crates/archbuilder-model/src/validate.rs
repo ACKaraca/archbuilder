@@ -27,7 +27,7 @@ use arc_doc::{Change, Document, DocumentValidator, Finding, Object, Severity, Sn
 use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
-use crate::types::{self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, SITE, STOREY, WALL, WINDOW};
+use crate::types::{self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOM, SITE, STOREY, WALL, WINDOW};
 
 /// The key a name is compared by ([`crate::names::fold`]).
 fn folded(object: &Object) -> String {
@@ -40,7 +40,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         SITE => Some(PROJECT),
         BUILDING => Some(SITE),
         STOREY | LEVEL => Some(BUILDING),
-        WALL | FLOOR => Some(STOREY),
+        WALL | FLOOR | ROOM => Some(STOREY),
         DOOR | WINDOW => Some(WALL),
         _ => None,
     }
@@ -81,7 +81,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         out.extend(crate::insert::problems(candidate, object));
     }
     let own = folded(object);
+    // Rooms are told apart by number, not by name.
     if key != PROJECT
+        && key != ROOM
         && objects(candidate, key)
             .iter()
             .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
@@ -318,13 +320,17 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         if *change == Change::Deleted {
             continue;
         }
-        if matches!(type_of(candidate, *id).as_deref(), Some(WALL | FLOOR)) {
+        if matches!(
+            type_of(candidate, *id).as_deref(),
+            Some(WALL | FLOOR | ROOM)
+        ) {
             storeys.extend(get(candidate, *id).and_then(|o| o.header.owner));
         }
     }
     storeys.sort();
     storeys.dedup();
     for storey in storeys {
+        out.extend(room_findings(candidate, storey));
         let walls = crate::spatial::walls(candidate, storey);
         let data: Vec<(usize, crate::wall::Wall)> = walls
             .iter()
@@ -361,6 +367,35 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
                         ),
                 );
             }
+        }
+    }
+    out
+}
+
+/// The findings about the rooms of `storey`: unenclosed, redundant and duplicate numbers.
+#[must_use]
+pub fn room_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
+    let entries = crate::room::of_storey(candidate, storey);
+    let duplicates = crate::room::duplicate_numbers(&entries);
+    let mut out = Vec::new();
+    for e in &entries {
+        let name = e.room.name.clone();
+        let number = e.room.number.clone().unwrap_or_default();
+        let code = match e.state() {
+            crate::room::State::Unenclosed => Some(codes::ROOM_UNENCLOSED),
+            crate::room::State::Redundant => Some(codes::ROOM_REDUNDANT),
+            crate::room::State::Enclosed => None,
+        };
+        for code in code.into_iter().chain(
+            duplicates
+                .contains(&e.id)
+                .then_some(codes::ROOM_NUMBER_DUPLICATE),
+        ) {
+            out.push(
+                Error::new(code)
+                    .with_arg("name", name.clone())
+                    .with_arg("number", number.clone()),
+            );
         }
     }
     out

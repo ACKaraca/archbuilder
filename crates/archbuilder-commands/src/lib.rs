@@ -10,7 +10,7 @@
 //! (the selected walls and inserts, else the selected storey); [`insert`]: `archbuilder.door.place`,
 //! `archbuilder.window.place`, `archbuilder.insert.flip_hand` and `archbuilder.insert.flip_facing`; [`floor`]:
 //! `archbuilder.floor.create` and `archbuilder.floor.add_hole`; [`modify`]: `archbuilder.modify.move`,
-//! `copy`, `rotate` and `mirror`.
+//! `copy`, `rotate` and `mirror`; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`.
 //! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
@@ -20,6 +20,7 @@ pub mod error;
 pub mod floor;
 pub mod insert;
 pub mod modify;
+pub mod room;
 pub mod structure;
 pub mod wall;
 
@@ -54,6 +55,7 @@ pub fn registry() -> Result<Registry> {
     insert::register(&mut registry)?;
     floor::register(&mut registry)?;
     modify::register(&mut registry)?;
+    room::register(&mut registry)?;
     Ok(registry)
 }
 

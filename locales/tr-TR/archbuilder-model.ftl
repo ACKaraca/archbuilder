@@ -22,3 +22,7 @@ ab-model-floor-hole-outside = "{ $name }" döşemesinin bir boşluğu dış sın
 ab-model-floor-holes-overlap = "{ $name }" döşemesinin iki boşluğu çakışıyor ya da biri ötekinin içinde. Boşlukları birbirinden ayırın.
 ab-model-wall-corner-open = "{ $name }" ile "{ $other }" duvarlarının uçları birbirine yakın ama birleşik değil: köşe açık.
 ab-model-floor-edge-unsupported = "{ $name }" döşemesinin bir kenarı "{ $wall }" duvarını izliyor ama uçlarının ötesine taşıyor: duvar döşemeyi orada artık sınırlamıyor.
+
+ab-model-room-unenclosed = "{ $name }" ({ $number }) odası kapalı bir duvar halkasının içinde değil: duvarları kapanana kadar alanı yok.
+ab-model-room-redundant = "{ $name }" ({ $number }) odası bölgesini daha düşük numaralı bir odayla paylaşıyor; bölge o odada kalıyor: diğeri kaldırılana ya da bu oda taşınana kadar bu odanın alanı yok.
+ab-model-room-number-duplicate = "{ $name }" odasının { $number } numarasını aynı kattaki başka bir oda da kullanıyor.
