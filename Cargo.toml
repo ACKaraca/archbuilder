@@ -15,16 +15,16 @@ publish = false
 # Third-party versions follow the arc-core lock; every crate listed must also appear in
 # xtask/layers.toml.
 [workspace.dependencies]
-arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
-arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "dafb481f0191e74301f6bfacbec2014488dbbd11" }
+arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
+arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "56a2fe5f2149d4dda2a770511447c5008a96d2f4" }
 
 schemars = { version = "1.2.3", default-features = false, features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

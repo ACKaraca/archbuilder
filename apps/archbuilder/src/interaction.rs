@@ -32,7 +32,7 @@ use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_io::command::EXPORT_IFC;
 use archbuilder_model::spatial;
 use archbuilder_model::wall::LocationLine;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::floor_tool::FloorTool;
 use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_named};
@@ -150,10 +150,15 @@ fn baselines(cx: &InteractionContext<'_>, storey: ObjectId) -> Vec<[[f64; 2]; 2]
         .collect()
 }
 
-/// The folder a relative export path is taken in: the user's documents folder, else the home
-/// folder, else the working directory. The shell gives a controller no path of the document, so
-/// a saved document's folder is not available here.
-fn export_base() -> PathBuf {
+/// The folder a relative export path is taken in: the folder of the document's file when it was
+/// saved, else the user's documents folder, else the home folder, else the working directory.
+fn export_base(saved: Option<&Path>) -> PathBuf {
+    if let Some(folder) = saved
+        .and_then(Path::parent)
+        .filter(|f| !f.as_os_str().is_empty())
+    {
+        return folder.to_path_buf();
+    }
     let home = ["HOME", "USERPROFILE"]
         .iter()
         .find_map(|n| std::env::var_os(n).filter(|v| !v.is_empty()))
@@ -176,6 +181,18 @@ fn export_line(text: &str) -> Option<Option<String>> {
         .strip_prefix("path=")
         .map(|p| p.trim().trim_matches('"'));
     Some(path.filter(|p| !p.is_empty()).map(str::to_owned))
+}
+
+/// The most notices the history keeps.
+const MAX_NOTICES: usize = 500;
+
+/// Appends `text`, dropping the oldest notices beyond [`MAX_NOTICES`] and counting them.
+fn push_bounded(notices: &mut Vec<String>, first: &mut u64, text: String) {
+    notices.push(text);
+    if notices.len() > MAX_NOTICES {
+        notices.remove(0);
+        *first += 1;
+    }
 }
 
 /// Whether `text` asks to delete the selection.
@@ -203,6 +220,9 @@ pub struct WallInteraction {
     symbols: Option<(arc_doc::Snapshot, Vec<ProductOverlay>)>,
     /// Lines the interface shows above the command line: refusals of clicks and what a delete took.
     notices: Vec<String>,
+    /// The number of notices dropped from the front of `notices`: the sequence number of its
+    /// first line, which the shell places its own lines by.
+    notices_first: u64,
     registry: Option<Registry>,
     /// The seed of the next invocation, advanced with each one so a reopened document does not
     /// repeat the identifiers of an earlier run.
@@ -232,6 +252,7 @@ impl WallInteraction {
             highlight: Vec::new(),
             symbols: None,
             notices: Vec::new(),
+            notices_first: 0,
             registry: archbuilder_commands::registry()
                 .and_then(|mut r| archbuilder_io::register(&mut r).map(|()| r))
                 .ok(),
@@ -391,11 +412,7 @@ impl WallInteraction {
     }
 
     fn push_notice(&mut self, text: String) {
-        const KEPT: usize = 3;
-        self.notices.push(text);
-        if self.notices.len() > KEPT {
-            self.notices.remove(0);
-        }
+        push_bounded(&mut self.notices, &mut self.notices_first, text);
     }
 
     /// The next invocation's seed.
@@ -559,7 +576,6 @@ impl Interaction for WallInteraction {
             .take_error()
             .or_else(|| self.inserts.take_error())
             .or_else(|| self.floors.take_error());
-        self.notices.clear();
         self.refresh_highlight(cx);
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
@@ -685,6 +701,7 @@ impl Interaction for WallInteraction {
                 .or(self.floors.running().then_some(()))
                 .and(self.cursor),
             history: self.notices.clone(),
+            history_first: self.notices_first,
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
             inline_arguments: !self.tool.active()
                 && !self.inserts.running()
@@ -792,15 +809,20 @@ impl WallInteraction {
         Ok(())
     }
 
-    /// Exports the document as an IFC4 file to `path` and says so in the history. The shell has no
-    /// request that asks for a file name for a product command, so without a path this is an
-    /// error that names the typed form. The file is written by the export command inside a
-    /// session whose only write root is the directory of the path, as the shell's save does.
+    /// Exports the document as an IFC4 file to `path` and says so in the history. Without a path
+    /// the shell is asked for one: it shows the save dialog the product registered for the
+    /// command and sends the command back with the chosen file. The file is written by the
+    /// export command inside a session whose only write root is the directory of the path, as
+    /// the shell's save does.
     fn export_ifc(&mut self, cx: &InteractionContext<'_>, path: Option<String>) -> Result<()> {
-        let path = path
+        let Some(path) = path else {
+            cx.ask(Intent::new(EXPORT_IFC));
+            return Ok(());
+        };
+        let path = Some(path)
             .filter(|p| !p.trim().is_empty())
             .ok_or_else(|| Error::new(archbuilder_io::error::codes::PATH_REQUIRED))?;
-        let target = export_base().join(path.trim());
+        let target = export_base(cx.document_path()).join(path.trim());
         let target = std::path::absolute(target)
             .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
         let directory = target
@@ -1306,7 +1328,34 @@ impl WallInteraction {
 
 #[cfg(test)]
 mod tests {
-    use super::export_line;
+    use super::{MAX_NOTICES, export_base, export_line, push_bounded};
+
+    #[test]
+    fn notices_accumulate_in_order_and_the_oldest_go_beyond_the_bound() {
+        let (mut notices, mut first) = (Vec::new(), 0);
+        for n in 0..5 {
+            push_bounded(&mut notices, &mut first, n.to_string());
+        }
+        // An export notice is still there after later lines, in order.
+        assert_eq!(notices, ["0", "1", "2", "3", "4"]);
+        for n in 5..MAX_NOTICES + 10 {
+            push_bounded(&mut notices, &mut first, n.to_string());
+        }
+        assert_eq!((notices.len(), first), (MAX_NOTICES, 10));
+        assert_eq!(notices.first().map(String::as_str), Some("10"));
+    }
+    use std::path::Path;
+
+    #[test]
+    fn a_relative_export_path_is_taken_in_the_folder_of_the_saved_document() {
+        let saved = Path::new("plans").join("house.archb");
+        assert_eq!(export_base(Some(&saved)), Path::new("plans"));
+        // A document never saved, or a file name alone, falls back to the documents or home folder.
+        assert_eq!(
+            export_base(None),
+            export_base(Some(Path::new("house.archb")))
+        );
+    }
 
     #[test]
     fn the_typed_export_line_names_its_path_or_none() {

@@ -114,3 +114,5 @@ ab-prop-floor-walls = Bağlı duvarlar
 ab-prop-floor-storey = Kat
 ab-notice-ifc-exported = { $name } dışa aktarıldı ({ $count } öğe)
 ab-notice-ifc-loss = Kayıp raporunda dosyada bulunmayan veya yalnızca yaklaşık yazılan { $count } kalem var.
+ab-export-ifc-title = IFC olarak dışa aktar
+ab-export-ifc-filter = IFC dosyaları (*.ifc)

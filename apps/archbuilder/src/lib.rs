@@ -10,7 +10,9 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use arc_app::product::{Entry, Extractor, FileType, Product, ProductBuilder};
+use arc_app::product::{
+    Entry, Extractor, FileType, PathDialog, PathFilter, PathMode, Product, ProductBuilder,
+};
 use arc_app::shell::{
     self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel, WorkPlaneProbe,
 };
@@ -73,6 +75,23 @@ fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry
     }
 }
 
+const EXPORT_IFC_TITLE: Message = Message {
+    message_id: "ab-export-ifc-title",
+};
+
+/// The save dialog of File > Export > IFC.
+fn export_ifc_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Save,
+        title: EXPORT_IFC_TITLE.message_id.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-export-ifc-filter".into(),
+            extensions: vec!["ifc".into()],
+        }],
+        default_name: Some("{document}.ifc".into()),
+    }
+}
+
 /// The product of the application: the type set and commands of `archbuilder-commands`, the shell
 /// commands and settings, the `archb` package, four panels and the level extractor.
 ///
@@ -94,6 +113,8 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out
     });
     shell::prefs::register_settings(&mut builder)?;
+    // File > Export > IFC asks for the file in a save dialog that starts with the document's name.
+    builder.path_dialog(archbuilder_io::command::EXPORT_IFC, export_ifc_dialog());
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
     // step, and the document saves like any other.

@@ -200,4 +200,9 @@ fn the_file_menu_has_export_ifc_after_save_as() {
             .get("archbuilder.file.export_ifc")
             .is_some()
     );
+    // Without a path the command asks for one in a save dialog for IFC files.
+    let dialog = product.path_dialog("archbuilder.file.export_ifc").unwrap();
+    assert_eq!(dialog.mode, arc_app::product::PathMode::Save);
+    assert_eq!(dialog.filters[0].extensions, ["ifc"]);
+    assert_eq!(dialog.default_name.as_deref(), Some("{document}.ifc"));
 }

@@ -8,4 +8,4 @@ ab-io-loss-object-not-exported = An object could not be read and is not in the I
 ab-io-loss-body-not-exported = An element is in the IFC file without its shape.
 ab-io-loss-quantity-not-exported = A quantity of an element is left out of the IFC file.
 ab-io-loss-window-operation = A casement window is written as a single panel: IFC4 has no operation on the window itself, so its operation, hand and facing are not in the file.
-ab-io-path-required = No file name was given. ArchBuilder cannot ask for one yet: type archbuilder.file.export_ifc path=<file> in the command line.
+ab-io-path-required = No file name was given. Type archbuilder.file.export_ifc path=<file> in the command line.

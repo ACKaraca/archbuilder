@@ -10,7 +10,7 @@ pub mod codes {
         category: Category::NotFound,
         message_id: "ab-io-no-structure",
     };
-    /// The export command was started without a path and the shell has no file dialog for it.
+    /// The export command was given an empty path.
     pub const PATH_REQUIRED: ErrorCode = ErrorCode {
         code: "ab.io.path_required",
         category: Category::InvalidInput,

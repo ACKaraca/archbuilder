@@ -115,3 +115,5 @@ ab-prop-floor-walls = Associated walls
 ab-prop-floor-storey = Storey
 ab-notice-ifc-exported = Exported { $name } ({ $count } elements)
 ab-notice-ifc-loss = The loss report lists { $count } item(s) that are missing from the file or only approximated.
+ab-export-ifc-title = Export IFC
+ab-export-ifc-filter = IFC files (*.ifc)

@@ -231,8 +231,11 @@ bytes, the number of walls, floors, doors and windows, and a loss report (`archb
 export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` prints it). Objects that cannot be read, a
 body that cannot be made, a left-out quantity and the casement window operation are report items;
 other buildings are reported as not exported. The command `archbuilder.file.export_ifc path=<file>`
-is File > Export > IFC; the shell has no request that asks for a file name for a product command, so
-the menu entry without a path says to type the command with its path.
+is File > Export > IFC. Started without a path (the menu entry, or the typed command), it opens a
+save dialog for IFC files that starts with the document's name, then runs with the chosen file. A
+relative path resolves against the folder of the saved document, else the documents or home folder.
+When no file dialog opens or the user cancels, the history says that no file was chosen and the
+typed form with a path still works.
 
 ### Types and families
 
