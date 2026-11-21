@@ -773,7 +773,8 @@ fn junction(w0: &Wall, w1: &Wall, a: &Line, b: &Line) -> Option<[f64; 2]> {
 }
 
 /// The vertices of a floor over the closed chain `walls` (in order, each meeting the next and the
-/// last meeting the first), edges on the chosen `face`. For [`Face::Interior`] and
+/// last meeting the first; a wall that bounds the region on two separate stretches, such as a
+/// through wall that a notch ends on, appears twice), edges on the chosen `face`. For [`Face::Interior`] and
 /// [`Face::Exterior`] the face is the one that looks into, or away from, the area the chain
 /// encloses, whichever side of its baseline that is.
 ///
@@ -785,8 +786,7 @@ pub fn vertices_of_walls(
     offset: f64,
 ) -> std::result::Result<Vec<Vertex>, WallsRefusal> {
     let n = walls.len();
-    let unique: BTreeSet<ObjectId> = walls.iter().map(|(id, _)| *id).collect();
-    if !(3..=MAX_VERTICES).contains(&n) || unique.len() != n {
+    if !(3..=MAX_VERTICES).contains(&n) {
         return Err(WallsRefusal::NoLoop);
     }
     let lines = |faces: &[Face]| -> std::result::Result<Vec<[f64; 2]>, WallsRefusal> {
@@ -912,8 +912,8 @@ pub struct WallRegion {
     pub area: f64,
     /// The corners of the loop on the center lines, counterclockwise.
     pub polygon: Vec<[f64; 2]>,
-    /// The walls around the region in order, each once; `None` when the loop uses a wall twice
-    /// or has fewer than three walls.
+    /// The walls around the region in order, one entry per stretch (a through wall that another
+    /// wall's ends land on appears twice); `None` when the loop has fewer than three walls.
     pub walls: Option<Vec<ObjectId>>,
     /// The closed loops of walls inside the region that touch none of its walls (a courtyard), each
     /// as its walls in order: the region's holes, bounded by the outer faces of those walls. Only
@@ -945,7 +945,7 @@ pub fn smallest_around(regions: &[WallRegion], p: [f64; 2]) -> Option<usize> {
 
 /// The walls of the smallest closed loop of walls around `p`, in order; walls are joined where
 /// their ends meet or an end lies on another wall (a T). `None` when no loop encloses the point,
-/// the loop uses a wall twice, or the search exceeds its bounds.
+/// or the search exceeds its bounds.
 #[must_use]
 pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<ObjectId>> {
     region_around(walls, p)?.walls
@@ -1103,12 +1103,10 @@ pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
         if order.len() > 1 && order.first() == order.last() {
             order.pop();
         }
-        let unique: BTreeSet<usize> = order.iter().copied().collect();
         found.push(WallRegion {
             area,
             polygon,
-            walls: (order.len() >= 3 && unique.len() == order.len())
-                .then(|| order.into_iter().map(|k| walls[k].0).collect()),
+            walls: (order.len() >= 3).then(|| order.into_iter().map(|k| walls[k].0).collect()),
             holes: Vec::new(),
             center_area: area,
         });
@@ -1120,7 +1118,7 @@ pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
 /// Gives each region the regions directly inside it as holes. A region is inside another when all
 /// its corners are inside the other's center-line loop; faces of one plan never overlap, so only a
 /// loop that touches no wall of the other can be inside it. A region with a hole whose walls do
-/// not make a simple chain loses its own chain, so no room or floor is made of it.
+/// make no chain (fewer than three walls) loses its own chain, so no room or floor is made of it.
 fn nest(found: &mut [WallRegion]) {
     let parents: Vec<Option<usize>> = (0..found.len())
         .map(|s| {

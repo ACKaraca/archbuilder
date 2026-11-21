@@ -210,17 +210,20 @@ pub fn footprints_ranked(
 pub type Loops = Vec<Vec<[f64; 2]>>;
 
 /// The loops of every enclosed region of `walls` (the outer loop first, then its holes), each
-/// with a point well inside it: what `place_all` puts a room in.
+/// with a point well inside it: what `place_all` puts a room in; and the number of regions whose
+/// boundary could not be resolved (reported, never skipped silently).
 #[must_use]
-pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> Vec<([f64; 2], Loops)> {
+pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> (Vec<([f64; 2], Loops)>, usize) {
     let regions = floor::regions(walls).unwrap_or_default();
-    regions
+    let found: Vec<Option<([f64; 2], Loops)>> = regions
         .iter()
-        .filter_map(|r| {
+        .map(|r| {
             let loops = boundary_of(r, walls)?.loops;
             Some((pole_of(&loops)?, loops))
         })
-        .collect()
+        .collect();
+    let unresolved = found.iter().filter(|f| f.is_none()).count();
+    (found.into_iter().flatten().collect(), unresolved)
 }
 
 /// The distance from `p` to the nearest edge of `loops`, negative when `p` is outside the region
@@ -636,7 +639,8 @@ mod tests {
 
     #[test]
     fn every_enclosed_region_has_a_point_inside_it() {
-        let regions = enclosed_regions(&house(true));
+        let (regions, unresolved) = enclosed_regions(&house(true));
+        assert_eq!(unresolved, 0);
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {
             assert!((floor::signed_area(&loops[0]).abs() - 27.84).abs() < 1e-9);
@@ -684,7 +688,8 @@ mod tests {
         let at = pole_of(&around.loops()).unwrap();
         assert!(around.boundary().contains(at));
         // place_all finds both regions, each with a point inside it.
-        let regions = enclosed_regions(&courtyard());
+        let (regions, unresolved) = enclosed_regions(&courtyard());
+        assert_eq!(unresolved, 0);
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {
             assert!(Boundary { loops }.contains(point));

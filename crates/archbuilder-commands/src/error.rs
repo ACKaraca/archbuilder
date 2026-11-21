@@ -89,6 +89,12 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-room-none-missing",
     };
+    /// A region is enclosed by walls but its boundary cannot be resolved, so it gets no room.
+    pub const ROOM_REGION_UNRESOLVED: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_region_unresolved",
+        category: Category::Conflict,
+        message_id: "ab-cmd-room-region-unresolved",
+    };
     /// The walls or the click do not make a closed outline for a floor.
     pub const FLOOR_NO_LOOP: ErrorCode = ErrorCode {
         code: "ab.cmd.floor_no_loop",

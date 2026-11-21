@@ -96,6 +96,8 @@ pub struct RoomsPlaced {
     pub storey: IdParam,
     /// The area of each new room in square meters.
     pub areas: Vec<f64>,
+    /// Enclosed regions whose boundary could not be resolved and got no room (`place_all`).
+    pub unresolved: usize,
 }
 
 fn add(
@@ -164,6 +166,7 @@ fn finish(ctx: &mut Context<'_>, storey: ObjectId, ids: Vec<ObjectId>) -> Result
         numbers,
         storey: IdParam(storey),
         areas,
+        unresolved: 0,
     })
 }
 
@@ -208,7 +211,8 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .iter()
         .map(|e| e.room.point)
         .collect();
-    let missing: Vec<[f64; 2]> = model::enclosed_regions(&walls)
+    let (regions, unresolved) = model::enclosed_regions(&walls);
+    let missing: Vec<[f64; 2]> = regions
         .into_iter()
         .filter(|(_, loops)| {
             let b = Boundary {
@@ -220,13 +224,19 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .take(MAX_PLACED)
         .collect();
     if missing.is_empty() {
-        return Err(Error::new(codes::ROOM_NONE_MISSING));
+        return Err(Error::new(if unresolved > 0 {
+            codes::ROOM_REGION_UNRESOLVED
+        } else {
+            codes::ROOM_NONE_MISSING
+        }));
     }
     let mut ids = Vec::new();
     for point in missing {
         ids.push(add(ctx, storey, point, None, None, None)?);
     }
-    finish(ctx, storey, ids)
+    let mut placed = finish(ctx, storey, ids)?;
+    placed.unresolved = unresolved;
+    Ok(placed)
 }
 
 /// The prompt of `archbuilder.room.place`: one point per room.

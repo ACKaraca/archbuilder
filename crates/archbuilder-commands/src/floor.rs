@@ -207,6 +207,10 @@ fn picked_walls(
         if list.len() > MAX_VERTICES {
             return Err(too_big());
         }
+        // A hand-made chain names each wall once; only a derived region repeats a through wall.
+        if list.iter().enumerate().any(|(k, a)| list[..k].contains(a)) {
+            return Err(Error::new(codes::FLOOR_NO_LOOP));
+        }
         return list
             .iter()
             .map(|IdParam(id)| by_id(*id))
@@ -227,12 +231,16 @@ fn picked_walls(
                 let region = floor::region_around(&all, *q).ok_or_else(no_loop)?;
                 (region.walls.ok_or_else(no_loop)?, region.holes)
             }
-            _ => (
-                hits.into_iter()
+            _ => {
+                let ids = hits
+                    .into_iter()
                     .collect::<Option<Vec<_>>>()
-                    .ok_or_else(no_loop)?,
-                Vec::new(),
-            ),
+                    .ok_or_else(no_loop)?;
+                if ids.iter().enumerate().any(|(k, a)| ids[..k].contains(a)) {
+                    return Err(no_loop());
+                }
+                (ids, Vec::new())
+            }
         };
     let chain = |ids: Vec<ObjectId>| ids.into_iter().map(by_id).collect::<Result<WallChain>>();
     let holes = holes.into_iter().map(chain).collect::<Result<Vec<_>>>()?;

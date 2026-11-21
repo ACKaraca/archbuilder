@@ -146,6 +146,7 @@ ab-cmd-select-before-points = Select the objects first (click or drag a window),
 ab-cmd-room-no-region = This point is not inside a closed loop of walls. Click inside walls that enclose an area.
 ab-cmd-room-region-taken = This region already has a room.
 ab-cmd-room-none-missing = Every enclosed region of this storey already has a room.
+ab-cmd-room-region-unresolved = A region is enclosed by walls but its boundary cannot be resolved, so it has no room. Check the walls around it.
 ab-cmd-room-place-label = Room
 ab-cmd-room-place-description = Places a room on a storey at a point inside a region closed by walls. The boundary, area, perimeter and volume follow the walls; the room gets the next number of the storey.
 ab-cmd-room-place-all-label = Place all rooms

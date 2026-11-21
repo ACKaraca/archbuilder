@@ -145,6 +145,7 @@ ab-cmd-select-before-points = Nokta vermeden önce nesneleri seçin (tıklayın 
 ab-cmd-room-no-region = Bu nokta kapalı bir duvar halkasının içinde değil. Bir alanı çevreleyen duvarların içine tıklayın.
 ab-cmd-room-region-taken = Bu bölgede zaten bir oda var.
 ab-cmd-room-none-missing = Bu katta kapalı her bölgede zaten bir oda var.
+ab-cmd-room-region-unresolved = Duvarlarla çevrili bir bölgenin sınırı çözülemedi, bu yüzden odası yok. Çevresindeki duvarları kontrol edin.
 ab-cmd-room-place-label = Oda
 ab-cmd-room-place-description = Bir katta, duvarlarla kapanan bir bölgenin içindeki noktaya oda yerleştirir. Sınır, alan, çevre ve hacim duvarları izler; oda katın sıradaki numarasını alır.
 ab-cmd-room-place-all-label = Tüm odaları yerleştir

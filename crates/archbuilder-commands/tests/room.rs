@@ -338,3 +338,61 @@ fn place_all_puts_an_l_shaped_room_well_inside_it() {
     // The arms are 3.8 m wide: the best a point can do is 1.9 m from the walls.
     assert!(depth(at) > 1.85, "{at:?} {}", depth(at));
 }
+
+/// The 12 x 12 box of center-line walls with a notch whose two ends land on the top wall, which
+/// runs through as one piece.
+fn notch_box(env: &Env) {
+    env.wall([0.0, 0.0], [12.0, 0.0]);
+    env.wall([12.0, 0.0], [12.0, 12.0]);
+    env.wall([12.0, 12.0], [0.0, 12.0]);
+    env.wall([0.0, 12.0], [0.0, 0.0]);
+    env.wall([4.0, 12.0], [4.0, 8.0]);
+    env.wall([4.0, 8.0], [8.0, 8.0]);
+    env.wall([8.0, 8.0], [8.0, 12.0]);
+}
+
+#[test]
+fn a_notch_ending_on_a_through_wall_gives_both_rooms_and_a_floor_of_the_main_area() {
+    let env = Env::new();
+    notch_box(&env);
+    env.run("archbuilder.room.place_all", json!({})).unwrap();
+    let mut areas: Vec<f64> = env.rooms().iter().map(|r| r.area().unwrap()).collect();
+    areas.sort_by(f64::total_cmp);
+    // Notch: 3.8 x 3.8 clear. Main: 11.8 x 11.8 less the notch's outer footprint 4.2 x 4.0.
+    assert_eq!(areas.len(), 2);
+    assert!(close(areas[0], 3.8 * 3.8), "{areas:?}");
+    assert!(close(areas[1], 11.8 * 11.8 - 4.2 * 4.0), "{areas:?}");
+    assert!(env.findings().is_empty());
+    // A click in the main area makes a floor of the same area.
+    env.run("archbuilder.floor.create", json!({"picks": [[2.0, 2.0]]}))
+        .unwrap();
+    let snapshot = env.document.snapshot();
+    let floor = spatial::objects(&snapshot, archbuilder_model::types::FLOOR);
+    let derived = archbuilder_model::floor::Derived::of(&snapshot, &floor[0]).unwrap();
+    derived.boundary.check().unwrap();
+    assert!(close(derived.area(), 11.8 * 11.8 - 4.2 * 4.0));
+    // A hand-made chain still names each wall once.
+    let walls = archbuilder_model::floor::storey_walls(
+        &snapshot,
+        spatial::lowest_storey(&snapshot).unwrap().id,
+    );
+    let id = walls[0].0;
+    assert!(
+        env.run(
+            "archbuilder.floor.create",
+            json!({"walls": [id, id, walls[1].0]})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_partition_ending_on_one_wall_only_does_not_split_the_room() {
+    let env = Env::new();
+    env.house();
+    env.wall([5.0, 0.0], [5.0, 3.0]);
+    env.run("archbuilder.room.place_all", json!({})).unwrap();
+    let rooms = env.rooms();
+    assert_eq!(rooms.len(), 1);
+    assert!(close(rooms[0].area().unwrap(), 9.8 * 5.8));
+}
