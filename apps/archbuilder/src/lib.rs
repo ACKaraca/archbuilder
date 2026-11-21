@@ -320,7 +320,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
             ..arc_ui::Appearance::default()
         },
         display: None,
-        // The rooms' tags and hatch follow the level labels; the shared room view learns the
+        // The rooms' fills and tags follow the level labels; the shared room view learns the
         // selection and the active storey from the work-plane probe.
         overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
             let mut out = labels::overlays(app, tab, language);

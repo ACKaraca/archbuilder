@@ -210,9 +210,9 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .collect();
     let missing: Vec<[f64; 2]> = model::enclosed_regions(&walls)
         .into_iter()
-        .filter(|(_, polygon)| {
+        .filter(|(_, loops)| {
             let b = Boundary {
-                loops: vec![polygon.clone()],
+                loops: loops.clone(),
             };
             !existing.iter().any(|e| b.contains(*e))
         })

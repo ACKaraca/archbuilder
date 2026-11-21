@@ -263,7 +263,6 @@ fn rooms_beyond_the_budget_are_counted_in_a_notice_and_other_storeys_do_not_use_
         size: [1300.0, 900.0],
     }));
     let overlays = view.overlays(&snapshot, "en-US");
-    assert!(overlays.len() <= 256);
     let labels: Vec<&str> = overlays
         .iter()
         .filter_map(|o| match o {

@@ -383,3 +383,41 @@ fn a_wall_split_in_two_makes_one_straight_edge_and_follows_both_parts() {
     d.boundary.check().unwrap();
     assert!(d.area() < 9.8 * 5.8 && d.area() > 9.8 * 5.8 - 0.3 * 5.0);
 }
+
+/// A floor by click inside a box with a courtyard of walls gets the courtyard as a hole, and a
+/// room in the courtyard and the room around it do not overlap.
+#[test]
+fn a_floor_by_click_around_a_courtyard_has_the_hole() {
+    let env = Env::new();
+    for (side, at) in [(12.0, 0.0), (4.0, 4.0)] {
+        let c = [
+            [at, at],
+            [at, at + side],
+            [at + side, at + side],
+            [at + side, at],
+        ];
+        for k in 0..4 {
+            env.run(
+                "archbuilder.wall.create",
+                json!({"start": c[k], "end": c[(k + 1) % 4]}),
+            )
+            .unwrap();
+        }
+    }
+    env.run("archbuilder.floor.create", json!({"picks": [[2.0, 2.0]]}))
+        .unwrap();
+    // The floor in the courtyard is its own, without a hole.
+    env.run("archbuilder.floor.create", json!({"picks": [[6.0, 6.0]]}))
+        .unwrap();
+    let snapshot = env.snapshot();
+    let all: Vec<Derived> = env
+        .floors()
+        .iter()
+        .map(|f| Derived::of(&snapshot, f).unwrap())
+        .collect();
+    assert_eq!(all.len(), 2);
+    let around = all.iter().find(|d| d.boundary.loops.len() == 2).unwrap();
+    let inner = all.iter().find(|d| d.boundary.loops.len() == 1).unwrap();
+    near(around.area(), 11.8 * 11.8 - 4.2 * 4.2);
+    near(inner.area(), 3.8 * 3.8);
+}

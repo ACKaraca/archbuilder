@@ -915,6 +915,13 @@ pub struct WallRegion {
     /// The walls around the region in order, each once; `None` when the loop uses a wall twice
     /// or has fewer than three walls.
     pub walls: Option<Vec<ObjectId>>,
+    /// The closed loops of walls inside the region that touch none of its walls (a courtyard), each
+    /// as its walls in order: the region's holes, bounded by the outer faces of those walls. Only
+    /// the outermost loops are listed; a loop inside a hole is a region of its own.
+    pub holes: Vec<Vec<ObjectId>>,
+    /// The area inside the center lines of the walls with the holes' center-line areas taken out,
+    /// in square meters.
+    pub center_area: f64,
 }
 
 impl WallRegion {
@@ -941,8 +948,15 @@ pub fn smallest_around(regions: &[WallRegion], p: [f64; 2]) -> Option<usize> {
 /// the loop uses a wall twice, or the search exceeds its bounds.
 #[must_use]
 pub fn loop_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<ObjectId>> {
-    let regions = regions(walls)?;
-    regions.get(smallest_around(&regions, p)?)?.walls.clone()
+    region_around(walls, p)?.walls
+}
+
+/// The smallest region around `p`: the walls of its loop and the loops of its holes. A point in
+/// a courtyard is in the courtyard's own region, which is smaller.
+#[must_use]
+pub fn region_around(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<WallRegion> {
+    let all = regions(walls)?;
+    all.get(smallest_around(&all, p)?).cloned()
 }
 
 /// Every closed region of the plan the walls make, found once: walls are joined where their ends
@@ -1095,9 +1109,44 @@ pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
             polygon,
             walls: (order.len() >= 3 && unique.len() == order.len())
                 .then(|| order.into_iter().map(|k| walls[k].0).collect()),
+            holes: Vec::new(),
+            center_area: area,
         });
     }
+    nest(&mut found);
     Some(found)
+}
+
+/// Gives each region the regions directly inside it as holes. A region is inside another when all
+/// its corners are inside the other's center-line loop; faces of one plan never overlap, so only a
+/// loop that touches no wall of the other can be inside it. A region with a hole whose walls do
+/// not make a simple chain loses its own chain, so no room or floor is made of it.
+fn nest(found: &mut [WallRegion]) {
+    let parents: Vec<Option<usize>> = (0..found.len())
+        .map(|s| {
+            (0..found.len())
+                .filter(|&r| {
+                    r != s
+                        && found[s].area < found[r].area
+                        && found[s]
+                            .polygon
+                            .iter()
+                            .all(|q| inside(&found[r].polygon, *q))
+                })
+                .min_by(|&a, &b| found[a].area.total_cmp(&found[b].area))
+        })
+        .collect();
+    for (s, parent) in parents.into_iter().enumerate() {
+        let Some(r) = parent else { continue };
+        match found[s].walls.clone() {
+            Some(chain) => {
+                let area = found[s].area;
+                found[r].holes.push(chain);
+                found[r].center_area -= area;
+            }
+            None => found[r].walls = None,
+        }
+    }
 }
 
 #[cfg(test)]

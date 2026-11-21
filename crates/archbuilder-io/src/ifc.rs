@@ -1,5 +1,5 @@
 //! The document as an IFC4 file: the project, site, building and storeys, and on each storey its
-//! walls, the doors and windows in them and its floors, mapped to the neutral description of
+//! walls, the doors and windows in them, its floors and its enclosed rooms (spaces), mapped to the neutral description of
 //! [`arc_io_ifc::write`] and written by it. Lengths are meters. The result is deterministic for a
 //! document and options: every `GlobalId` comes from an `ObjectId`, and the time stamp is the
 //! caller's. The mapping is described in `docs/architecture/domain-model.md`.
@@ -10,12 +10,13 @@ use arc_base::{Cancel, Error, Limits, ObjectId, Result};
 use arc_doc::{Object, Snapshot};
 use arc_io_common::loss::{Argument, LossItem, LossReport, Reason};
 use arc_io_ifc::write::{
-    Body, Element, ElementKind, Placement, Quantity, QuantitySet, QuantityValue, Spatial, Storey,
-    derived_id, role,
+    Body, Element, ElementKind, Placement, Property, PropertySet, PropertyValue, Quantity,
+    QuantitySet, QuantityValue, Spatial, Storey, derived_id, role,
 };
 use arc_io_ifc::{WriteModel, WriteOptions, write};
 use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
+use archbuilder_model::room::State;
 use archbuilder_model::types::{DOOR, FLOOR, WINDOW, text};
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{join, spatial};
@@ -55,7 +56,7 @@ impl Default for ExportOptions {
 pub struct Export {
     /// The bytes of the IFC4 file.
     pub bytes: Vec<u8>,
-    /// The walls, floors, doors and windows written; the openings that void walls are not counted.
+    /// The walls, floors, rooms, doors and windows written; the openings that void walls are not counted.
     pub elements: usize,
     /// What was not exported or only approximately; the writer's own entries are included.
     pub report: LossReport,
@@ -155,11 +156,89 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.floor(&floor, storey);
         }
-        // The writer has no IfcSpace yet: rooms are named in the loss report.
-        for room in spatial::children(self.snapshot, archbuilder_model::types::ROOM, storey) {
-            self.lose(reasons::ROOM_NOT_WRITTEN, "IFCSPACE", &room);
+        for entry in archbuilder_model::room::of_storey(self.snapshot, storey) {
+            self.cancel.check()?;
+            self.room(&entry, storey, level);
         }
         Ok(())
+    }
+
+    /// An enclosed room as an `IfcSpace`: the number is the `Name`, the room's name the `LongName`,
+    /// the region (with its courtyards as voids) extruded by the room's height, with the derived
+    /// quantities: `NetFloorArea` at the wall faces, `GrossFloorArea` to the wall center lines,
+    /// `NetPerimeter` the outer loop and every courtyard loop. A room that is not
+    /// enclosed has no region and one that shares its region with another room would be a second
+    /// space on the same boundary; both are named in the loss report.
+    fn room(&mut self, entry: &archbuilder_model::room::Entry, storey: ObjectId, level: f64) {
+        let Some(object) = spatial::get(self.snapshot, entry.id) else {
+            return;
+        };
+        let reason = match entry.state() {
+            State::Enclosed => None,
+            State::Unenclosed => Some(reasons::ROOM_UNENCLOSED),
+            State::Redundant => Some(reasons::ROOM_REDUNDANT),
+        };
+        if let Some(reason) = reason {
+            return self.lose(reason, "IFCSPACE", &object);
+        }
+        let height = (entry.top - entry.base).max(0.0);
+        let (Some(area), Some(gross), Some(perimeter), Some(volume)) = (
+            entry.area(),
+            entry.footprint.gross_area(),
+            entry.perimeter(),
+            entry.volume(),
+        ) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCSPACE", &object);
+        };
+        let (name, long_name) = match &entry.room.number {
+            Some(number) => (number.clone(), Some(entry.room.name.clone())),
+            None => (entry.room.name.clone(), None),
+        };
+        let mut element = Element::new(
+            entry.id.as_u128(),
+            ElementKind::Space,
+            &name,
+            storey.as_u128(),
+        );
+        element.long_name = long_name;
+        element.predefined_type = Some("INTERNAL".to_owned());
+        element.placement = Placement::new(
+            Point3::new(0.0, 0.0, entry.base - level),
+            Vector3::z(),
+            Vector3::x(),
+        );
+        element.body = Some(Body::Extrusion {
+            outer: profile(&entry.footprint.polygon, true),
+            holes: entry
+                .footprint
+                .holes
+                .iter()
+                .map(|h| profile(h, false))
+                .collect(),
+            direction: Vector3::z(),
+            depth: height,
+        });
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_SpaceBaseQuantities",
+            vec![
+                Quantity::new("NetFloorArea", QuantityValue::Area(area)),
+                Quantity::new("GrossFloorArea", QuantityValue::Area(gross)),
+                Quantity::new("NetPerimeter", QuantityValue::Length(perimeter)),
+                Quantity::new("Height", QuantityValue::Length(height)),
+                Quantity::new("NetVolume", QuantityValue::Volume(volume)),
+            ],
+        ));
+        if let Some(number) = &entry.room.number {
+            element.property_sets.push(PropertySet::new(
+                "Pset_SpaceCommon",
+                vec![Property::new(
+                    "Reference",
+                    PropertyValue::Label(number.clone()),
+                )],
+            ));
+        }
+        self.elements.push(element);
+        self.exported += 1;
     }
 
     fn wall(&mut self, object: &Object, storey: ObjectId, level: f64) {

@@ -16,8 +16,8 @@ joins derived with authored end styles, `snap.rs`), doors and windows hosted by 
 (picked walls or sketch, holes; wall-associated edges follow the wall faces), rooms
 (`archbuilder.room.place`, `place_all`: derived from the walls around a placement point, warnings
 for unenclosed, redundant and duplicate numbers), `archbuilder.modify.move|copy|rotate|mirror`,
-Delete, `archbuilder.property.set`, outliner, property grid, `inspect` lists, IFC4 export (not
-rooms). No layers, types or slope yet; families, views and the rest are still specifications.
+Delete, `archbuilder.property.set`, outliner, property grid, `inspect` lists, IFC4 export (rooms
+as spaces). No layers, types or slope yet; families, views and the rest are still specifications.
 Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
@@ -30,7 +30,7 @@ Present:
 ```
 crates/archbuilder-model/     spatial, wall, insert, floor and room types, picking order, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands of the structure, wall, insert and floor (headless)
-crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors with a loss report; `archbuilder.file.export_ifc` (headless)
+crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, rooms with a loss report; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall, insert and floor tools
 apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window and floor lists, `export-ifc`
 xtask/                        layers, catalogs, ci

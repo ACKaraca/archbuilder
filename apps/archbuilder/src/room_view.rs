@@ -1,12 +1,12 @@
 //! What the viewport draws for rooms: a tag centered on the placement point (name, number, area in
-//! m² with the language's decimal separator, or the state when there is no area), a light diagonal
-//! hatch of the region (one polyline per room, distinct from the tinted floor), and, for a
+//! m² with the language's decimal separator, or the state when there is no area), a light
+//! translucent fill of the region (one polygon per room), and, for a
 //! selected room, its outline at the base and the top with the corner edges: the wireframe volume.
 //! Rooms have no mesh, so nothing of a room is drawn as a solid in 3D.
 //!
 //! Only the rooms of the active storey are drawn, and in a view from above only those whose point
-//! is in the visible area. What does not fit the overlay budget is never dropped silently: a
-//! notice at the top left of the view says how many tags are not shown, or that the hatch is off.
+//! is in the visible area. What does not fit is never dropped silently: a notice at the top left
+//! of the view says how many tags are not shown.
 //! A tag that would overlap another tag or a level label moves to the nearest place that does not,
 //! inside its room when it fits there, with a short leader line to the point.
 //!
@@ -19,7 +19,7 @@ use std::sync::{Mutex, OnceLock};
 use arc_base::ObjectId;
 use arc_base::math::Point3;
 use arc_doc::Snapshot;
-use arc_ui::ProductOverlay;
+use arc_ui::{OverlayColor, ProductOverlay};
 use archbuilder_model::floor::Boundary;
 use archbuilder_model::room::{Entry, State};
 
@@ -37,16 +37,6 @@ const TAG_REDUNDANT: Msg = Msg {
 const TAGS_HIDDEN: Msg = Msg {
     message_id: "ab-room-tags-hidden",
 };
-const HATCH_HIDDEN: Msg = Msg {
-    message_id: "ab-room-hatch-hidden",
-};
-
-const HATCH_STEP: f64 = 0.4;
-const MAX_ROWS: u16 = 400;
-/// The overlays rooms may use of the viewport's 256 (the rest is for levels, symbols and tools).
-const BUDGET: usize = 190;
-/// The fewest hatch strokes per room worth drawing; below it the hatch is off.
-const MIN_STROKES: usize = 2;
 /// The view cube's corner of the image, which tags keep clear of, in pixels.
 const CUBE_PX: f64 = 112.0;
 /// A tag's size is estimated from its text, in pixels.
@@ -204,51 +194,34 @@ fn tag(entry: &Entry, language: &str, say: &dyn Fn(&str) -> String) -> String {
     lines.join("\n")
 }
 
-/// Diagonal hatch strokes of `polygon`, each clipped to the region (no connectors along the
-/// boundary), at most `cap` of them: the spacing widens until they fit. `None` when even the
-/// widest spacing gives more.
-fn hatch(polygon: &[[f64; 2]], z: f64, cap: usize) -> Option<Vec<ProductOverlay>> {
-    let s = std::f64::consts::FRAC_1_SQRT_2;
-    let to = |p: [f64; 2]| [(p[0] + p[1]) * s, (p[1] - p[0]) * s];
-    let back = |p: [f64; 2]| [(p[0] - p[1]) * s, (p[0] + p[1]) * s];
-    let rotated: Vec<[f64; 2]> = polygon.iter().map(|p| to(*p)).collect();
-    let (low, high) = rotated
-        .iter()
-        .fold((f64::MAX, f64::MIN), |(l, h), p| (l.min(p[1]), h.max(p[1])));
-    if !(high - low).is_finite() || high - low < HATCH_STEP || cap == 0 {
+/// The fill of an enclosed room: a muted blue-gray that reads on the dark theme.
+const ENCLOSED_FILL: OverlayColor = OverlayColor::Rgba([150, 165, 185, 105]);
+/// The fill of a redundant room, whose region another room holds: amber.
+const REDUNDANT_FILL: OverlayColor = OverlayColor::Rgba([230, 165, 55, 105]);
+
+/// The translucent fill of a room's region at height `z`: one muted tone for an enclosed room, the
+/// warning tone for a redundant one (its region is another room's too). An unenclosed room has no
+/// region and no fill.
+fn fill(entry: &Entry) -> Option<ProductOverlay> {
+    let polygon = &entry.footprint.polygon;
+    if polygon.len() < 3 {
         return None;
     }
-    let mut step = HATCH_STEP;
-    for _ in 0..12 {
-        let rows = ((high - low) / step).floor();
-        let mut strokes: Vec<ProductOverlay> = Vec::new();
-        for k in 0..MAX_ROWS {
-            if f64::from(k) >= rows {
-                break;
-            }
-            let y = low + step * (f64::from(k) + 0.5);
-            let mut xs: Vec<f64> = Vec::new();
-            for i in 0..rotated.len() {
-                let (a, b) = (rotated[i], rotated[(i + 1) % rotated.len()]);
-                if (a[1] > y) != (b[1] > y) {
-                    xs.push(a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]));
-                }
-            }
-            xs.sort_by(f64::total_cmp);
-            for pair in xs.chunks_exact(2) {
-                let (p, q) = (back([pair[0], y]), back([pair[1], y]));
-                strokes.push(ProductOverlay::Path {
-                    points: vec![Point3::new(p[0], p[1], z), Point3::new(q[0], q[1], z)],
-                    dashed: false,
-                });
-            }
-        }
-        if strokes.len() <= cap {
-            return Some(strokes).filter(|s| !s.is_empty());
-        }
-        step *= 1.4;
-    }
-    None
+    let rings = entry
+        .footprint
+        .loops()
+        .iter()
+        .map(|l| {
+            l.iter()
+                .map(|p| Point3::new(p[0], p[1], entry.base))
+                .collect()
+        })
+        .collect();
+    let color = match entry.state() {
+        State::Enclosed => ENCLOSED_FILL,
+        State::Unenclosed | State::Redundant => REDUNDANT_FILL,
+    };
+    Some(ProductOverlay::Fill { rings }.colored(color))
 }
 
 /// A room's tag to lay out, in view pixels.
@@ -259,6 +232,8 @@ pub struct TagIn {
     pub size: [f64; 2],
     /// The room's region; empty for a room without one.
     pub polygon: Vec<[f64; 2]>,
+    /// The holes of the region (courtyards); a tag never covers one.
+    pub holes: Vec<Vec<[f64; 2]>>,
     /// The room's area, which decides who keeps the place when two tags would overlap.
     pub area: f64,
     /// A well-inside place of the room (display only), tried when the point does not fit.
@@ -282,9 +257,9 @@ pub fn layout_tags(
     let mut taken: Vec<PixelRect> = blocked.to_vec();
     for k in order {
         let t = &tags[k];
-        let boundary = Boundary {
-            loops: vec![t.polygon.clone()],
-        };
+        let mut loops = vec![t.polygon.clone()];
+        loops.extend(t.holes.iter().cloned());
+        let boundary = Boundary { loops };
         let mid = |a: f64, b: f64| (a + b) / 2.0;
         let suits = |c: [f64; 2], taken: &[PixelRect]| {
             let r = rect_at(c, t.size);
@@ -427,8 +402,14 @@ impl RoomView {
                         center: v.to_pixel(e.room.point),
                         size: label_size(t),
                         polygon: e.footprint.polygon.iter().map(|p| v.to_pixel(*p)).collect(),
+                        holes: e
+                            .footprint
+                            .holes
+                            .iter()
+                            .map(|h| h.iter().map(|p| v.to_pixel(*p)).collect())
+                            .collect(),
                         area: e.area().unwrap_or(0.0),
-                        alt: archbuilder_model::room::pole(&e.footprint.polygon)
+                        alt: archbuilder_model::room::pole_of(&e.footprint.loops())
                             .map(|p| v.to_pixel(p)),
                     })
                     .collect();
@@ -445,20 +426,9 @@ impl RoomView {
             }
         };
         let hidden = shown.iter().filter(|s| s.is_none()).count();
-        let tagged = seen.len() - hidden;
-        // What the budget leaves goes to the hatch of every enclosed room in view, tagged or not,
-        // shared evenly; when it cannot give each room a few strokes the hatch is off.
-        let enclosed = seen.iter().filter(|e| e.state() == State::Enclosed).count();
-        let per_room = BUDGET.saturating_sub(tagged + 1) / enclosed.max(1);
-        let hatched = per_room >= MIN_STROKES;
         let mut drawn: Vec<ProductOverlay> = Vec::new();
         for ((entry, text), at) in seen.iter().zip(texts).zip(&shown) {
-            if hatched
-                && entry.state() == State::Enclosed
-                && let Some(strokes) = hatch(&entry.footprint.polygon, entry.base, per_room)
-            {
-                drawn.extend(strokes);
-            }
+            drawn.extend(fill(entry));
             let Some(center) = at else {
                 continue;
             };
@@ -473,13 +443,7 @@ impl RoomView {
             });
         }
         // Whatever was left out is said, at the top left of the view.
-        let notice = if hidden > 0 {
-            Some(say(TAGS_HIDDEN.message_id, hidden))
-        } else if !hatched && enclosed > 0 {
-            Some(say(HATCH_HIDDEN.message_id, enclosed))
-        } else {
-            None
-        };
+        let notice = (hidden > 0).then(|| say(TAGS_HIDDEN.message_id, hidden));
         if let Some(text) = notice {
             let r = notice_rect(&text);
             let size = label_size(&text);
@@ -538,15 +502,18 @@ fn volume(entry: &Entry) -> Vec<ProductOverlay> {
     if polygon.is_empty() {
         return Vec::new();
     }
-    let ring = |z: f64| ProductOverlay::Path {
-        points: polygon
+    let ring = |l: &Vec<[f64; 2]>, z: f64| ProductOverlay::Path {
+        points: l
             .iter()
-            .chain(polygon.first())
+            .chain(l.first())
             .map(|p| Point3::new(p[0], p[1], z))
             .collect(),
         dashed: false,
     };
-    let mut out = vec![ring(entry.base), ring(entry.top)];
+    let mut out = Vec::new();
+    for l in std::iter::once(polygon).chain(&entry.footprint.holes) {
+        out.extend([ring(l, entry.base), ring(l, entry.top)]);
+    }
     out.extend(polygon.iter().take(64).map(|p| ProductOverlay::Path {
         points: vec![
             Point3::new(p[0], p[1], entry.base),
@@ -565,6 +532,7 @@ mod tests {
         TagIn {
             center,
             size: [50.0, 45.0],
+            holes: Vec::new(),
             polygon: vec![
                 [room[0], room[1]],
                 [room[2], room[1]],
@@ -620,19 +588,52 @@ mod tests {
     }
 
     #[test]
-    fn hatch_strokes_stay_in_the_region_and_in_their_budget() {
-        let square = [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
-        let strokes = hatch(&square, 0.0, 12).unwrap();
-        assert!(!strokes.is_empty() && strokes.len() <= 12);
-        for s in strokes {
-            let ProductOverlay::Path { points, .. } = s else {
-                panic!("a path");
-            };
-            assert_eq!(points.len(), 2);
-            assert!(points.iter().all(
-                |p| (-1e-9..=4.0 + 1e-9).contains(&p.x) && (-1e-9..=4.0 + 1e-9).contains(&p.y)
-            ));
-        }
+    fn a_room_region_is_one_translucent_fill_and_an_unenclosed_room_has_none() {
+        let mut entry = Entry {
+            id: arc_base::id::Identifier::from_u128(1),
+            room: archbuilder_model::room::Room {
+                name: "Living".into(),
+                number: Some("101".into()),
+                point: [1.0, 1.0],
+                department: None,
+                finishes: [None, None, None, None],
+                upper_level: None,
+                upper_offset: 0.0,
+                base_offset: 0.0,
+            },
+            footprint: archbuilder_model::room::Footprint {
+                state: State::Enclosed,
+                polygon: vec![[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]],
+                holes: vec![vec![[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]]],
+                gross: 11.0,
+            },
+            base: 3.0,
+            top: 5.8,
+        };
+        let Some(ProductOverlay::Styled { color, item }) = fill(&entry) else {
+            panic!("a styled fill");
+        };
+        assert_eq!(color, ENCLOSED_FILL);
+        let ProductOverlay::Fill { rings } = *item else {
+            panic!("a fill");
+        };
+        assert_eq!(rings.len(), 2, "the outline and the courtyard hole");
+        assert!(rings[0].iter().all(|p| p.z == 3.0));
+        entry.footprint.state = State::Redundant;
+        assert!(matches!(
+            fill(&entry),
+            Some(ProductOverlay::Styled {
+                color: REDUNDANT_FILL,
+                ..
+            })
+        ));
+        entry.footprint = archbuilder_model::room::Footprint {
+            state: State::Unenclosed,
+            polygon: Vec::new(),
+            holes: Vec::new(),
+            gross: 0.0,
+        };
+        assert!(fill(&entry).is_none());
     }
 
     #[test]

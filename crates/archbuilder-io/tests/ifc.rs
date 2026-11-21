@@ -446,3 +446,193 @@ fn a_casement_window_is_reported_as_approximated() {
     assert_eq!(item.object_id, Some(window.to_string()));
     assert_eq!(exported.elements, 15);
 }
+
+/// Enclosed rooms are spaces under their storey with the model's derived quantities and body
+/// volumes; an unenclosed room and a second room in a region are named in the loss report.
+#[test]
+fn enclosed_rooms_are_spaces_and_the_others_are_reported() {
+    use archbuilder_model::room;
+    let house = House::new();
+    let storey = spatial::storeys(
+        &house.snapshot(),
+        spatial::buildings(&house.snapshot())[0].id,
+    )[0]
+    .storey
+    .id;
+    // A small box on its own, whose room loses a wall; two rooms in the house, which then lose
+    // the partition between them.
+    let corners = [[20.0, 0.0], [24.0, 0.0], [24.0, 4.0], [20.0, 4.0]];
+    let mut box_walls = Vec::new();
+    for k in 0..4 {
+        let made = house.run(
+            "archbuilder.wall.create",
+            json!({"storey": storey, "start": corners[k], "end": corners[(k + 1) % 4]}),
+        );
+        box_walls.push(House::id(&made["wall"]));
+    }
+    for (point, name, number) in [
+        ([2.5, 3.0], "Living", "101"),
+        ([7.5, 3.0], "Kitchen", "102"),
+        ([22.0, 2.0], "Outside", "103"),
+    ] {
+        house.run(
+            "archbuilder.room.place",
+            json!({"storey": storey, "points": [point], "name": name, "number": number}),
+        );
+    }
+    let partition = spatial::walls(&house.snapshot(), storey)
+        .into_iter()
+        .find(|w| {
+            archbuilder_model::wall::Wall::of(&house.snapshot(), w)
+                .is_some_and(|d| d.thickness < 0.11)
+        })
+        .unwrap();
+    house.run(
+        "archbuilder.wall.delete",
+        json!({"walls": [partition.id.to_string(), box_walls[3].to_string()]}),
+    );
+    let snapshot = house.snapshot();
+    let entries = room::of_storey(&snapshot, storey);
+    let enclosed: Vec<_> = entries
+        .iter()
+        .filter(|e| e.state() == room::State::Enclosed)
+        .collect();
+    assert_eq!(enclosed.len(), 1);
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let reasons: Vec<_> = exported
+        .report
+        .items
+        .iter()
+        .map(|i| i.reason.as_str())
+        .collect();
+    assert!(
+        reasons.contains(&"ab.io.ifc.room_redundant")
+            && reasons.contains(&"ab.io.ifc.room_unenclosed"),
+        "{reasons:?}"
+    );
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let views = file.typed_views(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let ground = &views.spatial[0].children[0].children[0].children[0];
+    let names: Vec<_> = ground
+        .children
+        .iter()
+        .map(|n| (n.entity.type_name.clone(), n.entity.name.clone().unwrap()))
+        .collect();
+    assert_eq!(names, [("IFCSPACE".to_owned(), "101".to_owned())]);
+    assert!(ground.contained.iter().all(|e| e.type_name != "IFCSPACE"));
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let mut volumes: BTreeMap<String, f64> = BTreeMap::new();
+    for item in &geometry.items {
+        let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+        *volumes.entry(gid(&file, item.product)).or_default() +=
+            volume(&mesh, &Limits::DEFAULT).unwrap();
+    }
+    for entry in &enclosed {
+        near(
+            volumes[&global_id(entry.id.as_u128())],
+            entry.volume().unwrap(),
+        );
+        let space = file
+            .instances_of("IFCSPACE")
+            .find(|i| gid(&file, i.name) == global_id(entry.id.as_u128()))
+            .unwrap();
+        assert_eq!(
+            space.records[0].parameters[7],
+            Parameter::Text(entry.room.name.clone())
+        );
+    }
+    let mut areas = BTreeMap::new();
+    for set in &views.quantity_sets {
+        for related in &set.related {
+            for q in &set.quantities {
+                if let Some(Number::Real(v)) = q.value {
+                    areas.insert(
+                        (related.global_id.clone().unwrap(), q.name.clone().unwrap()),
+                        v,
+                    );
+                }
+            }
+        }
+    }
+    for entry in &enclosed {
+        let id = global_id(entry.id.as_u128());
+        near(
+            areas[&(id.clone(), "NetFloorArea".into())],
+            entry.area().unwrap(),
+        );
+        near(
+            areas[&(id.clone(), "NetPerimeter".into())],
+            entry.perimeter().unwrap(),
+        );
+        near(areas[&(id, "NetVolume".into())], entry.volume().unwrap());
+    }
+}
+
+/// Rooms around a courtyard: the room around has the courtyard as a void in its body, its area,
+/// perimeter and volume leave the courtyard out, and the room inside it does not overlap.
+#[test]
+fn a_room_around_a_courtyard_is_a_space_with_a_void() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let storey = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[0]
+        .storey
+        .id;
+    for (side, at) in [(12.0, 30.0), (4.0, 34.0)] {
+        let c = [
+            [at, at],
+            [at, at + side],
+            [at + side, at + side],
+            [at + side, at],
+        ];
+        for k in 0..4 {
+            house.run(
+                "archbuilder.wall.create",
+                json!({"storey": storey, "start": c[k], "end": c[(k + 1) % 4]}),
+            );
+        }
+    }
+    for (point, name, number) in [
+        ([32.0, 32.0], "Ring", "201"),
+        ([36.0, 36.0], "Court", "202"),
+    ] {
+        house.run(
+            "archbuilder.room.place",
+            json!({"storey": storey, "points": [point], "name": name, "number": number}),
+        );
+    }
+    let snapshot = house.snapshot();
+    let entries = archbuilder_model::room::of_storey(&snapshot, storey);
+    let by = |n: &str| {
+        entries
+            .iter()
+            .find(|e| e.room.number.as_deref() == Some(n))
+            .unwrap()
+    };
+    near(by("201").area().unwrap(), 11.8 * 11.8 - 4.2 * 4.2);
+    near(by("202").area().unwrap(), 3.8 * 3.8);
+    near(by("201").perimeter().unwrap(), 4.0 * 11.8 + 4.0 * 4.2);
+    near(
+        by("201").footprint.gross_area().unwrap(),
+        12.0 * 12.0 - 4.0 * 4.0,
+    );
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let mut volumes: BTreeMap<String, f64> = BTreeMap::new();
+    for item in &geometry.items {
+        let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+        *volumes.entry(gid(&file, item.product)).or_default() +=
+            volume(&mesh, &Limits::DEFAULT).unwrap();
+    }
+    for n in ["201", "202"] {
+        near(
+            volumes[&global_id(by(n).id.as_u128())],
+            by(n).volume().unwrap(),
+        );
+    }
+    near(volumes[&global_id(by("201").id.as_u128())], 3.0 * 121.6);
+}

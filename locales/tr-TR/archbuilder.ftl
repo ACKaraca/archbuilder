@@ -161,4 +161,3 @@ ab-room-upper-default = Üst kat seviyesi (yoksa 3 m)
 ab-room-tag-unenclosed = (kapalı değil)
 ab-room-tag-redundant = (fazla)
 ab-room-tags-hidden = { $count } oda etiketi gösterilmiyor — yakınlaştırın
-ab-room-hatch-hidden = { $count } oda için tarama gizli — yakınlaştırın

@@ -187,13 +187,15 @@ pub(crate) fn next_floor_name(snapshot: &Snapshot, storey: ObjectId, language: &
         .unwrap_or_default()
 }
 
-/// The walls a floor over `p` follows: explicit walls, picks (a loop around a single point), or
-/// none for a sketch.
+type WallChain = Vec<(ObjectId, archbuilder_model::wall::Wall)>;
+
+/// The walls a floor over `p` follows: explicit walls, picks (a loop around a single point, with
+/// the loops of the courtyards inside it as holes), or none for a sketch.
 fn picked_walls(
     ctx: &Context<'_>,
     storey: ObjectId,
     p: &CreateFloor,
-) -> Result<Option<Vec<(ObjectId, archbuilder_model::wall::Wall)>>> {
+) -> Result<Option<(WallChain, Vec<WallChain>)>> {
     let all = floor::storey_walls(ctx.snapshot(), storey);
     let by_id = |id: ObjectId| {
         all.iter()
@@ -209,7 +211,7 @@ fn picked_walls(
             .iter()
             .map(|IdParam(id)| by_id(*id))
             .collect::<Result<Vec<_>>>()
-            .map(Some);
+            .map(|chain| Some((chain, Vec::new())));
     }
     let Some(picks) = &p.picks else {
         return Ok(None);
@@ -218,19 +220,23 @@ fn picked_walls(
         return Err(too_big());
     }
     let hits: Vec<Option<ObjectId>> = picks.iter().map(|q| floor::wall_at(&all, *q)).collect();
-    let ids: Vec<ObjectId> = match (picks.as_slice(), hits.as_slice()) {
-        ([q], [None]) => {
-            floor::loop_around(&all, *q).ok_or_else(|| Error::new(codes::FLOOR_NO_LOOP))?
-        }
-        _ => hits
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| Error::new(codes::FLOOR_NO_LOOP))?,
-    };
-    ids.into_iter()
-        .map(by_id)
-        .collect::<Result<Vec<_>>>()
-        .map(Some)
+    let no_loop = || Error::new(codes::FLOOR_NO_LOOP);
+    let (ids, holes): (Vec<ObjectId>, Vec<Vec<ObjectId>>) =
+        match (picks.as_slice(), hits.as_slice()) {
+            ([q], [None]) => {
+                let region = floor::region_around(&all, *q).ok_or_else(no_loop)?;
+                (region.walls.ok_or_else(no_loop)?, region.holes)
+            }
+            _ => (
+                hits.into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(no_loop)?,
+                Vec::new(),
+            ),
+        };
+    let chain = |ids: Vec<ObjectId>| ids.into_iter().map(by_id).collect::<Result<WallChain>>();
+    let holes = holes.into_iter().map(chain).collect::<Result<Vec<_>>>()?;
+    Ok(Some((chain(ids)?, holes)))
 }
 
 fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
@@ -245,11 +251,28 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
     let face = p.face.map_or(Face::Interior, Into::into);
     let walls = picked_walls(ctx, storey, &p)?;
     let vertices: Vec<Vertex> = match (&walls, &p.points) {
-        (Some(walls), None) => {
-            floor::vertices_of_walls(walls, face, edge_offset).map_err(|r| match r {
+        (Some((walls, holes)), None) => {
+            let refuse = |r| match r {
                 WallsRefusal::NoLoop => Error::new(codes::FLOOR_NO_LOOP),
                 WallsRefusal::Parallel => Error::new(codes::FLOOR_WALLS_PARALLEL),
-            })?
+            };
+            let mut vertices =
+                floor::vertices_of_walls(walls, face, edge_offset).map_err(refuse)?;
+            // A courtyard's walls bound a hole on the side that looks away from them.
+            let away = match face {
+                Face::Interior => Face::Exterior,
+                Face::Exterior => Face::Interior,
+                Face::Center => Face::Center,
+            };
+            for (k, hole) in (1_u32..).zip(holes) {
+                let mut loop_vertices =
+                    floor::vertices_of_walls(hole, away, edge_offset).map_err(refuse)?;
+                for v in &mut loop_vertices {
+                    v.loop_index = k;
+                }
+                vertices.extend(loop_vertices);
+            }
+            vertices
         }
         (None, Some(points)) => {
             let holes = p.holes.as_deref().unwrap_or_default();
@@ -270,7 +293,7 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
         Some(name) => name.to_owned(),
         None => next_floor_name(ctx.snapshot(), storey, &language),
     };
-    let count = walls.as_ref().map_or(0, Vec::len);
+    let count = walls.as_ref().map_or(0, |(w, _)| w.len());
     let id = create(
         ctx,
         FLOOR,

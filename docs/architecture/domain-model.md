@@ -244,10 +244,10 @@ copy takes the next free number). `inspect` lists number, name, storey, state, a
 volume.
 
 In a view from above, a room is drawn as a tag at the point (name, number, area in m² with the
-language's decimal separator, or the state), a diagonal hatch of its region and, when selected, its
+language's decimal separator, or the state), a translucent fill of its region (muted for an enclosed room, the warning tone for a redundant one) and, when selected, its
 outline at the base and top with the corner edges (the wireframe volume, also in 3D). Rooms have no
 mesh: unselected rooms are not drawn as solids in 3D. Only the active storey's rooms are drawn, and in
-a view from above only those whose point is in the visible area. A tag is centered on its point and never moved or led away: it is shown only when it lies inside the image and inside its room's region, clear of the notice, the view cube and the level labels, and clear of the tag of a larger room. Every other tag is counted in a notice at the top left ("N room tags not shown, zoom in"), never dropped silently. The hatch is a set of strokes clipped to the region, split among the tagged rooms within the overlay budget (and off, with a notice, when too many rooms are tagged). The level labels stay inside the view and clear of the view cube. Known limits: label sizes are estimated from the text (a high-density display may place a tag a little off); no openings that join
+a view from above only those whose point is in the visible area. A tag is centered on its point and never moved or led away: it is shown only when it lies inside the image and inside its room's region, clear of the notice, the view cube and the level labels, and clear of the tag of a larger room. Every other tag is counted in a notice at the top left ("N room tags not shown, zoom in"), never dropped silently. The level labels stay inside the view and clear of the view cube. Known limits: label sizes are estimated from the text (a high-density display may place a tag a little off); no openings that join
 rooms, no sloped tops, no separation lines.
 
 Picking in a view from above uses one ordered list for the hover and the click: doors and windows,
@@ -255,12 +255,15 @@ walls, rooms, floors, levels; a repeated click at the same spot steps down it (w
 about 1.5 s of the last click; Escape and moving the pointer start again), and the hover shows what
 the click would pick. Other views leave the pick to the viewport, with the door or window first.
 
-IFC mapping, planned (the writer has no space element yet, so rooms are not written and the loss
-report names each room as `IFCSPACE` not written): a room maps to `IfcSpace` aggregated to its
-`IfcBuildingStorey` with `IfcRelAggregates`, with a body of an extruded area solid of its boundary
-from the base up by the height, `PredefinedType` `INTERNAL`, `Name` the name, `LongName` the
-department, and `Qto_SpaceBaseQuantities` holding `Height`, `GrossFloorArea`, `NetFloorArea`,
-`GrossPerimeter` and `GrossVolume`, `NetVolume` from the same derivation `inspect` uses.
+IFC mapping: an enclosed room is an `IfcSpace` aggregated by its `IfcBuildingStorey` with
+`IfcRelAggregates` (not contained), `PredefinedType` `INTERNAL`, with a body of an extruded area
+solid of its boundary, with the courtyards as voids, from the base up by the height. `Name` is the room number and `LongName` the
+room name (a room without a number takes its name as `Name` and has no `LongName`).
+`Qto_SpaceBaseQuantities` holds `NetFloorArea` (at the wall faces), `GrossFloorArea` (to the wall
+center lines), `NetPerimeter` (the outer loop plus every courtyard loop), `Height` and `NetVolume` from the same derivation
+`inspect` uses, and `Pset_SpaceCommon` holds `Reference` (the number). An unenclosed room has no
+region and a redundant room shares its region with another room; neither is written, and the loss
+report names each one (`ab.io.ifc.room_unenclosed`, `ab.io.ifc.room_redundant`).
 
 ## Selection and modify commands
 

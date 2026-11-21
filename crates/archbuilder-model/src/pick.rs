@@ -66,10 +66,7 @@ pub fn stack(
             let p = e.room.point;
             match e.state() {
                 room::State::Unenclosed => (p[0] - at[0]).hypot(p[1] - at[1]) <= aperture * 2.0,
-                _ => crate::floor::Boundary {
-                    loops: vec![e.footprint.polygon.clone()],
-                }
-                .contains(at),
+                _ => e.footprint.boundary().contains(at),
             }
         })
         .map(|e| (-e.base, e.id))
@@ -175,7 +172,10 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
                         e.base,
                     )]
                 } else {
-                    vec![close(&e.footprint.polygon, e.base)]
+                    std::iter::once(&e.footprint.polygon)
+                        .chain(&e.footprint.holes)
+                        .map(|l| close(l, e.base))
+                        .collect()
                 }
             })
             .unwrap_or_default(),

@@ -58,43 +58,95 @@ impl State {
 pub struct Footprint {
     /// The state.
     pub state: State,
-    /// The corners of the boundary at the interior wall faces; empty when unenclosed.
+    /// The corners of the outer boundary at the interior wall faces; empty when unenclosed.
     pub polygon: Vec<[f64; 2]>,
+    /// The holes: closed loops of walls inside the region (a courtyard), at their outer faces.
+    pub holes: Vec<Vec<[f64; 2]>>,
+    /// The area to the center lines of the walls, holes taken out, in square meters; zero when
+    /// unenclosed. This is the gross floor area.
+    pub gross: f64,
 }
 
 impl Footprint {
-    /// The area in square meters; `None` unless enclosed.
+    /// The boundary: the outer loop, then the holes.
     #[must_use]
-    pub fn area(&self) -> Option<f64> {
-        (self.state == State::Enclosed).then(|| floor::signed_area(&self.polygon).abs())
+    pub fn boundary(&self) -> Boundary {
+        let mut loops = vec![self.polygon.clone()];
+        loops.extend(self.holes.iter().cloned());
+        Boundary { loops }
     }
 
-    /// The perimeter in meters; `None` unless enclosed.
+    /// The loops of the region, the outer one first; none when there is no region.
+    #[must_use]
+    pub fn loops(&self) -> Vec<Vec<[f64; 2]>> {
+        if self.polygon.is_empty() {
+            Vec::new()
+        } else {
+            self.boundary().loops
+        }
+    }
+
+    /// The net area in square meters, the outer loop minus the holes; `None` unless enclosed.
+    #[must_use]
+    pub fn area(&self) -> Option<f64> {
+        (self.state == State::Enclosed).then(|| self.boundary().area())
+    }
+
+    /// The perimeter in meters: the outer loop and every hole; `None` unless enclosed.
     #[must_use]
     pub fn perimeter(&self) -> Option<f64> {
-        (self.state == State::Enclosed).then(|| {
-            Boundary {
-                loops: vec![self.polygon.clone()],
-            }
-            .perimeter()
-        })
+        (self.state == State::Enclosed).then(|| self.boundary().perimeter())
+    }
+
+    /// The gross floor area to the center lines of the walls; `None` unless enclosed.
+    #[must_use]
+    pub fn gross_area(&self) -> Option<f64> {
+        (self.state == State::Enclosed).then_some(self.gross)
+    }
+
+    fn none() -> Self {
+        Self {
+            state: State::Unenclosed,
+            polygon: Vec::new(),
+            holes: Vec::new(),
+            gross: 0.0,
+        }
     }
 }
 
-/// The boundary at the interior faces of the region `region`, when the walls make one around `p`.
-fn interior(region: &WallRegion, walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Vec<[f64; 2]>> {
-    let chain: Vec<(ObjectId, Wall)> = region
-        .walls
-        .as_ref()?
-        .iter()
-        .filter_map(|id| walls.iter().find(|(w, _)| w == id).copied())
-        .collect();
-    let vertices = floor::vertices_of_walls(&chain, Face::Interior, 0.0).ok()?;
-    let polygon: Vec<[f64; 2]> = vertices.iter().map(|v| v.point).collect();
-    let boundary = Boundary {
-        loops: vec![polygon.clone()],
+/// The boundary of the region `region`: its loop at the interior wall faces and its holes at the
+/// outer faces of their walls, checked; `None` when a chain does not close or the loops are not a
+/// valid boundary.
+fn boundary_of(region: &WallRegion, walls: &[(ObjectId, Wall)]) -> Option<Boundary> {
+    let chain = |ids: &[ObjectId], face: Face| -> Option<Vec<[f64; 2]>> {
+        let chain: Vec<(ObjectId, Wall)> = ids
+            .iter()
+            .filter_map(|id| walls.iter().find(|(w, _)| w == id).copied())
+            .collect();
+        let vertices = floor::vertices_of_walls(&chain, face, 0.0).ok()?;
+        Some(vertices.iter().map(|v| v.point).collect())
     };
-    (boundary.check().is_ok() && boundary.contains(p)).then_some(polygon)
+    let mut loops = vec![chain(region.walls.as_ref()?, Face::Interior)?];
+    for hole in &region.holes {
+        loops.push(chain(hole, Face::Exterior)?);
+    }
+    let boundary = Boundary { loops };
+    boundary.check().is_ok().then_some(boundary)
+}
+
+/// The footprint of `region` when `p` is in it.
+fn footprint_in(region: &WallRegion, walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<Footprint> {
+    let boundary = boundary_of(region, walls)?;
+    if !boundary.contains(p) {
+        return None;
+    }
+    let mut loops = boundary.loops.into_iter();
+    Some(Footprint {
+        state: State::Enclosed,
+        polygon: loops.next()?,
+        holes: loops.collect(),
+        gross: region.center_area,
+    })
 }
 
 /// The footprints of rooms at `points` among `walls` (the walls of one storey), in the order of
@@ -102,29 +154,26 @@ fn interior(region: &WallRegion, walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Opt
 #[must_use]
 pub fn footprints(walls: &[(ObjectId, Wall)], points: &[[f64; 2]]) -> Vec<Footprint> {
     let regions = floor::regions(walls).unwrap_or_default();
-    let found: Vec<Option<(usize, Vec<[f64; 2]>)>> = points
+    let found: Vec<Option<(usize, Footprint)>> = points
         .iter()
         .map(|p| {
             let at = floor::smallest_around(&regions, *p)?;
-            Some((at, interior(regions.get(at)?, walls, *p)?))
+            Some((at, footprint_in(regions.get(at)?, walls, *p)?))
         })
         .collect();
     found
         .iter()
         .enumerate()
         .map(|(k, f)| match f {
-            None => Footprint {
-                state: State::Unenclosed,
-                polygon: Vec::new(),
-            },
-            Some((at, polygon)) => Footprint {
+            None => Footprint::none(),
+            Some((at, print)) => Footprint {
                 // The first point in a region keeps it; later ones are redundant.
                 state: if found[..k].iter().flatten().any(|(other, _)| other == at) {
                     State::Redundant
                 } else {
                     State::Enclosed
                 },
-                polygon: polygon.clone(),
+                ..print.clone()
             },
         })
         .collect()
@@ -157,39 +206,45 @@ pub fn footprints_ranked(
     out.into_iter().flatten().collect()
 }
 
-/// The boundaries of every enclosed region of `walls`, each with a point well inside it: what
-/// `place_all` puts a room in.
+/// The loops of a region: the outer loop, then the holes.
+pub type Loops = Vec<Vec<[f64; 2]>>;
+
+/// The loops of every enclosed region of `walls` (the outer loop first, then its holes), each
+/// with a point well inside it: what `place_all` puts a room in.
 #[must_use]
-pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> Vec<([f64; 2], Vec<[f64; 2]>)> {
+pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> Vec<([f64; 2], Loops)> {
     let regions = floor::regions(walls).unwrap_or_default();
     regions
         .iter()
         .filter_map(|r| {
-            let rough = interior_point(&r.polygon)?;
-            let polygon = interior(r, walls, rough)?;
-            Some((pole(&polygon)?, polygon))
+            let loops = boundary_of(r, walls)?.loops;
+            Some((pole_of(&loops)?, loops))
         })
         .collect()
 }
 
-/// The distance from `p` to the nearest edge of `polygon`, negative when `p` is outside.
-fn depth(polygon: &[[f64; 2]], p: [f64; 2]) -> f64 {
-    let n = polygon.len();
-    let nearest = (0..n)
-        .map(|k| {
-            let (a, b) = (polygon[k], polygon[(k + 1) % n]);
-            let d = [b[0] - a[0], b[1] - a[1]];
-            let len2 = d[0] * d[0] + d[1] * d[1];
-            let t = if len2 > 0.0 {
-                (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+/// The distance from `p` to the nearest edge of `loops`, negative when `p` is outside the region
+/// (outside the first loop or inside another).
+fn depth(loops: &[Vec<[f64; 2]>], p: [f64; 2]) -> f64 {
+    let nearest = loops
+        .iter()
+        .flat_map(|polygon| {
+            let n = polygon.len();
+            (0..n).map(move |k| {
+                let (a, b) = (polygon[k], polygon[(k + 1) % n]);
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let len2 = d[0] * d[0] + d[1] * d[1];
+                let t = if len2 > 0.0 {
+                    (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                (p[0] - a[0] - t * d[0]).hypot(p[1] - a[1] - t * d[1])
+            })
         })
         .fold(f64::MAX, f64::min);
     if (Boundary {
-        loops: vec![polygon.to_vec()],
+        loops: loops.to_vec(),
     })
     .contains(p)
     {
@@ -204,6 +259,13 @@ fn depth(polygon: &[[f64; 2]], p: [f64; 2]) -> f64 {
 /// room's wider arm, not its corner. `None` for a loop with no inside.
 #[must_use]
 pub fn pole(polygon: &[[f64; 2]]) -> Option<[f64; 2]> {
+    pole_of(&[polygon.to_vec()])
+}
+
+/// [`pole`] of a region with holes: `loops` is the outer loop, then the holes.
+#[must_use]
+pub fn pole_of(loops: &[Vec<[f64; 2]>]) -> Option<[f64; 2]> {
+    let polygon = loops.first()?;
     if polygon.len() < 3 {
         return None;
     }
@@ -228,7 +290,7 @@ pub fn pole(polygon: &[[f64; 2]]) -> Option<[f64; 2]> {
                     lo[0] + step[0] * f64::from(i),
                     lo[1] + step[1] * f64::from(j),
                 ];
-                let d = depth(polygon, p);
+                let d = depth(loops, p);
                 if best.is_none_or(|(_, b)| d > b) {
                     best = Some((p, d));
                 }
@@ -557,14 +619,18 @@ mod tests {
             [0.0, 10.0],
         ];
         let at = pole(&l).unwrap();
-        assert!(depth(&l, at) > 1.95, "{at:?} {}", depth(&l, at));
+        assert!(
+            depth(&[l.to_vec()], at) > 1.95,
+            "{at:?} {}",
+            depth(&[l.to_vec()], at)
+        );
         let brute = (0..=100)
             .flat_map(|i| (0..=100).map(move |j| [f64::from(i) / 10.0, f64::from(j) / 10.0]))
-            .map(|p| depth(&l, p))
+            .map(|p| depth(&[l.to_vec()], p))
             .fold(f64::MIN, f64::max);
-        assert!(depth(&l, at) >= brute - 0.05);
+        assert!(depth(&[l.to_vec()], at) >= brute - 0.05);
         // The centroid of the L is closer to a wall.
-        assert!(depth(&l, [3.0, 3.0]) < depth(&l, at) + 1e-9);
+        assert!(depth(&[l.to_vec()], [3.0, 3.0]) < depth(&[l.to_vec()], at) + 1e-9);
         assert!(pole(&[[0.0, 0.0], [1.0, 0.0]]).is_none());
     }
 
@@ -572,14 +638,56 @@ mod tests {
     fn every_enclosed_region_has_a_point_inside_it() {
         let regions = enclosed_regions(&house(true));
         assert_eq!(regions.len(), 2);
-        for (point, polygon) in regions {
-            assert!((floor::signed_area(&polygon).abs() - 27.84).abs() < 1e-9);
-            assert!(
-                Boundary {
-                    loops: vec![polygon]
-                }
-                .contains(point)
-            );
+        for (point, loops) in regions {
+            assert!((floor::signed_area(&loops[0]).abs() - 27.84).abs() < 1e-9);
+            assert!(Boundary { loops }.contains(point));
+        }
+    }
+
+    /// A 12 x 12 box with a closed 4 x 4 courtyard of walls in the middle.
+    fn courtyard() -> Vec<(ObjectId, Wall)> {
+        let ring = |at: f64, side: f64, first: u64| {
+            let c = [
+                [at, at],
+                [at + side, at],
+                [at + side, at + side],
+                [at, at + side],
+            ];
+            (0..4)
+                .map(|k| (id(first + k as u64), wall(c[k], c[(k + 1) % 4])))
+                .collect::<Vec<_>>()
+        };
+        let mut walls = ring(0.0, 12.0, 1);
+        walls.extend(ring(4.0, 4.0, 11));
+        walls
+    }
+
+    #[test]
+    fn a_courtyard_is_a_hole_of_the_room_around_it_and_a_room_of_its_own() {
+        let prints = footprints(&courtyard(), &[[2.0, 2.0], [6.0, 6.0]]);
+        let around = &prints[0];
+        assert_eq!(around.state, State::Enclosed);
+        assert_eq!(around.holes.len(), 1);
+        // 11.8 x 11.8 clear, minus the courtyard's outer faces 4.2 x 4.2.
+        assert!(
+            (around.area().unwrap() - 121.6).abs() < 1e-9,
+            "{:?}",
+            around.area()
+        );
+        assert!((around.perimeter().unwrap() - (4.0 * 11.8 + 4.0 * 4.2)).abs() < 1e-9);
+        // To the center lines: 12 x 12 minus 4 x 4.
+        assert!((around.gross_area().unwrap() - 128.0).abs() < 1e-9);
+        let inside = &prints[1];
+        assert!((inside.area().unwrap() - 14.44).abs() < 1e-9);
+        assert!(inside.holes.is_empty());
+        // The pole of the room around is in its ring, not in the courtyard.
+        let at = pole_of(&around.loops()).unwrap();
+        assert!(around.boundary().contains(at));
+        // place_all finds both regions, each with a point inside it.
+        let regions = enclosed_regions(&courtyard());
+        assert_eq!(regions.len(), 2);
+        for (point, loops) in regions {
+            assert!(Boundary { loops }.contains(point));
         }
     }
 
