@@ -161,3 +161,7 @@ ab-room-upper-default = Üst kat seviyesi (yoksa 3 m)
 ab-room-tag-unenclosed = (kapalı değil)
 ab-room-tag-redundant = (fazla)
 ab-room-tags-hidden = { $count } oda etiketi gösterilmiyor — yakınlaştırın
+
+ab-dim-edit-prompt = Ölçüyü ayarla
+ab-dim-edit-label = Uzunluk
+ab-dim-edit-invalid = Bu bir uzunluk değil. Bir sayı yazın, isterseniz birimiyle.

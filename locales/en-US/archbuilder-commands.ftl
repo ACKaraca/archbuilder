@@ -36,6 +36,8 @@ ab-cmd-wall-delete-label = Delete Wall
 ab-cmd-wall-delete-description = Deletes walls, the selected ones unless walls are named.
 ab-cmd-wall-flip-label = Flip Wall
 ab-cmd-wall-flip-description = Flips walls: the baseline is reversed, so the exterior side swaps; the location line stays.
+ab-cmd-wall-move-end-label = Move Wall End
+ab-cmd-wall-move-end-description = Moves one end of a wall to a point; the other end stays and doors and windows keep their place along the wall, or the move is refused naming them.
 ab-cmd-object-delete-label = Delete
 ab-cmd-object-delete-description = Deletes the selected walls, or the selected storey when no wall is selected.
 

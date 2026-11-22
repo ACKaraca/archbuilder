@@ -35,6 +35,8 @@ ab-cmd-wall-delete-label = Duvarı Sil
 ab-cmd-wall-delete-description = Duvarları siler; duvar belirtilmezse seçili olanları.
 ab-cmd-wall-flip-label = Duvarı Çevir
 ab-cmd-wall-flip-description = Duvarları çevirir: eksen çizgisi ters çevrilir, dış taraf yer değiştirir; konum çizgisi aynı kalır.
+ab-cmd-wall-move-end-label = Duvar Ucunu Taşı
+ab-cmd-wall-move-end-description = Bir duvarın bir ucunu bir noktaya taşır; öbür uç yerinde kalır, kapı ve pencereler duvar boyunca yerlerini korur, korumazsa taşıma onları adlandırarak reddedilir.
 ab-cmd-object-delete-label = Sil
 ab-cmd-object-delete-description = Seçili duvarları siler; duvar seçili değilse seçili katı siler.
 

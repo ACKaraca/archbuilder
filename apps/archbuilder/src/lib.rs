@@ -32,6 +32,7 @@ use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
 
 pub mod chrome;
+pub mod direct;
 pub mod extract_floor;
 pub mod extract_insert;
 pub mod extract_level;

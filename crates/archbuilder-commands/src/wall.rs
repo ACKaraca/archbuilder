@@ -43,6 +43,8 @@ pub const WALL_CREATE: &str = "archbuilder.wall.create";
 pub const WALL_DELETE: &str = "archbuilder.wall.delete";
 /// The identifier of the command that flips walls to the other side of their location line.
 pub const WALL_FLIP: &str = "archbuilder.wall.flip";
+/// The identifier of the command that moves one end of a wall.
+pub const WALL_MOVE_END: &str = "archbuilder.wall.move_end";
 /// The identifier of the command that sets the join style of wall ends.
 pub const WALL_JOIN_STYLE: &str = "archbuilder.wall.join_style";
 /// The identifier of the command that takes wall ends out of joins.
@@ -325,6 +327,47 @@ fn delete_walls(ctx: &mut Context<'_>, p: DeleteWalls) -> Result<Deleted> {
         None => selected_walls(ctx).into_iter().collect(),
     };
     delete_set(ctx, ids, BTreeSet::new(), BTreeSet::new())
+}
+
+/// The end of a baseline.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BaselineEnd {
+    /// The baseline's start point.
+    Start,
+    /// The baseline's end point.
+    End,
+}
+
+/// Parameters of `archbuilder.wall.move_end`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveEnd {
+    /// The wall.
+    pub wall: IdParam,
+    /// The end that moves; the other end stays.
+    pub end: BaselineEnd,
+    /// The new position `[x, y]` of the end, in meters.
+    pub to: [f64; 2],
+}
+
+/// Moves one end of a wall to a point and keeps the joins: neighbors whose ends met this end
+/// (auto, butt or square joins) take the same corner point, and a stem standing on the wall
+/// follows its new line; a free end or a disallowed join moves alone. The other end of the wall
+/// stays, and so do its doors and windows (their distance from that end), and the openings of the
+/// neighbors keep their place. The command is refused, naming the opening and telling the range of
+/// the wall as it would stand, when an opening would no longer fit.
+fn move_end(ctx: &mut Context<'_>, p: MoveEnd) -> Result<()> {
+    let IdParam(id) = p.wall;
+    expect(ctx.snapshot(), id, WALL)?;
+    if !p.to.iter().all(|v| v.is_finite()) {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    let end = match p.end {
+        BaselineEnd::Start => 0,
+        BaselineEnd::End => 1,
+    };
+    crate::modify::move_end_of(ctx, id, end, p.to).map(|_| ())
 }
 
 /// Flips walls: the baseline is reversed (start and end swap) and the location line stays. The
@@ -970,6 +1013,18 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         WALL_FLIP_LABEL.message_id,
         WALL_FLIP_DESCRIPTION.message_id,
         flip_walls,
+    ))?;
+    const MOVE_END_LABEL: Msg = Msg {
+        message_id: "ab-cmd-wall-move-end-label",
+    };
+    const MOVE_END_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-wall-move-end-description",
+    };
+    registry.register(CommandSpec::new(
+        WALL_MOVE_END,
+        MOVE_END_LABEL.message_id,
+        MOVE_END_DESCRIPTION.message_id,
+        move_end,
     ))?;
     const JOIN_STYLE_LABEL: Msg = Msg {
         message_id: "ab-cmd-wall-join-style-label",

@@ -508,9 +508,140 @@ pub fn preview(snapshot: &Snapshot, objects: &[ObjectId], xf: &Xform) -> Vec<Wal
     }
 }
 
+/// What moving one end of a wall changes: the wall as it would stand and the walls that follow.
+struct EndMove {
+    old: Wall,
+    new: Wall,
+    neighbors: Vec<(ObjectId, Wall, Wall)>,
+}
+
+/// Moves end `end` (0 the start, 1 the end) of wall `id` to `to` and keeps its joins: a neighbor
+/// whose end met this end with an auto, butt or square join takes the same corner point, and a
+/// neighbor whose end stood on the wall's baseline (a T) stretches or shrinks along its own line to
+/// the wall's new line. A wall end with a disallowed join, on either side, moves alone, as does a
+/// free end.
+fn end_plan(snapshot: &Snapshot, id: ObjectId, end: usize, to: [f64; 2]) -> Result<EndMove> {
+    let object = spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let old = Wall::from_values(&object.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let new = with_end(&old, end, to);
+    let tol = archbuilder_model::join::JOIN_TOLERANCE;
+    let at = end_of(&old, end);
+    let own = if end == 0 {
+        old.start_join
+    } else {
+        old.end_join
+    };
+    let dir = [new.end[0] - new.start[0], new.end[1] - new.start[1]];
+    let mut neighbors: Vec<(ObjectId, Wall, Wall)> = object
+        .header
+        .owner
+        .map(|storey| spatial::walls(snapshot, storey))
+        .unwrap_or_default()
+        .iter()
+        .take(MAX_OBJECTS)
+        .filter(|o| o.id != id)
+        .filter_map(|o| Wall::from_values(&o.values).map(|w| (o.id, w, w)))
+        .collect();
+    for (_, nold, nnew) in &mut neighbors {
+        for k in 0..2 {
+            let point = end_of(nold, k);
+            let style = if k == 0 {
+                nold.start_join
+            } else {
+                nold.end_join
+            };
+            if style == JoinStyle::Disallowed {
+                continue;
+            }
+            if gap(point, at) <= tol {
+                if own != JoinStyle::Disallowed {
+                    *nnew = with_end(nnew, k, to);
+                }
+                continue;
+            }
+            let on_body = archbuilder_model::join::baseline_distance(&old, point) <= tol
+                && gap(point, old.start) > tol
+                && gap(point, old.end) > tol;
+            if !on_body {
+                continue;
+            }
+            let reach = MAX_STRETCH * nold.length();
+            let stretched = archbuilder_model::join::line_hit(nnew, new.start, dir)
+                .filter(|(q, _)| gap(*q, point) <= reach)
+                .map(|(q, _)| with_end(nnew, k, q))
+                .filter(|c| c.length() >= types::MIN_WALL_LENGTH);
+            if let Some(candidate) = stretched {
+                *nnew = candidate;
+            }
+        }
+    }
+    neighbors.retain(|(_, o, n)| o != n);
+    Ok(EndMove {
+        old,
+        new,
+        neighbors,
+    })
+}
+
+/// The walls moving one end of wall `id` to `to` would leave: the wall and the neighbors that
+/// follow, for a host's preview. Empty when the wall is unknown.
+#[must_use]
+pub fn preview_end(snapshot: &Snapshot, id: ObjectId, end: usize, to: [f64; 2]) -> Vec<Wall> {
+    match end_plan(snapshot, id, end, to) {
+        Ok(m) => std::iter::once(m.new)
+            .chain(m.neighbors.into_iter().map(|(_, _, n)| n))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Moves one end of wall `id` (see [`end_plan`]); the openings of the wall keep their distance
+/// from the end that stays and those of the neighbors keep their place along them. Returns the
+/// number of neighbors that followed.
+pub(crate) fn move_end_of(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    end: usize,
+    to: [f64; 2],
+) -> Result<usize> {
+    let snapshot = ctx.snapshot().clone();
+    let plan = end_plan(&snapshot, id, end, to)?;
+    // The range a refused opening is told is the wall as it would stand after the move.
+    let shift = if end == 0 {
+        plan.old.length() - plan.new.length()
+    } else {
+        0.0
+    };
+    let own = shifted_inserts(&snapshot, id, &plan.new, shift, None)?;
+    let mut follows = Vec::new();
+    for (nid, nold, nnew) in &plan.neighbors {
+        follows.push((
+            *nid,
+            *nnew,
+            shifted_inserts(&snapshot, *nid, nnew, start_shift(nold, nnew), None)?,
+        ));
+    }
+    let count = follows.len();
+    for (wid, wall, hosted) in std::iter::once((id, plan.new, own)).chain(follows) {
+        for (field, value) in [
+            ("start_x", wall.start[0]),
+            ("start_y", wall.start[1]),
+            ("end_x", wall.end[0]),
+            ("end_y", wall.end[1]),
+        ] {
+            set_length(ctx, wid, field, value)?;
+        }
+        for (insert, distance, _) in hosted {
+            set_length(ctx, insert, "distance", distance)?;
+        }
+    }
+    crate::structure::ensure_valid(ctx)?;
+    Ok(count)
+}
+
 /// The doors and windows of `wall` with their distance after the wall's start moved by `shift`
 /// along its line (and the extra change a reflection makes), keeping them where they are.
-fn shifted_inserts(
+pub(crate) fn shifted_inserts(
     snapshot: &Snapshot,
     id: ObjectId,
     wall: &Wall,

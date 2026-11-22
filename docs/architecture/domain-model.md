@@ -274,6 +274,46 @@ clears. A band that takes a wall also takes the doors and windows in it. The pro
 fields the selected objects share and "(mixed)" where their values differ; one edit applies to all
 of them as one undo step.
 
+### Direct manipulation
+
+With no tool running, the pointer edits the selection directly (`apps/archbuilder/src/direct.rs`);
+each gesture ends in one command and so one undo step, and Escape during a gesture changes nothing.
+A press on a door or window, a wall or a selected floor claims the gesture; a press elsewhere (or with
+Shift) still starts the selection band. A drag shorter than 4 pixels is a click.
+
+- **Move.** Dragging a selected object moves the whole selection; dragging an unselected one selects
+  it first. Snapping and tracking are those of the move tool (end points, wall bodies, directions
+  from the press point, a 10 mm grid); the dragged walls' own ends do not attract. A preview shows
+  the walls as they would stand, neighbors that keep their join included. Releasing with Ctrl held
+  copies (`archbuilder.modify.copy`) instead of moving (`archbuilder.modify.move`). A door or window
+  dragged alone slides along its wall, in whole centimeters, and stops at the clear span and the
+  neighboring openings instead of being refused.
+- **Handles** of a single selected wall: both baseline ends (`archbuilder.wall.move_end`) and, in
+  views not from above, the top (`archbuilder.property.set` of `height`, which disconnects the top
+  from its level; steps of 50 mm; the wall shows as a ghost box at the new height with its height
+  as a label). The end keeps the other end and the openings' distance from it, and keeps the
+  joins: a neighbor whose end met this end with an auto, butt or square join takes the same corner
+  point, and a stem whose end stands on the wall stretches or shrinks along its own line to the
+  wall's new line; a free end, or a disallowed join on either side, moves alone. The neighbors'
+  openings keep their place, and the move is refused, naming the opening and the range of the wall
+  as it would stand, when an opening no longer fits. The label while dragging shows the length and
+  the angle measured from the end that stays. A selection with walls or floors has a rotation
+  handle about the center of its bounds, in steps of 15 degrees (free with Shift)
+  (`archbuilder.modify.rotate`). A selected door or window has two flip handles that flip its hand
+  and its facing on a click.
+- **Alt** held during a drag turns snapping off (the pointer's own point, whole millimeters of
+  height, free rotation). Escape ends a drag and leaves the keyboard focus in the viewport.
+- **Temporary dimensions.** A single selected wall shows the distance between its center line and
+  the center lines of the nearest parallel walls on either side. A single selected door or window
+  shows the gaps between its edges and the ends of the wall's clear span. A wall's value is written
+  a quarter of the way from the other wall, clear of a room's tag. A click on a value opens an input
+  with the value selected (in the project's unit, or with a unit typed; Escape closes it; an entry that is not a
+  length is reported and the input stays open); Enter moves the object
+  (`archbuilder.modify.move`) so that the dimension has the typed value.
+- While a wall is drawn, a label at the cursor shows the live length and angle.
+- Handles and dimensions are overlays, hit-tested within 7 pixels and highlighted on hover; over a
+  handle the mouse pointer changes.
+
 `archbuilder.modify.move`, `copy`, `rotate` and `mirror` (rotate's `angle`: a JSON number is radians, a text with a unit such as `"90 deg"` says its own, a bare text number is degrees; typed `m`, `co`, `ro`, `mi`, or the
 Turkish `taşı`, `kopyala`, `döndür`, `aynala`) work on the selection, or ask for objects first and
 take the selection on Enter. Each run is one transaction. Walls move by their baselines and their

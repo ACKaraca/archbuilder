@@ -109,6 +109,16 @@ fn view_ray(cx: &InteractionContext<'_>, m: Point3) -> Option<crate::insert_tool
     })
 }
 
+/// How far from the top right corner of the viewport the view cube reaches, in pixels.
+const CUBE_CLEARANCE: f64 = 150.0;
+/// How far a label near the view cube moves to the left of the cursor, in pixels.
+const CUBE_LABEL_SHIFT: f64 = 140.0;
+
+/// What the dimension input says of an entry that is not a length.
+const DIM_INVALID: Message = Message {
+    message_id: "ab-dim-edit-invalid",
+};
+
 /// How far from an object a point of a plan view still picks it, in pixels.
 const PICK_PIXELS: f64 = 5.0;
 
@@ -293,6 +303,20 @@ pub struct WallInteraction {
     plane: Option<f64>,
     /// The messages of the interface language, for the keywords typed in it.
     messages: Option<(String, arc_app::locale::Localizer)>,
+    /// Direct manipulation: dragging, handles and temporary dimensions.
+    direct: crate::direct::Direct,
+    /// The handles, dimensions and drag preview of the selection, refreshed each frame.
+    direct_overlays: Vec<ProductOverlay>,
+    /// The mouse pointer direct manipulation asks for.
+    direct_icon: Option<arc_ui::egui::CursorIcon>,
+    /// Whether the pointer is over the view cube's corner of the viewport.
+    near_cube: bool,
+    /// The screen's right direction on the plan, for placing labels.
+    right_xy: [f64; 2],
+    /// The pixels per meter of the last pointer event, which sizes the handles.
+    ppu: f64,
+    /// The project's length unit and the language's decimal separator, for the live labels.
+    label_units: (archbuilder_model::units::LengthUnit, char),
 }
 
 impl WallInteraction {
@@ -330,6 +354,13 @@ impl WallInteraction {
             plane: None,
             ghost: Vec::new(),
             messages: None,
+            direct: crate::direct::Direct::new(),
+            direct_overlays: Vec::new(),
+            direct_icon: None,
+            ppu: 0.0,
+            near_cube: false,
+            right_xy: [1.0, 0.0],
+            label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
         }
     }
 
@@ -562,79 +593,90 @@ impl WallInteraction {
             self.push_notice(text);
         }
         for (command, done) in self.modify.take_ran() {
-            // The new objects of a copy are selected, as the command's own selection says. A
-            // mirror keeps what was selected: the originals when they stay, else the mirrored
-            // objects themselves.
-            let created: Vec<String> = done
-                .get("created")
+            self.after_modify(cx, command, &done);
+        }
+    }
+
+    /// Selects the copies a modify command made and says what it could not keep: floor edges that
+    /// lost their wall, walls it could not reconnect, doors and windows that now open into a wall.
+    fn after_modify(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        command: &str,
+        done: &serde_json::Value,
+    ) {
+        // The new objects of a copy are selected, as the command's own selection says. A
+        // mirror keeps what was selected: the originals when they stay, else the mirrored
+        // objects themselves.
+        let created: Vec<String> = done
+            .get("created")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !created.is_empty() && command != archbuilder_commands::modify::MODIFY_MIRROR {
+            let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
+            intent.params = serde_json::json!({"objects": created, "mode": "replace"})
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            cx.ask(intent);
+        }
+        let mut lines: Vec<(&str, Vec<(&str, arc_base::error::Value)>)> = Vec::new();
+        if let Some(count) = done
+            .get("dissociated_edges")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|c| *c > 0)
+        {
+            lines.push((
+                MODIFY_DISSOCIATED.message_id,
+                vec![("count", arc_base::error::Value::Int(count))],
+            ));
+        }
+        let strings = |key: &str| -> Vec<String> {
+            done.get(key)
                 .and_then(serde_json::Value::as_array)
                 .map(|a| {
                     a.iter()
                         .filter_map(|v| v.as_str().map(str::to_owned))
                         .collect()
                 })
-                .unwrap_or_default();
-            if !created.is_empty() && command != archbuilder_commands::modify::MODIFY_MIRROR {
-                let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
-                intent.params = serde_json::json!({"objects": created, "mode": "replace"})
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default();
-                cx.ask(intent);
-            }
-            let mut lines: Vec<(&str, Vec<(&str, arc_base::error::Value)>)> = Vec::new();
-            if let Some(count) = done
-                .get("dissociated_edges")
-                .and_then(serde_json::Value::as_i64)
-                .filter(|c| *c > 0)
-            {
-                lines.push((
-                    MODIFY_DISSOCIATED.message_id,
-                    vec![("count", arc_base::error::Value::Int(count))],
-                ));
-            }
-            let strings = |key: &str| -> Vec<String> {
-                done.get(key)
-                    .and_then(serde_json::Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default()
+                .unwrap_or_default()
+        };
+        let unjoined = strings("unjoined");
+        if !unjoined.is_empty() {
+            lines.push((
+                MODIFY_UNJOINED.message_id,
+                vec![("names", unjoined.join(", ").into())],
+            ));
+        }
+        for pair in done
+            .get("meets")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .take(20)
+        {
+            let at = |k: usize| {
+                pair.get(k)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
             };
-            let unjoined = strings("unjoined");
-            if !unjoined.is_empty() {
-                lines.push((
-                    MODIFY_UNJOINED.message_id,
-                    vec![("names", unjoined.join(", ").into())],
-                ));
-            }
-            for pair in done
-                .get("meets")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-                .take(20)
-            {
-                let at = |k: usize| {
-                    pair.get(k)
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                };
-                lines.push((
-                    MODIFY_MEETS.message_id,
-                    vec![("name", at(0).into()), ("other", at(1).into())],
-                ));
-            }
-            if let Some(l) = self.localizer(cx.language()) {
-                let texts: Vec<String> = lines
-                    .iter()
-                    .map(|(id, args)| l.format(id, args).text)
-                    .collect();
-                for text in texts {
-                    self.push_notice(text);
-                }
+            lines.push((
+                MODIFY_MEETS.message_id,
+                vec![("name", at(0).into()), ("other", at(1).into())],
+            ));
+        }
+        if let Some(l) = self.localizer(cx.language()) {
+            let texts: Vec<String> = lines
+                .iter()
+                .map(|(id, args)| l.format(id, args).text)
+                .collect();
+            for text in texts {
+                self.push_notice(text);
             }
         }
     }
@@ -750,7 +792,29 @@ impl Interaction for WallInteraction {
         handled
     }
 
-    fn dynamic(&mut self, _: &InteractionContext<'_>, _: &DynamicEvent) {}
+    fn frame(&mut self, cx: &InteractionContext<'_>) {
+        let right = cx.camera().right();
+        self.right_xy = [right.x, right.y];
+        if let Ok(document) = cx.document() {
+            let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
+            self.label_units = (unit, cx.decimal_separator());
+        }
+        self.refresh_highlight(cx);
+        self.refresh_direct(cx);
+    }
+
+    fn dynamic(&mut self, cx: &InteractionContext<'_>, event: &DynamicEvent) {
+        if let Some(done) = self.direct.edited(event) {
+            self.run_direct(cx, done);
+        }
+        if self.direct.take_invalid()
+            && let Some(l) = self.localizer(cx.language())
+        {
+            let text = l.format(DIM_INVALID.message_id, &[]).text;
+            self.push_notice(text);
+        }
+        self.refresh_direct(cx);
+    }
 
     #[allow(
         clippy::too_many_lines,
@@ -771,6 +835,8 @@ impl Interaction for WallInteraction {
         self.update_view(cx, None);
         if matches!(action, LineAction::Cancel | LineAction::ClearInput) {
             self.picker.reset();
+            self.direct.cancel();
+            self.refresh_direct(cx);
         }
         let rooming = self.rooms.running();
         let inserting = self.inserts.running();
@@ -924,7 +990,8 @@ impl Interaction for WallInteraction {
                     || self.inserts.running()
                     || self.floors.running()
                     || self.rooms.running()
-                    || self.modify.running(),
+                    || self.modify.running()
+                    || self.direct.active(),
                 answers: line.active().map_or(0, |s| s.answers().len()),
                 has_selection: false,
                 has_last: line.last().is_some(),
@@ -942,6 +1009,7 @@ impl Interaction for WallInteraction {
                 .chain(self.room_hover.iter().cloned())
                 .chain(self.pick_hover.iter().cloned())
                 .chain(self.ghost.iter().cloned())
+                .chain(self.direct_overlays.iter().cloned())
                 .chain(self.symbols.iter().flat_map(|(_, o)| o.iter().cloned()))
                 // Last, so that the selection's outline lies over the hover highlight of the wall.
                 .chain(self.highlight.iter().cloned())
@@ -955,6 +1023,14 @@ impl Interaction for WallInteraction {
                 .or(self.rooms.running().then_some(()))
                 .or(self.modify.prompting().then_some(()))
                 .and(self.cursor),
+            dynamic: self
+                .direct
+                .input()
+                .map(|(_, field)| arc_app::shell::DynamicOutput {
+                    prompt: crate::direct::EDIT_PROMPT.message_id.to_owned(),
+                    fields: vec![field],
+                }),
+            pointer_icon: self.direct_icon,
             history: self.notices.clone(),
             history_first: self.notices_first,
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
@@ -974,6 +1050,13 @@ impl Interaction for WallInteraction {
 
 impl WallInteraction {
     fn pointer_inner(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        if let Some(ppu) = event.pixels_per_unit.filter(|p| *p > 0.0) {
+            self.ppu = ppu;
+        }
+        // The view cube stands in the top right corner of the viewport: labels keep clear of it.
+        self.near_cube = self.view_size.is_some_and(|[w, _]| {
+            event.pixel[0] > w - CUBE_CLEARANCE && event.pixel[1] < CUBE_CLEARANCE
+        });
         self.refresh_highlight(cx);
         self.update_view(cx, Some(event));
         if self.modify.prompting() {
@@ -989,6 +1072,11 @@ impl WallInteraction {
             return self.insert_pointer(cx, event);
         }
         let Some(chain) = self.tool.chain().cloned() else {
+            if !self.tool.active()
+                && let Some(taken) = self.direct_pointer(cx, event)
+            {
+                return taken;
+            }
             return self.pick_idle(cx, event);
         };
         let walls = baselines(cx, chain.storey);
@@ -1234,6 +1322,153 @@ impl WallInteraction {
 }
 
 impl WallInteraction {
+    /// Whether a tool that asks for points is running: direct manipulation leaves the pointer to it.
+    fn tool_running(&self) -> bool {
+        self.tool.active()
+            || self.inserts.running()
+            || self.floors.running()
+            || self.rooms.running()
+            || self.modify.running()
+    }
+
+    /// The camera as direct manipulation reads it.
+    fn direct_frame(cx: &InteractionContext<'_>, ppu: f64) -> crate::direct::Frame {
+        let c = cx.camera();
+        let v = |p: Vector3| [p.x, p.y, p.z];
+        let eye = c.eye();
+        let perspective = matches!(c.projection(), arc_geom::Projection::Perspective { .. });
+        crate::direct::Frame {
+            ppu,
+            right: v(c.right()),
+            up: v(c.up()),
+            forward: v(c.forward()),
+            eye: perspective.then_some([eye.x, eye.y, eye.z]),
+            target_depth: (c.target() - eye).norm(),
+            top: c.forward().z < -0.98,
+        }
+    }
+
+    /// Recomputes the handles, dimensions and drag preview.
+    fn refresh_direct(&mut self, cx: &InteractionContext<'_>) {
+        self.direct_overlays.clear();
+        self.direct_icon = None;
+        if self.tool_running() || cx.read_only() {
+            self.direct.cancel();
+            return;
+        }
+        let (Ok(document), true) = (cx.document(), self.ppu > 0.0) else {
+            return;
+        };
+        let snapshot = document.snapshot();
+        let unit = archbuilder_model::spatial::length_unit(&snapshot);
+        let frame = Self::direct_frame(cx, self.ppu);
+        self.direct_overlays = self.direct.overlays(
+            &snapshot,
+            cx.selection(),
+            &frame,
+            unit,
+            cx.decimal_separator(),
+        );
+        self.direct_icon = self.direct.icon(cx.selection());
+    }
+
+    /// Runs the commands of a finished gesture, each one undo step, and says what they report.
+    fn run_direct(&mut self, cx: &InteractionContext<'_>, done: crate::direct::Done) {
+        for command in done.commands {
+            let mut invocation = Invocation::new(command.name, command.params);
+            invocation.seed = self.next_seed();
+            match cx.invoke(invocation) {
+                Ok(outcome) => self.after_modify(cx, command.name, &outcome.value),
+                Err(error) => self.notice_error(cx, &error),
+            }
+        }
+    }
+
+    /// Direct manipulation of the selection with the pointer; `None` when it leaves the event to
+    /// the viewport and the picking.
+    fn direct_pointer(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        event: &PointerEvent,
+    ) -> Option<bool> {
+        let document = cx.document().ok()?;
+        if cx.read_only() {
+            return None;
+        }
+        let snapshot = document.snapshot();
+        if let Some(ppu) = event.pixels_per_unit.filter(|p| *p > 0.0) {
+            self.ppu = ppu;
+        }
+        let input = crate::direct::Input {
+            snapshot: &snapshot,
+            selection: cx.selection(),
+            frame: Self::direct_frame(cx, self.ppu.max(1.0e-6)),
+            ray: event.model.and_then(|m| view_ray(cx, m)),
+            pixel: event.pixel,
+            at: event.model.map(|m| [m.x, m.y]),
+            shift: event.modifiers.shift,
+            ctrl: event.modifiers.ctrl,
+            free: event.modifiers.alt,
+            unit: archbuilder_model::spatial::length_unit(&snapshot),
+            separator: cx.decimal_separator(),
+        };
+        let primary = event.button == Some(PointerButton::Primary);
+        let taken = match event.kind {
+            PointerKind::Move => {
+                let taken = self.direct.moved(&input);
+                if let Some(id) = self.direct.take_select() {
+                    let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
+                    intent.params = serde_json::json!({
+                        "objects": [id.to_string()], "mode": "replace", "gesture": "drag"
+                    })
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                    cx.ask(intent);
+                }
+                if taken {
+                    self.pick_hover.clear();
+                }
+                taken.then_some(true)
+            }
+            PointerKind::Press if primary => self.direct.press(&input).then_some(true),
+            PointerKind::Release if primary => {
+                if let Some(done) = self.direct.release(&input) {
+                    self.run_direct(cx, done);
+                }
+                None
+            }
+            PointerKind::Click if primary => {
+                if self.direct.take_swallow() {
+                    Some(true)
+                } else if !input.frame.top
+                    && let Some(id) = crate::direct::body_at(&input)
+                {
+                    // The press was the engine's, so the viewport did not see it: select here.
+                    let mode = if event.modifiers.command {
+                        "toggle"
+                    } else {
+                        "replace"
+                    };
+                    let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
+                    intent.params = serde_json::json!({
+                        "objects": [id.to_string()], "mode": mode, "gesture": "click"
+                    })
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default();
+                    cx.ask(intent);
+                    Some(true)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        self.refresh_direct(cx);
+        taken
+    }
+
     /// Whether `text` is the identifier of a command of the product.
     fn names_command(&self, text: &str) -> bool {
         self.registry
@@ -1627,8 +1862,46 @@ impl WallInteraction {
 
     /// The angle of the snapped direction, beside the rubber band's end.
     fn angle_label(&self) -> Option<ProductOverlay> {
-        let ([x, y], degrees) = self.angle?;
         let z = self.elevation()?;
+        // While a wall is drawn the label shows its live length and angle at the cursor.
+        let live = self.tool.chain().and_then(|chain| {
+            let from = self
+                .tool
+                .line()
+                .base_point()
+                .map(|p| [p.x, p.y])
+                .or(chain.end)
+                .filter(|_| self.tool.line().active().is_some())?;
+            Some((from, self.cursor?))
+        });
+        if let Some((from, to)) = live {
+            let length = (to[0] - from[0]).hypot(to[1] - from[1]);
+            if length > GRID {
+                let degrees = (to[1] - from[1])
+                    .atan2(to[0] - from[0])
+                    .to_degrees()
+                    .rem_euclid(360.0);
+                let (unit, separator) = self.label_units;
+                // Near the view cube the label moves to the left of the cursor.
+                let back = if self.near_cube && self.ppu > 0.0 {
+                    CUBE_LABEL_SHIFT / self.ppu
+                } else {
+                    0.0
+                };
+                return Some(ProductOverlay::Label {
+                    at: Point3::new(
+                        to[0] - self.right_xy[0] * back,
+                        to[1] - self.right_xy[1] * back,
+                        z,
+                    ),
+                    text: format!(
+                        "{}  {degrees:.1}\u{b0}",
+                        archbuilder_model::units::length_text(length, unit, separator)
+                    ),
+                });
+            }
+        }
+        let ([x, y], degrees) = self.angle?;
         Some(ProductOverlay::Label {
             at: Point3::new(x, y, z),
             text: format!("{degrees}\u{b0}"),

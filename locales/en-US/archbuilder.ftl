@@ -162,3 +162,7 @@ ab-room-upper-default = Level above (3 m if none)
 ab-room-tag-unenclosed = (not enclosed)
 ab-room-tag-redundant = (redundant)
 ab-room-tags-hidden = { $count } room tags not shown — zoom in
+
+ab-dim-edit-prompt = Set dimension
+ab-dim-edit-label = Length
+ab-dim-edit-invalid = That is not a length. Type a number, with a unit if you like.
