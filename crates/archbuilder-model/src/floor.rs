@@ -7,8 +7,7 @@
 //! with a wall face ([`Association`]).
 //!
 //! Associated edges are derived each time ([`Floor::boundary`]): the edge lies on the line of the
-//! chosen face of the wall (the interior face, the exterior face or the center line, which is the
-//! core center while walls have no layers), moved across by the offset, and a vertex that touches
+//! chosen face of the wall (the interior face, the exterior face or the core center line), moved across by the offset, and a vertex that touches
 //! an associated edge is the intersection of the two lines of its edges. So the floor follows when
 //! the wall moves or changes thickness. An edge that is not associated lies on the line through
 //! its two authored points. [`Floor::frozen`] gives the vertices after a wall is deleted: the
@@ -51,7 +50,7 @@ pub enum Face {
     Interior,
     /// The exterior face (the left of the baseline's direction).
     Exterior,
-    /// The middle of the wall's thickness; the core center until walls have layers.
+    /// The middle of the core of the wall's type.
     Center,
 }
 
@@ -95,7 +94,10 @@ impl Face {
         match self {
             Self::Interior => low,
             Self::Exterior => high,
-            Self::Center => (low + high) / 2.0,
+            Self::Center => {
+                let (low, high) = wall.core_extent();
+                (low + high) / 2.0
+            }
         }
     }
 }
@@ -869,6 +871,23 @@ pub fn storey_walls(snapshot: &Snapshot, storey: ObjectId) -> Vec<(ObjectId, Wal
         .collect()
 }
 
+/// The walls of `storey` that bound rooms: [`storey_walls`] without those whose type is not
+/// room-bounding.
+#[must_use]
+pub fn room_walls(snapshot: &Snapshot, storey: ObjectId) -> Vec<(ObjectId, Wall)> {
+    use crate::element_type::{TypeKind, WallType, type_of};
+    let bounding = |id: ObjectId| {
+        crate::spatial::get(snapshot, id)
+            .and_then(|o| type_of(snapshot, TypeKind::Wall, &o.values))
+            .and_then(|t| WallType::from_values(&t.values))
+            .is_none_or(|t| t.room_bounding)
+    };
+    storey_walls(snapshot, storey)
+        .into_iter()
+        .filter(|(id, _)| bounding(*id))
+        .collect()
+}
+
 /// Why walls cannot make a floor boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WallsRefusal {
@@ -1329,6 +1348,7 @@ mod tests {
             start,
             end,
             thickness: 0.2,
+            core: [0.0, 0.0],
             height: 3.0,
             base_offset: 0.0,
             location: LocationLine::Center,

@@ -710,6 +710,7 @@ mod tests {
             start,
             end,
             thickness,
+            core: [0.0, 0.0],
             height: 3.0,
             base_offset: 0.0,
             location,

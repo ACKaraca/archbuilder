@@ -19,6 +19,10 @@ pub(crate) fn wall_of(object: &Value) -> Option<Wall> {
         start: [number(v, "start_x")?, number(v, "start_y")?],
         end: [number(v, "end_x")?, number(v, "end_y")?],
         thickness: number(v, "thickness")?,
+        core: [
+            number(v, "core_exterior").unwrap_or(0.0),
+            number(v, "core_interior").unwrap_or(0.0),
+        ],
         height: number(v, "height")?,
         base_offset: number(v, "base_offset")?,
         location: LocationLine::ALL

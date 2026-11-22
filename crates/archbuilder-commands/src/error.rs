@@ -179,4 +179,34 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-object-not-found",
     };
+    /// A field of an instance comes from its type and is not edited on the instance.
+    pub const FIELD_FROM_TYPE: ErrorCode = ErrorCode {
+        code: "ab.cmd.field_from_type",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-field-from-type",
+    };
+    /// No type of the kind has the name or identifier given.
+    pub const TYPE_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.cmd.type_unknown",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-type-unknown",
+    };
+    /// A type is still used by instances and no replacement was given.
+    pub const TYPE_IN_USE: ErrorCode = ErrorCode {
+        code: "ab.cmd.type_in_use",
+        category: Category::Conflict,
+        message_id: "ab-cmd-type-in-use",
+    };
+    /// The last type of a kind cannot be deleted.
+    pub const TYPE_LAST: ErrorCode = ErrorCode {
+        code: "ab.cmd.type_last",
+        category: Category::Conflict,
+        message_id: "ab-cmd-type-last",
+    };
+    /// None of the objects is of the kind of the type.
+    pub const TYPE_KIND: ErrorCode = ErrorCode {
+        code: "ab.cmd.type_kind",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-type-kind",
+    };
 }

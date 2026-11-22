@@ -44,11 +44,17 @@ ab-cmd-object-delete-description = Deletes the selected walls, or the selected s
 ab-prompt-wall-start = Wall on { $storey }: specify the start point (thickness { $thickness }, height { $height }, line { $location ->
         [exterior] exterior face
         [interior] interior face
+        [core_center] core center
+        [core_exterior] core exterior face
+        [core_interior] core interior face
        *[other] center
     })
 ab-prompt-wall-end = Wall on { $storey }: specify the next point, or press Enter to finish (thickness { $thickness }, height { $height }, line { $location ->
         [exterior] exterior face
         [interior] interior face
+        [core_center] core center
+        [core_exterior] core exterior face
+        [core_interior] core interior face
        *[other] center
     })
 ab-prompt-wall-thickness = Wall thickness (now { $thickness })
@@ -190,3 +196,57 @@ ab-keyword-stair-right = Right
 ab-keyword-stair-width = Width
 ab-keyword-stair-tread = Tread
 ab-prompt-stair-turn-again = "{ $typed }" is not a side. Answer Left (l) or Right (r), or press Enter for the side shown.
+
+ab-cmd-field-from-type = { $field } comes from the type. Edit the type, or choose another type for the selected objects.
+ab-cmd-type-unknown = No type is named "{ $name }". Choose one of the types of this kind.
+ab-cmd-type-in-use = The type "{ $name }" is used by { $count ->
+        [one] one object
+       *[other] { $count } objects
+    }. Choose a type to replace it with, then delete it.
+ab-cmd-type-last = "{ $name }" is the last type of its kind and cannot be deleted. Duplicate it first, or edit it.
+ab-cmd-type-kind = The objects are not of the kind of that type. A wall takes a wall type, a floor a floor type, a door a door type and a window a window type.
+ab-cmd-type-set-label = Edit Type
+ab-cmd-type-set-description = Changes a type's name, layers, core, flags or size; every object of the type changes with it in one step.
+ab-cmd-type-duplicate-label = Duplicate Type
+ab-cmd-type-duplicate-description = Makes a copy of a type under a new name.
+ab-cmd-type-delete-label = Delete Type
+ab-cmd-type-delete-description = Deletes a type; the objects that use it get the replacement type.
+ab-cmd-type-assign-label = Change Type
+ab-cmd-type-assign-description = Gives the selected walls, floors, doors or windows another type of their kind.
+ab-cmd-type-match-label = Match Type
+ab-cmd-type-match-description = Gives the selected objects the type of a source object of the same kind.
+ab-cmd-type-upgrade-label = Add Types
+ab-cmd-type-upgrade-description = Gives every wall, floor, door and window without a type a type that matches its size, made when none matches.
+
+ab-type-wall-generic = Generic 200
+ab-type-wall-cavity = Exterior masonry cavity
+ab-type-wall-partition = Interior partition 100
+ab-type-floor-generic = Generic 200
+ab-type-floor-slab = Concrete slab with screed and finish
+ab-type-door-single = Single 900 × 2100
+ab-type-door-double = Double 1500 × 2100
+ab-type-window-large = Window 1200 × 1500
+ab-type-window-small = Window 600 × 600
+ab-type-wall-generated = Generic { $mm }
+ab-type-floor-generated = Generic { $mm }
+ab-type-door-generated = Door { $width } × { $height }
+ab-type-window-generated = Window { $width } × { $height }
+ab-type-copy-name = { $name } ({ $n })
+ab-material-generic = Generic
+ab-material-brick = Brick
+ab-material-air = Air gap
+ab-material-insulation = Insulation
+ab-material-vapor-barrier = Vapor barrier
+ab-material-concrete-block = Concrete block
+ab-material-plaster = Plaster
+ab-material-gypsum-board = Gypsum board
+ab-material-steel-stud = Steel studs
+ab-material-floor-finish = Floor finish
+ab-material-screed = Screed
+ab-material-separation-layer = Separation layer
+ab-material-concrete = Concrete
+ab-keyword-wall-core-center = Core center
+ab-keyword-wall-core-exterior = Core exterior face
+ab-keyword-wall-core-interior = Core interior face
+ab-type-door-sliding = Sliding 1800 × 2100
+ab-type-window-sliding = Sliding window 1800 × 1200

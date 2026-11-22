@@ -101,6 +101,21 @@ pub(super) struct Habits {
     pub(super) snap_on: bool,
     /// The fine grid step, in meters.
     pub(super) grid: f64,
+    /// Set when a typed shortcut fired: an empty Enter that is the very next input confirms the
+    /// shortcut instead of answering the prompt it started (see `EnterMark`).
+    pub(super) swallow_enter: Option<EnterMark>,
+}
+
+/// The state of an Enter that may only confirm a typed shortcut.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum EnterMark {
+    /// The shortcut fired; its command has not started yet.
+    Armed,
+    /// The command started and waits at the prompt with this key, the view as it was then.
+    Waiting {
+        prompt: String,
+        camera: arc_geom::view::ViewFrame,
+    },
 }
 
 impl Default for Habits {
@@ -118,6 +133,7 @@ impl Default for Habits {
             view: None,
             snap_on: true,
             grid: GRID,
+            swallow_enter: None,
         }
     }
 }
@@ -164,6 +180,10 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "snap" if rest.is_empty() => Intent::new(ui::SNAP),
         "repeat" if rest.is_empty() => Intent::new(ui::REPEAT),
         "cut" if rest.is_empty() => Intent::new(ui::CUT),
+        "createsimilar" | "benzerini" if rest.is_empty() => Intent::new(ui::CREATE_SIMILAR),
+        "selecttype" | "tipisec" if rest.is_empty() => Intent::new(ui::SELECT_TYPE),
+        "matchtype" | "tipesle" if rest.is_empty() => Intent::new(ui::MATCH_TYPE),
+        "edittype" | "tipduzenle" if rest.is_empty() => Intent::new(ui::EDIT_TYPE),
         "exportkeys" if rest.len() == 1 => {
             Intent::new(EXPORT_SHORTCUTS).with("path", rest[0].clone())
         }
@@ -208,6 +228,32 @@ fn repeatable(command: &str) -> bool {
 }
 
 impl WallInteraction {
+    /// Whether an empty Enter only confirms the typed shortcut `mark` remembers: no input and
+    /// no view change came between, the command still waits at the prompt it started with, and
+    /// Enter does not answer that prompt (a default, an optional text, a selection to take, a
+    /// paste in place).
+    pub(super) fn confirms_shortcut(
+        &self,
+        cx: &InteractionContext<'_>,
+        mark: Option<&EnterMark>,
+    ) -> bool {
+        let Some(EnterMark::Waiting { prompt, camera }) = mark else {
+            return false;
+        };
+        let out = self.output();
+        let Some(now) = out.prompt else {
+            return false;
+        };
+        let enter_answers = now.default.is_some()
+            || now
+                .accepts
+                .iter()
+                .any(|a| matches!(a, arc_command::prompt::Accept::Text { min_chars: 0, .. }))
+            || self.modify.gathering()
+            || self.modify.pastes();
+        cx.camera() == camera && now.key == *prompt && out.status.answers == 0 && !enter_answers
+    }
+
     /// Whether a command or an input is running, so that typing belongs to it.
     fn busy(&self) -> bool {
         self.tool_running()
@@ -250,7 +296,7 @@ impl WallInteraction {
     }
 
     /// Says `id` in the history, in the interface language.
-    fn say(
+    pub(super) fn say(
         &mut self,
         cx: &InteractionContext<'_>,
         id: &str,
@@ -463,6 +509,7 @@ impl WallInteraction {
         let table = &self.habits.table.as_ref()?.1;
         let names = &self.habits.names.as_ref()?.1;
         if let Some(command) = shortcuts::immediate(table, names, text) {
+            self.habits.swallow_enter = Some(EnterMark::Armed);
             return Some(LineAction::Invoke(Intent::new(command)));
         }
         let word = text.strip_suffix(' ')?.trim();
@@ -769,6 +816,9 @@ impl WallInteraction {
         cx: &InteractionContext<'_>,
         intent: &Intent,
     ) -> Option<Result<()>> {
+        if let Some(result) = self.type_intent(cx, intent) {
+            return Some(result);
+        }
         let command = intent.command.as_str();
         let plain = intent.params.is_empty();
         let result = match command {
@@ -781,6 +831,10 @@ impl WallInteraction {
             ui::SELECT_ALL => cx.document().map(|d| {
                 let ids = selection::all(&d.snapshot(), &self.habits.vis);
                 cx.ask(select_intent(&ids, "replace"));
+            }),
+            ui::SELECT_TYPE => self.hideable(cx).map(|(snapshot, ids)| {
+                let all = selection::all_of_types_in(&snapshot, &ids, &self.habits.vis);
+                cx.ask(select_intent(&all, "replace"));
             }),
             ui::SELECT_KIND => self.hideable(cx).map(|(snapshot, ids)| {
                 let all = selection::all_of_kinds_in(&snapshot, &ids, &self.habits.vis);

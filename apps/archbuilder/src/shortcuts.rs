@@ -62,6 +62,17 @@ pub mod ui {
     pub const EXPORT_SHORTCUTS: &str = "archbuilder.shortcuts.export";
     /// Reads a shortcut table from a file (the `path` parameter).
     pub const IMPORT_SHORTCUTS: &str = "archbuilder.shortcuts.import";
+    /// Selects every object whose type is the type of a selected object.
+    pub const SELECT_TYPE: &str = "archbuilder.select.all_of_type";
+    /// Picks a type in the type selector (the `name` parameter): the next type of the running
+    /// tool, else the type of the selected objects of that kind.
+    pub const TYPE_PICK: &str = "archbuilder.type.pick";
+    /// Starts the tool of the selected wall, floor, door or window with its type.
+    pub const CREATE_SIMILAR: &str = "archbuilder.type.create_similar";
+    /// Asks for a source object, then gives the objects clicked next its type.
+    pub const MATCH_TYPE: &str = "archbuilder.type.match_pick";
+    /// Opens the type editor on the type of the selection.
+    pub const EDIT_TYPE: &str = "archbuilder.type.edit";
 }
 
 /// The default bindings: two letters and the command each starts.
@@ -102,6 +113,8 @@ pub fn defaults() -> Vec<(&'static str, &'static str)> {
         ("RV", ui::RESET_VISIBILITY),
         ("ZE", ui::ZOOM_EXTENTS),
         ("SN", ui::SNAP),
+        ("CS", ui::CREATE_SIMILAR),
+        ("MT", ui::MATCH_TYPE),
         ("UD", arc_app::commands::EDIT_UNDO),
     ]
 }
@@ -249,6 +262,14 @@ const TYPED_WORDS: &[&str] = &[
     "erase",
     "sil",
     "cut",
+    "createsimilar",
+    "selecttype",
+    "tipisec",
+    "benzerini",
+    "matchtype",
+    "tipesle",
+    "edittype",
+    "tipduzenle",
     "repeat",
     "snap",
 ];

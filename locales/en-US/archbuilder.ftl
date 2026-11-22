@@ -256,3 +256,74 @@ ab-notice-room-slivers = { $count ->
    *[other] { $count } regions smaller than { $least } m² got no room: they are slivers between walls.
 }
 ab-stair-down = DN
+
+ab-tool-type-hint = Type: the type the running tool places next, or the type of the selected walls, floors, doors or windows
+ab-panel-types = Types
+ab-prop-type = Type
+ab-op-double-swing = Double leaf
+ab-op-sliding = Sliding
+ab-loc-core-center = Core center
+ab-loc-core-exterior = Core exterior face
+ab-loc-core-interior = Core interior face
+ab-menu-create-similar = Create Similar
+ab-menu-match-type = Match Type
+ab-menu-edit-type = Edit Type
+ab-notice-match-source = Match type: click the object whose type the others should get. Escape ends.
+ab-notice-match-targets = Match type: click objects to give them the type "{ $type }". Escape ends.
+ab-notice-no-typed = That object has no type: click a wall, floor, door or window.
+ab-notice-types-added = { $count ->
+        [one] One object of this older document got a type
+       *[other] { $count } objects of this older document got types
+    } matching their size. Saving keeps them.
+ab-layer-structure = Structure
+ab-layer-substrate = Substrate
+ab-layer-thermal = Thermal or air
+ab-layer-membrane = Membrane
+ab-layer-finish = Finish
+ab-types-kind-wall = Wall types
+ab-types-kind-floor = Floor types
+ab-types-kind-door = Door types
+ab-types-kind-window = Window types
+ab-types-type = Type
+ab-types-name = Name
+ab-types-rename = Rename
+ab-types-duplicate = Duplicate
+ab-types-delete = Delete
+ab-types-replace-with = Replace with
+ab-types-in-use = { $count ->
+        [0] Not used
+        [one] Used by one object
+       *[other] Used by { $count } objects
+    }
+ab-types-exterior = Exterior
+ab-types-interior = Interior
+ab-types-load-bearing = Load-bearing
+ab-types-room-bounding = Bounds rooms
+ab-types-layers = Layers
+ab-types-core = Core
+ab-types-function = Function
+ab-types-material = Material
+ab-types-thickness-mm = Thickness (mm)
+ab-types-add-layer = Add layer
+ab-types-total = Total thickness: { $mm } mm
+ab-types-apply = Apply
+ab-types-revert = Revert
+ab-types-width-mm = Width (mm)
+ab-types-height-mm = Height (mm)
+ab-types-frame-width-mm = Frame width (mm)
+ab-types-frame-depth-mm = Frame depth (mm)
+ab-types-operation = Operation
+ab-types-sill-mm = Default sill height (mm)
+ab-types-number-invalid = { $layer ->
+        [0] Type each size as a number of millimeters, 0 or more.
+       *[other] Type the thickness of layer { $layer } as a number of millimeters.
+    }
+ab-types-core-gap = The core layers must follow one another: mark one run of layers as the core.
+ab-types-exterior-side = Exterior side on the left
+ab-types-top-side = Top on the left
+ab-types-empty = The document has no type of this kind.
+ab-menu-select-type = Select all of this type
+ab-notice-types-resynced = { $count ->
+        [one] One object disagreed with its type in this file and took its type's values again
+       *[other] { $count } objects disagreed with their types in this file and took their types' values again
+    }. Saving keeps the correction.

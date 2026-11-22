@@ -14,6 +14,9 @@
 //! language.
 
 mod habits;
+mod types;
+
+pub use types::upgrade_invocation;
 
 pub use habits::{GRID_SETTING, SNAP_SETTING};
 
@@ -159,6 +162,9 @@ const DIM_INVALID: Message = Message {
 
 /// How far from an object a point of a plan view still picks it, in pixels.
 const PICK_PIXELS: f64 = 5.0;
+/// How long after a typed shortcut an empty Enter still counts as confirming it.
+/// The shell's line for a command ended without finishing (`*Cancel*`).
+const CANCELLED: &str = "app-history-cancel";
 
 /// The snap step of the cursor on the level plane, in meters.
 pub const GRID: f64 = 0.01;
@@ -364,6 +370,12 @@ pub struct WallInteraction {
     label_units: (archbuilder_model::units::LengthUnit, char),
     /// Tab, the context menu, the clipboard, shortcuts, hide and isolate (see [`habits`]).
     habits: habits::Habits,
+    /// Match type while it runs: the source once picked.
+    matching: Option<Option<ObjectId>>,
+    /// The name of the source's type, for the match prompt.
+    match_type_name: String,
+    /// Whether the tab's document was checked for types once (see [`upgrade_invocation`]).
+    upgrade_tried: bool,
 }
 
 impl WallInteraction {
@@ -412,6 +424,9 @@ impl WallInteraction {
             right_xy: [1.0, 0.0],
             label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
             habits: habits::Habits::default(),
+            matching: None,
+            match_type_name: String::new(),
+            upgrade_tried: false,
         }
     }
 
@@ -652,6 +667,7 @@ impl WallInteraction {
         self.room_hover.clear();
         self.floor_hover.clear();
         self.hover = None;
+        self.matching = None;
     }
 
     /// The elevation of the plane the running tool works on.
@@ -897,6 +913,9 @@ impl WallInteraction {
 impl Interaction for WallInteraction {
     fn pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         self.just_reported = false;
+        if event.kind != PointerKind::Move {
+            self.habits.swallow_enter = None;
+        }
         if event.kind == PointerKind::DoubleClick {
             self.double_click(cx, event);
             return false;
@@ -923,6 +942,7 @@ impl Interaction for WallInteraction {
     }
 
     fn key(&mut self, cx: &InteractionContext<'_>, input: &KeyInput) -> KeyReply {
+        self.habits.swallow_enter = None;
         self.habit_key(cx, input)
     }
 
@@ -942,12 +962,14 @@ impl Interaction for WallInteraction {
             self.label_units = (unit, cx.decimal_separator());
         }
         self.habit_frame(cx);
+        self.type_frame(cx);
         self.say_stair_warnings(cx);
         self.refresh_highlight(cx);
         self.refresh_direct(cx);
     }
 
     fn dynamic(&mut self, cx: &InteractionContext<'_>, event: &DynamicEvent) {
+        self.habits.swallow_enter = None;
         if self.rename_event(cx, event) {
             return;
         }
@@ -970,6 +992,21 @@ impl Interaction for WallInteraction {
     )]
     fn line(&mut self, cx: &InteractionContext<'_>, action: LineAction) -> Result<()> {
         self.just_reported = false;
+        // Enter decided on an idle line can arrive after a command started in the same frame (a
+        // typed shortcut and Enter typed at once): it answers that command, it does not repeat.
+        let action = match action {
+            LineAction::Repeat if self.line_active() => LineAction::Submit(String::new()),
+            other => other,
+        };
+        // Every line action uses up the mark of a typed shortcut; only its own start re-arms it.
+        let mark = self.habits.swallow_enter.take();
+        if matches!(&action, LineAction::Submit(t) if t.trim().is_empty())
+            && self.confirms_shortcut(cx, mark.as_ref())
+        {
+            return Ok(());
+        }
+        let started =
+            mark == Some(habits::EnterMark::Armed) && matches!(action, LineAction::Invoke(_));
         // An error a click left comes first; one this action left (a rejected answer) is shown now.
         let pending = self
             .tool
@@ -996,8 +1033,23 @@ impl Interaction for WallInteraction {
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
         let modifying = self.modify.running();
+        // A typed line or a button's command ends match type; an empty Enter ends it below.
+        if matches!(&action, LineAction::Submit(t) if !t.trim().is_empty()) {
+            self.matching = None;
+        }
         let result = match action {
             LineAction::ClearInput => Ok(()),
+            // Escape at the match prompt ends it; the shell says `*Cancel*` for the prompt.
+            LineAction::Cancel if self.matching.is_some() => {
+                self.matching = None;
+                Ok(())
+            }
+            // Enter ends match type too, and says so.
+            LineAction::Submit(_) if self.matching.is_some() => {
+                self.matching = None;
+                self.say(cx, CANCELLED, &[]);
+                Ok(())
+            }
             LineAction::Cancel if rooming => {
                 self.stop_all();
                 Ok(())
@@ -1154,6 +1206,12 @@ impl Interaction for WallInteraction {
             .or_else(|| self.rooms.take_error())
             .or_else(|| self.stairs.take_error())
             .or_else(|| self.modify.take_error());
+        if started {
+            self.habits.swallow_enter = self.output().prompt.map(|p| habits::EnterMark::Waiting {
+                prompt: p.key,
+                camera: *cx.camera(),
+            });
+        }
         result
             .and(pending.map_or(Ok(()), Err))
             .and(fresh.map_or(Ok(()), Err))
@@ -1161,11 +1219,16 @@ impl Interaction for WallInteraction {
 
     fn output(&self) -> InteractionOutput {
         let line = self.current_line();
-        let prompt = line.active().and_then(|s| s.prompt()).cloned().or_else(|| {
-            self.modify
-                .gathering()
-                .then(archbuilder_commands::modify::select_prompt)
-        });
+        let prompt = line
+            .active()
+            .and_then(|s| s.prompt())
+            .cloned()
+            .or_else(|| {
+                self.modify
+                    .gathering()
+                    .then(archbuilder_commands::modify::select_prompt)
+            })
+            .or_else(|| self.match_prompt());
         let options = prompt
             .as_ref()
             .map_or_else(PromptControls::default, |p| PromptControls {
@@ -1182,14 +1245,7 @@ impl Interaction for WallInteraction {
         // The selection is the tab's: the shell fills `has_selection` and the highlight from it.
         InteractionOutput {
             status: LineStatus {
-                active: self.tool.active()
-                    || self.inserts.running()
-                    || self.floors.running()
-                    || self.rooms.running()
-                    || self.stairs.running()
-                    || self.modify.running()
-                    || self.direct.active()
-                    || self.habits.rename.is_some(),
+                active: self.line_active(),
                 // The walls of a chain count: Back (Ctrl+Z, Undo last point) takes the last one back.
                 answers: line.active().map_or(0, |s| s.answers().len())
                     + self.tool.chain().map_or(0, |c| c.walls),
@@ -1287,6 +1343,9 @@ impl WallInteraction {
         }
         if self.inserts.running() {
             return self.insert_pointer(cx, event);
+        }
+        if let Some(taken) = self.match_pointer(cx, event) {
+            return taken;
         }
         let Some(chain) = self.tool.chain().cloned() else {
             if !self.tool.active()
@@ -1680,6 +1739,8 @@ impl WallInteraction {
         if let Some(result) = self.ui_intent(cx, intent) {
             return result;
         }
+        // Any command of the product ends match type.
+        self.matching = None;
         self.note_intent(intent);
         let command = intent.command.as_str();
         if command == EXPORT_IFC {
@@ -1736,6 +1797,7 @@ impl WallInteraction {
         if !self.names_command(command) {
             return Ok(());
         }
+        // The shell says `*Cancel*` when a started command ends what was asking.
         self.stop_all();
         let mut invocation = Invocation::new(
             command.to_owned(),
@@ -1744,10 +1806,20 @@ impl WallInteraction {
         invocation.seed = self.next_seed();
         let outcome = cx.invoke(invocation)?;
         self.after_command(cx);
-        self.say_slivers(cx, &outcome.value);
+        self.say_outcome(cx, command, &outcome.value);
+        Ok(())
+    }
+
+    /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
+    fn say_outcome(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        command: &str,
+        value: &serde_json::Value,
+    ) {
+        self.say_slivers(cx, value);
         // Floor edges that followed a deleted wall stay put: say so.
-        let frozen = outcome
-            .value
+        let frozen = value
             .get("frozen_edges")
             .and_then(serde_json::Value::as_i64);
         if let Some(count) = frozen.filter(|c| *c > 0)
@@ -1762,10 +1834,7 @@ impl WallInteraction {
             self.push_notice(text);
         }
         // A wall goes with its doors and windows: say so.
-        let inserts = outcome
-            .value
-            .get("inserts")
-            .and_then(serde_json::Value::as_i64);
+        let inserts = value.get("inserts").and_then(serde_json::Value::as_i64);
         if matches!(command, OBJECT_DELETE | WALL_DELETE)
             && let Some(count) = inserts.filter(|c| *c > 0)
             && let Some(localizer) = self.localizer(cx.language())
@@ -1778,7 +1847,19 @@ impl WallInteraction {
                 .text;
             self.push_notice(text);
         }
-        Ok(())
+    }
+
+    /// Whether a command or an edit waits for input on the command line.
+    fn line_active(&self) -> bool {
+        self.tool.active()
+            || self.inserts.running()
+            || self.floors.running()
+            || self.rooms.running()
+            || self.stairs.running()
+            || self.modify.running()
+            || self.direct.active()
+            || self.habits.rename.is_some()
+            || self.matching.is_some()
     }
 
     /// After a command of the product: what the pointer outlined may be gone (a delete), so the
@@ -2264,9 +2345,18 @@ impl WallInteraction {
                 start,
                 end,
                 thickness,
+                core: chain.core,
                 height: 1.0,
                 base_offset: 0.0,
-                location,
+                location: LocationLine::ALL
+                    .into_iter()
+                    .find(|l| {
+                        Some(l.name())
+                            == arg("location")
+                                .map(String::as_str)
+                                .or(chain.location.as_deref())
+                    })
+                    .unwrap_or(location),
                 start_join: archbuilder_model::wall::JoinStyle::Auto,
                 end_join: archbuilder_model::wall::JoinStyle::Auto,
             };
@@ -2338,7 +2428,7 @@ impl WallInteraction {
                         let snapshot = document.snapshot();
                         let z = spatial::get(&snapshot, storey)
                             .map_or(0.0, |s| spatial::storey_elevation(&snapshot, &s));
-                        let walls = archbuilder_model::floor::storey_walls(&snapshot, storey);
+                        let walls = archbuilder_model::floor::room_walls(&snapshot, storey);
                         archbuilder_model::room::footprints(&walls, &[at])
                             .into_iter()
                             .filter(|f| !f.polygon.is_empty())

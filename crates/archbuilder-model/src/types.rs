@@ -1,6 +1,7 @@
 //! The object types of the spatial structure, as the domain model document defines them:
 //! `Project`, `Site`, `Building`, `Storey` and `Level`, the `Wall` that stands on a storey and the
-//! `Door` and `Window` that a wall hosts.
+//! `Door` and `Window` that a wall hosts, and the element types (`WallType`, `FloorType`,
+//! `DoorType`, `WindowType`) that the project owns and instances refer to.
 //!
 //! Containment is the header owner of an object: a site is owned by the project, a building by
 //! the site, a storey and a level by their building, a wall by its storey. Lengths are stored in
@@ -49,6 +50,18 @@ pub const ROOM: &str = "archbuilder.room";
 /// A stair on a storey: runs and landings from the storey's level up to the level above.
 pub const STAIR: &str = "archbuilder.stair";
 
+/// A wall type: layers, a core and the function flags; owned by the project.
+pub const WALL_TYPE: &str = "archbuilder.wall_type";
+/// A floor type: layers and a core; owned by the project.
+pub const FLOOR_TYPE: &str = "archbuilder.floor_type";
+/// A door type: the size, the frame, the operation and the default sill; owned by the project.
+pub const DOOR_TYPE: &str = "archbuilder.door_type";
+/// A window type, with the layout of a door type.
+pub const WINDOW_TYPE: &str = "archbuilder.window_type";
+
+/// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
+pub const TYPE_KEYS: [&str; 4] = [WALL_TYPE, FLOOR_TYPE, DOOR_TYPE, WINDOW_TYPE];
+
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
 pub const ELEMENTS: [&str; 6] = [WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR];
@@ -69,8 +82,22 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 11] = [
-    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR,
+pub const KEYS: [&str; 15] = [
+    PROJECT,
+    SITE,
+    BUILDING,
+    STOREY,
+    LEVEL,
+    WALL,
+    DOOR,
+    WINDOW,
+    FLOOR,
+    ROOM,
+    STAIR,
+    WALL_TYPE,
+    FLOOR_TYPE,
+    DOOR_TYPE,
+    WINDOW_TYPE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -98,6 +125,8 @@ pub const BASE_OFFSET_RANGE: (f64, f64) = (-1000.0, 1000.0);
 pub const MIN_WALL_LENGTH: f64 = 0.001;
 /// The thickness of a wall created without one, in meters.
 pub const DEFAULT_THICKNESS: f64 = 0.2;
+/// The range of the thickness of the layers outside a wall's core on one side, in meters.
+pub const THICKNESS_RANGE_OR_ZERO: (f64, f64) = (0.0, 5.0);
 
 /// Field positions of `archbuilder.project`.
 pub mod project {
@@ -179,6 +208,13 @@ pub mod wall {
     pub const START_JOIN: usize = 10;
     /// How the end end joins ([`crate::wall::JoinStyle`] code); appended in schema 1.1.
     pub const END_JOIN: usize = 11;
+    /// The wall type; appended in schema 1.2, absent in older files until they are upgraded.
+    pub const WALL_TYPE: usize = 12;
+    /// The thickness of the type's layers outside the core on the exterior side, in meters: a
+    /// copy of the type kept by the commands; appended in schema 1.2.
+    pub const CORE_EXTERIOR: usize = 13;
+    /// The same on the interior side; appended in schema 1.2.
+    pub const CORE_INTERIOR: usize = 14;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -203,6 +239,55 @@ pub mod insert {
     pub const HAND: usize = 8;
     /// The facing ([`crate::insert::Facing`] code).
     pub const FACING: usize = 9;
+    /// The door or window type; appended in schema 1.1.
+    pub const INSERT_TYPE: usize = 10;
+}
+
+/// Field positions of `archbuilder.wall_type` and `archbuilder.floor_type` (a floor type has the
+/// first four).
+pub mod layered_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The layers, from the exterior face (a wall) or the top (a floor).
+    pub const LAYERS: usize = 1;
+    /// The index of the first core layer.
+    pub const CORE_START: usize = 2;
+    /// The index after the last core layer.
+    pub const CORE_END: usize = 3;
+    /// Walls: the function ([`crate::element_type::Exposure`] code).
+    pub const EXPOSURE: usize = 4;
+    /// Walls: whether the wall carries loads.
+    pub const LOAD_BEARING: usize = 5;
+    /// Walls: whether the wall bounds rooms.
+    pub const ROOM_BOUNDING: usize = 6;
+
+    /// Field positions of one layer record.
+    pub mod layer {
+        /// The function ([`crate::element_type::Function`] code).
+        pub const FUNCTION: usize = 0;
+        /// The material name.
+        pub const MATERIAL: usize = 1;
+        /// The thickness, in meters.
+        pub const THICKNESS: usize = 2;
+    }
+}
+
+/// Field positions of `archbuilder.door_type` and `archbuilder.window_type`.
+pub mod insert_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The width of the opening, in meters.
+    pub const WIDTH: usize = 1;
+    /// The height of the opening, in meters.
+    pub const HEIGHT: usize = 2;
+    /// The width of the frame bars, in meters.
+    pub const FRAME_WIDTH: usize = 3;
+    /// The depth of the frame, in meters.
+    pub const FRAME_DEPTH: usize = 4;
+    /// The operation ([`crate::insert::Operation`] code).
+    pub const OPERATION: usize = 5;
+    /// The sill height a new instance gets, in meters.
+    pub const SILL: usize = 6;
 }
 
 /// Field positions of `archbuilder.floor`.
@@ -215,6 +300,8 @@ pub mod floor {
     pub const TOP_OFFSET: usize = 2;
     /// The boundary vertices of all loops ([`crate::floor::Vertex`] records).
     pub const VERTICES: usize = 3;
+    /// The floor type; appended in schema 1.1.
+    pub const FLOOR_TYPE: usize = 4;
 
     /// Field positions of one vertex record.
     pub mod vertex {
@@ -310,7 +397,7 @@ pub const ELEVATION_BASE_PROJECT: u32 = 0;
 /// The elevation base code of the survey point.
 pub const ELEVATION_BASE_SURVEY: u32 = 1;
 
-fn name_field(aspect: &str) -> FieldDecl {
+pub(crate) fn name_field(aspect: &str) -> FieldDecl {
     FieldDecl::new("name", ValueType::String)
         .with_bound(Bound::Length { max: NAME_BYTES })
         .in_aspect(aspect)
@@ -323,7 +410,7 @@ fn text_field(name: &str, max: u64) -> FieldDecl {
         .in_aspect("identity")
 }
 
-fn length_field(name: &str, bound: Option<Bound>) -> FieldDecl {
+pub(crate) fn length_field(name: &str, bound: Option<Bound>) -> FieldDecl {
     let field = FieldDecl::new(name, ValueType::Quantity(Dimension::LENGTH))
         .with_default(Value::Quantity(Quantity::new(0.0, Dimension::LENGTH)))
         .in_aspect("geometry");
@@ -333,7 +420,7 @@ fn length_field(name: &str, bound: Option<Bound>) -> FieldDecl {
     }
 }
 
-fn real((min, max): (f64, f64)) -> Bound {
+pub(crate) fn real((min, max): (f64, f64)) -> Bound {
     Bound::Real { min, max }
 }
 
@@ -345,7 +432,7 @@ fn optional_level() -> ReferenceSpec {
     spec
 }
 
-fn reference_to(target: &str) -> ReferenceSpec {
+pub(crate) fn reference_to(target: &str) -> ReferenceSpec {
     ReferenceSpec {
         targets: TypeKey::new(target).into_iter().collect(),
         rule: RelationshipRule {
@@ -391,6 +478,7 @@ fn declaration(key: &str, fields: Vec<FieldDecl>) -> Result<TypeDecl> {
 ///
 /// # Errors
 /// The registry's errors; none occur for these declarations.
+#[allow(clippy::too_many_lines, reason = "one field list per type")]
 pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     let project = vec![
         name_field("identity"),
@@ -463,6 +551,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .in_aspect("geometry"),
         join_field("start_join"),
         join_field("end_join"),
+        type_field("wall_type", WALL_TYPE, 2),
+        length_field("core_exterior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
+        length_field("core_interior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
     ];
     let floor = vec![
         name_field("identity"),
@@ -474,13 +565,18 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
                 max: crate::floor::MAX_VERTICES as u64,
             })
             .in_aspect("geometry"),
+        type_field("floor_type", FLOOR_TYPE, 1),
     ];
     for (key, fields) in [
         (STAIR, stair_fields()),
         (ROOM, room_fields()),
         (FLOOR, floor),
-        (DOOR, insert_fields()),
-        (WINDOW, insert_fields()),
+        (DOOR, insert_fields(DOOR_TYPE)),
+        (WINDOW, insert_fields(WINDOW_TYPE)),
+        (WALL_TYPE, crate::element_type::wall_type_fields()),
+        (FLOOR_TYPE, crate::element_type::floor_type_fields()),
+        (DOOR_TYPE, crate::element_type::insert_type_fields()),
+        (WINDOW_TYPE, crate::element_type::insert_type_fields()),
         (PROJECT, project),
         (SITE, site),
         (BUILDING, building),
@@ -488,7 +584,13 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (LEVEL, level),
         (WALL, wall),
     ] {
-        registry.register(declaration(key, fields)?)?;
+        let mut decl = declaration(key, fields)?;
+        match key {
+            WALL_TYPE | FLOOR_TYPE => decl.validators.push(crate::element_type::layer_findings),
+            DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
+            _ => {}
+        }
+        registry.register(decl)?;
     }
     Ok(())
 }
@@ -586,8 +688,19 @@ fn vertex_type() -> ValueType {
     ])
 }
 
+/// The reference of an instance to its type, appended in schema 1.`minor`: optional, so files
+/// from before types load; a type in use cannot be deleted.
+fn type_field(name: &str, target: &str, minor: u32) -> FieldDecl {
+    let mut spec = reference_to(target);
+    spec.rule.cardinality = Cardinality::Optional;
+    FieldDecl::new(name, ValueType::Reference(spec))
+        .optional()
+        .in_aspect("identity")
+        .since_minor(minor)
+}
+
 /// The fields of a door or a window, which share one layout; the host is the header owner.
-fn insert_fields() -> Vec<FieldDecl> {
+fn insert_fields(type_key: &str) -> Vec<FieldDecl> {
     use crate::insert::{Facing, Hand, Operation};
     let variants = |items: Vec<(&'static str, u32)>| {
         ValueType::Enum(
@@ -628,6 +741,7 @@ fn insert_fields() -> Vec<FieldDecl> {
         )
         .with_default(Value::Enum(Facing::Exterior.code()))
         .in_aspect("geometry"),
+        type_field("insert_type", type_key, 1),
     ]
 }
 
@@ -698,8 +812,9 @@ mod tests {
             ("operation", insert::OPERATION),
             ("hand", insert::HAND),
             ("facing", insert::FACING),
+            ("insert_type", insert::INSERT_TYPE),
         ];
-        let expect: [(&str, &[(&str, usize)]); 11] = [
+        let expect: [(&str, &[(&str, usize)]); 13] = [
             (
                 STAIR,
                 &[
@@ -742,6 +857,7 @@ mod tests {
                     ("thickness", floor::THICKNESS),
                     ("top_offset", floor::TOP_OFFSET),
                     ("vertices", floor::VERTICES),
+                    ("floor_type", floor::FLOOR_TYPE),
                 ],
             ),
             (DOOR, insert_fields),
@@ -791,6 +907,33 @@ mod tests {
                     ("top_level", wall::TOP_LEVEL),
                     ("start_join", wall::START_JOIN),
                     ("end_join", wall::END_JOIN),
+                    ("wall_type", wall::WALL_TYPE),
+                    ("core_exterior", wall::CORE_EXTERIOR),
+                    ("core_interior", wall::CORE_INTERIOR),
+                ],
+            ),
+            (
+                WALL_TYPE,
+                &[
+                    ("name", layered_type::NAME),
+                    ("layers", layered_type::LAYERS),
+                    ("core_start", layered_type::CORE_START),
+                    ("core_end", layered_type::CORE_END),
+                    ("exposure", layered_type::EXPOSURE),
+                    ("load_bearing", layered_type::LOAD_BEARING),
+                    ("room_bounding", layered_type::ROOM_BOUNDING),
+                ],
+            ),
+            (
+                DOOR_TYPE,
+                &[
+                    ("name", insert_type::NAME),
+                    ("width", insert_type::WIDTH),
+                    ("height", insert_type::HEIGHT),
+                    ("frame_width", insert_type::FRAME_WIDTH),
+                    ("frame_depth", insert_type::FRAME_DEPTH),
+                    ("operation", insert_type::OPERATION),
+                    ("sill", insert_type::SILL),
                 ],
             ),
         ];

@@ -125,6 +125,20 @@ impl FloorTool {
         (sketch, points)
     }
 
+    /// A type was picked in the type selector: the prompt starts again with it while nothing of
+    /// the floor was answered yet; otherwise the next floor takes it.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn retype(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        let answered = self.line.active().is_some_and(|s| !s.answers().is_empty());
+        if self.state.as_ref().is_none_or(|s| s.hole_in.is_some()) || answered {
+            return Ok(());
+        }
+        self.line.cancel();
+        self.next(env, run)
+    }
+
     /// Starts the tool on the storey of the selection (else the lowest); with `hole_in`, the
     /// sketch of a hole in that floor.
     ///
@@ -164,6 +178,13 @@ impl FloorTool {
             None => {
                 if state.sketch {
                     preset.insert("mode".into(), Value::from("sketch"));
+                }
+                let snapshot = env.document.snapshot();
+                if let Some(t) = crate::tool_type::current_param(
+                    &snapshot,
+                    archbuilder_model::element_type::TypeKind::Floor,
+                ) {
+                    preset.insert("type".into(), Value::from(t));
                 }
                 FLOOR_CREATE
             }

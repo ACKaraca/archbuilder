@@ -9,6 +9,52 @@
 //!
 //! No function in this crate panics.
 
+/// An enumeration stored as a code in a record: its variants, names, codes and reader.
+macro_rules! coded {
+    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident = $code:literal, $text:literal;)+ }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+        pub enum $name {
+            $( $(#[$vmeta])* $variant, )+
+        }
+
+        impl $name {
+            /// Every variant, in code order.
+            pub const ALL: [Self; coded!(@count $($variant)+)] = [$(Self::$variant),+];
+
+            /// The name of the variant in the record.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self { $( Self::$variant => $text, )+ }
+            }
+
+            /// The code stored in the record.
+            #[must_use]
+            pub const fn code(self) -> u32 {
+                match self { $( Self::$variant => $code, )+ }
+            }
+
+            /// The variant of a stored code; the default for a code that names none.
+            #[must_use]
+            pub fn from_code(code: u32) -> Self {
+                Self::ALL.into_iter().find(|v| v.code() == code).unwrap_or_default()
+            }
+
+            /// The variant of a stored value.
+            #[allow(dead_code, reason = "not every coded enum is read from a field")]
+            pub(crate) fn of_field(values: &[Option<::arc_doc::Value>], at: usize) -> Self {
+                match values.get(at) {
+                    Some(Some(::arc_doc::Value::Enum(code))) => Self::from_code(*code),
+                    _ => Self::default(),
+                }
+            }
+        }
+    };
+    (@count) => { 0 };
+    (@count $head:ident $($tail:ident)*) => { 1 + coded!(@count $($tail)*) };
+}
+
+pub mod element_type;
 pub mod error;
 pub mod floor;
 pub mod insert;

@@ -44,6 +44,10 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
                 start: [number(values, "start_x")?, number(values, "start_y")?],
                 end: [number(values, "end_x")?, number(values, "end_y")?],
                 thickness: number(values, "thickness")?,
+                core: [
+                    number(values, "core_exterior").unwrap_or(0.0),
+                    number(values, "core_interior").unwrap_or(0.0),
+                ],
                 height: number(values, "height")?,
                 base_offset: number(values, "base_offset")?,
                 location: LocationLine::ALL
@@ -96,6 +100,7 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
                 "id": object["id"],
                 "name": values["name"],
                 "storey": name_of(owner, STOREY),
+                "type": name_of(&values["wall_type"], archbuilder_model::types::WALL_TYPE),
                 "length": data.as_ref().map(Wall::length),
                 "thickness": data.as_ref().map(|w| w.thickness),
                 "height": data.as_ref().map(|w| w.height),

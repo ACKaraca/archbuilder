@@ -425,6 +425,7 @@ fn the_plan_symbol_has_the_leaf_open_on_the_facing_side_and_the_swing_on_the_han
         start: [0.0, 0.0],
         end: [10.0, 0.0],
         thickness: 0.2,
+        core: [0.0, 0.0],
         height: 3.0,
         base_offset: 0.0,
         location: LocationLine::Center,

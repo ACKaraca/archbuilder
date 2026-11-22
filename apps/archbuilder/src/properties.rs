@@ -1,5 +1,7 @@
 //! The property grid: the fields of the selected objects with readable names and values, lengths
-//! in the project's unit. A storey shows its level's elevation as its own. An edit becomes an
+//! in the project's unit. A storey shows its level's elevation as its own. A wall, floor, door or
+//! window shows its type as a choice second (one choice retypes the whole selection) and the
+//! values its type decides read-only. An edit becomes an
 //! intent for `archbuilder.property.set`.
 
 use arc_app::shell::{Action, Panel, PanelContext};
@@ -9,6 +11,7 @@ use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
 use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject};
 use archbuilder_commands::structure::PROPERTY_SET;
+use archbuilder_model::element_type::{self as et, TypeKind};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
     self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOM, SITE, STAIR, STOREY, WALL,
@@ -22,6 +25,42 @@ struct Message {
 
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "type",
+        Message {
+            message_id: "ab-prop-type",
+        },
+    ),
+    (
+        "double_swing",
+        Message {
+            message_id: "ab-op-double-swing",
+        },
+    ),
+    (
+        "sliding",
+        Message {
+            message_id: "ab-op-sliding",
+        },
+    ),
+    (
+        "core_center",
+        Message {
+            message_id: "ab-loc-core-center",
+        },
+    ),
+    (
+        "core_exterior",
+        Message {
+            message_id: "ab-loc-core-exterior",
+        },
+    ),
+    (
+        "core_interior",
+        Message {
+            message_id: "ab-loc-core-interior",
+        },
+    ),
     (
         "shape",
         Message {
@@ -709,7 +748,12 @@ fn length_field() -> FieldDecl {
 /// The fields of `object` as the grid shows them. A storey's fields are its name and its level's
 /// name and elevation; a level's `storey` flag is shown and not editable.
 #[allow(clippy::too_many_lines, reason = "one arm per kind of object")]
-fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
+fn shown(
+    snapshot: &Snapshot,
+    key: &str,
+    object: &Object,
+    label: &dyn Fn(&str) -> String,
+) -> Option<Shown> {
     let decl = snapshot.registry().get(key)?;
     let mut fields = decl.schema.fields.clone();
     let mut values = object.values.clone();
@@ -797,6 +841,15 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 fields.push(field);
                 values.push(value);
             }
+            // Last: the fields above are found by their positions in the record.
+            with_type(
+                (snapshot, label),
+                TypeKind::Wall,
+                object,
+                &mut fields,
+                &mut values,
+                &mut read_only,
+            );
         }
         // A floor shows its storey, the area and volume derived from its boundary, and the walls
         // its edges follow; the boundary itself is edited by sketching.
@@ -817,6 +870,14 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 .collect();
             fields.truncate(types::floor::VERTICES);
             values.truncate(types::floor::VERTICES);
+            with_type(
+                (snapshot, label),
+                TypeKind::Floor,
+                object,
+                &mut fields,
+                &mut values,
+                &mut read_only,
+            );
             for (name, value) in [
                 ("floor_storey", storey),
                 (
@@ -1031,12 +1092,24 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 .owner
                 .and_then(|id| spatial::get(snapshot, id))
                 .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            fields.truncate(types::insert::INSERT_TYPE);
+            values.truncate(types::insert::INSERT_TYPE);
+            let kind = if key == DOOR {
+                TypeKind::Door
+            } else {
+                TypeKind::Window
+            };
+            with_type(
+                (snapshot, label),
+                kind,
+                object,
+                &mut fields,
+                &mut values,
+                &mut read_only,
+            );
             fields.push(text_field("insert_wall"));
             values.push(host.map(Value::String));
             read_only.push("insert_wall".to_owned());
-            if key == DOOR {
-                read_only.push("sill".to_owned());
-            }
         }
         // The building's base elevation has no effect yet: the levels carry the elevations.
         BUILDING => read_only.push("elevation".to_owned()),
@@ -1048,6 +1121,56 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
         values,
         read_only,
     })
+}
+
+/// The type choice of an instance of `kind`: the types of the kind in their order (the grid sends
+/// the number, which `archbuilder.property.set` of `type` reads), and the instance's.
+fn type_field(snapshot: &Snapshot, kind: TypeKind, object: &Object) -> (FieldDecl, Option<Value>) {
+    let all = et::of_kind(snapshot, kind);
+    let own = et::type_id(kind, &object.values);
+    let variants = (0_u32..)
+        .zip(&all)
+        .map(|(code, t)| arc_doc::EnumVariant::new(et::name(t), code))
+        .collect();
+    let current = (0_u32..)
+        .zip(&all)
+        .find(|(_, t)| Some(t.id) == own)
+        .map(|(code, _)| Value::Enum(code));
+    (
+        FieldDecl::new("type", ValueType::Enum(variants)).in_aspect("identity"),
+        current,
+    )
+}
+
+/// Puts the type choice of `object` second, after the name, and makes the fields its type
+/// decides read-only; a choice among them shows its value's label as text.
+fn with_type(
+    (snapshot, label): (&Snapshot, &dyn Fn(&str) -> String),
+    kind: TypeKind,
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    for (field, value) in fields.iter_mut().zip(values.iter_mut()) {
+        if !et::is_copied(kind, &field.name) {
+            continue;
+        }
+        read_only.push(field.name.clone());
+        if let (ValueType::Enum(variants), Some(Value::Enum(code))) = (&field.value_type, &*value) {
+            let text = variants
+                .iter()
+                .find(|v| v.code == *code)
+                .map(|v| label(&v.name))
+                .unwrap_or_default();
+            *field = FieldDecl::new(&field.name, ValueType::String).in_aspect(&field.aspect);
+            *value = Some(Value::String(text));
+        }
+    }
+    let (field, value) = type_field(snapshot, kind, object);
+    let at = 1.min(fields.len());
+    fields.insert(at, field);
+    values.insert(at, value);
 }
 
 fn text_field(name: &str) -> FieldDecl {
@@ -1074,6 +1197,13 @@ impl Panel for PropertiesPanel {
         let Ok(tab) = cx.app.tab(tab) else {
             return;
         };
+        let localize = cx.localize;
+        let label_of = |name: &str| {
+            LABELS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
+        };
         let snapshot = tab.document().snapshot();
         // A selected storey stands for its level, which the grid shows through it.
         let covered: Vec<arc_base::ObjectId> = view
@@ -1093,7 +1223,7 @@ impl Panel for PropertiesPanel {
             .filter_map(|id| {
                 let key = spatial::type_of(&snapshot, *id)?;
                 let object = spatial::get(&snapshot, *id)?;
-                Some((shown(&snapshot, &key, &object)?, id))
+                Some((shown(&snapshot, &key, &object, &label_of)?, id))
             })
             .collect();
         let Some(first) = items.first().map(|(s, _)| s) else {

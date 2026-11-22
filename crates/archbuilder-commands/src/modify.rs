@@ -772,7 +772,8 @@ fn move_stairs(
 
 /// Applies `xf` to the objects of `set` in place.
 fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
-    let snapshot = ctx.snapshot().clone();
+    // The transaction's view: a command may move walls after it changed others.
+    let snapshot = ctx.txn()?.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
     let mut count =
         set.walls.len() + set.floors.len() + set.rooms.len() + set.stairs.len() + set.inserts.len();
@@ -866,6 +867,24 @@ fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Mo
         unjoined: joined.unjoined,
         meets,
     })
+}
+
+/// Moves the walls `walls` by `d` and keeps their joins as a move does: neighbors whose ends met
+/// them stretch along their own lines to the moved walls, and the moved walls' ends go to the same
+/// corner points.
+///
+/// # Errors
+/// The errors of a move.
+pub(crate) fn translate_walls(
+    ctx: &mut Context<'_>,
+    walls: &[ObjectId],
+    d: [f64; 2],
+) -> Result<Modified> {
+    let set = Set {
+        walls: walls.to_vec(),
+        ..Set::default()
+    };
+    transform_in_place(ctx, &set, &Xform::Translate(d))
 }
 
 /// The storey an object belongs to.

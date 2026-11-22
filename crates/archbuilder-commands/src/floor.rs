@@ -16,6 +16,7 @@
 //! the keywords `thickness`, `offset`, `interior`, `exterior`, `sketch` or `walls` (to change the
 //! mode) and `done` or `close` come first and return to the point.
 
+use archbuilder_model::element_type::TypeKind;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -94,7 +95,12 @@ pub struct CreateFloor {
     /// meters; 0 when absent.
     #[serde(default)]
     pub edge_offset: Option<QuantityParam>,
-    /// The thickness; 0.2 m when absent.
+    /// The floor type: its identifier or name; else the document's first floor type.
+    #[serde(default, rename = "type")]
+    #[schemars(length(max = 256))]
+    pub floor_type: Option<String>,
+    /// The thickness. A thickness other than the type's gives the floor a type of one layer of
+    /// that thickness (an existing one, else a new one).
     #[serde(default)]
     pub thickness: Option<QuantityParam>,
     /// The top's distance above the storey's level; 0 when absent.
@@ -253,7 +259,12 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
         Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
         None => Ok(default),
     };
-    let thickness = meters(ctx, &p.thickness, DEFAULT_FLOOR_THICKNESS)?;
+    let floor_type = crate::element_type::layered_for(
+        ctx,
+        TypeKind::Floor,
+        p.floor_type.as_deref(),
+        p.thickness.as_ref(),
+    )?;
     let offset = meters(ctx, &p.offset, 0.0)?;
     let edge_offset = meters(ctx, &p.edge_offset, 0.0)?;
     let face = p.face.map_or(Face::Interior, Into::into);
@@ -308,12 +319,17 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
         Some(storey),
         vec![
             Some(named(&name)),
-            Some(types::length(thickness)),
+            Some(types::length(DEFAULT_FLOOR_THICKNESS)),
             Some(types::length(offset)),
             Some(Floor::vertex_values(&vertices)),
+            None,
         ],
     )?;
+    crate::element_type::assign(ctx, id, TypeKind::Floor, floor_type)?;
     ensure_valid(ctx)?;
+    let thickness = spatial::get(ctx.txn()?.snapshot(), id)
+        .and_then(|f| types::meters(&f.values, types::floor::THICKNESS))
+        .unwrap_or(DEFAULT_FLOOR_THICKNESS);
     let (area, volume) = {
         let txn = ctx.txn()?;
         spatial::get(txn.snapshot(), id)
@@ -480,6 +496,8 @@ struct Scan {
     sketch: bool,
     face: &'static str,
     thickness: f64,
+    /// Whether the thickness was answered; else the floor takes its type's.
+    thickness_given: bool,
     offset: f64,
     points: Vec<[f64; 2]>,
     picks: Vec<[f64; 2]>,
@@ -507,7 +525,20 @@ impl FloorPrompts {
         let mut scan = Scan {
             sketch: self.hole || preset.get("mode").and_then(Json::as_str) == Some("sketch"),
             face: "interior",
-            thickness: number("thickness").unwrap_or(DEFAULT_FLOOR_THICKNESS),
+            // The thickness of the floor's type (the preset one, else the default one).
+            thickness: number("thickness").unwrap_or_else(|| {
+                preset
+                    .get("type")
+                    .and_then(Json::as_str)
+                    .and_then(|t| {
+                        crate::element_type::resolve(state.snapshot, TypeKind::Floor, t).ok()
+                    })
+                    .or_else(|| crate::element_type::default_of(state.snapshot, TypeKind::Floor))
+                    .and_then(|id| spatial::get(state.snapshot, id))
+                    .and_then(|t| archbuilder_model::element_type::Layers::from_values(&t.values))
+                    .map_or(DEFAULT_FLOOR_THICKNESS, |l| l.total())
+            }),
+            thickness_given: number("thickness").is_some(),
             offset: number("offset").unwrap_or(0.0),
             points: Vec::new(),
             picks: Vec::new(),
@@ -657,6 +688,7 @@ impl FloorPrompts {
                         if let PromptInput::Distance(d) = value.input {
                             if k == "thickness" {
                                 scan.thickness = d;
+                                scan.thickness_given = true;
                             } else {
                                 scan.offset = d;
                             }
@@ -671,7 +703,9 @@ impl FloorPrompts {
         if self.hole {
             params.insert("points".into(), points_json(&scan.points));
         } else {
-            params.insert("thickness".into(), Json::from(scan.thickness));
+            if scan.thickness_given {
+                params.insert("thickness".into(), Json::from(scan.thickness));
+            }
             params.insert("offset".into(), Json::from(scan.offset));
             if scan.sketch {
                 params.insert("points".into(), points_json(&scan.points));

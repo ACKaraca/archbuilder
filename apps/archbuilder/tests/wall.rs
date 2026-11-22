@@ -320,11 +320,12 @@ fn walls_survive_undo_redo_save_and_reopen_unchanged_and_the_property_command_ed
         json!({"start": [0.0, 0.0], "end": [4.0, 0.0], "thickness": "250 mm"}),
     );
     let id = made.value["wall"].as_str().unwrap().to_owned();
-    // The property grid's command changes the thickness and refuses a hostile value.
+    // The property grid's command changes the type (and so the thickness) and refuses a
+    // hostile value.
     run(
         &first,
         "archbuilder.property.set",
-        json!({"objects": [id], "field": "thickness", "value": "0.3 m"}),
+        json!({"objects": [id], "field": "type", "value": "Generic 200"}),
     );
     let refused = first.invoke(
         tab,

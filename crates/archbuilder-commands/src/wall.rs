@@ -22,6 +22,7 @@ use arc_command::prompt::{
 };
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{Object, Snapshot, Value};
+use archbuilder_model::element_type::TypeKind;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
     self, DEFAULT_THICKNESS, FLOOR, HEIGHT_RANGE, LEVEL, MIN_WALL_LENGTH, STOREY, THICKNESS_RANGE,
@@ -67,6 +68,12 @@ pub enum LocationLineParam {
     Exterior,
     /// The interior face: the body lies on the left of the baseline's direction.
     Interior,
+    /// The middle of the core of the wall's type.
+    CoreCenter,
+    /// The exterior face of the core.
+    CoreExterior,
+    /// The interior face of the core.
+    CoreInterior,
 }
 
 impl From<LocationLineParam> for LocationLine {
@@ -75,6 +82,22 @@ impl From<LocationLineParam> for LocationLine {
             LocationLineParam::Center => Self::Center,
             LocationLineParam::Exterior => Self::Exterior,
             LocationLineParam::Interior => Self::Interior,
+            LocationLineParam::CoreCenter => Self::CoreCenter,
+            LocationLineParam::CoreExterior => Self::CoreExterior,
+            LocationLineParam::CoreInterior => Self::CoreInterior,
+        }
+    }
+}
+
+impl From<LocationLine> for LocationLineParam {
+    fn from(line: LocationLine) -> Self {
+        match line {
+            LocationLine::Center => Self::Center,
+            LocationLine::Exterior => Self::Exterior,
+            LocationLine::Interior => Self::Interior,
+            LocationLine::CoreCenter => Self::CoreCenter,
+            LocationLine::CoreExterior => Self::CoreExterior,
+            LocationLine::CoreInterior => Self::CoreInterior,
         }
     }
 }
@@ -90,7 +113,13 @@ pub struct CreateWall {
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
-    /// The thickness, a number in meters or a text with a unit; 0.2 m when absent.
+    /// The wall type: its identifier or name; else the document's first wall type.
+    #[serde(default, rename = "type")]
+    #[schemars(length(max = 256))]
+    pub wall_type: Option<String>,
+    /// The thickness, a number in meters or a text with a unit. A thickness other than the
+    /// type's gives the wall a type of one layer of that thickness (an existing one, else a new
+    /// one).
     #[serde(default)]
     pub thickness: Option<QuantityParam>,
     /// The height above the base, which leaves the wall unconnected at the top; else the wall's
@@ -133,6 +162,9 @@ pub struct WallCreated {
     pub end: [f64; 2],
     /// The thickness in meters.
     pub thickness: f64,
+    /// The wall type.
+    #[serde(rename = "type")]
+    pub wall_type: IdParam,
     /// The height in meters.
     pub height: f64,
     /// The level the top is constrained to, when it is.
@@ -568,6 +600,23 @@ pub(crate) fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Ob
         .ok_or_else(|| Error::new(codes::NO_BUILDING))
 }
 
+/// The type of `kind` a new instance gets: the one `given` names, else the document's default,
+/// else a new generic one.
+pub(crate) fn choose_type(
+    ctx: &mut Context<'_>,
+    kind: TypeKind,
+    given: Option<&str>,
+) -> Result<ObjectId> {
+    let snapshot = ctx.txn()?.snapshot().clone();
+    if let Some(text) = given.filter(|t| !t.trim().is_empty()) {
+        return crate::element_type::resolve(&snapshot, kind, text);
+    }
+    if let Some(id) = crate::element_type::default_of(&snapshot, kind) {
+        return Ok(id);
+    }
+    crate::element_type::ensure(ctx, kind, &crate::element_type::generic(kind))
+}
+
 pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &str) -> String {
     let used = spatial::walls(snapshot, storey);
     let taken = |name: &str| {
@@ -587,7 +636,12 @@ fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
         Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
         None => Ok(default),
     };
-    let thickness = meters(ctx, &p.thickness, DEFAULT_THICKNESS)?;
+    let wall_type = crate::element_type::layered_for(
+        ctx,
+        TypeKind::Wall,
+        p.wall_type.as_deref(),
+        p.thickness.as_ref(),
+    )?;
     let base_offset = meters(ctx, &p.base_offset, 0.0)?;
     // A given height leaves the top unconnected; else the top follows the level above.
     let top_level = match (&p.height, p.top_level) {
@@ -634,31 +688,35 @@ fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
             Some(types::length(baseline[0][1])),
             Some(types::length(baseline[1][0])),
             Some(types::length(baseline[1][1])),
-            Some(types::length(thickness)),
+            Some(types::length(DEFAULT_THICKNESS)),
             Some(types::length(height)),
             Some(types::length(base_offset)),
             Some(Value::Enum(location.code())),
             top_level.map(Value::Reference),
             Some(Value::Enum(JoinStyle::Auto.code())),
             Some(Value::Enum(JoinStyle::Auto.code())),
+            None,
+            Some(types::length(0.0)),
+            Some(types::length(0.0)),
         ],
     )?;
+    crate::element_type::assign(ctx, id, TypeKind::Wall, wall_type)?;
     ensure_valid(ctx)?;
+    let thickness = spatial::get(ctx.txn()?.snapshot(), id)
+        .and_then(|w| types::meters(&w.values, types::wall::THICKNESS))
+        .unwrap_or(DEFAULT_THICKNESS);
     Ok(WallCreated {
         wall: IdParam(id),
         storey: IdParam(storey.id),
         start: p.start,
         end: p.end,
         thickness,
+        wall_type: IdParam(wall_type),
         height,
         top_level: top_level.map(IdParam),
         flip,
         base_offset,
-        location_line: match location {
-            LocationLine::Center => LocationLineParam::Center,
-            LocationLine::Exterior => LocationLineParam::Exterior,
-            LocationLine::Interior => LocationLineParam::Interior,
-        },
+        location_line: location.into(),
     })
 }
 
@@ -696,6 +754,15 @@ const KEY_FLIP: Msg = Msg {
 };
 const KEY_CLOSE: Msg = Msg {
     message_id: "ab-keyword-wall-close",
+};
+const KEY_CORE_CENTER: Msg = Msg {
+    message_id: "ab-keyword-wall-core-center",
+};
+const KEY_CORE_EXTERIOR: Msg = Msg {
+    message_id: "ab-keyword-wall-core-exterior",
+};
+const KEY_CORE_INTERIOR: Msg = Msg {
+    message_id: "ab-keyword-wall-core-interior",
 };
 const KEY_CENTER: Msg = Msg {
     message_id: "ab-keyword-wall-center",
@@ -765,9 +832,11 @@ impl Shown {
             .or_else(|| state.preset.get("location_line"))
             .and_then(Json::as_str)
         {
-            Some("exterior") => "exterior",
-            Some("interior") => "interior",
-            _ => "center",
+            Some(name) => LocationLine::ALL
+                .into_iter()
+                .find(|l| l.name() == name)
+                .map_or("center", LocationLine::name),
+            None => "center",
         };
         Self {
             storey: storey
@@ -850,6 +919,12 @@ fn location_prompt(key: String, shown: &Shown) -> Prompt {
                 .with_shortcut(shortcut(shown, 'e', 'd')),
             KeywordOption::new("interior", KEY_INTERIOR.message_id)
                 .with_shortcut(shortcut(shown, 'i', 'i')),
+            KeywordOption::new("core_center", KEY_CORE_CENTER.message_id)
+                .with_shortcut(shortcut(shown, 'o', 'k')),
+            KeywordOption::new("core_exterior", KEY_CORE_EXTERIOR.message_id)
+                .with_shortcut(shortcut(shown, 'x', 'r')),
+            KeywordOption::new("core_interior", KEY_CORE_INTERIOR.message_id)
+                .with_shortcut(shortcut(shown, 'n', 'n')),
         ]),
     )
     .with_default(PromptInput::Keyword(shown.location.to_owned()))

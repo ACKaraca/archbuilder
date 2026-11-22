@@ -17,7 +17,8 @@ joins derived with authored end styles, `snap.rs`), doors and windows hosted by 
 (`archbuilder.room.place`, `place_all`: derived from the walls around a placement point, warnings
 for unenclosed, redundant and duplicate numbers), stairs (straight, L, U; floor openings, railings), `archbuilder.modify.move|copy|rotate|mirror` and direct manipulation (drag, handles, temporary dimensions), everyday habits (Tab, context menu, double click, clipboard, typed shortcuts, temporary hide and isolate, more snaps),
 Delete, `archbuilder.property.set`, outliner, property grid, `inspect` lists, IFC4 export (rooms
-as spaces). No layers, types or slope yet; families, views and the rest are still specifications.
+as spaces), element types (layered wall and floor types, door and window types; type editor,
+create similar, match type). No slope yet; families, views and the rest are still specifications.
 Read in this order:
 `docs/product/vision.md`,
 `docs/product/capabilities/README.md`, `docs/architecture/overview.md`,
@@ -28,7 +29,7 @@ Read in this order:
 Present:
 
 ```
-crates/archbuilder-model/     spatial, wall, insert, floor and room types, picking order, validation rules, solids, wall joins, readers (headless)
+crates/archbuilder-model/     spatial, wall, insert, floor, room and element types, picking order, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands of the structure, wall, insert and floor (headless)
 crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, rooms with a loss report; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, outliner, property grid, extractors, wall, insert and floor tools

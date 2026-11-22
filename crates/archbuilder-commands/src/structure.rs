@@ -13,6 +13,7 @@ use arc_command::{
     CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
 };
 use arc_doc::{FieldPath, Header, Object, Snapshot, Value, ValueType};
+use archbuilder_model::element_type as et;
 use archbuilder_model::spatial::{self, StoreyLevel};
 use archbuilder_model::types::{
     self, BUILDING, ELEVATION_BASE_PROJECT, LEVEL, PROJECT, SITE, STOREY, WALL, level, storey,
@@ -226,7 +227,11 @@ pub struct SetProperty {
     /// The field: `name` of any object, `elevation` of a level, a storey (its level's) or a
     /// building, `number`, `client`, `address`, `length_unit` or `template` of the project,
     /// `start_x`, `start_y`, `end_x`, `end_y`, `thickness`, `height`, `base_offset` (lengths) or
-    /// `location_line` (`center`, `exterior`, `interior`) of a wall.
+    /// `location_line` (`center`, `exterior`, `interior`, `core_center`, `core_exterior`,
+    /// `core_interior`) of a wall, and `type` (a type's name or identifier, or its number in the
+    /// list of the kind's types) of a wall, floor, door or window. The values a type decides
+    /// (a wall's or floor's thickness, a door's or window's width, height, frame and operation)
+    /// are edited on the type.
     pub field: String,
     /// The value in canonical JSON form: a text, a number in meters, an enum name or code, or a
     /// truth value.
@@ -330,6 +335,7 @@ fn new_project(ctx: &mut Context<'_>, p: NewProject) -> Result<ProjectCreated> {
             create_storey(ctx, building_id, storey_name, meters)?.0,
         ));
     }
+    crate::element_type::create_defaults(ctx)?;
     ensure_valid(ctx)?;
     ctx.set_selection_after(vec![project_id]);
     Ok(ProjectCreated {
@@ -677,22 +683,23 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
                     Some(Value::Enum(code)) => code,
                     _ => return Err(Error::new(codes::VALUE_INVALID)),
                 };
-                // The body stays where it is: the baseline moves by the difference of the offsets.
+                // The body stays where it is: the baseline moves across by the difference of the
+                // offsets, and its ends keep their joins, as a move of the wall by that distance
+                // does (neighbors stretch along their own lines to the new corners).
                 let object =
                     spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
                 let wall = archbuilder_model::wall::Wall::from_values(&object.values)
                     .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
                 let moved =
                     wall.with_location(archbuilder_model::wall::LocationLine::from_code(code));
-                let txn = ctx.txn()?;
-                for (field, value) in [
-                    ("start_x", moved.start[0]),
-                    ("start_y", moved.start[1]),
-                    ("end_x", moved.end[0]),
-                    ("end_y", moved.end[1]),
-                ] {
-                    txn.modify(id, FieldPath::new(field), Some(types::length(value)))?;
+                let d = [
+                    moved.start[0] - wall.start[0],
+                    moved.start[1] - wall.start[1],
+                ];
+                if d[0].hypot(d[1]) > 1e-12 {
+                    crate::modify::translate_walls(ctx, &[id], d)?;
                 }
+                let txn = ctx.txn()?;
                 txn.modify(id, FieldPath::new("location_line"), Some(Value::Enum(code)))?;
                 ensure_valid(ctx)?;
             }
@@ -812,6 +819,34 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
                 txn.modify(id, FieldPath::new("height"), Some(value))?;
                 txn.modify(id, FieldPath::new("top_level"), None)?;
                 ensure_valid(ctx)?;
+            }
+            (k, "type") if et::TypeKind::of_instance_key(k).is_some() => {
+                let kind = et::TypeKind::of_instance_key(k)
+                    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                // The grid sends the number of its choice (the types of the kind in order); a
+                // name or an identifier also does.
+                let type_id = match &p.value {
+                    serde_json::Value::Number(n) => n
+                        .as_u64()
+                        .and_then(|k| usize::try_from(k).ok())
+                        .and_then(|k| et::of_kind(snapshot, kind).get(k).map(|t| t.id))
+                        .ok_or_else(|| Error::new(codes::VALUE_INVALID))?,
+                    serde_json::Value::String(text) => {
+                        crate::element_type::resolve(snapshot, kind, text)?
+                    }
+                    _ => return Err(Error::new(codes::VALUE_INVALID)),
+                };
+                crate::element_type::assign(ctx, id, kind, type_id)?;
+                ensure_valid(ctx)?;
+            }
+            (k, field)
+                if et::TypeKind::of_instance_key(k).is_some_and(|kind| {
+                    et::is_copied(kind, field)
+                        && spatial::get(snapshot, id)
+                            .is_some_and(|o| et::type_of(snapshot, kind, &o.values).is_some())
+                }) =>
+            {
+                return Err(Error::new(codes::FIELD_FROM_TYPE).with_arg("field", field.to_owned()));
             }
             (LEVEL | STOREY, "elevation") => {
                 let param: QuantityParam = serde_json::from_value(p.value.clone())

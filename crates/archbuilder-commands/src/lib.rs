@@ -10,13 +10,15 @@
 //! (the selected walls and inserts, else the selected storey); [`insert`]: `archbuilder.door.place`,
 //! `archbuilder.window.place`, `archbuilder.insert.flip_hand` and `archbuilder.insert.flip_facing`; [`floor`]:
 //! `archbuilder.floor.create` and `archbuilder.floor.add_hole`; [`modify`]: `archbuilder.modify.move`,
-//! `copy`, `rotate` and `mirror`; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`; [`stair`]: `archbuilder.stair.create`.
+//! `copy`, `rotate` and `mirror`; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`; [`stair`]: `archbuilder.stair.create`; [`element_type`]: `archbuilder.type.set`, `duplicate`,
+//! `delete`, `assign`, `match` and `upgrade`.
 //! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
 //! No function in this crate panics.
 
 pub mod clip;
+pub mod element_type;
 pub mod error;
 pub mod floor;
 pub mod insert;
@@ -59,6 +61,7 @@ pub fn registry() -> Result<Registry> {
     modify::register(&mut registry)?;
     room::register(&mut registry)?;
     stair::register(&mut registry)?;
+    element_type::register(&mut registry)?;
     Ok(registry)
 }
 

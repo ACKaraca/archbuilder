@@ -114,8 +114,8 @@ fn the_volume_of_a_wall_is_the_joined_solid_minus_its_openings_exactly() {
         json!({"wall": wall, "distance": 6.0}),
     )
     .unwrap();
-    // 10 x 0.2 x 3, minus a 0.9 x 2.1 door and a 1.2 x 1.2 window through 0.2 m.
-    let expected = 6.0 - 0.9 * 2.1 * 0.2 - 1.2 * 1.2 * 0.2;
+    // 10 x 0.2 x 3, minus a 0.9 x 2.1 door and a 1.2 x 1.5 window through 0.2 m.
+    let expected = 6.0 - 0.9 * 2.1 * 0.2 - 1.2 * 1.5 * 0.2;
     assert!(
         (env.volume(wall) - expected).abs() < 1e-9,
         "{}",
@@ -130,7 +130,7 @@ fn the_volume_of_a_wall_is_the_joined_solid_minus_its_openings_exactly() {
     );
     let windows = spatial::children(&env.snapshot(), WINDOW, wall);
     let window = Insert::of(&env.snapshot(), &windows[0]).unwrap();
-    assert_eq!((window.width, window.height, window.sill), (1.2, 1.2, 0.9));
+    assert_eq!((window.width, window.height, window.sill), (1.2, 1.5, 0.9));
 }
 
 #[test]

@@ -240,3 +240,74 @@ ab-menu-keep-stairs = Yalnızca merdivenleri tut
 ab-menu-new-stair = Yeni merdiven
 ab-notice-room-slivers = { $least } m² altındaki { $count } bölge oda almadı: duvarlar arasında kalan dar şeritler.
 ab-stair-down = AŞAĞI
+
+ab-tool-type-hint = Tip: çalışan aracın sonraki yerleştireceği tip ya da seçili duvar, döşeme, kapı veya pencerelerin tipi
+ab-panel-types = Tipler
+ab-prop-type = Tip
+ab-op-double-swing = Çift kanatlı
+ab-op-sliding = Sürme
+ab-loc-core-center = Çekirdek ekseni
+ab-loc-core-exterior = Çekirdek dış yüzü
+ab-loc-core-interior = Çekirdek iç yüzü
+ab-menu-create-similar = Benzerini Oluştur
+ab-menu-match-type = Tipi Eşle
+ab-menu-edit-type = Tipi Düzenle
+ab-notice-match-source = Tipi eşle: tipi diğerlerine verilecek nesneye tıklayın. Escape bitirir.
+ab-notice-match-targets = Tipi eşle: "{ $type }" tipini vermek için nesnelere tıklayın. Escape bitirir.
+ab-notice-no-typed = Bu nesnenin tipi yok: bir duvar, döşeme, kapı ya da pencereye tıklayın.
+ab-notice-types-added = Bu eski belgenin { $count ->
+        [one] bir nesnesi
+       *[other] { $count } nesnesi
+    } boyutuna uyan bir tip aldı. Kaydetmek tipleri korur.
+ab-layer-structure = Taşıyıcı
+ab-layer-substrate = Alt katman
+ab-layer-thermal = Isı yalıtımı ya da hava
+ab-layer-membrane = Membran
+ab-layer-finish = Kaplama
+ab-types-kind-wall = Duvar tipleri
+ab-types-kind-floor = Döşeme tipleri
+ab-types-kind-door = Kapı tipleri
+ab-types-kind-window = Pencere tipleri
+ab-types-type = Tip
+ab-types-name = Ad
+ab-types-rename = Yeniden adlandır
+ab-types-duplicate = Çoğalt
+ab-types-delete = Sil
+ab-types-replace-with = Yerine
+ab-types-in-use = { $count ->
+        [0] Kullanılmıyor
+        [one] Bir nesne kullanıyor
+       *[other] { $count } nesne kullanıyor
+    }
+ab-types-exterior = Dış
+ab-types-interior = İç
+ab-types-load-bearing = Taşıyıcı
+ab-types-room-bounding = Odaları sınırlar
+ab-types-layers = Katmanlar
+ab-types-core = Çekirdek
+ab-types-function = İşlev
+ab-types-material = Malzeme
+ab-types-thickness-mm = Kalınlık (mm)
+ab-types-add-layer = Katman ekle
+ab-types-total = Toplam kalınlık: { $mm } mm
+ab-types-apply = Uygula
+ab-types-revert = Geri al
+ab-types-width-mm = Genişlik (mm)
+ab-types-height-mm = Yükseklik (mm)
+ab-types-frame-width-mm = Kasa genişliği (mm)
+ab-types-frame-depth-mm = Kasa derinliği (mm)
+ab-types-operation = Çalışma biçimi
+ab-types-sill-mm = Varsayılan denizlik yüksekliği (mm)
+ab-types-number-invalid = { $layer ->
+        [0] Her boyutu 0 ya da daha büyük bir milimetre sayısı olarak yazın.
+       *[other] { $layer }. katmanın kalınlığını milimetre sayısı olarak yazın.
+    }
+ab-types-core-gap = Çekirdek katmanları art arda olmalıdır: tek bir katman dizisini çekirdek olarak işaretleyin.
+ab-types-exterior-side = Dış yüz solda
+ab-types-top-side = Üst yüz solda
+ab-types-empty = Belgede bu türden tip yok.
+ab-menu-select-type = Bu tipin tümünü seç
+ab-notice-types-resynced = Bu dosyada { $count ->
+        [one] bir nesne tipiyle uyuşmuyordu ve değerlerini tipinden yeniden aldı
+       *[other] { $count } nesne tipleriyle uyuşmuyordu ve değerlerini tiplerinden yeniden aldı
+    }. Kaydetmek düzeltmeyi korur.

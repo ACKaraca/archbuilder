@@ -201,4 +201,46 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-stair-overlap",
     };
+    /// A type has no layers or more than [`crate::element_type::MAX_LAYERS`].
+    pub const TYPE_LAYER_COUNT: ErrorCode = ErrorCode {
+        code: "ab.model.type_layer_count",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-layer-count",
+    };
+    /// A layer other than a membrane is not thicker than zero, or is too thick.
+    pub const TYPE_LAYER_THICKNESS: ErrorCode = ErrorCode {
+        code: "ab.model.type_layer_thickness",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-layer-thickness",
+    };
+    /// A membrane layer has a thickness.
+    pub const TYPE_MEMBRANE_THICKNESS: ErrorCode = ErrorCode {
+        code: "ab.model.type_membrane_thickness",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-membrane-thickness",
+    };
+    /// The core of a type holds no layer or lies outside the layers.
+    pub const TYPE_CORE: ErrorCode = ErrorCode {
+        code: "ab.model.type_core",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-core",
+    };
+    /// The total thickness of a type is outside the range of a wall or floor thickness.
+    pub const TYPE_TOTAL: ErrorCode = ErrorCode {
+        code: "ab.model.type_total",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-total",
+    };
+    /// A value an instance takes from its type differs from the type.
+    pub const TYPE_MISMATCH: ErrorCode = ErrorCode {
+        code: "ab.model.type_mismatch",
+        category: Category::Conflict,
+        message_id: "ab-model-type-mismatch",
+    };
+    /// A door or window type has an operation its kind does not allow.
+    pub const TYPE_OPERATION: ErrorCode = ErrorCode {
+        code: "ab.model.type_operation",
+        category: Category::InvalidInput,
+        message_id: "ab-model-type-operation",
+    };
 }

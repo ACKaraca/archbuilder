@@ -205,9 +205,9 @@ fn inspect_lists_doors_and_windows_and_the_wall_volume_without_their_openings() 
     assert_eq!(window["hand"], "right");
     let wall = &dump["walls"][0];
     assert_eq!(wall["openings"].as_u64(), Some(2));
-    // 10 x 0.2 x 3, minus 0.9 x 2.1 x 0.2 and 1.5 x 1.2 x 0.2.
+    // 10 x 0.2 x 3, minus 0.9 x 2.1 x 0.2 and 1.5 x 1.5 x 0.2 (the window type's height).
     assert!((wall["gross_volume"].as_f64().unwrap() - 6.0).abs() < 1e-9);
-    let net = 6.0 - 0.9 * 2.1 * 0.2 - 1.5 * 1.2 * 0.2;
+    let net = 6.0 - 0.9 * 2.1 * 0.2 - 1.5 * 1.5 * 0.2;
     assert!((wall["volume"].as_f64().unwrap() - net).abs() < 1e-9);
     let _ = std::fs::remove_dir_all(&dir);
 }

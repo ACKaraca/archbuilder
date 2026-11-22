@@ -180,7 +180,7 @@ fn place(ctx: &mut Context<'_>, p: PlaceRoom) -> Result<RoomsPlaced> {
     if p.points.is_empty() || p.points.len() > MAX_PLACED {
         return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
     }
-    let walls = floor::storey_walls(ctx.snapshot(), storey);
+    let walls = floor::room_walls(ctx.snapshot(), storey);
     let existing: Vec<[f64; 2]> = model::of_storey(ctx.snapshot(), storey)
         .iter()
         .map(|e| e.room.point)
@@ -216,7 +216,7 @@ fn place(ctx: &mut Context<'_>, p: PlaceRoom) -> Result<RoomsPlaced> {
 
 fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
     let storey = crate::wall::storey_for(ctx, p.storey)?.id;
-    let walls = floor::storey_walls(ctx.snapshot(), storey);
+    let walls = floor::room_walls(ctx.snapshot(), storey);
     let existing: Vec<[f64; 2]> = model::of_storey(ctx.snapshot(), storey)
         .iter()
         .map(|e| e.room.point)

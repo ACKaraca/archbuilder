@@ -43,11 +43,17 @@ ab-cmd-object-delete-description = Seçili duvarları siler; duvar seçili deği
 ab-prompt-wall-start = { $storey } üzerinde duvar: başlangıç noktasını belirtin (kalınlık { $thickness }, yükseklik { $height }, çizgi { $location ->
         [exterior] dış yüz
         [interior] iç yüz
+        [core_center] çekirdek ekseni
+        [core_exterior] çekirdek dış yüzü
+        [core_interior] çekirdek iç yüzü
        *[other] eksen
     })
 ab-prompt-wall-end = { $storey } üzerinde duvar: sonraki noktayı belirtin ya da bitirmek için Enter'a basın (kalınlık { $thickness }, yükseklik { $height }, çizgi { $location ->
         [exterior] dış yüz
         [interior] iç yüz
+        [core_center] çekirdek ekseni
+        [core_exterior] çekirdek dış yüzü
+        [core_interior] çekirdek iç yüzü
        *[other] eksen
     })
 ab-prompt-wall-thickness = Duvar kalınlığı (şimdi { $thickness })
@@ -189,3 +195,57 @@ ab-keyword-stair-right = Sağ
 ab-keyword-stair-width = Genişlik
 ab-keyword-stair-tread = Basamak
 ab-prompt-stair-turn-again = "{ $typed }" bir yan değil. Sol (s) ya da Sağ (a) yanıtını verin veya gösterilen yan için Enter'a basın.
+
+ab-cmd-field-from-type = { $field } tipten gelir. Tipi düzenleyin ya da seçili nesneler için başka bir tip seçin.
+ab-cmd-type-unknown = "{ $name }" adında bir tip yok. Bu türün tiplerinden birini seçin.
+ab-cmd-type-in-use = "{ $name }" tipini { $count ->
+        [one] bir nesne
+       *[other] { $count } nesne
+    } kullanıyor. Yerine geçecek bir tip seçin, sonra silin.
+ab-cmd-type-last = "{ $name }" türünün son tipidir ve silinemez. Önce çoğaltın ya da düzenleyin.
+ab-cmd-type-kind = Nesneler o tipin türünden değil. Duvar duvar tipi, döşeme döşeme tipi, kapı kapı tipi, pencere pencere tipi alır.
+ab-cmd-type-set-label = Tipi Düzenle
+ab-cmd-type-set-description = Bir tipin adını, katmanlarını, çekirdeğini, özelliklerini ya da boyutunu değiştirir; tipin bütün nesneleri tek adımda onunla birlikte değişir.
+ab-cmd-type-duplicate-label = Tipi Çoğalt
+ab-cmd-type-duplicate-description = Bir tipin yeni adla kopyasını oluşturur.
+ab-cmd-type-delete-label = Tipi Sil
+ab-cmd-type-delete-description = Bir tipi siler; onu kullanan nesneler yerine geçen tipi alır.
+ab-cmd-type-assign-label = Tipi Değiştir
+ab-cmd-type-assign-description = Seçili duvar, döşeme, kapı ya da pencerelere kendi türlerinden başka bir tip verir.
+ab-cmd-type-match-label = Tipi Eşle
+ab-cmd-type-match-description = Seçili nesnelere aynı türden bir kaynak nesnenin tipini verir.
+ab-cmd-type-upgrade-label = Tip Ekle
+ab-cmd-type-upgrade-description = Tipi olmayan her duvar, döşeme, kapı ve pencereye boyutuna uyan bir tip verir; uyan yoksa oluşturur.
+
+ab-type-wall-generic = Genel 200
+ab-type-wall-cavity = Dış yığma boşluklu duvar
+ab-type-wall-partition = İç bölme 100
+ab-type-floor-generic = Genel 200
+ab-type-floor-slab = Şap ve kaplamalı betonarme döşeme
+ab-type-door-single = Tek kanat 900 × 2100
+ab-type-door-double = Çift kanat 1500 × 2100
+ab-type-window-large = Pencere 1200 × 1500
+ab-type-window-small = Pencere 600 × 600
+ab-type-wall-generated = Genel { $mm }
+ab-type-floor-generated = Genel { $mm }
+ab-type-door-generated = Kapı { $width } × { $height }
+ab-type-window-generated = Pencere { $width } × { $height }
+ab-type-copy-name = { $name } ({ $n })
+ab-material-generic = Genel
+ab-material-brick = Tuğla
+ab-material-air = Hava boşluğu
+ab-material-insulation = Yalıtım
+ab-material-vapor-barrier = Buhar kesici
+ab-material-concrete-block = Beton blok
+ab-material-plaster = Sıva
+ab-material-gypsum-board = Alçı levha
+ab-material-steel-stud = Çelik dikme
+ab-material-floor-finish = Döşeme kaplaması
+ab-material-screed = Şap
+ab-material-separation-layer = Ayırma katmanı
+ab-material-concrete = Beton
+ab-keyword-wall-core-center = Çekirdek ekseni
+ab-keyword-wall-core-exterior = Çekirdek dış yüzü
+ab-keyword-wall-core-interior = Çekirdek iç yüzü
+ab-type-door-sliding = Sürme 1800 × 2100
+ab-type-window-sliding = Sürme pencere 1800 × 1200

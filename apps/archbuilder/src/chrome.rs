@@ -180,6 +180,7 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             STAIR_CREATE,
         ),
+        crate::tool_type::toolbar_item(),
         ToolItem::Separator,
         button(
             Message {

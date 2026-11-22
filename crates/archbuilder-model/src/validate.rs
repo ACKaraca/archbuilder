@@ -44,6 +44,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         STOREY | LEVEL => Some(BUILDING),
         k if types::is_storey_element(k) => Some(STOREY),
         DOOR | WINDOW => Some(WALL),
+        k if types::TYPE_KEYS.contains(&k) => Some(PROJECT),
         _ => None,
     }
 }
@@ -85,6 +86,7 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
     }
+    out.extend(type_problem(candidate, key, object));
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT
@@ -94,6 +96,52 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
             .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
     {
         out.push(name_taken(object));
+    }
+}
+
+/// What breaks the rules of types in `object`: an instance whose copies of its type's values
+/// differ from the type, or a door or window type with an operation its kind does not allow.
+fn type_problem(candidate: &Snapshot, key: &str, object: &Object) -> Option<Error> {
+    use crate::element_type::{self as et, TypeKind};
+    if let Some(kind) = TypeKind::of_key(key) {
+        let insert = kind.insert()?;
+        let operation = et::InsertType::from_values(&object.values)?.operation;
+        return (!operation.allowed(insert)).then(|| {
+            Error::new(codes::TYPE_OPERATION)
+                .with_arg("name", display_name(object))
+                .with_arg("operation", operation.name())
+        });
+    }
+    let kind = TypeKind::of_instance_key(key)?;
+    let found = et::type_of(candidate, kind, &object.values)?;
+    let field = et::mismatch(kind, &found.values, &object.values)?;
+    Some(
+        Error::new(codes::TYPE_MISMATCH)
+            .with_arg("name", display_name(object))
+            .with_arg("field", field),
+    )
+}
+
+/// The instances of every type that changed must still match it: a type is changed together
+/// with its instances.
+fn check_instances_of_types(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    use crate::element_type::{self as et, TypeKind};
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        let Some(kind) = type_of(candidate, *id).and_then(|k| TypeKind::of_key(&k)) else {
+            continue;
+        };
+        for instance in et::instances(candidate, kind, *id) {
+            if !touched.contains_key(&instance.id) {
+                out.extend(type_problem(candidate, kind.instance_key(), &instance));
+            }
+        }
     }
 }
 
@@ -292,6 +340,7 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_walls_of_levels(candidate, touched, &mut out);
     check_inserts_of_walls(candidate, touched, &mut out);
     check_floors(candidate, touched, &mut out);
+    check_instances_of_types(candidate, touched, &mut out);
     out
 }
 

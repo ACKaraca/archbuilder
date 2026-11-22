@@ -6,7 +6,8 @@
 //!
 //! A chain is a run of walls from one start point: each wall is one `archbuilder.wall.create`
 //! (one undo step per wall), and when a wall is placed the next one starts at its end with the
-//! same storey, thickness, height and location line. The chain ends on Enter or Escape (the walls
+//! same storey, type, height and location line. The type is the one picked in the type selector
+//! ([`crate::tool_type`]); a thickness typed at the prompt gives the wall a type of that thickness. The chain ends on Enter or Escape (the walls
 //! already placed stay; the segment in progress is dropped), and when a wall ends at the start of
 //! the chain after at least two walls (the `close` keyword, a typed or a clicked point).
 
@@ -19,6 +20,7 @@ use arc_command::{
 };
 use arc_doc::{Document, Snapshot};
 use archbuilder_commands::wall::WALL_CREATE;
+use archbuilder_model::element_type::TypeKind;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{DEFAULT_THICKNESS, DOOR, MIN_WALL_LENGTH, STOREY, WINDOW};
 use serde_json::{Map, Value};
@@ -54,8 +56,17 @@ pub struct Chain {
     pub end: Option<[f64; 2]>,
     /// The walls placed so far.
     pub walls: usize,
-    /// The thickness of the next wall, in meters.
+    /// The thickness of the next wall, in meters: its type's.
     pub thickness: f64,
+    /// The thickness of the layers outside the core of the next wall's type, on the exterior
+    /// and the interior side.
+    pub core: [f64; 2],
+    /// The type of the next wall: the type picked in the type selector, or the type the last
+    /// wall got (a typed thickness gives a wall a type of that thickness).
+    pub wall_type: Option<String>,
+    /// The type picked in the type selector when the chain last looked; a new pick replaces
+    /// `wall_type`.
+    pub picked: Option<String>,
     /// The height of the next wall, once a wall carried it (unconnected walls only).
     pub height: Option<f64>,
     /// The level the next wall's top is constrained to, once a wall carried it.
@@ -174,6 +185,9 @@ impl Tool {
             end: None,
             walls: 0,
             thickness: DEFAULT_THICKNESS,
+            core: [0.0, 0.0],
+            wall_type: None,
+            picked: None,
             height: None,
             top_level: None,
             location: None,
@@ -185,15 +199,34 @@ impl Tool {
 
     /// Starts the prompts of the next wall with the options the chain carries.
     fn next(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
-        let Some(chain) = &self.chain else {
+        let snapshot = env.document.snapshot();
+        let Some(chain) = &mut self.chain else {
             return Ok(());
         };
+        let picked = crate::tool_type::current_param(&snapshot, TypeKind::Wall);
+        if picked != chain.picked || chain.wall_type.is_none() {
+            chain.wall_type.clone_from(&picked);
+            chain.picked = picked;
+        }
+        // The thickness and core of the type, for the prompt and the preview.
+        if let Some(t) = chain
+            .wall_type
+            .as_deref()
+            .and_then(|id| id.parse().ok())
+            .and_then(|id| spatial::get(&snapshot, id))
+            .and_then(|t| archbuilder_model::element_type::Layers::from_values(&t.values))
+        {
+            chain.thickness = t.total();
+            chain.core = t.core_offsets();
+        }
+        let chain = &*chain;
         let mut preset = Map::new();
         preset.insert("storey".into(), Value::from(chain.storey.to_string()));
         if let Some(end) = chain.end {
             preset.insert("start".into(), Value::from(end.to_vec()));
         }
-        if chain.walls > 0 {
+        if let Some(wall_type) = &chain.wall_type {
+            preset.insert("type".into(), Value::from(wall_type.as_str()));
             preset.insert("thickness".into(), Value::from(chain.thickness));
         }
         if let Some(level) = &chain.top_level {
@@ -258,6 +291,7 @@ impl Tool {
             .get("thickness")
             .and_then(Value::as_f64)
             .unwrap_or(chain.thickness);
+        chain.wall_type = wall.get("type").and_then(Value::as_str).map(str::to_owned);
         chain.top_level = wall
             .get("top_level")
             .and_then(Value::as_str)
@@ -423,6 +457,20 @@ impl Tool {
         }
         self.line.cancel();
         self.line.set_last_point(None)?;
+        self.next(env, run)
+    }
+
+    /// A type was picked in the type selector: the segment in progress takes it at once when no
+    /// point of it was answered yet; otherwise the next wall does.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn retype(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        let answered = self.line.active().is_some_and(|s| !s.answers().is_empty());
+        if self.chain.is_none() || answered {
+            return Ok(());
+        }
+        self.line.cancel();
         self.next(env, run)
     }
 

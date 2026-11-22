@@ -233,6 +233,7 @@ pub(crate) fn paste_content(
         ] {
             put(at, types::length(v));
         }
+        crate::element_type::rebind(ctx, WALL, &mut values)?;
         let new = create(ctx, WALL, Some(storey), values)?;
         map.insert(old, new);
         created.push(new);
@@ -251,6 +252,7 @@ pub(crate) fn paste_content(
         if let Some(slot) = values.get_mut(types::insert::NAME) {
             *slot = Some(Value::String(name));
         }
+        crate::element_type::rebind(ctx, &key, &mut values)?;
         created.push(create(ctx, &key, Some(host), values)?);
     }
     for (key, _, _, mut values) in decoded.iter().cloned() {
@@ -267,6 +269,7 @@ pub(crate) fn paste_content(
         if let Some(slot) = values.get_mut(types::floor::VERTICES) {
             *slot = Some(Floor::vertex_values(&vertices));
         }
+        crate::element_type::rebind(ctx, FLOOR, &mut values)?;
         created.push(create(ctx, FLOOR, Some(storey), values)?);
     }
     for (key, _, _, mut values) in decoded.iter().cloned() {

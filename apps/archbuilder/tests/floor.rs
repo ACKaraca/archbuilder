@@ -308,3 +308,26 @@ fn raising_the_level_of_a_storey_raises_its_floor() {
     );
     assert!((top(&rig) - 5.0).abs() < 1e-9);
 }
+
+#[test]
+fn a_type_picked_while_the_floor_tool_runs_makes_the_next_floor() {
+    use archbuilder_model::element_type::{self as et, TypeKind};
+    let mut rig = Rig::new();
+    rig.step(|t, env, run| t.begin(env, run, None));
+    // The type selector picks the slab while the prompt waits: the prompt starts again with it.
+    let slab = et::of_kind(&rig.document.snapshot(), TypeKind::Floor)
+        .into_iter()
+        .find(|t| et::name(t).starts_with("Concrete slab"))
+        .unwrap()
+        .id;
+    archbuilder::tool_type::choose(TypeKind::Floor, slab);
+    rig.step(|t, env, run| t.retype(env, run));
+    rig.step(|t, env, run| t.text(env, run, "sketch"));
+    for p in ["0,0", "4,0", "4,3", "0,3"] {
+        rig.step(|t, env, run| t.text(env, run, p));
+    }
+    rig.step(|t, env, run| t.text(env, run, ""));
+    let floors = rig.floors();
+    assert_eq!(floors.len(), 1);
+    assert!((floors[0].floor.thickness - 0.26).abs() < 1e-9);
+}

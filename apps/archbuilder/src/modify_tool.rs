@@ -142,6 +142,14 @@ impl ModifyTool {
         self.run.as_ref().is_some_and(|r| r.gathering)
     }
 
+    /// Whether a paste runs, where Enter pastes in place.
+    #[must_use]
+    pub fn pastes(&self) -> bool {
+        self.run
+            .as_ref()
+            .is_some_and(|r| r.command == CLIPBOARD_PASTE)
+    }
+
     /// The copies made in this run.
     #[must_use]
     pub fn copies(&self) -> usize {

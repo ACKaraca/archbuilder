@@ -3,9 +3,9 @@
 //!
 //! The place commands take the host wall (else the selected wall, else the wall of the selected
 //! insert), the distance of the insert's center from the baseline's start (else the middle of the
-//! wall's clear span), and optionally the width, height, sill height (windows only: a door's sill is
-//! the wall's base), the hand and the facing. Without options a door is 0.9 m by 2.1 m and a window
-//! 1.2 m by 1.2 m on a 0.9 m sill, left hand, facing the exterior side. One call is one transaction,
+//! wall's clear span), and optionally the type, the width, height, sill height, the hand and the
+//! facing. Without options an insert takes the size, frame, operation and sill of the document's
+//! first type of its kind, left hand, facing the exterior side. One call is one transaction,
 //! so one undo step; a chain of inserts placed in a row is one undo step each.
 //!
 //! The prompt machine ([`InsertPrompts`]) asks for a distance along the wall; the answers `pick`
@@ -23,7 +23,8 @@ use arc_command::prompt::{
 };
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Snapshot, Value};
-use archbuilder_model::insert::{self, Facing, HEAD_CLEARANCE, Hand, Insert, Kind, Operation};
+use archbuilder_model::element_type::{InsertType, TypeKind};
+use archbuilder_model::insert::{self, Facing, HEAD_CLEARANCE, Hand, Insert, Kind};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
     self, DOOR, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, SILL_RANGE, WALL, WINDOW,
@@ -71,15 +72,20 @@ pub struct PlaceInsert {
     /// meters or a text with a unit; the middle of the wall's clear span when absent.
     #[serde(default)]
     pub distance: Option<QuantityParam>,
-    /// The width of the opening; 0.9 m for a door and 1.2 m for a window when absent.
+    /// The door or window type: its identifier or name; else the document's first type of the
+    /// kind.
+    #[serde(default, rename = "type")]
+    #[schemars(length(max = 256))]
+    pub insert_type: Option<String>,
+    /// The width of the opening; the type's when absent. A width or height other than the type's
+    /// gives the insert a type of that size with the type's frame and operation (an existing
+    /// one, else a new one).
     #[serde(default)]
     pub width: Option<QuantityParam>,
-    /// The height of the opening; 2.1 m for a door and 1.2 m for a window when absent, never
-    /// above the wall's top.
+    /// The height of the opening; the type's when absent, lowered to fit under the wall's top.
     #[serde(default)]
     pub height: Option<QuantityParam>,
-    /// The sill height of a window; 0.9 m when absent. A door's sill is the wall's base, and the
-    /// value is ignored.
+    /// The sill height above the wall's base; the type's when absent.
     #[serde(default)]
     pub sill: Option<QuantityParam>,
     /// Whether the hand is flipped from the default (left): the hinge is on the right.
@@ -109,6 +115,9 @@ pub struct InsertPlaced {
     pub height: f64,
     /// The sill height in meters.
     pub sill: f64,
+    /// The type.
+    #[serde(rename = "type")]
+    pub insert_type: IdParam,
     /// Whether the hand is the flipped one (right).
     pub flip_hand: bool,
     /// Whether the facing is the flipped one (interior).
@@ -178,6 +187,10 @@ pub(crate) fn next_name(snapshot: &Snapshot, kind: Kind, wall: ObjectId, languag
         .unwrap_or_default()
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the options of one placement, in order"
+)]
 fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlaced> {
     let wall_object = wall_for(ctx, p.wall)?;
     let wall =
@@ -188,21 +201,40 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
             .map(|q| Some(q.value())),
         None => Ok(None),
     };
-    let sill = match kind {
-        Kind::Door => 0.0,
-        Kind::Window => meters(ctx, &p.sill)?.unwrap_or(WINDOW_SILL),
+    let type_kind = if kind == Kind::Door {
+        TypeKind::Door
+    } else {
+        TypeKind::Window
     };
-    let (default_width, default_height) = match kind {
-        Kind::Door => (DOOR_WIDTH, DOOR_HEIGHT),
-        Kind::Window => (WINDOW_WIDTH, WINDOW_HEIGHT),
-    };
-    let width = meters(ctx, &p.width)?.unwrap_or(default_width);
-    // A default height gives way to a low wall; a typed one is checked as it is.
+    let chosen = crate::wall::choose_type(ctx, type_kind, p.insert_type.as_deref())?;
+    let base = spatial::get(ctx.txn()?.snapshot(), chosen)
+        .and_then(|t| InsertType::from_values(&t.values))
+        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let sill = meters(ctx, &p.sill)?.unwrap_or(base.sill);
+    let width = meters(ctx, &p.width)?.unwrap_or(base.width);
+    // The type's height gives way to a low wall; a typed one is checked as it is.
     let height = match meters(ctx, &p.height)? {
         Some(height) => height,
-        None => default_height
+        None => base
+            .height
             .min(wall.height - sill - HEAD_CLEARANCE)
             .max(INSERT_HEIGHT_RANGE.0),
+    };
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9;
+    let insert_type = if same(width, base.width) && same(height, base.height) {
+        chosen
+    } else {
+        crate::element_type::ensure(
+            ctx,
+            type_kind,
+            &[
+                (types::insert::WIDTH, types::length(width)),
+                (types::insert::HEIGHT, types::length(height)),
+                (types::insert::FRAME_WIDTH, types::length(base.frame_width)),
+                (types::insert::FRAME_DEPTH, types::length(base.frame_depth)),
+                (types::insert::OPERATION, Value::Enum(base.operation.code())),
+            ],
+        )?
     };
     let distance = match meters(ctx, &p.distance)? {
         Some(d) => d,
@@ -218,10 +250,6 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
         Facing::Interior
     } else {
         Facing::Exterior
-    };
-    let operation = match kind {
-        Kind::Door => Operation::SingleSwing,
-        Kind::Window => Operation::Fixed,
     };
     if spatial::children(ctx.snapshot(), kind.key(), wall_object.id).len()
         + spatial::children(
@@ -248,12 +276,20 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
             Some(types::length(width)),
             Some(types::length(height)),
             Some(types::length(sill)),
-            Some(types::length(0.05)),
-            Some(types::length(0.1_f64.min(wall.thickness))),
-            Some(Value::Enum(operation.code())),
+            Some(types::length(base.frame_width)),
+            Some(types::length(base.frame_depth)),
+            Some(Value::Enum(base.operation.code())),
             Some(Value::Enum(hand.code())),
             Some(Value::Enum(facing.code())),
+            None,
         ],
+    )?;
+    crate::element_type::assign(ctx, id, type_kind, insert_type)?;
+    // The sill is the instance's own: the given one, else the type's default.
+    ctx.txn()?.modify(
+        id,
+        arc_doc::FieldPath::new("sill"),
+        Some(types::length(sill)),
     )?;
     ensure_valid(ctx)?;
     Ok(InsertPlaced {
@@ -263,6 +299,7 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
         width,
         height,
         sill,
+        insert_type: IdParam(insert_type),
         flip_hand: hand == Hand::Right,
         flip_facing: facing == Facing::Interior,
     })
@@ -388,10 +425,26 @@ impl Shown {
             .setting(LANGUAGE_SETTING)
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
-        let (width, height) = match kind {
-            Kind::Door => (DOOR_WIDTH, DOOR_HEIGHT),
-            Kind::Window => (WINDOW_WIDTH, WINDOW_HEIGHT),
+        // The type's size and sill, unless an answer or the host gave others.
+        let type_kind = match kind {
+            Kind::Door => TypeKind::Door,
+            Kind::Window => TypeKind::Window,
         };
+        let chosen = over
+            .get("type")
+            .or_else(|| state.preset.get("type"))
+            .and_then(Json::as_str)
+            .and_then(|t| crate::element_type::resolve(snapshot, type_kind, t).ok())
+            .or_else(|| crate::element_type::default_of(snapshot, type_kind))
+            .and_then(|id| spatial::get(snapshot, id))
+            .and_then(|t| InsertType::from_values(&t.values));
+        let (width, height, sill) = chosen.map_or(
+            match kind {
+                Kind::Door => (DOOR_WIDTH, DOOR_HEIGHT, 0.0),
+                Kind::Window => (WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_SILL),
+            },
+            |t| (t.width, t.height, t.sill),
+        );
         Self {
             wall: wall
                 .and_then(|id| spatial::get(snapshot, id))
@@ -399,11 +452,7 @@ impl Shown {
                 .unwrap_or_else(|| "-".to_owned()),
             width: number("width").unwrap_or(width),
             height: number("height").unwrap_or(height),
-            sill: if kind == Kind::Window {
-                number("sill").unwrap_or(WINDOW_SILL)
-            } else {
-                0.0
-            },
+            sill: number("sill").unwrap_or(sill),
             flip_hand: flag("flip_hand"),
             flip_facing: flag("flip_facing"),
             turkish: language.starts_with("tr"),

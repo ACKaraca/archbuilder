@@ -50,6 +50,31 @@ pub fn all_of_kinds_in(
     )
 }
 
+/// Every shown wall, floor, door and window whose type is the type of one of the objects of
+/// `selection`.
+#[must_use]
+pub fn all_of_types_in(
+    snapshot: &Snapshot,
+    selection: &[ObjectId],
+    vis: &Visibility,
+) -> Vec<ObjectId> {
+    use archbuilder_model::element_type::{TypeKind, instances, type_of_object};
+    let mut wanted: Vec<(TypeKind, ObjectId)> = selection
+        .iter()
+        .filter_map(|id| spatial::get(snapshot, *id))
+        .filter_map(|o| type_of_object(snapshot, &o).map(|(k, t)| (k, t.id)))
+        .collect();
+    wanted.sort();
+    wanted.dedup();
+    wanted
+        .into_iter()
+        .flat_map(|(kind, id)| instances(snapshot, kind, id))
+        .map(|o| o.id)
+        .filter(|id| vis.shows(snapshot, *id))
+        .take(MAX_SELECTED)
+        .collect()
+}
+
 /// The objects of `selection` that are of `kind`.
 #[must_use]
 pub fn only(snapshot: &Snapshot, selection: &[ObjectId], kind: &str) -> Vec<ObjectId> {

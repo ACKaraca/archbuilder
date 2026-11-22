@@ -10,10 +10,14 @@ use arc_base::{Cancel, Error, Limits, ObjectId, Result};
 use arc_doc::{Object, Snapshot};
 use arc_io_common::loss::{Argument, LossItem, LossReport, Reason};
 use arc_io_ifc::write::{
-    Body, Element, ElementKind, Placement, Property, PropertySet, PropertyValue, Quantity,
-    QuantitySet, QuantityValue, Spatial, Storey, derived_id, role,
+    Body, Element, ElementKind, ElementType, LayerDirection, LayerSetUsage, MaterialLayer,
+    Placement, Property, PropertySet, PropertyValue, Quantity, QuantitySet, QuantityValue, Spatial,
+    Storey, derived_id, role,
 };
 use arc_io_ifc::{WriteModel, WriteOptions, write};
+use archbuilder_model::element_type::{
+    self as et, Exposure, Function, InsertType, Layers, TypeKind, WallType,
+};
 use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
@@ -263,6 +267,25 @@ impl Mapper<'_> {
             storey.as_u128(),
         );
         element.placement = frame.placement(wall.base_offset);
+        if let Some(found) = et::type_of(self.snapshot, TypeKind::Wall, &object.values) {
+            element.element_type = Some(found.id.as_u128());
+            // The layers run from the exterior face, on the left of the baseline: the local y
+            // axis of the placement, toward its negative side.
+            let (_, high) = wall.extent();
+            element.layer_usage = Some(LayerSetUsage::new(LayerDirection::Axis2, false, high));
+            if let Some(t) = WallType::from_values(&found.values) {
+                element.property_sets.push(PropertySet::new(
+                    "Pset_WallCommon",
+                    vec![
+                        Property::new(
+                            "IsExternal",
+                            PropertyValue::Boolean(t.exposure == Exposure::Exterior),
+                        ),
+                        Property::new("LoadBearing", PropertyValue::Boolean(t.load_bearing)),
+                    ],
+                ));
+            }
+        }
         let gross = wall.solid_in(footprint, level).map(|s| s.volume());
         let mut quantities = vec![
             Quantity::new("Length", QuantityValue::Length(wall.length())),
@@ -375,6 +398,13 @@ impl Mapper<'_> {
             storey_id,
         );
         element.placement = frame.placement(z);
+        let kind = if door {
+            TypeKind::Door
+        } else {
+            TypeKind::Window
+        };
+        element.element_type =
+            et::type_of(self.snapshot, kind, &object.values).map(|t| t.id.as_u128());
         element.predefined_type = Some(if door { "DOOR" } else { "WINDOW" }.to_owned());
         element.operation_type = Some(operation(item).to_owned());
         element.overall_width = Some(item.width);
@@ -411,6 +441,11 @@ impl Mapper<'_> {
             Vector3::x(),
         );
         element.predefined_type = Some("FLOOR".to_owned());
+        if let Some(found) = et::type_of(self.snapshot, TypeKind::Floor, &object.values) {
+            element.element_type = Some(found.id.as_u128());
+            // The layers run from the top, the placement's plane, downward.
+            element.layer_usage = Some(LayerSetUsage::new(LayerDirection::Axis3, false, 0.0));
+        }
         let loops = &derived.boundary.loops;
         if let Some((outer, holes)) = loops.split_first() {
             element.body = Some(Body::Extrusion {
@@ -440,16 +475,83 @@ impl Mapper<'_> {
 }
 
 /// The IFC4 operation type of a door (`IfcDoorTypeOperationEnum`) or partitioning of a window
-/// (`IfcWindowTypePartitioningEnum`). The placement's y axis points to the swing side. The product
+/// (`IfcWindowTypePartitioningEnum`): a double door swings two leaves, a sliding door slides
+/// toward the side opposite its hinge, a sliding window has two panels side by side. The
+/// placement's y axis points to the swing side. The product
 /// reads the hand facing the leaf from that side, IFC4 along the y axis: opposite viewpoints, so
 /// the product's left (hinge at +x) is `SINGLE_SWING_RIGHT` (IFC left has its hinge at -x). Fixed and casement windows are both one panel; IFC4 has
 /// no operation attribute on the window itself, so a casement's is reported as approximated.
 fn operation(item: &Insert) -> &'static str {
-    match (item.kind, item.hand) {
-        (Kind::Door, Hand::Left) => "SINGLE_SWING_RIGHT",
-        (Kind::Door, Hand::Right) => "SINGLE_SWING_LEFT",
-        (Kind::Window, _) => "SINGLE_PANEL",
+    use insert::Operation;
+    match (item.kind, item.operation, item.hand) {
+        (Kind::Door, Operation::DoubleSwing, _) => "DOUBLE_DOOR_SINGLE_SWING",
+        (Kind::Door, Operation::Sliding, Hand::Left) => "SLIDING_TO_RIGHT",
+        (Kind::Door, Operation::Sliding, Hand::Right) => "SLIDING_TO_LEFT",
+        (Kind::Door, _, Hand::Left) => "SINGLE_SWING_RIGHT",
+        (Kind::Door, _, Hand::Right) => "SINGLE_SWING_LEFT",
+        (Kind::Window, Operation::Sliding, _) => "DOUBLE_PANEL_VERTICAL",
+        (Kind::Window, _, _) => "SINGLE_PANEL",
     }
+}
+
+/// The element types of the document: wall and floor types with their layers, door and window
+/// types with their operation. A wall type is `PARTITIONING` when it is interior and carries no
+/// load, else `STANDARD`. A door type's hand is its occurrences', so a type with one swinging
+/// or sliding leaf names its operation as a user-defined value.
+fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
+    use insert::Operation;
+    let mut out = Vec::new();
+    for kind in TypeKind::ALL {
+        for object in et::of_kind(snapshot, kind) {
+            let (ifc_kind, predefined) = match kind {
+                TypeKind::Wall => (ElementKind::Wall, "STANDARD"),
+                TypeKind::Floor => (ElementKind::Slab, "FLOOR"),
+                TypeKind::Door => (ElementKind::Door, "DOOR"),
+                TypeKind::Window => (ElementKind::Window, "WINDOW"),
+            };
+            let mut t = ElementType::new(object.id.as_u128(), ifc_kind, et::name(&object));
+            t.predefined_type = Some(predefined.to_owned());
+            if let Some(wall) =
+                WallType::from_values(&object.values).filter(|_| kind == TypeKind::Wall)
+                && wall.exposure == Exposure::Interior
+                && !wall.load_bearing
+            {
+                t.predefined_type = Some("PARTITIONING".to_owned());
+            }
+            if kind.layered() {
+                t.layers = Layers::from_values(&object.values)
+                    .map(|l| {
+                        l.layers
+                            .iter()
+                            .map(|layer| {
+                                let mut m = MaterialLayer::new(&layer.material, layer.thickness);
+                                m.category = match layer.function {
+                                    Function::Structure => Some("LoadBearing".to_owned()),
+                                    Function::Thermal => Some("Insulation".to_owned()),
+                                    Function::Finish => Some("Finish".to_owned()),
+                                    Function::Substrate | Function::Membrane => None,
+                                };
+                                m
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            } else if let Some(i) = InsertType::from_values(&object.values) {
+                t.operation_type = Some(
+                    match (kind, i.operation) {
+                        (TypeKind::Door, Operation::DoubleSwing) => "DOUBLE_DOOR_SINGLE_SWING",
+                        (TypeKind::Door, Operation::Sliding) => "SLIDING",
+                        (TypeKind::Door, _) => "SINGLE_SWING",
+                        (_, Operation::Sliding) => "DOUBLE_PANEL_VERTICAL",
+                        _ => "SINGLE_PANEL",
+                    }
+                    .to_owned(),
+                );
+            }
+            out.push(t);
+        }
+    }
+    out
 }
 
 /// The solids of an insert as one faceted B-rep in the insert's frame; `z0` is the elevation of
@@ -522,6 +624,7 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         mapper.storey(entry.storey.id, elevation)?;
     }
     model.elements = std::mem::take(&mut mapper.elements);
+    model.types = element_types(snapshot);
     let write_options = WriteOptions {
         limits: options.limits,
         cancel: options.cancel.clone(),

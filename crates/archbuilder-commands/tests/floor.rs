@@ -92,6 +92,32 @@ impl Env {
         (d.area(), d.volume())
     }
 
+    /// Gives `object` (a wall or floor) a type of its own of one layer of `thickness`: the
+    /// thickness comes from the type.
+    fn thicken(&self, object: ObjectId, kind: &str, thickness: f64) {
+        let snapshot = self.snapshot();
+        let instance = spatial::get(&snapshot, object).unwrap();
+        let (_, current) =
+            archbuilder_model::element_type::type_of_object(&snapshot, &instance).unwrap();
+        let copy = self
+            .run(
+                "archbuilder.type.duplicate",
+                json!({"type": current.id, "name": format!("T {thickness}")}),
+            )
+            .unwrap();
+        let copy = copy.value["type"].clone();
+        self.run(
+            "archbuilder.type.set",
+            json!({"type": copy, "layers": [{"function": "structure", "thickness": thickness}], "core": [0, 1]}),
+        )
+        .unwrap();
+        self.run(
+            "archbuilder.type.assign",
+            json!({"type": copy, "kind": kind, "objects": [object]}),
+        )
+        .unwrap();
+    }
+
     fn set(&self, object: ObjectId, field: &str, value: Json) {
         self.run(
             "archbuilder.property.set",
@@ -149,7 +175,7 @@ fn the_floor_follows_a_moved_wall_and_a_thicker_wall() {
     env.set(walls[2], "end_x", json!(11.0));
     near(env.area_volume().0, 10.8 * 5.8);
     // The left wall gets thicker: its interior face moves by 0.1 m.
-    env.set(walls[0], "thickness", json!(0.4));
+    env.thicken(walls[0], "wall", 0.4);
     near(env.area_volume().0, 10.7 * 5.8);
 }
 
@@ -224,7 +250,7 @@ fn a_sketch_with_a_hole_subtracts_the_hole_and_undo_redo_restore_it() {
     // Thickness and offset are edited through the property command, and the floor is deleted by
     // the selection command.
     env.document.redo().wait().unwrap();
-    env.set(floor.id, "thickness", json!(0.3));
+    env.thicken(floor.id, "floor", 0.3);
     env.set(floor.id, "top_offset", json!(-0.1));
     let d = Derived::of(&env.snapshot(), &env.floors()[0]).unwrap();
     near(d.floor.thickness, 0.3);
@@ -377,7 +403,7 @@ fn a_wall_split_in_two_makes_one_straight_edge_and_follows_both_parts() {
     near(inner.area(), 9.8 * 5.8);
     assert_eq!(inner.floor.walls().len(), 5);
     // One part gets thicker: its half of the edge follows, and the floor stays valid and smaller.
-    env.set(walls[3], "thickness", json!(0.4));
+    env.thicken(walls[3], "wall", 0.4);
     let snapshot = env.snapshot();
     let d = Derived::of(&snapshot, &by_name("Slab 2")).unwrap();
     d.boundary.check().unwrap();

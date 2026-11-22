@@ -60,6 +60,8 @@ pub mod shortcuts;
 pub mod snap;
 pub mod stair_tool;
 pub mod stair_view;
+pub mod tool_type;
+pub mod type_panel;
 pub mod visibility;
 pub mod wall_tool;
 
@@ -73,6 +75,8 @@ pub const OUTLINER: &str = "archbuilder.outliner";
 pub const COMMAND_LINE: &str = "archbuilder.command_line";
 /// The settings panel.
 pub const SETTINGS: &str = "archbuilder.settings";
+/// The type editor.
+pub const TYPES: &str = "archbuilder.types";
 
 /// A message of the application.
 struct Message {
@@ -240,6 +244,13 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             || shell::panel(outliner::OutlinerPanel::default()),
         ),
         entry(
+            TYPES,
+            Message {
+                message_id: "ab-panel-types",
+            },
+            || shell::panel(type_panel::TypePanel::default()),
+        ),
+        entry(
             SETTINGS,
             Message {
                 message_id: "ab-panel-settings",
@@ -390,19 +401,19 @@ fn menu() -> Result<Menu> {
 pub fn config(seed: u64) -> Result<ShellConfig> {
     let right = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.55,
+        fraction: 0.26,
         first: Box::new(tabs(&[OUTLINER])),
-        second: Box::new(tabs(&[PROPERTIES, SETTINGS])),
+        second: Box::new(tabs(&[PROPERTIES, TYPES, SETTINGS])),
     };
     let top = Dock::Split {
         axis: Axis::Horizontal,
-        fraction: 0.72,
+        fraction: 0.62,
         first: Box::new(tabs(&[VIEWPORT])),
         second: Box::new(right),
     };
     let root = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.78,
+        fraction: 0.82,
         first: Box::new(top),
         second: Box::new(tabs(&[COMMAND_LINE])),
     };

@@ -155,13 +155,88 @@ fn the_house_exports_without_loss_and_deterministically() {
     assert_eq!(first.bytes, second.bytes);
     assert!(!first.report.has_loss(), "{:?}", first.report);
     assert_eq!(first.report.summary.approximated, 0);
-    // 9 walls, 1 door, 2 windows and 3 floors; the three openings are not counted.
+    // 9 walls, 1 door, 2 windows and 3 floors; the three openings are not counted. The writer
+    // also counts the openings and the element types of the document.
     assert_eq!(first.elements, 15);
-    assert_eq!(first.report.summary.mapped, 18);
+    let types: usize = archbuilder_model::element_type::TypeKind::ALL
+        .iter()
+        .map(|k| archbuilder_model::element_type::of_kind(&house.snapshot(), *k).len())
+        .sum();
+    assert_eq!(
+        first.report.summary.mapped,
+        18 + u64::try_from(types).unwrap()
+    );
     assert_eq!(
         first.report.header.time.as_deref(),
         Some("2026-01-02T03:04:05")
     );
+}
+
+/// Every element type is written with its kind; walls and floors take their type's layer set
+/// with a usage, walls state whether they are external and load-bearing.
+#[test]
+fn types_layer_sets_and_wall_flags_are_exported() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let wall = spatial::objects(&snapshot, WALL)[0].id;
+    house.run(
+        "archbuilder.type.assign",
+        json!({"type": "Exterior masonry cavity", "kind": "wall", "objects": [wall]}),
+    );
+    let snapshot = house.snapshot();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(!exported.report.has_loss(), "{:?}", exported.report);
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let views = file.typed_views(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    // Every wall, floor, door and window has a type of its kind.
+    let typed = |entity: &str| {
+        views
+            .types
+            .iter()
+            .filter(|t| t.element_type.type_name == entity)
+            .count()
+    };
+    assert_eq!(typed("IFCWALLTYPE"), 9);
+    assert_eq!(typed("IFCSLABTYPE"), 3);
+    assert_eq!(typed("IFCDOORTYPE"), 1);
+    assert_eq!(typed("IFCWINDOWTYPE"), 2);
+    let cavity = views
+        .types
+        .iter()
+        .find(|t| t.element.global_id.as_deref() == Some(&*global_id(wall.as_u128())))
+        .unwrap();
+    assert_eq!(
+        cavity.element_type.name.as_deref(),
+        Some("Exterior masonry cavity")
+    );
+    // The cavity wall's layer set has its six layers, the membrane without thickness.
+    let layers: Vec<f64> = file
+        .instances_of("IFCMATERIALLAYER")
+        .filter_map(|i| match i.records[0].parameters[1] {
+            arc_io_ifc::Parameter::Real(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        layers
+            .windows(6)
+            .any(|w| w == [0.1, 0.05, 0.05, 0.0, 0.15, 0.015])
+    );
+    // One usage per wall and floor, and the wall flags in Pset_WallCommon.
+    assert_eq!(file.instances_of("IFCMATERIALLAYERSETUSAGE").count(), 12);
+    let flags: Vec<&arc_io_ifc::PropertySet> = views
+        .property_sets
+        .iter()
+        .filter(|p| p.definition.name.as_deref() == Some("Pset_WallCommon"))
+        .collect();
+    assert_eq!(flags.len(), 9);
+    assert!(flags.iter().any(|p| {
+        p.properties
+            .iter()
+            .any(|q| q.name.as_deref() == Some("LoadBearing"))
+    }));
 }
 
 #[test]
@@ -431,9 +506,23 @@ fn body_volumes_and_quantities_equal_the_derived_volumes() {
 fn a_casement_window_is_reported_as_approximated() {
     let house = House::new();
     let window = spatial::objects(&house.snapshot(), WINDOW)[0].id;
+    // The operation comes from the type: a copy of the window's type that opens.
+    let snapshot = house.snapshot();
+    let own = archbuilder_model::element_type::type_of_object(
+        &snapshot,
+        &spatial::get(&snapshot, window).unwrap(),
+    )
+    .unwrap()
+    .1
+    .id;
+    let copy = house.run("archbuilder.type.duplicate", json!({"type": own}));
     house.run(
-        "archbuilder.property.set",
-        json!({"objects": [window], "field": "operation", "value": "casement"}),
+        "archbuilder.type.set",
+        json!({"type": copy["type"], "operation": "casement"}),
+    );
+    house.run(
+        "archbuilder.type.assign",
+        json!({"type": copy["type"], "objects": [window]}),
     );
     let exported = export_ifc(&house.snapshot(), &options()).unwrap();
     assert!(!exported.report.has_loss());

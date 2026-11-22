@@ -32,11 +32,24 @@ pub enum LocationLine {
     Exterior,
     /// The interior face: the wall's body lies on the left of the baseline's direction.
     Interior,
+    /// The middle of the core layers of the wall's type.
+    CoreCenter,
+    /// The exterior face of the core.
+    CoreExterior,
+    /// The interior face of the core.
+    CoreInterior,
 }
 
 impl LocationLine {
     /// Every location line, in code order.
-    pub const ALL: [Self; 3] = [Self::Center, Self::Exterior, Self::Interior];
+    pub const ALL: [Self; 6] = [
+        Self::Center,
+        Self::Exterior,
+        Self::Interior,
+        Self::CoreCenter,
+        Self::CoreExterior,
+        Self::CoreInterior,
+    ];
 
     /// The name of the variant in the wall record.
     #[must_use]
@@ -45,6 +58,9 @@ impl LocationLine {
             Self::Center => "center",
             Self::Exterior => "exterior",
             Self::Interior => "interior",
+            Self::CoreCenter => "core_center",
+            Self::CoreExterior => "core_exterior",
+            Self::CoreInterior => "core_interior",
         }
     }
 
@@ -55,6 +71,9 @@ impl LocationLine {
             Self::Center => 0,
             Self::Exterior => 1,
             Self::Interior => 2,
+            Self::CoreCenter => 3,
+            Self::CoreExterior => 4,
+            Self::CoreInterior => 5,
         }
     }
 
@@ -157,8 +176,11 @@ pub struct Wall {
     pub start: [f64; 2],
     /// The baseline's end point.
     pub end: [f64; 2],
-    /// The thickness.
+    /// The thickness: the total of the type's layers.
     pub thickness: f64,
+    /// The thickness of the type's layers outside the core: on the exterior side, then on the
+    /// interior side. Zero for a wall that is all core.
+    pub core: [f64; 2],
     /// The height above the base.
     pub height: f64,
     /// The base's distance above the storey's level.
@@ -184,6 +206,10 @@ impl Wall {
             start: [m(wall::START_X)?, m(wall::START_Y)?],
             end: [m(wall::END_X)?, m(wall::END_Y)?],
             thickness: m(wall::THICKNESS)?,
+            core: [
+                m(wall::CORE_EXTERIOR).unwrap_or(0.0),
+                m(wall::CORE_INTERIOR).unwrap_or(0.0),
+            ],
             height: m(wall::HEIGHT)?,
             base_offset: m(wall::BASE_OFFSET)?,
             location,
@@ -270,11 +296,25 @@ impl Wall {
     /// baseline's direction: `(low, high)`, with `high - low` the thickness.
     #[must_use]
     pub fn extent(&self) -> (f64, f64) {
-        match self.location {
-            LocationLine::Center => (-self.thickness / 2.0, self.thickness / 2.0),
-            LocationLine::Exterior => (-self.thickness, 0.0),
-            LocationLine::Interior => (0.0, self.thickness),
-        }
+        let t = self.thickness;
+        // Where the line lies, measured from the interior face toward the exterior one.
+        let [exterior, interior] = self.core;
+        let line = match self.location {
+            LocationLine::Center => t / 2.0,
+            LocationLine::Exterior => t,
+            LocationLine::Interior => 0.0,
+            LocationLine::CoreCenter => (interior + t - exterior) / 2.0,
+            LocationLine::CoreExterior => t - exterior,
+            LocationLine::CoreInterior => interior,
+        };
+        (-line, t - line)
+    }
+
+    /// The extent of the core across the baseline, like [`Self::extent`].
+    #[must_use]
+    pub fn core_extent(&self) -> (f64, f64) {
+        let (low, high) = self.extent();
+        (low + self.core[1], high - self.core[0])
     }
 
     /// The same wall with another location line, in the same physical position: the baseline moves
@@ -370,6 +410,82 @@ impl Wall {
     }
 }
 
+impl Wall {
+    /// The lines between the layers of the wall's type `layers` in plan, inside the joined
+    /// footprint `footprint` (corners as [`Self::plain_footprint`] orders them), each with whether
+    /// it is a boundary of the core. The faces of the wall are not among them, layers without
+    /// thickness add no second line, and the stretches `gaps` along the baseline (distances from
+    /// its start: the openings) are left out.
+    #[must_use]
+    pub fn layer_lines(
+        &self,
+        footprint: [[f64; 2]; 4],
+        layers: &crate::element_type::Layers,
+        gaps: &[(f64, f64)],
+    ) -> Vec<([[f64; 2]; 2], bool)> {
+        let (low, high) = self.extent();
+        let length = self.length();
+        if high - low <= 0.0 || length <= 0.0 {
+            return Vec::new();
+        }
+        let u = [
+            (self.end[0] - self.start[0]) / length,
+            (self.end[1] - self.start[1]) / length,
+        ];
+        let along = |p: [f64; 2]| (p[0] - self.start[0]) * u[0] + (p[1] - self.start[1]) * u[1];
+        let lerp =
+            |a: [f64; 2], b: [f64; 2], t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        // Each boundary's distance from the exterior face, once, with whether the core starts or
+        // ends there.
+        let mut offsets: Vec<(f64, bool)> = Vec::new();
+        let mut at = 0.0;
+        for (k, layer) in layers
+            .layers
+            .iter()
+            .enumerate()
+            .take(layers.layers.len().saturating_sub(1))
+        {
+            at += layer.thickness;
+            let core = k + 1 == layers.core.0 || k + 1 == layers.core.1;
+            match offsets.last_mut() {
+                Some(last) if (last.0 - at).abs() < 1e-9 => last.1 |= core,
+                _ => offsets.push((at, core)),
+            }
+        }
+        let mut out = Vec::new();
+        for (offset, core) in offsets {
+            if offset <= 1e-9 || offset >= high - low - 1e-9 {
+                continue;
+            }
+            let t = offset / (high - low);
+            let from = lerp(footprint[3], footprint[0], t);
+            let to = lerp(footprint[2], footprint[1], t);
+            let (a, b) = (along(from), along(to));
+            if b - a <= 1e-9 {
+                continue;
+            }
+            let point = |d: f64| lerp(from, to, (d - a) / (b - a));
+            let mut start = a;
+            let mut cuts: Vec<(f64, f64)> = gaps
+                .iter()
+                .copied()
+                .filter(|g| g.1 > a && g.0 < b)
+                .collect();
+            cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
+            for (g0, g1) in cuts {
+                if g0 > start {
+                    out.push(([point(start), point(g0)], core));
+                }
+                start = start.max(g1);
+            }
+            if b > start {
+                out.push(([point(start), point(b)], core));
+            }
+        }
+        out
+    }
+}
+
 /// The index of the face of `solid` that carries `tag`.
 #[must_use]
 pub fn face_index(solid: &Polyhedron, tag: FaceTag) -> Option<usize> {
@@ -386,6 +502,7 @@ mod tests {
             start: [0.0, 0.0],
             end: [4.0, 0.0],
             thickness: 0.2,
+            core: [0.0, 0.0],
             height: 3.0,
             base_offset: 0.0,
             location: LocationLine::Exterior,
@@ -408,6 +525,7 @@ mod tests {
             start: [1.0, 2.0],
             end: [4.0, 6.0],
             thickness: 0.3,
+            core: [0.05, 0.02],
             height: 2.5,
             base_offset: 0.1,
             location,
@@ -452,6 +570,38 @@ mod tests {
             assert!((side(face) - high).abs() < 1e-9, "{location:?}");
             assert!((side(interior) - low).abs() < 1e-9, "{location:?}");
         }
+    }
+
+    #[test]
+    fn layer_lines_lie_between_the_layers_and_skip_openings() {
+        use crate::element_type::{Function, Layer, Layers};
+        let wall = Wall {
+            thickness: 0.3,
+            core: [0.1, 0.05],
+            ..wall(LocationLine::Exterior)
+        };
+        let wall = Wall {
+            start: [0.0, 0.0],
+            end: [4.0, 0.0],
+            ..wall
+        };
+        let layers = Layers {
+            layers: vec![
+                Layer::new(Function::Finish, "a", 0.1),
+                Layer::new(Function::Membrane, "m", 0.0),
+                Layer::new(Function::Structure, "b", 0.15),
+                Layer::new(Function::Finish, "c", 0.05),
+            ],
+            core: (2, 3),
+        };
+        let lines = wall.layer_lines(wall.plain_footprint(), &layers, &[(1.0, 2.0)]);
+        // Two boundaries (the membrane adds none), both of the core, each cut by the opening.
+        assert_eq!(lines.len(), 4);
+        assert!(lines.iter().all(|(_, core)| *core));
+        // The exterior face is the baseline; the first boundary is 0.1 m inside it.
+        assert!((lines[0].0[0][1] + 0.1).abs() < 1e-9);
+        assert!((lines[0].0[1][0] - 1.0).abs() < 1e-9);
+        assert!((lines[2].0[0][1] + 0.25).abs() < 1e-9);
     }
 
     #[test]

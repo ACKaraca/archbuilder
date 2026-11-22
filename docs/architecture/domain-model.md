@@ -70,12 +70,14 @@ meters:
 |---|---|---|
 | `name` | Unique within the storey, `Wall <n>` by default | Not blank |
 | `start_x`, `start_y`, `end_x`, `end_y` | The baseline's two points, project coordinates | Within 100 km of the origin; the baseline is at least 1 mm long |
-| `thickness` | Distance between the two faces | 1 mm to 5 m; 0.2 m by default |
+| `thickness` | Distance between the two faces: the total of the wall type's layers | 1 mm to 5 m; written only with the type (schema 1.2 makes it a copy of the type) |
 | `height` | Height above the base of an unconnected wall; the fallback of a constrained one | 10 mm to 1000 m; 3 m by default |
 | `top_level` | The level the top is constrained to; absent for an unconnected wall | Optional reference to a level, cleared when the level is deleted; by default the level of the next higher storey, when there is one |
 | `base_offset` | The base's distance above the storey's level | -1000 m to 1000 m; 0 by default |
 | `start_join`, `end_join` | How each end joins: `auto`, `butt`, `square` or `disallowed` (schema 1.1; absent in older files, read as `auto`) | `auto` by default; the only authored part of a join |
-| `location_line` | Which line of the wall the baseline is: `center`, `exterior` (the exterior face) or `interior` (the interior face) | `center` by default; changing it keeps the wall's physical position: the stored baseline moves across by the difference of the offsets |
+| `location_line` | Which line of the wall the baseline is: `center`, `exterior` (the exterior finish face), `interior` (the interior finish face), `core_center`, `core_exterior` or `core_interior` (the middle and the faces of the type's core layers; schema 1.2) | `center` by default; changing it keeps the wall's physical position: the stored baseline moves across by the difference of the offsets, and the joins are kept as a move keeps them (neighbors stretch along their own lines to the new corners), so the rooms and floors around the wall stay |
+| `wall_type` | The wall type (schema 1.2) | A reference to a wall type of the project; a type in use cannot be deleted; absent only in files from before types until they are upgraded |
+| `core_exterior`, `core_interior` | The thickness of the type's layers outside the core on the exterior and the interior side (schema 1.2) | Copies of the type, written only with it; 0 when absent |
 
 The solid is derived, never stored: a prism over the rectangle of the baseline and the thickness,
 from the storey's level elevation plus the base offset, up by the height. With a `top_level` the
@@ -105,7 +107,7 @@ that node stay square; the volume, the property grid and `inspect` use the joine
 closed rectangle counts each corner once. The viewport extracts the walls of a storey again when
 any of them is created, changed or deleted.
 
-Known limits: walls have no constraints, types, layers or curves, and the only inserts are the doors and windows below; a wall that
+Known limits: walls have no constraints, layer wrapping at ends and openings, or curves, and the only inserts are the doors and windows below; a wall that
 crosses another without ending on it is not joined; a node of three or more walls without a
 straight run (a Y) leaves a small notch at its center; styles other than `auto` apply only at a
 corner of two walls and at a T. The viewport extracts a wall again when its storey or the level of its storey changes. A storey
@@ -127,10 +129,11 @@ inserts back. Authored data only, lengths in meters, one layout for both kinds:
 |---|---|---|
 | `name` | Unique among the doors (or windows) of the wall, `Door <n>` or `Window <n>` by default | Not blank |
 | `distance` | From the baseline's start to the center of the opening | 0 to 100 km; the opening lies in the clear span (below) |
-| `width`, `height` | Size of the opening | 0.1 m to 20 m; 0.9 by 2.1 m for a door, 1.2 by 1.2 m for a window by default |
-| `sill` | Bottom of the opening above the wall's base | 0 to 100 m; 0 for a door, 0.9 m for a window by default; the head stays 10 mm below the wall's top |
-| `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall (never more than the thickness) | 10 mm to 0.5 m and 10 mm to 2 m; 50 mm and 100 mm by default; the frame leaves at least 20 mm clear |
-| `operation` | `single_swing` for a door; `fixed` or `casement` for a window | The kind decides what is allowed |
+| `width`, `height` | Size of the opening | 0.1 m to 20 m; copies of the type, written only with it |
+| `sill` | Bottom of the opening above the wall's base | 0 to 100 m; the type's default sill when placed or retyped, then the instance's own; the head stays 10 mm below the wall's top |
+| `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall | 10 mm to 0.5 m and 10 mm to 2 m; copies of the type; the solids, the plan symbol and the IFC body use the depth clamped to the host wall's thickness; the frame leaves at least 20 mm clear |
+| `operation` | `single_swing`, `double_swing` or `sliding` for a door; `fixed`, `casement` or `sliding` for a window | A copy of the type; the kind decides what is allowed |
+| `insert_type` | The door or window type (schema 1.1) | A reference to a type of the kind; absent only in files from before types until they are upgraded |
 | `hand` | `left` or `right`: the hinge side seen from the side the leaf swings toward | `left` by default |
 | `facing` | `exterior` or `interior`: the side of the wall the leaf swings toward | `exterior` by default |
 
@@ -149,15 +152,15 @@ placed on the storey with its origin at the baseline's start, base offset up and
 baseline. Its body is the extrusion of the joined footprint by the derived height (the corners the
 joins give, so the volume is the one of `inspect`). `Qto_WallBaseQuantities` holds `Length` (baseline),
 `Width`, `Height`, `GrossVolume` (the joined prism) and `NetVolume` (the volume with the openings
-cut, the same rule as the property grid). The wall type is `NOTDEFINED` and no `Pset_WallCommon` is
-written: the model has no external flag, and writing `IsExternal` either way would state what is not
-known. Each door or window maps to an `IfcOpeningElement` (identifier derived from the insert's with
+cut, the same rule as the property grid). The wall's own `PredefinedType` stays `NOTDEFINED`; its type
+carries one (see element types below), and `Pset_WallCommon` holds `IsExternal` and `LoadBearing`
+from the type's function flags. Each door or window maps to an `IfcOpeningElement` (identifier derived from the insert's with
 the role `INSERT_OPENING`) that voids the wall and is filled by an `IfcDoor` or `IfcWindow`, both
 placed at the center of the opening at the sill. The opening's body is the prism of the width and the
 height through the wall's thickness. The insert's body is one faceted B-rep of the frame bars and the
 leaf or pane (and a door's handle), the same solids the viewport draws; they are separate closed
 solids in one shell. The insert's placement has its y axis toward the side a door swings to, so a
-door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; windows are `SINGLE_PANEL`. IFC4 has no operation on the window itself, so the operation,
+door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; a double door is `DOUBLE_DOOR_SINGLE_SWING`, a sliding door `SLIDING_TO_RIGHT` (left hand) or `SLIDING_TO_LEFT`; fixed and casement windows are `SINGLE_PANEL`, sliding windows `DOUBLE_PANEL_VERTICAL`. IFC4 has no operation on the window itself, so the operation,
 hand and facing of a casement window are reported as approximated and a fixed window loses nothing.
 `OverallWidth` and `OverallHeight` come from `width` and `height`.
 
@@ -169,23 +172,26 @@ handle opposite the hinge on the facing side) or the glass pane (window), drawn 
 typed distance along the selected wall; the options width, height, sill, hand and facing; chains
 continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_hand` and
 `archbuilder.insert.flip_facing` flip the selected ones, and `archbuilder.object.delete` deletes the selected
-inserts. Known limits: no types or families, no room relations,
-arched or non-rectangular openings and double leaves are not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
+inserts. A double door has two leaves meeting in the middle, a sliding door or window two panels in
+two tracks. Known limits: no families, no room relations, arched or non-rectangular openings are
+not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
 
 #### The floor of the first slice
 
 The first implemented `Floor` is a reduced record, `archbuilder.floor`, owned by its storey (a
-storey that has floors cannot be deleted). It has no type, layers, slope or shape points yet.
+storey that has floors cannot be deleted). Its type gives its layers; it has no slope or shape
+points yet.
 
 | Field | Meaning | Rule |
 |---|---|---|
 | `name` | Unique within the storey, `Slab <n>` by default | Not blank |
-| `thickness` | The slab's thickness; the slab hangs down from its top | 1 mm to 5 m; 0.2 m by default |
+| `thickness` | The slab's thickness, the total of its type's layers; the slab hangs down from its top | 1 mm to 5 m; a copy of the type, written only with it |
 | `top_offset` | The top's distance above the storey's level | -1000 m to 1000 m; 0 by default |
 | `vertices` | The boundary: the outer loop, then the holes, each loop in order, straight edges only. Each vertex is a record of the loop number (0 outer), the authored point, and the optional association of the edge that starts there: `wall` (reference, cleared when the wall is deleted), `face` (`interior`, `exterior` or `center`) and `offset` | At most 1000 vertices and 64 loops |
+| `floor_type` | The floor type (schema 1.1) | A reference to a floor type of the project; absent only in files from before types until they are upgraded |
 
 An edge associated with a wall lies on the line of the chosen face of that wall (the center face is
-the wall's center line, the core center once walls have layers), moved by the offset; a vertex that
+the center line of the wall type's core), moved by the offset; a vertex that
 touches an associated edge is the meeting point of the lines of its two edges, so the floor follows
 a wall that moves or changes thickness. The interior and exterior faces are the ones that look into
 and away from the enclosed area, whichever way the wall was drawn. A free edge lies on the line
@@ -199,8 +205,9 @@ area of at least 1 cm², holes lie inside the outer loop and apart from each oth
 `archbuilder.floor.create` takes `points` (with optional `holes`), `walls` (a closed chain in order)
 or `picks` (points: each on a wall picks it; a single point inside a closed loop of joined walls,
 including walls that end on other walls, picks the smallest loop around it), with `face`,
-`thickness` and `offset`. `archbuilder.floor.add_hole` cuts a hole from a sketched loop. The
-property grid edits `thickness` and `top_offset` through `archbuilder.property.set` and shows the
+`type`, `thickness` (a thickness other than the type's gives the floor a one-layer type of that
+thickness) and `offset`. `archbuilder.floor.add_hole` cuts a hole from a sketched loop. The
+property grid edits the type and `top_offset` through `archbuilder.property.set` and shows the
 storey, the area, the volume and the associated walls; `inspect` lists each floor with the same
 numbers. Derived, never stored: the boundary, the area (outer loop minus holes), the volume (area
 times thickness) and the solid, a prism of the boundary from the top down by the thickness.
@@ -209,7 +216,7 @@ times thickness) and the solid, a prism of the boundary from the top down by the
 
 `archbuilder.room` is owned by its storey (a storey that has rooms cannot be deleted). A room is
 its placement point; everything else is derived from the walls around it. Every wall bounds rooms
-in this slice; there are no separation lines, openings do not split a boundary, and linked documents
+unless its type is not room-bounding; there are no separation lines, openings do not split a boundary, and linked documents
 do not bound.
 
 | Field | Meaning | Rule |
@@ -438,7 +445,11 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
 - **Typed shortcuts.** Letters typed while the viewport has the focus or the pointer is over it go to
   the command line, where the text shows as it accumulates. With no command running, a complete
   shortcut starts its command at once, unless a longer command name begins with it (`wa` waits
-  because `wall` is a name; `mv` starts at once). The names are read from the registered commands
+  because `wall` is a name; `mv` starts at once). An empty Enter that is the very next input after a shortcut
+  started a command confirms the shortcut and is dropped, so it does not end that command; it is
+  taken as usual when anything came between (a click, a key, a change of view), when the command
+  has moved past its first prompt or already finished (Enter then repeats), and when Enter
+  answers that prompt (a default, a selection to take, paste in place). The names are read from the registered commands
   (identifier parts, aliases, labels in both languages), so a new command, such as `save`, never
   has a shortcut fire early. Anything else waits for Enter or Space: Enter
   starts the shortcut the text is, else the command name or alias it names (`wall`, `m`, `duvar`,
@@ -523,7 +534,8 @@ the sketch or the picks and asks again, the third ends the tool.
 IFC mapping as implemented: a floor maps to `IfcSlab` with `PredefinedType` `FLOOR`, contained in the
 `IfcBuildingStorey` of its storey. Its body is an extruded area solid of the boundary (the holes as
 inner curves) hanging from the top: the profile lies at the storey's level plus `top_offset` and the
-extrusion runs down by the thickness. `Qto_SlabBaseQuantities` holds `Width` (the thickness),
+extrusion runs down by the thickness. The slab takes its type (below) and a layer set usage of its type's layers from the top down.
+`Qto_SlabBaseQuantities` holds `Width` (the thickness),
 `GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
 the rule of `inspect`).
 
@@ -538,6 +550,90 @@ save dialog for IFC files that starts with the document's name, then runs with t
 relative path resolves against the folder of the saved document, else the documents or home folder.
 When no file dialog opens or the user cancels, the history says that no file was chosen and the
 typed form with a path still works.
+
+#### The element types of the first slice
+
+Wall, floor, door and window types are records the project owns (`archbuilder.wall_type`,
+`archbuilder.floor_type`, `archbuilder.door_type`, `archbuilder.window_type`, schema 1.0), addressed by
+identifier and edited only through commands. Names are unique per kind, compared as all names are.
+Each wall, floor, door and window refers to one type of its kind. The values the type decides are
+also stored on the instance (a wall's thickness and core offsets, a floor's thickness, an insert's
+size, frame and operation) so that its geometry reads from the instance alone; only the commands
+that assign or change a type write them, and every commit refuses an instance whose copies differ
+from its type (`ab.model.type_mismatch`). Editing them on the instance is refused
+(`ab.cmd.field_from_type`); height, offsets, location line, joins, hand, facing and sill stay the
+instance's own.
+
+| Type | Fields | Rules |
+|---|---|---|
+| Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding` | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
+| Floor type | `name`, `layers` from the top down, `core_start`, `core_end` | As a wall type |
+| Door type, window type | `name`, `width`, `height`, `frame_width`, `frame_depth`, `operation`, `sill` (the default sill height of new instances) | The ranges of an insert; the frame leaves an opening; the operation suits the kind |
+
+A new project starts with three wall types (a generic 200 mm type, an exterior masonry cavity type
+and a 100 mm interior partition), two floor types (generic 200 mm, a concrete slab with screed and
+finish), three door types (single 900 × 2100 mm, double 1500 × 2100 mm, sliding 1800 × 2100 mm) and three
+window types (1200 × 1500 mm on a 900 mm sill, 600 × 600 mm on a 1500 mm sill, sliding 1800 × 1200 mm
+on a 900 mm sill). Their names and material names are
+formatted in the interface language from the commands' message catalog when the project is made
+and are user data afterwards.
+
+Commands, one transaction and one undo step each: `archbuilder.type.set` changes a type's name,
+layers, core, flags, size, operation or default sill, and in the same transaction writes the new
+copies on every instance, so walls rethicken around their location lines, joins re-derive, floors
+that follow wall faces move, openings are checked against the new walls (a change that would break
+one is refused, naming it) and rooms re-derive; `archbuilder.type.duplicate` copies a type under the
+next free `<name> (n)`; `archbuilder.type.delete` refuses the last type of a kind and a type in use
+without a `replacement`, which its instances get first; `archbuilder.type.assign` retypes the given
+or selected objects of the type's kind (a door or window also takes the type's sill);
+`archbuilder.type.match` gives them the type of a `source` object; `archbuilder.type.upgrade` gives
+a document without types the default set, takes the type's values again for instances whose
+copies differ from their type (a file edited by hand), and gives every instance without a type a
+matching one. `archbuilder.wall.create`, `archbuilder.floor.create`
+and the insert place commands take a `type` (name or identifier); without one they take the
+document's generic type of the kind. A `thickness`, `width` or `height` other than the type's gives
+the new object a type of that size: an existing one that matches, else a new `Generic <mm>`, `Door
+<w> × <h>` or `Window <w> × <h>` type. Pasted copies keep their type when it exists in the document
+and matches, else get a matching one in the same way. `archbuilder.property.set` of `type` takes a
+name, an identifier or the number of the type in the list of its kind.
+
+The `.archb` addition is backward compatible: the new type records and the appended instance fields
+(wall 1.2, floor 1.1, door and window 1.1) are optional, so files from before types load unchanged.
+When the application opens a file whose instances lack a type or disagree with it, it runs
+`archbuilder.type.upgrade` once as the document's starting content, no undo step: the default set,
+then one type per distinct wall or floor thickness (one structure layer) and per distinct door or
+window size not matched by an existing type; saving writes them. The history says how many objects got types and, separately, how many took their type's values
+again.
+The headless CLI reads such a file without changing it; its instances then have no type.
+
+In the application the toolbar's type selector lists the types of the running wall, floor, door or
+window tool and sets the type it places next (the prompt in progress takes it at once), and without
+a tool lists the types of the selection's kind and retypes all selected objects of that kind. The
+property grid shows the type as a choice after the name and the values the type decides read-only;
+the outliner shows the type's name after the object's. The Types panel shows the type of the
+selected object (or a kind and type chosen in it) with its name, flags, a table of its layers
+(function, material, thickness in millimeters, core marks; add, remove, move up and down), the total
+thickness and a section strip drawn to scale with the core boundary in red; or a door's or window's
+size, frame, operation and sill. Edits are checked as they are typed and applied in one step;
+duplicate, rename and delete (with the replacement type for a type in use) are buttons. Create
+similar (`createsimilar`, typed `CS`, the context menu) starts the tool of the selected object with
+its type; match type (`matchtype`, `MT`, the context menu) takes the selected object as the source,
+else asks for one, and gives each object clicked next its type until Escape; edit type
+(`edittype`, the context menu) brings the Types panel to the front; select all of this type
+(`selecttype`, the context menu) selects every shown object whose type is the type of a selected
+one. After Duplicate the panel shows the copy. In a view from above each wall
+shows the boundaries between its type's layers at the plan cut (1 m above its base) as thin
+dashed lines and the core boundaries solid, interrupted at the openings the cut passes.
+
+IFC mapping: every type is written (`IfcWallType`, `IfcSlabType` `FLOOR`, `IfcDoorType` `DOOR`,
+`IfcWindowType` `WINDOW`) and assigned to its occurrences with `IfcRelDefinesByType`. A wall type is
+`PARTITIONING` when it is interior and not load-bearing, else `STANDARD`. Wall and floor types carry
+an `IfcMaterialLayerSet` of their layers (the material, the thickness, the category `LoadBearing`,
+`Insulation` or `Finish` by function, ventilation unknown); each wall gets an
+`IfcMaterialLayerSetUsage` along its placement's y axis, negative sense, starting at its exterior
+face, and each floor one along z, negative sense, from its top. A door type's operation is
+`DOUBLE_DOOR_SINGLE_SWING`, or the user-defined `SINGLE_SWING` or `SLIDING` (the hand is the
+occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 
 ### Types and families
 

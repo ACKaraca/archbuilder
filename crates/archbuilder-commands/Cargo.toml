@@ -13,6 +13,8 @@ arc-base = { workspace = true }
 arc-command = { workspace = true, features = ["headless"] }
 arc-doc = { workspace = true }
 archbuilder-model = { path = "../archbuilder-model" }
+fluent-bundle = { workspace = true }
+unic-langid = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

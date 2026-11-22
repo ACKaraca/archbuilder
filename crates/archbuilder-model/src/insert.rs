@@ -34,12 +34,16 @@ pub const HEAD_CLEARANCE: f64 = 0.01;
 /// The least distance between the openings of two inserts of one wall, in meters.
 pub const MIN_GAP: f64 = 0.01;
 /// The least clear size left inside the frame bars, in meters.
-const MIN_CLEAR: f64 = 0.02;
+pub const MIN_CLEAR: f64 = 0.02;
 /// How far the cutting prism reaches beyond the faces of the wall, in meters.
 const OVERSHOOT: f64 = 0.5;
 /// The thickness of a door leaf and of a glass pane, in meters.
 const LEAF: f64 = 0.04;
 const PANE: f64 = 0.01;
+/// The gap between the two leaves of a double door, in meters.
+const GAP: f64 = 0.005;
+/// How far the two panels of a sliding door or window overlap, in meters.
+const OVERLAP: f64 = 0.05;
 /// The chord of the prisms; every outline is straight.
 const CHORD: f64 = 0.01;
 /// The most inserts one wall can hold.
@@ -75,49 +79,6 @@ impl Kind {
     }
 }
 
-macro_rules! coded {
-    ($(#[$meta:meta])* $name:ident { $($(#[$vmeta:meta])* $variant:ident = $code:literal, $text:literal;)+ }) => {
-        $(#[$meta])*
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-        pub enum $name {
-            $( $(#[$vmeta])* $variant, )+
-        }
-
-        impl $name {
-            /// Every variant, in code order.
-            pub const ALL: [Self; coded!(@count $($variant)+)] = [$(Self::$variant),+];
-
-            /// The name of the variant in the record.
-            #[must_use]
-            pub const fn name(self) -> &'static str {
-                match self { $( Self::$variant => $text, )+ }
-            }
-
-            /// The code stored in the record.
-            #[must_use]
-            pub const fn code(self) -> u32 {
-                match self { $( Self::$variant => $code, )+ }
-            }
-
-            /// The variant of a stored code; the default for a code that names none.
-            #[must_use]
-            pub fn from_code(code: u32) -> Self {
-                Self::ALL.into_iter().find(|v| v.code() == code).unwrap_or_default()
-            }
-
-            /// The variant of a stored value.
-            fn of_field(values: &[Option<Value>], at: usize) -> Self {
-                match values.get(at) {
-                    Some(Some(Value::Enum(code))) => Self::from_code(*code),
-                    _ => Self::default(),
-                }
-            }
-        }
-    };
-    (@count) => { 0 };
-    (@count $head:ident $($tail:ident)*) => { 1 + coded!(@count $($tail)*) };
-}
-
 coded! {
     /// How an insert operates.
     Operation {
@@ -128,6 +89,22 @@ coded! {
         Fixed = 1, "fixed";
         /// A window with a leaf on hinges.
         Casement = 2, "casement";
+        /// A door with two leaves on hinges at both jambs.
+        DoubleSwing = 3, "double_swing";
+        /// A door or window whose leaf slides along the wall.
+        Sliding = 4, "sliding";
+    }
+}
+
+impl Operation {
+    /// Whether an insert of `kind` can operate this way: a door swings with one or two leaves or
+    /// slides; a window is fixed, casement or sliding.
+    #[must_use]
+    pub const fn allowed(self, kind: Kind) -> bool {
+        match kind {
+            Kind::Door => matches!(self, Self::SingleSwing | Self::DoubleSwing | Self::Sliding),
+            Kind::Window => matches!(self, Self::Fixed | Self::Casement | Self::Sliding),
+        }
     }
 }
 
@@ -370,11 +347,7 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     let host = types::text(&wall_object.values, 0)
         .unwrap_or_default()
         .to_owned();
-    let allowed = match item.kind {
-        Kind::Door => item.operation == Operation::SingleSwing,
-        Kind::Window => item.operation != Operation::SingleSwing,
-    };
-    if !allowed {
+    if !item.operation.allowed(item.kind) {
         out.push(
             Error::new(codes::INSERT_OPERATION)
                 .with_arg("name", name.clone())
@@ -633,15 +606,34 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
         Kind::Door => (Role::Panel, LEAF),
         Kind::Window => (Role::Glass, PANE),
     };
-    out.push((
-        role,
-        boxed(
-            clear.0,
-            (middle - thick / 2.0, middle + thick / 2.0),
-            clear.1,
-        )?,
-    ));
-    if item.kind == Kind::Door && item.height >= 1.3 && item.width >= 0.4 {
+    let across = |offset: f64| (middle + offset - thick / 2.0, middle + offset + thick / 2.0);
+    let (c0, c1) = clear.0;
+    let mid = (c0 + c1) / 2.0;
+    match item.operation {
+        // Two leaves meeting in the middle.
+        Operation::DoubleSwing => {
+            out.push((role, boxed((c0, mid - GAP / 2.0), across(0.0), clear.1)?));
+            out.push((role, boxed((mid + GAP / 2.0, c1), across(0.0), clear.1)?));
+        }
+        // Two panels side by side in two tracks, overlapping a little in the middle.
+        Operation::Sliding => {
+            let track = (half - thick / 2.0).clamp(0.0, thick);
+            out.push((
+                role,
+                boxed((c0, mid + OVERLAP / 2.0), across(-track), clear.1)?,
+            ));
+            out.push((
+                role,
+                boxed((mid - OVERLAP / 2.0, c1), across(track), clear.1)?,
+            ));
+        }
+        _ => out.push((role, boxed(clear.0, across(0.0), clear.1)?)),
+    }
+    if item.kind == Kind::Door
+        && item.operation == Operation::SingleSwing
+        && item.height >= 1.3
+        && item.width >= 0.4
+    {
         // On the facing side of the leaf, near the edge opposite the hinge.
         let at = item.distance - item.hinge_direction() * (item.width / 2.0 - fw - 0.1);
         let face = if item.facing == Facing::Exterior {
@@ -701,7 +693,51 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
                 at(x0, middle + half),
                 at(x0, middle - half),
             ]);
+            if item.operation == Operation::Sliding {
+                let mid = item.distance;
+                lines.push(vec![
+                    at(x0 + fw, middle - 0.015),
+                    at(mid + 0.025, middle - 0.015),
+                ]);
+                lines.push(vec![
+                    at(mid - 0.025, middle + 0.015),
+                    at(x1 - fw, middle + 0.015),
+                ]);
+            } else {
+                lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]);
+            }
+        }
+        Kind::Door if item.operation == Operation::Sliding => {
+            // The panel in front of the opening, slid half open toward the hinge side.
+            let hinge = item.hinge_direction();
+            let (face, out) = if item.facing == Facing::Exterior {
+                (axes.high, 1.0)
+            } else {
+                (axes.low, -1.0)
+            };
+            let clear = item.width - 2.0 * fw;
+            let from = item.distance - hinge * (clear / 2.0);
+            let to = item.distance + hinge * clear;
+            lines.push(vec![at(from, face + out * 0.03), at(to, face + out * 0.03)]);
             lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]);
+        }
+        Kind::Door if item.operation == Operation::DoubleSwing => {
+            let (face, out) = if item.facing == Facing::Exterior {
+                (axes.high, 1.0)
+            } else {
+                (axes.low, -1.0)
+            };
+            let leaf = (item.width - 2.0 * fw) / 2.0;
+            for (hx, toward) in [(x0 + fw, 1.0), (x1 - fw, -1.0)] {
+                lines.push(vec![at(hx, face), at(hx, face + out * leaf)]);
+                let arc: Vec<[f64; 3]> = (0..=12)
+                    .map(|k| {
+                        let t = f64::from(k) / 12.0 * std::f64::consts::FRAC_PI_2;
+                        at(hx + toward * leaf * t.cos(), face + out * leaf * t.sin())
+                    })
+                    .collect();
+                lines.push(arc);
+            }
         }
         Kind::Door => {
             let hinge = item.hinge_direction();

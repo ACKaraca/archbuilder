@@ -144,7 +144,8 @@ const MAX_SYMBOLS: usize = 5_000;
 
 /// The plan symbol of each door and window: the opening across its wall, a door's open leaf and
 /// swing, a window's frame and glass line, at a cut 1 m above the wall's base, so that an insert
-/// shows in a view from above, where the wall's top hides it.
+/// shows in a view from above, where the wall's top hides it; and the lines between the layers of
+/// each wall at the same cut.
 #[must_use]
 pub fn symbols(
     snapshot: &Snapshot,
@@ -178,8 +179,61 @@ pub fn symbols(
             }
         }
     }
+    out.extend(layer_lines(snapshot, shown));
     out
 }
+
+/// The lines between the layers of each wall at the plan cut, 1 m above its base: thin dashed
+/// lines, the boundaries of the core solid. The openings the cut passes through are left out.
+fn layer_lines(
+    snapshot: &Snapshot,
+    shown: &dyn Fn(arc_base::ObjectId) -> bool,
+) -> Vec<ProductOverlay> {
+    use archbuilder_model::element_type::{Layers, TypeKind, type_of};
+    let mut out = Vec::new();
+    for object in spatial::objects(snapshot, types::WALL)
+        .iter()
+        .take(MAX_SYMBOLS)
+    {
+        if !shown(object.id) {
+            continue;
+        }
+        let (Some(wall), Some(layers)) = (
+            archbuilder_model::wall::Wall::of(snapshot, object),
+            type_of(snapshot, TypeKind::Wall, &object.values)
+                .and_then(|t| Layers::from_values(&t.values)),
+        ) else {
+            continue;
+        };
+        if layers.layers.len() < 2 {
+            continue;
+        }
+        let footprint = archbuilder_model::join::footprint_of(snapshot, object)
+            .unwrap_or_else(|| wall.plain_footprint());
+        let gaps: Vec<(f64, f64)> = archbuilder_model::insert::hosted(snapshot, object.id)
+            .into_iter()
+            .filter(|(_, i)| i.sill <= CUT && CUT <= i.top())
+            .map(|(_, i)| i.extent())
+            .collect();
+        let z = object
+            .header
+            .owner
+            .and_then(|s| spatial::get(snapshot, s))
+            .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s))
+            + wall.base_offset
+            + CUT;
+        for (line, core) in wall.layer_lines(footprint, &layers, &gaps) {
+            out.push(ProductOverlay::Path {
+                points: line.iter().map(|p| Point3::new(p[0], p[1], z)).collect(),
+                dashed: !core,
+            });
+        }
+    }
+    out
+}
+
+/// The height of the plan cut above a wall's base, in meters.
+const CUT: f64 = 1.0;
 
 /// The overlay probe of the shell: the labels of the active tab's levels.
 #[must_use]

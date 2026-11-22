@@ -1,5 +1,6 @@
 //! The outliner: the project, its site, the buildings of the site, the storeys of each
-//! building and the walls of each storey, with the doors and windows of each wall under it, as a tree labelled with the names the user gave, the highest storey at the top as in
+//! building and the walls of each storey, with the doors and windows of each wall under it, as a tree labelled with the names the user gave (a wall, floor, door or window also with its
+//! type's name in brackets), the highest storey at the top as in
 //! an elevation drawing. Selecting a row runs `archbuilder.object.select`, which selects a storey
 //! with its level; renaming a row runs `archbuilder.object.rename`.
 
@@ -47,6 +48,48 @@ fn name(object: &arc_doc::Object) -> String {
         .to_owned()
 }
 
+/// The label of a wall, floor, door or window: its name and, in brackets, its type's name.
+fn labelled(snapshot: &Snapshot, object: &arc_doc::Object) -> String {
+    match archbuilder_model::element_type::type_of_object(snapshot, object) {
+        Some((_, t)) => format!(
+            "{} [{}]",
+            name(object),
+            archbuilder_model::element_type::name(&t)
+        ),
+        None => name(object),
+    }
+}
+
+/// A rename starts from the row's label, which shows the type's name in brackets: the name the
+/// rename sets leaves that part out.
+fn without_type(snapshot: &Snapshot, mut intent: Intent) -> Intent {
+    if intent.command != OBJECT_RENAME {
+        return intent;
+    }
+    let object = intent
+        .params
+        .get("object")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| id.parse::<ObjectId>().ok())
+        .and_then(|id| spatial::get(snapshot, id));
+    let suffix = object
+        .and_then(|o| archbuilder_model::element_type::type_of_object(snapshot, &o))
+        .map(|(_, t)| format!(" [{}]", archbuilder_model::element_type::name(&t)));
+    let name = intent
+        .params
+        .get("name")
+        .and_then(serde_json::Value::as_str);
+    if let (Some(suffix), Some(name)) = (suffix, name)
+        && let Some(stripped) = name.trim_end().strip_suffix(&suffix)
+    {
+        let stripped = stripped.to_owned();
+        intent
+            .params
+            .insert("name".to_owned(), serde_json::Value::String(stripped));
+    }
+    intent
+}
+
 impl<'a> Structure<'a> {
     fn new(snapshot: &Snapshot, selection: &'a [ObjectId], language: &'a str) -> Self {
         let mut children: BTreeMap<Option<ObjectId>, Vec<(ObjectId, String)>> = BTreeMap::new();
@@ -70,7 +113,7 @@ impl<'a> Structure<'a> {
                         // "Wall 2" before "Wall 10": by length of the name, then by name.
                         let mut walls: Vec<_> = spatial::walls(snapshot, s.storey.id)
                             .iter()
-                            .map(|w| (w.id, name(w)))
+                            .map(|w| (w.id, labelled(snapshot, w)))
                             .collect();
                         walls.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
                         for (wall, _) in &walls {
@@ -78,7 +121,7 @@ impl<'a> Structure<'a> {
                             let inserts: Vec<_> =
                                 archbuilder_model::insert::hosted(snapshot, *wall)
                                     .iter()
-                                    .map(|(o, _)| (o.id, name(o)))
+                                    .map(|(o, _)| (o.id, labelled(snapshot, o)))
                                     .collect();
                             children.insert(Some(*wall), inserts);
                         }
@@ -89,7 +132,7 @@ impl<'a> Structure<'a> {
                             s.storey.id,
                         )
                         .iter()
-                        .map(|f| (f.id, name(f)))
+                        .map(|f| (f.id, labelled(snapshot, f)))
                         .collect();
                         floors.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
                         walls.extend(floors);
@@ -255,7 +298,57 @@ impl Panel for OutlinerPanel {
         }
         self.open_new(&source);
         if let Some(intent) = self.tree.show(ui, &source, &self.commands, cx.localize) {
-            cx.actions.push(Action::Intent(intent));
+            cx.actions
+                .push(Action::Intent(without_type(&snapshot, intent)));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arc_command::{Invocation, Invoker, Permission, Session, Surface};
+    use arc_doc::graph::Evaluators;
+    use arc_doc::{Document, DocumentConfig};
+
+    use super::*;
+
+    #[test]
+    fn a_rename_from_the_outliner_leaves_the_type_out_of_the_name() {
+        let document = Document::open(
+            Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
+            Arc::new(Evaluators::new()),
+            DocumentConfig {
+                workers: 0,
+                ..DocumentConfig::default()
+            },
+        )
+        .unwrap();
+        let registry = archbuilder_commands::registry().unwrap();
+        let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+        let run = |command: &str, params: serde_json::Value| {
+            Invoker::new(&registry)
+                .invoke(&document, &session, Invocation::new(command, params))
+                .unwrap()
+        };
+        run("archbuilder.project.new", serde_json::json!({}));
+        let wall = run(
+            "archbuilder.wall.create",
+            serde_json::json!({"start": [0.0, 0.0], "end": [3.0, 0.0]}),
+        )
+        .value["wall"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let snapshot = document.snapshot();
+        let rename = |name: &str| {
+            let intent = Intent::new(OBJECT_RENAME)
+                .with("object", wall.as_str())
+                .with("name", name);
+            without_type(&snapshot, intent).params["name"].clone()
+        };
+        assert_eq!(rename("Facade [Generic 200]"), "Facade");
+        assert_eq!(rename("Facade [Other]"), "Facade [Other]");
     }
 }

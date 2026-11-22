@@ -4,7 +4,8 @@
 //! finishes), an upper limit (a level, else the level above its storey, else 3 m, plus an offset)
 //! and a base offset. The boundary is never stored: it is the smallest closed loop of walls around
 //! the placement point, taken at the interior wall faces with the floor's loop finding
-//! ([`crate::floor::regions`]). Every wall bounds rooms in this slice.
+//! ([`crate::floor::regions`]). Every wall bounds rooms unless its type is not room-bounding
+//! ([`crate::floor::room_walls`]).
 //!
 //! A room is in one of three states ([`State`]). It is *enclosed* when its point lies inside a
 //! closed loop of walls, *unenclosed* when it does not, and *redundant* when another room's point
@@ -524,7 +525,7 @@ pub fn of_storey(snapshot: &Snapshot, storey: ObjectId) -> Vec<Entry> {
         .iter()
         .map(|(_, r)| (r.point, r.number.as_deref()))
         .collect();
-    let prints = footprints_ranked(&floor::storey_walls(snapshot, storey), &items);
+    let prints = footprints_ranked(&floor::room_walls(snapshot, storey), &items);
     let level = spatial::storey_elevation(snapshot, &owner);
     let above = spatial::level_above(snapshot, &owner)
         .and_then(|l| types::meters(&l.values, types::level::ELEVATION));
@@ -579,6 +580,7 @@ mod tests {
             start,
             end,
             thickness: 0.2,
+            core: [0.0, 0.0],
             height: 3.0,
             base_offset: 0.0,
             location: LocationLine::Center,

@@ -8,6 +8,7 @@
 //! the pointer and the distance along it; a typed distance goes to the wall under the pointer, else
 //! to the wall of the selection.
 
+use archbuilder_model::element_type::TypeKind;
 use std::collections::BTreeMap;
 
 use arc_base::{Error, ObjectId, Result};
@@ -63,6 +64,12 @@ pub struct State {
     pub flip_facing: bool,
     /// The inserts placed so far.
     pub placed: usize,
+    /// The type of the next insert: the type picked in the type selector, or the type the last
+    /// insert got.
+    pub insert_type: Option<String>,
+    /// The type picked in the type selector when the chain last looked; a new pick replaces
+    /// `insert_type` and the size and sill carried so far.
+    pub picked: Option<String>,
 }
 
 /// The state of the insert tool of one tab.
@@ -161,16 +168,33 @@ impl InsertTool {
             flip_hand: false,
             flip_facing: false,
             placed: 0,
+            insert_type: None,
+            picked: None,
         });
         self.next(env, run)
     }
 
     /// Starts the prompt of the next insert with the options the chain carries.
     fn start(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<Submitted> {
-        let Some(state) = &self.state else {
+        let snapshot = env.document.snapshot();
+        let Some(state) = &mut self.state else {
             return Ok(Submitted::Idle);
         };
+        let kind = match state.kind {
+            Kind::Door => TypeKind::Door,
+            Kind::Window => TypeKind::Window,
+        };
+        let picked = crate::tool_type::current_param(&snapshot, kind);
+        if picked != state.picked || state.insert_type.is_none() {
+            state.insert_type.clone_from(&picked);
+            state.picked = picked;
+            (state.width, state.height, state.sill) = (None, None, None);
+        }
+        let state = &*state;
         let mut preset = Map::new();
+        if let Some(t) = &state.insert_type {
+            preset.insert("type".into(), Value::from(t.as_str()));
+        }
         if let Some(wall) = state.wall {
             preset.insert("wall".into(), Value::from(wall.to_string()));
         }
@@ -251,12 +275,26 @@ impl InsertTool {
         state.width = number("width");
         state.height = number("height");
         state.sill = number("sill");
+        state.insert_type = value.get("type").and_then(Value::as_str).map(str::to_owned);
         // A click carries the options the person set; the flags it placed with followed the pointer.
         (state.flip_hand, state.flip_facing) = self
             .pending
             .take()
             .unwrap_or((flag("flip_hand"), flag("flip_facing")));
         state.placed += 1;
+    }
+
+    /// A type was picked in the type selector: the prompt starts again with it.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn retype(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        if self.state.is_none() {
+            return Ok(());
+        }
+        self.line.cancel();
+        let result = self.start(env, run);
+        self.follow(env, run, result)
     }
 
     /// Keeps the options the active prompt shows (width, height, sill, flips), so a refused

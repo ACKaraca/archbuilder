@@ -9,7 +9,8 @@
 //!   stair, Select all, Zoom extents, Unhide all.
 //! - Idle with a selection: Delete, Move, Copy, Rotate, Mirror; Copy to clipboard; Hide, Isolate,
 //!   Hide kind, Isolate kind, Unhide all (while something is hidden); Select all of this kind, and
-//!   when the selection holds several kinds one Keep only entry per kind; Properties.
+//!   when the selection holds several kinds one Keep only entry per kind; Create similar, Match
+//!   type and Edit type when it holds walls, floors, doors or windows; Properties.
 
 use arc_app::shell::ContextEntry;
 use arc_ui::{Intent, LineAction};
@@ -98,6 +99,18 @@ const KEEP_WINDOWS: Label = Label {
 };
 const MIRROR: Label = Label {
     message_id: "ab-menu-mirror",
+};
+const SELECT_TYPE: Label = Label {
+    message_id: "ab-menu-select-type",
+};
+const CREATE_SIMILAR: Label = Label {
+    message_id: "ab-menu-create-similar",
+};
+const MATCH_TYPE: Label = Label {
+    message_id: "ab-menu-match-type",
+};
+const EDIT_TYPE: Label = Label {
+    message_id: "ab-menu-edit-type",
 };
 const MOVE: Label = Label {
     message_id: "ab-menu-move",
@@ -200,6 +213,16 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
         ContextEntry::separator(),
         ContextEntry::command(SELECT_KIND.message_id, ui::SELECT_KIND),
     ];
+    if state
+        .kinds
+        .iter()
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW))
+    {
+        out.push(ContextEntry::command(
+            SELECT_TYPE.message_id,
+            ui::SELECT_TYPE,
+        ));
+    }
     if state.kinds.len() > 1 {
         out.extend(state.kinds.iter().map(|k| {
             ContextEntry::new(
@@ -207,6 +230,19 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
                 LineAction::Invoke(Intent::new(ui::SELECT_ONLY).with("kind", *k)),
             )
         }));
+    }
+    // Walls, floors, doors and windows have types.
+    if state
+        .kinds
+        .iter()
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW))
+    {
+        out.extend([
+            ContextEntry::separator(),
+            ContextEntry::command(CREATE_SIMILAR.message_id, ui::CREATE_SIMILAR),
+            ContextEntry::command(MATCH_TYPE.message_id, ui::MATCH_TYPE),
+            ContextEntry::command(EDIT_TYPE.message_id, ui::EDIT_TYPE),
+        ]);
     }
     out.extend([
         ContextEntry::separator(),
@@ -296,6 +332,10 @@ mod tests {
             "ab-menu-hide",
             "ab-menu-isolate",
             "ab-menu-select-kind",
+            "ab-menu-select-type",
+            "ab-menu-create-similar",
+            "ab-menu-match-type",
+            "ab-menu-edit-type",
             "ab-menu-properties",
         ] {
             assert!(names.contains(&want.to_owned()), "{want}");

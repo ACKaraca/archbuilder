@@ -15,17 +15,20 @@ publish = false
 # Third-party versions follow the arc-core lock; every crate listed must also appear in
 # xtask/layers.toml.
 [workspace.dependencies]
-arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
-arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "25d46f11bb8938dc8c67a39be9c16f77a98dece6" }
+arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
+arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "c8bf079b6f8d3cb6d706bb20c5919bd0085e4dc0" }
 
+# Formats the names of the default element types from the message catalogs.
+fluent-bundle = { version = "0.16.0", default-features = false }
+unic-langid = { version = "0.9.6", default-features = false }
 schemars = { version = "1.2.3", default-features = false, features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: a number read back from JSON is the number that was written.
