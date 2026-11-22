@@ -81,6 +81,7 @@ pub fn defaults() -> Vec<(&'static str, &'static str)> {
         ("WN", WINDOW_PLACE),
         ("FL", FLOOR_CREATE),
         ("RM", ROOM_PLACE),
+        ("ST", archbuilder_commands::stair::STAIR_CREATE),
         ("MV", MODIFY_MOVE),
         ("CP", MODIFY_COPY),
         ("RT", MODIFY_ROTATE),

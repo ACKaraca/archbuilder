@@ -147,7 +147,9 @@ ab-cmd-select-before-points = Nokta vermeden önce nesneleri seçin (tıklayın 
 ab-cmd-room-no-region = Bu nokta kapalı bir duvar halkasının içinde değil. Bir alanı çevreleyen duvarların içine tıklayın.
 ab-cmd-room-region-taken = Bu bölgede zaten bir oda var.
 ab-cmd-room-none-missing = Bu katta kapalı her bölgede zaten bir oda var.
-ab-cmd-room-region-unresolved = Duvarlarla çevrili bir bölgenin sınırı çözülemedi, bu yüzden odası yok. Çevresindeki duvarları kontrol edin.
+ab-cmd-room-region-unresolved = Duvarlarla çevrili { $count } bölgenin sınırı çözülemedi, bu yüzden odaları yok. Çevrelerindeki duvarları kontrol edin.
+ab-cmd-room-region-sliver = Bu bölge { $area } m², en küçük oda alanı olan { $least } m² değerinden küçük: duvarlar arasında kalan dar bir şerit, oda almaz.
+ab-cmd-room-only-slivers = Odası olmayan her bölge en küçük oda alanı olan { $least } m² değerinden küçük ({ $count } dar şerit): oda yerleştirilmedi.
 ab-cmd-room-place-label = Oda
 ab-cmd-room-place-description = Bir katta, duvarlarla kapanan bir bölgenin içindeki noktaya oda yerleştirir. Sınır, alan, çevre ve hacim duvarları izler; oda katın sıradaki numarasını alır.
 ab-cmd-room-place-all-label = Tüm odaları yerleştir
@@ -162,3 +164,28 @@ ab-cmd-clipboard-empty = Henüz hiçbir şey kopyalanmadı. Önce duvar, döşem
 ab-cmd-storey-not-selected = Önce hedef katı seçin (örneğin yapı ağacından), sonra kata yapıştırın.
 ab-cmd-shortcuts-invalid = Dosya bir kısayol tablosu değil ya da iki harf olmayan bir tuşa ya da var olmayan bir komuta bağlanmış.
 ab-cmd-object-not-found = { $id } tanıtıcılı bir nesne yok.
+ab-cmd-stair-create-label = Merdiven
+ab-cmd-stair-create-description = Bir katın seviyesinden üstteki seviyeye merdiven oluşturur: düz ya da sahanlıklı L veya U dönüşlü; genişlik, basamak derinliği ve en yüksek rıht verilir; rıht sayısı ve yüksekliği seviyelerden çıkar.
+ab-prompt-stair-start = { $storey } üzerinde merdiven ({ $shape ->
+    [l_turn] { $turn ->
+        [right] sağa
+       *[left] sola
+    } L dönüş
+    [u_turn] { $turn ->
+        [right] sağa
+       *[left] sola
+    } U dönüş
+   *[straight] düz
+}, { $risers } rıht × { $riser }, genişlik { $width }, basamak { $tread }): başlangıcı, yani ilk rıhtın ortasını belirtin ya da bir seçenek seçin.
+ab-prompt-stair-direction = Merdiven ({ $risers } rıht × { $riser }, genişlik { $width }, basamak { $tread }): ilk kolun yönünü belirtin ya da bir seçenek seçin.
+ab-prompt-stair-turn = Çıkarken hangi yana dönsün?
+ab-prompt-stair-width = Merdiven genişliği (şimdi { $width })
+ab-prompt-stair-tread = Basamak derinliği (şimdi { $tread })
+ab-keyword-stair-straight = Düz
+ab-keyword-stair-l-turn = L dönüş
+ab-keyword-stair-u-turn = U dönüş
+ab-keyword-stair-left = Sol
+ab-keyword-stair-right = Sağ
+ab-keyword-stair-width = Genişlik
+ab-keyword-stair-tread = Basamak
+ab-prompt-stair-turn-again = "{ $typed }" bir yan değil. Sol (s) ya da Sağ (a) yanıtını verin veya gösterilen yan için Enter'a basın.

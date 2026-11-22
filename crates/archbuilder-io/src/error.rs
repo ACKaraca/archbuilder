@@ -64,4 +64,12 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-window-operation",
     };
+    /// A stair: the IFC writer of the foundation has no stair, stair flight or railing entity
+    /// yet, so the stair is left out (the shaft opening it cuts in the floors is written).
+    pub const STAIR_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.stair_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-stair-not-written",
+    };
 }

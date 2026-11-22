@@ -8,7 +8,7 @@
 //! # Rules
 //!
 //! - A press is claimed when it lands on a handle, a temporary dimension's value, or an object
-//!   (a door or window, else a wall, else a selected floor); otherwise the viewport's rubber band
+//!   (a door or window, else a wall, else a selected floor or stair); otherwise the viewport's rubber band
 //!   starts as before. Shift on the press leaves it to the viewport (add to the selection).
 //! - A press and release closer than [`DRAG_PIXELS`] is a click: the viewport's click selects.
 //! - **Move.** Dragging a selected object moves the whole selection; dragging an unselected one
@@ -21,7 +21,7 @@
 //!   tool.
 //! - **Top handle** of a selected wall (views that are not from above): the height, in steps of
 //!   [`HEIGHT_STEP`], shown as a dimension while dragging.
-//! - **Rotation handle** of a selection with walls or floors: the selection turns about the
+//! - **Rotation handle** of a selection with walls, floors or stairs: the selection turns about the
 //!   center of its bounds in steps of 15 degrees (free with Shift).
 //! - **Flip handles** of a selected door or window flip its hand and its facing on a click.
 //! - **Temporary dimensions.** A selected wall shows the distance between its center line and the
@@ -44,7 +44,7 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Insert};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, ROOM, WALL, WINDOW};
+use archbuilder_model::types::{self, DOOR, FLOOR, STAIR, WALL, WINDOW};
 use archbuilder_model::units::{LengthUnit, length_text};
 use archbuilder_model::wall::Wall;
 use serde_json::json;
@@ -430,12 +430,7 @@ fn middle(wall: &Wall) -> f64 {
 fn movable(snapshot: &Snapshot, ids: &[ObjectId]) -> Vec<ObjectId> {
     ids.iter()
         .copied()
-        .filter(|id| {
-            matches!(
-                kind_of(snapshot, *id).as_deref(),
-                Some(WALL | FLOOR | ROOM | DOOR | WINDOW)
-            )
-        })
+        .filter(|id| kind_of(snapshot, *id).is_some_and(|k| types::is_element(&k)))
         .take(archbuilder_commands::modify::MAX_OBJECTS)
         .collect()
 }
@@ -452,6 +447,11 @@ fn points_of(snapshot: &Snapshot, id: ObjectId) -> Vec<V2> {
     {
         return boundary.loops.iter().flatten().copied().collect();
     }
+    if kind_of(snapshot, id).as_deref() == Some(STAIR) {
+        return archbuilder_model::stair::Placed::of(snapshot, &object)
+            .map(|p| p.outline())
+            .unwrap_or_default();
+    }
     archbuilder_model::room::Room::from_values(&object.values)
         .map(|r| vec![r.point])
         .unwrap_or_default()
@@ -463,13 +463,15 @@ fn rotation_of(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Vec<Objec
     let objects: Vec<ObjectId> = selection
         .iter()
         .copied()
-        .filter(|id| matches!(kind_of(snapshot, *id).as_deref(), Some(WALL | FLOOR | ROOM)))
+        .filter(|id| kind_of(snapshot, *id).is_some_and(|k| types::is_storey_element(&k)))
         .take(archbuilder_commands::modify::MAX_OBJECTS)
         .collect();
-    if !objects
-        .iter()
-        .any(|id| matches!(kind_of(snapshot, *id).as_deref(), Some(WALL | FLOOR)))
-    {
+    if !objects.iter().any(|id| {
+        matches!(
+            kind_of(snapshot, *id).as_deref(),
+            Some(WALL | FLOOR | STAIR)
+        )
+    }) {
         return None;
     }
     let mut min = [f64::INFINITY; 2];
@@ -711,7 +713,10 @@ pub fn body_at(i: &Input<'_>) -> Option<ObjectId> {
     let at = i.at?;
     archbuilder_model::pick::stack(i.snapshot, &[], at, aperture, Some(ray))
         .into_iter()
-        .find(|id| kind_of(i.snapshot, *id).as_deref() == Some(FLOOR) && i.selection.contains(id))
+        .find(|id| {
+            matches!(kind_of(i.snapshot, *id).as_deref(), Some(FLOOR | STAIR))
+                && i.selection.contains(id)
+        })
 }
 
 /// The baselines of the walls of the storey `owner` is on, without `exclude`.
@@ -775,6 +780,11 @@ fn ghost(
                 let moved: Vec<V2> = ring.iter().map(|p| xf.point(*p)).collect();
                 out.push(closed(&moved));
             }
+        } else if kind_of(snapshot, *id).as_deref() == Some(STAIR)
+            && let Some(placed) = archbuilder_model::stair::Placed::of(snapshot, &object)
+        {
+            let moved: Vec<V2> = placed.outline().iter().map(|p| xf.point(*p)).collect();
+            out.push(closed(&moved));
         }
     }
     out

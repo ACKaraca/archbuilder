@@ -236,7 +236,13 @@ another region is bounded by that region.
 
 `archbuilder.room.place` takes `points` (each inside a closed loop of walls that has no room yet,
 else it is refused), optional `name`, `number` and `department`; `archbuilder.room.place_all` puts a
-room at a point inside every enclosed region of the storey that has none. Each call is one undo step.
+room at a point inside every enclosed region of the storey that has none. A region with a net area
+below `MIN_ROOM_AREA` (0.5 m²) is a sliver between walls: `place_all` skips it and reports the
+count (`slivers` in the result, a line in the history), and a click of the Room tool in one is
+refused with a message. Walls that lie on top of each other (collinear, sharing a stretch longer
+than 1 mm) bound regions as their union, each shared stretch counted once for the longest of them,
+so the region around them survives (a wall drawn over part of an outer wall leaves the room whole), and they are a warning
+(`ab.model.wall_overlap`) of the commit and of `inspect --check`. Each call is one undo step.
 The Room tool chains clicks until Escape or Enter. The property grid edits the text fields, the upper
 limit (a choice of the levels above), the offsets and the point, and shows area, perimeter, volume
 and state read-only; Delete removes selected rooms; move, copy, rotate and mirror move the point (a
@@ -251,9 +257,82 @@ a view from above only those whose point is in the visible area. A tag is center
 rooms, no sloped tops, no separation lines.
 
 Picking in a view from above uses one ordered list for the hover and the click: doors and windows,
-walls, rooms, floors, levels; a repeated click at the same spot steps down it (within a few pixels and
+walls, stairs, rooms, floors, levels; a repeated click at the same spot steps down it (within a few pixels and
 about 1.5 s of the last click; Escape and moving the pointer start again), and the hover shows what
 the click would pick. Other views leave the pick to the viewport, with the door or window first.
+
+#### The stair of the first slice
+
+`archbuilder.stair` is owned by its storey (a storey that has stairs cannot be deleted). Only the
+authored inputs are stored; the riser count and height, run lengths, landing, solids, railings and
+the shaft opening are derived each time (`archbuilder_model::stair`).
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | `Stair <n>` (`Merdiven <n>`) per storey by default | Not blank, unique within the storey |
+| `shape` | `straight`, `l_turn` (two runs at a right angle with a square landing) or `u_turn` (two runs side by side, 0.1 m apart, in opposite directions, with a landing across both) | |
+| `turn` | `left` or `right`, seen walking up; a right stair is the mirror image of a left one | |
+| `x`, `y` | The start: the middle of the first riser | Within the coordinate range |
+| `direction` | The direction of the first run, an angle | |
+| `width` | Of the runs and the landing | 0.5 m to 10 m; 1 m by default |
+| `tread` | The tread depth | 0.1 m to 2 m; 0.28 m by default |
+| `max_riser` | The highest riser allowed | 0.05 m to 0.5 m; 0.18 m by default |
+| `waist` | The waist of the monolithic construction | 0.05 m to 1 m; 0.15 m by default |
+| `railing_left`, `railing_right` | A railing on that side | On by default |
+| `top_level` | The level it arrives at; else the level above the storey | Cleared when the level is deleted |
+
+Derived: the height (top level minus the storey's level; refused without a level above,
+`ab.model.stair_no_top`), the riser count `ceil(height / max_riser)` (at least 2, or 4 for a
+turn; at most 200, else `ab.model.stair_risers`), the riser height `height / count` (3.00 m with
+0.18 m gives 17 risers of 0.17647 m); an L stair's first run takes the larger half of the risers,
+a U stair's the smaller half, so its upper run reaches past the foot and the opening covers the
+whole lower run. A run of `n` risers is `(n - 1) x tread` long; its last riser is the edge of the landing or
+of the floor above. The stride `2R + T` outside 0.60–0.66 m is a warning (`ab.model.stair_stride`),
+never a refusal; two stairs of one storey that overlap in plan are a warning
+(`ab.model.stair_overlap`). Stair warnings carry the stair's identifier (detail `object`, field
+`object` in `inspect --check`) and appear in the command history when a stair is made or edited. Solids: each run is its stepped side profile with the waist below it (measured
+square to the pitch line), extruded across the width; the landing is a slab of the waist (at least
+a riser) thick with its top at the landing. Railings on the sides that are on: a top rail 0.9 m
+above the line of the nosings (and above the landing) along the runs and the open landing edges,
+5 cm in from the edge, and posts at the ends, corners and at most 1.2 m apart. The volume (runs and
+landing, railings not counted) is in the property grid and `inspect`.
+
+Shaft opening: every floor of the storey whose level is the stair's top level loses the stair's
+footprint plus 5 cm on every side except the arrival edge (a U stair's opening is the rectangle over
+both runs and the gap). The opening is derived, never stored; overlapping openings are cut as one. Inside the slab it is
+a new hole; across the slab's edge it is subtracted as a notch; an opening that cannot be cut
+leaves the slab whole with a warning (`ab.model.stair_opening_uncut`). The floor's area, volume,
+solid, picking and IFC body follow; moving or deleting the stair moves or removes the opening.
+Stairs do not bound rooms.
+
+`archbuilder.stair.create` takes `start`, `to` (a point the first run heads toward) or
+`direction`, `shape`, `turn`, `width`, `tread`, `max_riser`, `waist`, `top_level` and `name`; one
+call is one undo step. The Stair tool (toolbar Stair, Structure menu, the typed shortcut `ST`, the
+words `stair` and `merdiven`, New stair in the context menu with nothing selected) asks for the start
+and the direction point with the keywords straight, L turn and U turn (a turn asks for the side),
+width and tread (another answer to the turn prompt asks the side again, naming the valid answers); every
+prompt shows the riser count and height, a dashed preview follows the pointer, and the next stair
+starts with the shape, turn, width and tread of the last one. The property grid edits the shape, turn, width, tread, highest riser, waist, railing sides,
+point and the top level (a choice), and shows the storey, direction, risers, riser height, run
+lengths, stride and volume read-only. Delete, move, copy, rotate, mirror (a mirror swaps the turn
+and the railing sides), dragging, copy, cut and paste (the opening follows the pasted stair) and hide
+and isolate work on stairs, all through one list of element kinds (`types::ELEMENTS`); its warnings
+appear in the history after any change, an edit of the grid and a paste included; the outliner
+lists them under their storey after the floors. In a view from above the active storey's stairs
+show the outline, a line per riser, a break line where the plan cut 1.2 m above the base crosses
+the stair, the risers above it lighter and dashed, and the walking line with an arrow and the up
+text (`UP`, `YUKARI`) just outside the foot. On the storey of the top level the arriving stair shows
+the risers above that cut normal and the rest lighter, the break line, the opening's outline and
+the walking line from the arrival down to the foot, with the down text (`DN`, `AŞAĞI`) just outside
+the arrival. Known limits: no winders, spiral or sketched stairs, no stringers, nosings or
+assembled construction, no headroom check, no multistorey repeat.
+
+IFC mapping, planned: an `IfcStair` aggregating an `IfcStairFlight` per run, an `IfcSlab` with
+`PredefinedType` `LANDING` for the landing and an `IfcRailing` per side. As implemented: the IFC
+writer of the foundation has no stair, flight or railing entity yet, so each stair is named in the
+loss report (`ab.io.ifc.stair_not_written`) and nothing is written in its place; its shaft opening is
+written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
+have it taken out.
 
 IFC mapping: an enclosed room is an `IfcSpace` aggregated by its `IfcBuildingStorey` with
 `IfcRelAggregates` (not contained), `PredefinedType` `INTERNAL`, with a body of an extruded area

@@ -11,8 +11,8 @@ use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject}
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOM, SITE, STOREY, WALL, WINDOW,
-    level, storey,
+    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOM, SITE, STAIR, STOREY, WALL,
+    WINDOW, level, storey,
 };
 
 /// A message of the application.
@@ -22,6 +22,114 @@ struct Message {
 
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "shape",
+        Message {
+            message_id: "ab-prop-stair-shape",
+        },
+    ),
+    (
+        "turn",
+        Message {
+            message_id: "ab-prop-stair-turn",
+        },
+    ),
+    (
+        "tread",
+        Message {
+            message_id: "ab-prop-stair-tread",
+        },
+    ),
+    (
+        "max_riser",
+        Message {
+            message_id: "ab-prop-stair-max-riser",
+        },
+    ),
+    (
+        "waist",
+        Message {
+            message_id: "ab-prop-stair-waist",
+        },
+    ),
+    (
+        "railing_left",
+        Message {
+            message_id: "ab-prop-stair-railing-left",
+        },
+    ),
+    (
+        "railing_right",
+        Message {
+            message_id: "ab-prop-stair-railing-right",
+        },
+    ),
+    (
+        "straight",
+        Message {
+            message_id: "ab-stair-shape-straight",
+        },
+    ),
+    (
+        "l_turn",
+        Message {
+            message_id: "ab-stair-shape-l-turn",
+        },
+    ),
+    (
+        "u_turn",
+        Message {
+            message_id: "ab-stair-shape-u-turn",
+        },
+    ),
+    (
+        "stair_direction",
+        Message {
+            message_id: "ab-prop-stair-direction",
+        },
+    ),
+    (
+        "stair_risers",
+        Message {
+            message_id: "ab-prop-stair-risers",
+        },
+    ),
+    (
+        "stair_riser",
+        Message {
+            message_id: "ab-prop-stair-riser",
+        },
+    ),
+    (
+        "stair_runs",
+        Message {
+            message_id: "ab-prop-stair-runs",
+        },
+    ),
+    (
+        "stair_stride",
+        Message {
+            message_id: "ab-prop-stair-stride",
+        },
+    ),
+    (
+        "stair_volume",
+        Message {
+            message_id: "ab-prop-stair-volume",
+        },
+    ),
+    (
+        "stair_storey",
+        Message {
+            message_id: "ab-prop-stair-storey",
+        },
+    ),
+    (
+        "stair_level_above",
+        Message {
+            message_id: "ab-stair-top-default",
+        },
+    ),
     (
         "name",
         Message {
@@ -554,6 +662,12 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-window",
         },
     ),
+    (
+        STAIR,
+        Message {
+            message_id: "ab-kind-stair",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -820,6 +934,95 @@ fn shown(snapshot: &Snapshot, key: &str, object: &Object) -> Option<Shown> {
                 })
             }));
             read_only.push("room_state".to_owned());
+        }
+        // A stair shows its record (the direction as a reading in degrees: it is turned with the
+        // rotate tools), the top level as a choice and what the levels make of it.
+        STAIR => {
+            use archbuilder_model::types::stair as st;
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id));
+            let above = storey
+                .as_ref()
+                .map(|s| archbuilder_model::room::levels_above(snapshot, s))
+                .unwrap_or_default();
+            let mut variants = vec![arc_doc::EnumVariant::new("stair_level_above", 0)];
+            let mut current = 0;
+            let top = match values.get(st::TOP_LEVEL) {
+                Some(Some(Value::Reference(id))) => Some(*id),
+                _ => None,
+            };
+            for (code, l) in (1_u32..).zip(&above) {
+                if let Some(name) = types::text(&l.values, level::NAME) {
+                    variants.push(arc_doc::EnumVariant::new(name, code));
+                    if top == Some(l.id) {
+                        current = code;
+                    }
+                }
+            }
+            let placed = archbuilder_model::stair::Placed::of(snapshot, object);
+            let layout = placed.as_ref().and_then(|p| p.layout.as_ref().ok());
+            let direction = placed
+                .as_ref()
+                .map(|p| format!("{:.1}°", p.stair.direction.to_degrees()));
+            let order = [
+                st::NAME,
+                st::SHAPE,
+                st::TURN,
+                st::WIDTH,
+                st::TREAD,
+                st::MAX_RISER,
+                st::WAIST,
+                st::RAILING_LEFT,
+                st::RAILING_RIGHT,
+                st::X,
+                st::Y,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            fields.push(
+                FieldDecl::new("top_constraint", ValueType::Enum(variants)).in_aspect("geometry"),
+            );
+            values.push(Some(Value::Enum(current)));
+            let runs = layout.map(|l| {
+                l.runs
+                    .iter()
+                    .map(|r| format!("{:.3} m", r.length))
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            });
+            for (name, value) in [
+                (
+                    "stair_storey",
+                    storey
+                        .as_ref()
+                        .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned)),
+                ),
+                ("stair_direction", direction),
+                ("stair_risers", layout.map(|l| l.risers.to_string())),
+                ("stair_riser", layout.map(|l| format!("{:.5} m", l.riser))),
+                ("stair_runs", runs),
+                (
+                    "stair_stride",
+                    layout.map(|l| {
+                        let warn = if l.stride_ok() { "" } else { " ⚠" };
+                        format!("{:.3} m{warn}", l.stride())
+                    }),
+                ),
+                (
+                    "stair_volume",
+                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
         }
         // A door or a window shows the wall that hosts it; a door's sill is the wall's base.
         DOOR | WINDOW => {

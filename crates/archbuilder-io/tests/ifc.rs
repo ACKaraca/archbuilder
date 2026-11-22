@@ -636,3 +636,46 @@ fn a_room_around_a_courtyard_is_a_space_with_a_void() {
     }
     near(volumes[&global_id(by("201").id.as_u128())], 3.0 * 121.6);
 }
+
+/// A stair is named in the loss report (the writer has no stair entities); the shaft opening it
+/// cuts in the slab of the level above is a hole of the slab's profile in the file.
+#[test]
+fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
+    let house = House::new();
+    let made = house.run(
+        "archbuilder.stair.create",
+        json!({"start": [7.0, 0.5], "direction": "90"}),
+    );
+    let stair = House::id(&made["stair"]);
+    let snapshot = house.snapshot();
+    let upper = spatial::objects(&snapshot, FLOOR)
+        .into_iter()
+        .find(|f| Derived::of(&snapshot, f).is_some_and(|d| d.top > 1.0))
+        .unwrap();
+    let derived = Derived::of(&snapshot, &upper).unwrap();
+    // The outer loop, the sketched hole and the shaft opening (4.53 x 1.1).
+    assert_eq!(derived.boundary.loops.len(), 3);
+    near(derived.area(), 60.0 - 4.0 - 4.53 * 1.1);
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let [item] = &exported.report.items[..] else {
+        panic!("{:?}", exported.report.items);
+    };
+    assert_eq!(item.reason, "ab.io.ifc.stair_not_written");
+    assert_eq!(item.record_kind.as_deref(), Some("IFCSTAIR"));
+    assert_eq!(item.object_id, Some(stair.to_string()));
+    assert_eq!(exported.elements, 15);
+    // The body read back has the opening as a hole: its volume is the net area times 0.2 m.
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let mut body = 0.0;
+    for item in &geometry.items {
+        if gid(&file, item.product) == global_id(upper.id.as_u128()) {
+            let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+            body += volume(&mesh, &Limits::DEFAULT).unwrap();
+        }
+    }
+    near(body, derived.volume());
+    near(body, (60.0 - 4.0 - 4.53 * 1.1) * 0.2);
+}

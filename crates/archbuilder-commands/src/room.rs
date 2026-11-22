@@ -4,7 +4,9 @@
 //! walls around it ([`archbuilder_model::room`]). `place` takes `points`; each must lie inside a
 //! closed loop of walls that has no room yet, and gets a room named `Room` (`Oda`) with the next
 //! number of the storey (101, 102, ...) unless `name` or `number` say otherwise. `place_all` puts a
-//! room in every enclosed region of the storey that has none. One call is one transaction. The
+//! room in every enclosed region of the storey that has none. A region with a net area below
+//! [`model::MIN_ROOM_AREA`] is a sliver: `place_all` skips it and reports how many it skipped, and
+//! `place` refuses a point in one. One call is one transaction. The
 //! prompt machine asks for one point per room; the tool chains them until Escape.
 
 use std::str::FromStr;
@@ -98,6 +100,8 @@ pub struct RoomsPlaced {
     pub areas: Vec<f64>,
     /// Enclosed regions whose boundary could not be resolved and got no room (`place_all`).
     pub unresolved: usize,
+    /// Enclosed regions smaller than the least room area that got no room (`place_all`).
+    pub slivers: usize,
 }
 
 fn add(
@@ -167,6 +171,7 @@ fn finish(ctx: &mut Context<'_>, storey: ObjectId, ids: Vec<ObjectId>) -> Result
         storey: IdParam(storey),
         areas,
         unresolved: 0,
+        slivers: 0,
     })
 }
 
@@ -192,6 +197,11 @@ fn place(ctx: &mut Context<'_>, p: PlaceRoom) -> Result<RoomsPlaced> {
         if print.state == State::Redundant {
             return Err(Error::new(codes::ROOM_REGION_TAKEN));
         }
+        if print.area().is_some_and(|a| a < model::MIN_ROOM_AREA) {
+            return Err(Error::new(codes::ROOM_REGION_SLIVER)
+                .with_arg("area", format!("{:.2}", print.area().unwrap_or(0.0)))
+                .with_arg("least", format!("{:.2}", model::MIN_ROOM_AREA)));
+        }
         ids.push(add(
             ctx,
             storey,
@@ -211,7 +221,11 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .iter()
         .map(|e| e.room.point)
         .collect();
-    let (regions, unresolved) = model::enclosed_regions(&walls);
+    let model::Enclosed {
+        regions,
+        unresolved,
+        slivers,
+    } = model::enclosed_regions(&walls);
     let missing: Vec<[f64; 2]> = regions
         .into_iter()
         .filter(|(_, loops)| {
@@ -224,11 +238,15 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .take(MAX_PLACED)
         .collect();
     if missing.is_empty() {
-        return Err(Error::new(if unresolved > 0 {
-            codes::ROOM_REGION_UNRESOLVED
+        return Err(if unresolved > 0 {
+            Error::new(codes::ROOM_REGION_UNRESOLVED).with_arg("count", unresolved.to_string())
+        } else if slivers > 0 {
+            Error::new(codes::ROOM_ONLY_SLIVERS)
+                .with_arg("count", slivers.to_string())
+                .with_arg("least", format!("{:.2}", model::MIN_ROOM_AREA))
         } else {
-            codes::ROOM_NONE_MISSING
-        }));
+            Error::new(codes::ROOM_NONE_MISSING)
+        });
     }
     let mut ids = Vec::new();
     for point in missing {
@@ -236,6 +254,7 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
     }
     let mut placed = finish(ctx, storey, ids)?;
     placed.unresolved = unresolved;
+    placed.slivers = slivers;
     Ok(placed)
 }
 

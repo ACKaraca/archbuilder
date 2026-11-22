@@ -16,23 +16,19 @@ use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DOOR, FLOOR, WALL, WINDOW};
+use archbuilder_model::types::is_element;
 use serde_json::{Map, Value};
 
 use crate::wall_tool::{Env, Runner, target};
 
-/// The objects a modify command takes from a selection: walls, floors, doors and windows.
+/// The objects a modify command takes from a selection: the building elements
+/// ([`archbuilder_model::types::ELEMENTS`]).
 #[must_use]
 pub fn movable(snapshot: &arc_doc::Snapshot, selection: &[ObjectId]) -> Vec<ObjectId> {
     selection
         .iter()
         .copied()
-        .filter(|id| {
-            matches!(
-                spatial::type_of(snapshot, *id).as_deref(),
-                Some(WALL | FLOOR | DOOR | WINDOW)
-            )
-        })
+        .filter(|id| spatial::type_of(snapshot, *id).is_some_and(|k| is_element(&k)))
         .collect()
 }
 

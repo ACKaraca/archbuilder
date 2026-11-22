@@ -152,7 +152,7 @@ pub fn label_size(text: &str) -> [f64; 2] {
 
 /// The model anchor that puts a label of `size` pixels with its center at pixel `center`
 /// (the viewport draws a label up and to the right of its anchor).
-fn anchor_for_center(view: &ViewRect, center: [f64; 2], size: [f64; 2]) -> [f64; 2] {
+pub fn anchor_for_center(view: &ViewRect, center: [f64; 2], size: [f64; 2]) -> [f64; 2] {
     view.to_model([
         center[0] - GAP_PX - size[0] / 2.0,
         center[1] + GAP_PX + size[1] / 2.0,
@@ -354,6 +354,20 @@ impl RoomView {
     /// Remembers the visible area of a view from above, `None` for any other view.
     pub fn set_view(&self, view: Option<ViewRect>) {
         set(&self.view, view);
+    }
+
+    /// The storey the viewport works on, last remembered.
+    #[must_use]
+    pub fn active(&self) -> Option<ObjectId> {
+        self.active.lock().ok().and_then(|a| *a)
+    }
+
+    /// Whether a temporary hide or isolation does not show `id` (a room or a stair).
+    #[must_use]
+    pub fn is_hidden(&self, id: ObjectId) -> bool {
+        self.hidden
+            .lock()
+            .is_ok_and(|h| h.binary_search(&id).is_ok())
     }
 
     /// The visible area last remembered.

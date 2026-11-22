@@ -27,7 +27,9 @@ use arc_doc::{Change, Document, DocumentValidator, Finding, Object, Severity, Sn
 use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
-use crate::types::{self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOM, SITE, STOREY, WALL, WINDOW};
+use crate::types::{
+    self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOM, SITE, STAIR, STOREY, WALL, WINDOW,
+};
 
 /// The key a name is compared by ([`crate::names::fold`]).
 fn folded(object: &Object) -> String {
@@ -40,7 +42,7 @@ fn container_of(key: &str) -> Option<&'static str> {
         SITE => Some(PROJECT),
         BUILDING => Some(SITE),
         STOREY | LEVEL => Some(BUILDING),
-        WALL | FLOOR | ROOM => Some(STOREY),
+        k if types::is_storey_element(k) => Some(STOREY),
         DOOR | WINDOW => Some(WALL),
         _ => None,
     }
@@ -80,6 +82,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == DOOR || key == WINDOW {
         out.extend(crate::insert::problems(candidate, object));
     }
+    if key == STAIR {
+        out.extend(stair_problem(candidate, object));
+    }
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT
@@ -90,6 +95,118 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     {
         out.push(name_taken(object));
     }
+}
+
+/// Why a stair has no layout: no level above its base, a riser count out of bounds, or a record
+/// that cannot be read.
+#[must_use]
+pub fn stair_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    use crate::stair::{MAX_RISERS, Placed, Refusal};
+    let name = display_name(object);
+    let Some(placed) = Placed::of(candidate, object) else {
+        return Some(Error::new(codes::STAIR_MALFORMED).with_arg("name", name));
+    };
+    match placed.layout {
+        Ok(_) => None,
+        Err(Refusal::NoTop) => Some(Error::new(codes::STAIR_NO_TOP).with_arg("name", name)),
+        Err(Refusal::Malformed) => Some(Error::new(codes::STAIR_MALFORMED).with_arg("name", name)),
+        Err(Refusal::Risers { count, least }) => Some(
+            Error::new(codes::STAIR_RISERS)
+                .with_arg("name", name)
+                .with_arg("count", count.to_string())
+                .with_arg("least", least.to_string())
+                .with_arg("most", MAX_RISERS.to_string()),
+        ),
+    }
+}
+
+/// The warnings of a stair: a stride outside the comfortable range, another stair of its storey
+/// that overlaps it, and a shaft opening that reaches a floor of the top level but could not be
+/// cut out of it. Each carries the stair's identifier as the detail `object`, so a surface can
+/// select it.
+#[must_use]
+pub fn stair_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
+    let mut out = Vec::new();
+    let Some(placed) = crate::stair::Placed::of(candidate, object) else {
+        return out;
+    };
+    let Ok(layout) = &placed.layout else {
+        return out;
+    };
+    let own = layout.footprint();
+    for other in object
+        .header
+        .owner
+        .map(|s| crate::spatial::children(candidate, STAIR, s))
+        .unwrap_or_default()
+        .iter()
+        .filter(|o| o.id != object.id)
+        .take(crate::room::MAX_ROOMS)
+    {
+        let theirs = crate::stair::Placed::of(candidate, other).map(|p| p.outline());
+        if theirs.is_some_and(|t| crate::stair::outlines_overlap(&own, &t)) {
+            out.push(
+                Error::new(codes::STAIR_OVERLAP)
+                    .with_arg("name", display_name(object))
+                    .with_arg("other", display_name(other)),
+            );
+        }
+    }
+    if !layout.stride_ok() {
+        let (low, high) = crate::stair::STRIDE_RANGE;
+        out.push(
+            Error::new(codes::STAIR_STRIDE)
+                .with_arg("name", display_name(object))
+                .with_arg("stride", format!("{:.3}", layout.stride()))
+                .with_arg("low", format!("{low:.2}"))
+                .with_arg("high", format!("{high:.2}")),
+        );
+    }
+    let Some(top) = placed.top_level else {
+        return with_object(out, object.id);
+    };
+    for storey in objects(candidate, STOREY) {
+        if crate::spatial::level_of(candidate, &storey).is_none_or(|l| l.id != top) {
+            continue;
+        }
+        for floor in crate::spatial::children(candidate, FLOOR, storey.id) {
+            if crate::floor::Derived::of(candidate, &floor).is_some_and(|d| d.uncut > 0) {
+                out.push(
+                    Error::new(codes::STAIR_OPENING_UNCUT)
+                        .with_arg("name", display_name(object))
+                        .with_arg("floor", display_name(&floor)),
+                );
+            }
+        }
+    }
+    with_object(out, object.id)
+}
+
+/// `errors` with the detail `object` set to `id`.
+fn with_object(errors: Vec<Error>, id: ObjectId) -> Vec<Error> {
+    errors
+        .into_iter()
+        .map(|e| e.with_detail("object", id.to_string()))
+        .collect()
+}
+
+/// The pairs of walls of `storey` that lie on top of each other, as warnings.
+#[must_use]
+pub fn overlap_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
+    let walls = crate::floor::storey_walls(candidate, storey);
+    crate::floor::overlapping_walls(&walls)
+        .into_iter()
+        .map(|(a, b)| {
+            let name = |id| {
+                get(candidate, id)
+                    .map(|o| display_name(&o))
+                    .unwrap_or_default()
+            };
+            Error::new(codes::WALL_OVERLAP)
+                .with_arg("name", name(a))
+                .with_arg("other", name(b))
+        })
+        .collect()
 }
 
 /// The name of an object as written.
@@ -309,7 +426,8 @@ fn check_walls_of_levels(
     }
 }
 
-/// The findings that are not errors: an open corner (the ends of two walls close together and not
+/// The findings that are not errors: walls on top of each other, a stair's stride or uncut
+/// shaft opening, an open corner (the ends of two walls close together and not
 /// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
 /// would open into another wall. They concern the touched walls and the floors of their storeys.
 #[must_use]
@@ -320,17 +438,29 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         if *change == Change::Deleted {
             continue;
         }
-        if matches!(
-            type_of(candidate, *id).as_deref(),
-            Some(WALL | FLOOR | ROOM)
-        ) {
+        if type_of(candidate, *id).is_some_and(|k| types::is_storey_element(&k)) {
             storeys.extend(get(candidate, *id).and_then(|o| o.header.owner));
         }
     }
     storeys.sort();
     storeys.dedup();
+    for (id, change) in touched {
+        if *change != Change::Deleted
+            && type_of(candidate, *id).as_deref() == Some(STAIR)
+            && let Some(object) = get(candidate, *id)
+        {
+            out.extend(stair_warnings(candidate, &object));
+        }
+    }
     for storey in storeys {
         out.extend(room_findings(candidate, storey));
+        if touched.iter().any(|(id, c)| {
+            *c != Change::Deleted
+                && type_of(candidate, *id).as_deref() == Some(WALL)
+                && get(candidate, *id).and_then(|o| o.header.owner) == Some(storey)
+        }) {
+            out.extend(overlap_findings(candidate, storey));
+        }
         let walls = crate::spatial::walls(candidate, storey);
         let data: Vec<(usize, crate::wall::Wall)> = walls
             .iter()
@@ -355,7 +485,11 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             let wall_of = |id: ObjectId| {
                 get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values))
             };
-            for wall in derived.floor.unsupported_edges(&derived.boundary, &wall_of) {
+            // The edges are matched to the vertices, so the boundary without the shaft openings.
+            let Some(raw) = derived.floor.boundary_in(candidate) else {
+                continue;
+            };
+            for wall in derived.floor.unsupported_edges(&raw, &wall_of) {
                 out.push(
                     Error::new(codes::FLOOR_EDGE_UNSUPPORTED)
                         .with_arg("name", display_name(&floor))

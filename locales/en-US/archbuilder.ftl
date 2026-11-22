@@ -103,8 +103,14 @@ ab-op-fixed = Fixed
 ab-op-casement = Casement
 ab-hand-left = Left
 ab-hand-right = Right
-ab-notice-inserts-deleted = The wall went with { $count } door(s) and window(s) in it, in one step. Undo brings them all back.
-ab-notice-floor-edges-frozen = { $count } floor edge(s) lost their wall and stay where they were. Undo brings the wall and the association back.
+ab-notice-inserts-deleted = { $count ->
+    [one] The wall went with 1 door or window in it, in one step. Undo brings it back.
+   *[other] The wall went with { $count } doors and windows in it, in one step. Undo brings them all back.
+}
+ab-notice-floor-edges-frozen = { $count ->
+    [one] 1 floor edge lost its wall and stays where it was. Undo brings the wall and the association back.
+   *[other] { $count } floor edges lost their wall and stay where they were. Undo brings the wall and the association back.
+}
 ab-tool-floor = Floor
 ab-tool-floor-hint = Create a floor by picking walls or sketching its boundary on the selected storey
 ab-kind-floor = Floor
@@ -114,7 +120,10 @@ ab-prop-floor-volume = Volume
 ab-prop-floor-walls = Associated walls
 ab-prop-floor-storey = Storey
 ab-notice-ifc-exported = Exported { $name } ({ $count } elements)
-ab-notice-ifc-loss = The loss report lists { $count } item(s) that are missing from the file or only approximated.
+ab-notice-ifc-loss = { $count ->
+    [one] The loss report lists 1 item that is missing from the file or only approximated.
+   *[other] The loss report lists { $count } items that are missing from the file or only approximated.
+}
 ab-export-ifc-title = Export IFC
 ab-export-ifc-filter = IFC files (*.ifc)
 
@@ -200,7 +209,10 @@ ab-setting-shortcuts = Typed command shortcuts: XX=command pairs separated by ;
 ab-setting-snap-enabled = Snap to points while drawing
 ab-setting-snap-grid = Snap grid step in millimeters
 ab-panel-settings = Settings
-ab-notice-copied = Copied { $count } objects to the clipboard.
+ab-notice-copied = { $count ->
+    [one] Copied 1 object to the clipboard.
+   *[other] Copied { $count } objects to the clipboard.
+}
 ab-notice-pasted-storey = Pasted into the storey.
 ab-notice-shortcuts-exported = Shortcuts written to { $path }.
 ab-notice-shortcuts-imported = Imported { $count } shortcuts.
@@ -215,3 +227,32 @@ ab-state-on = on
 ab-state-off = off
 ab-menu-cut = Cut
 ab-notice-paste-on-top = Warning: the pasted objects lie on top of their originals, so their doors and windows and rooms overlap them.
+ab-kind-stair = Stair
+ab-prop-stair-shape = Shape
+ab-prop-stair-turn = Turns to
+ab-prop-stair-tread = Tread depth
+ab-prop-stair-max-riser = Highest riser
+ab-prop-stair-waist = Waist thickness
+ab-prop-stair-railing-left = Railing on the left
+ab-prop-stair-railing-right = Railing on the right
+ab-prop-stair-direction = Direction
+ab-prop-stair-risers = Risers
+ab-prop-stair-riser = Riser height
+ab-prop-stair-runs = Run lengths
+ab-prop-stair-stride = Stride (2R + T)
+ab-prop-stair-volume = Volume
+ab-prop-stair-storey = Storey
+ab-stair-shape-straight = Straight
+ab-stair-shape-l-turn = L turn
+ab-stair-shape-u-turn = U turn
+ab-stair-top-default = Level above
+ab-stair-up = UP
+ab-tool-stair = Stair
+ab-tool-stair-hint = Create a stair from this storey up to the level above (ST)
+ab-menu-keep-stairs = Keep only stairs
+ab-menu-new-stair = New stair
+ab-notice-room-slivers = { $count ->
+    [one] 1 region smaller than { $least } m² got no room: it is a sliver between walls.
+   *[other] { $count } regions smaller than { $least } m² got no room: they are slivers between walls.
+}
+ab-stair-down = DN

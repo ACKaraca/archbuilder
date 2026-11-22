@@ -1,6 +1,6 @@
 //! The product findings of `inspect --check`, on top of the shared package check: an open corner
 //! (the ends of two walls of a storey that lie close together and are not joined) and a floor edge
-//! that follows a wall which no longer bounds it. They are warnings: the exit status is unchanged.
+//! that follows a wall which no longer bounds it, and walls that lie on top of each other. They are warnings: the exit status is unchanged.
 //! Read from the dump's JSON with the model's own rules ([`archbuilder_model::join::open_corners`],
 //! [`archbuilder_model::floor::Floor::unsupported_edges`]).
 
@@ -31,6 +31,24 @@ pub fn findings(objects: &[Value]) -> Vec<Value> {
             .filter_map(|w| Some((*w, wall_of(w)?)))
             .collect();
         let plain: Vec<_> = members.iter().map(|(_, w)| *w).collect();
+        let ids: Vec<(arc_base::ObjectId, archbuilder_model::wall::Wall)> = members
+            .iter()
+            .filter_map(|(o, w)| Some((o["id"].as_str()?.parse().ok()?, *w)))
+            .collect();
+        for (a, b) in archbuilder_model::floor::overlapping_walls(&ids) {
+            let name_of = |id: arc_base::ObjectId| {
+                members
+                    .iter()
+                    .find(|(o, _)| o["id"] == id.to_string())
+                    .map_or(Value::Null, |(o, _)| name(o))
+            };
+            out.push(json!({
+                "severity": "warning",
+                "code": "ab.model.wall_overlap",
+                "message_id": "ab-model-wall-overlap",
+                "arguments": {"name": name_of(a), "other": name_of(b)},
+            }));
+        }
         for (i, j) in archbuilder_model::join::open_corners(&plain) {
             out.push(json!({
                 "severity": "warning",

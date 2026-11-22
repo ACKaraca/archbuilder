@@ -257,6 +257,9 @@ pub struct Deleted {
     /// The rooms deleted by themselves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rooms: Option<usize>,
+    /// The stairs deleted by themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stairs: Option<usize>,
     /// The floor edges that followed a deleted wall and now stay where they were.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frozen_edges: Option<usize>,
@@ -276,12 +279,15 @@ fn delete_set(
     for id in &walls {
         expect(ctx.snapshot(), *id, WALL)?;
     }
-    // The third set holds floors and rooms, which nothing else depends on.
+    // The third set holds floors, rooms and stairs, which nothing else depends on.
     let mut room_count = 0;
+    let mut stair_count = 0;
     for id in &floors {
-        if spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(archbuilder_model::types::ROOM)
-        {
+        let kind = spatial::type_of(ctx.snapshot(), *id);
+        if kind.as_deref() == Some(archbuilder_model::types::ROOM) {
             room_count += 1;
+        } else if kind.as_deref() == Some(archbuilder_model::types::STAIR) {
+            stair_count += 1;
         } else {
             expect(ctx.snapshot(), *id, FLOOR)?;
         }
@@ -311,8 +317,9 @@ fn delete_set(
     Ok(Deleted {
         walls: walls.len(),
         inserts: count,
-        floors: Some(floors.len() - room_count).filter(|n| *n > 0),
+        floors: Some(floors.len() - room_count - stair_count).filter(|n| *n > 0),
         rooms: Some(room_count).filter(|n| *n > 0),
+        stairs: Some(stair_count).filter(|n| *n > 0),
         frozen_edges: Some(frozen_edges).filter(|n| *n > 0),
     })
 }
@@ -520,10 +527,9 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
         .iter()
         .copied()
         .filter(|id| {
-            matches!(
-                spatial::type_of(ctx.snapshot(), *id).as_deref(),
-                Some(FLOOR | archbuilder_model::types::ROOM)
-            )
+            // The storey's own elements other than walls, which nothing else depends on.
+            spatial::type_of(ctx.snapshot(), *id)
+                .is_some_and(|k| k != WALL && archbuilder_model::types::is_storey_element(&k))
         })
         .collect();
     if walls.is_empty() && inserts.is_empty() && floors.is_empty() {
@@ -543,9 +549,11 @@ pub(crate) fn storey_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<Ob
     for id in ctx.selection() {
         let found = match spatial::type_of(snapshot, *id).as_deref() {
             Some(STOREY) => spatial::get(snapshot, *id),
-            Some(WALL | FLOOR | archbuilder_model::types::ROOM) => spatial::get(snapshot, *id)
-                .and_then(|w| w.header.owner)
-                .and_then(|owner| spatial::get(snapshot, owner)),
+            Some(k) if archbuilder_model::types::is_storey_element(k) => {
+                spatial::get(snapshot, *id)
+                    .and_then(|w| w.header.owner)
+                    .and_then(|owner| spatial::get(snapshot, owner))
+            }
             Some(LEVEL) => spatial::objects(snapshot, STOREY)
                 .into_iter()
                 .find(|s| spatial::level_of(snapshot, s).is_some_and(|l| l.id == *id)),

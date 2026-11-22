@@ -1,8 +1,9 @@
 //! The modify commands: `archbuilder.modify.move`, `copy`, `rotate` and `mirror`, each one
 //! transaction and so one undo step, on the objects named or else on the selection.
 //!
-//! What moves: walls (their baselines), floors (their sketched points and holes) and, with their
-//! host wall, doors and windows. Storeys and levels are not movable and are skipped in a selection;
+//! What moves: walls (their baselines), floors (their sketched points and holes), rooms (their
+//! points), stairs (their start and direction; a mirrored stair turns the other way) and, with
+//! their host wall, doors and windows. Storeys and levels are not movable and are skipped in a selection;
 //! a command that names only them is refused (`ab.cmd.not_movable`).
 //!
 //! - A wall keeps its identifier; its joins are derived, so they re-derive from the new baselines
@@ -48,6 +49,7 @@ use arc_doc::{FieldPath, Header, Snapshot, Value};
 use archbuilder_model::floor::{Association, Boundary, Floor, Vertex};
 use archbuilder_model::insert::{self, Insert, Kind};
 use archbuilder_model::spatial;
+use archbuilder_model::stair::Stair;
 use archbuilder_model::transform::Xform;
 use archbuilder_model::types::{self, DOOR, FLOOR, WALL, WINDOW};
 use archbuilder_model::wall::{JoinStyle, Wall};
@@ -171,6 +173,8 @@ struct Set {
     floors: Vec<ObjectId>,
     /// The rooms (their placement points move).
     rooms: Vec<ObjectId>,
+    /// The stairs (their start and direction move).
+    stairs: Vec<ObjectId>,
     /// The doors and windows whose wall is not in the set.
     inserts: Vec<ObjectId>,
 }
@@ -208,6 +212,7 @@ fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
             Some(WALL) => set.walls.push(id),
             Some(FLOOR) => set.floors.push(id),
             Some(types::ROOM) => set.rooms.push(id),
+            Some(types::STAIR) => set.stairs.push(id),
             Some(DOOR | WINDOW) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -223,6 +228,7 @@ fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
     if set.walls.is_empty()
         && set.floors.is_empty()
         && set.rooms.is_empty()
+        && set.stairs.is_empty()
         && set.inserts.is_empty()
     {
         return Err(Error::new(if skipped {
@@ -733,11 +739,43 @@ pub(crate) fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String;
     Ok(meets)
 }
 
+/// Writes the fields of the stairs `stairs` that `xf` changes: the start, the direction and, under
+/// a reflection, the turn and the railing sides.
+fn move_stairs(
+    ctx: &mut Context<'_>,
+    snapshot: &Snapshot,
+    stairs: &[ObjectId],
+    xf: &Xform,
+) -> Result<()> {
+    for id in stairs {
+        let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let moved = Stair::from_values(&object.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            .moved(xf);
+        let name = types::text(&object.values, 0)
+            .unwrap_or_default()
+            .to_owned();
+        let txn = ctx.txn()?;
+        for (k, value) in moved.values(&name).into_iter().enumerate().skip(1) {
+            if let Some(decl) = snapshot
+                .registry()
+                .get(types::STAIR)
+                .and_then(|d| d.schema.fields.get(k))
+                && object.values.get(k) != Some(&value)
+            {
+                txn.modify(*id, FieldPath::new(decl.name.as_str()), value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Applies `xf` to the objects of `set` in place.
 fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
     let snapshot = ctx.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
-    let mut count = set.walls.len() + set.floors.len() + set.rooms.len() + set.inserts.len();
+    let mut count =
+        set.walls.len() + set.floors.len() + set.rooms.len() + set.stairs.len() + set.inserts.len();
     // Everything is read before the first write.
     let joined = reconnect(&snapshot, set, xf)?;
     let mut wall_changes = Vec::new();
@@ -818,6 +856,7 @@ fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Mo
         set_length(ctx, *id, "x", at[0])?;
         set_length(ctx, *id, "y", at[1])?;
     }
+    move_stairs(ctx, &snapshot, &set.stairs, xf)?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -891,7 +930,8 @@ fn copy_set(
     let tongue = language(ctx);
     let mut created: Vec<ObjectId> = Vec::new();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
-    let mut count = set.walls.len() + set.floors.len() + set.rooms.len() + set.inserts.len();
+    let mut count =
+        set.walls.len() + set.floors.len() + set.rooms.len() + set.stairs.len() + set.inserts.len();
     for id in &set.walls {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -957,6 +997,24 @@ fn copy_set(
     }
     for id in &set.rooms {
         created.push(copy_room(ctx, &snapshot, *id, xf, target)?);
+    }
+    for id in &set.stairs {
+        let object =
+            spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let mut moved = Stair::from_values(&object.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            .moved(xf);
+        let storey = target.or(object.header.owner);
+        let Some(s) = storey else {
+            return Err(Error::new(codes::KIND_MISMATCH));
+        };
+        // In another storey the top is that storey's level above.
+        if target.is_some_and(|t| Some(t) != object.header.owner) {
+            moved.top_level = None;
+        }
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::stair::next_stair_name(&seen, s, &tongue);
+        created.push(create(ctx, types::STAIR, storey, moved.values(&name))?);
     }
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());

@@ -95,6 +95,18 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-room-region-unresolved",
     };
+    /// A point lies in a region smaller than the least room area: a sliver between walls.
+    pub const ROOM_REGION_SLIVER: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_region_sliver",
+        category: Category::Conflict,
+        message_id: "ab-cmd-room-region-sliver",
+    };
+    /// Every region without a room is smaller than the least room area.
+    pub const ROOM_ONLY_SLIVERS: ErrorCode = ErrorCode {
+        code: "ab.cmd.room_only_slivers",
+        category: Category::Conflict,
+        message_id: "ab-cmd-room-only-slivers",
+    };
     /// The walls or the click do not make a closed outline for a floor.
     pub const FLOOR_NO_LOOP: ErrorCode = ErrorCode {
         code: "ab.cmd.floor_no_loop",

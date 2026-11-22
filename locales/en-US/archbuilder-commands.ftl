@@ -148,7 +148,9 @@ ab-cmd-select-before-points = Select the objects first (click or drag a window),
 ab-cmd-room-no-region = This point is not inside a closed loop of walls. Click inside walls that enclose an area.
 ab-cmd-room-region-taken = This region already has a room.
 ab-cmd-room-none-missing = Every enclosed region of this storey already has a room.
-ab-cmd-room-region-unresolved = A region is enclosed by walls but its boundary cannot be resolved, so it has no room. Check the walls around it.
+ab-cmd-room-region-unresolved = { $count } region(s) enclosed by walls have a boundary that cannot be resolved, so they have no room. Check the walls around them.
+ab-cmd-room-region-sliver = This region has { $area } m², less than the least room area of { $least } m²: it is a sliver between walls and gets no room.
+ab-cmd-room-only-slivers = Every region without a room is smaller than the least room area of { $least } m² ({ $count } slivers): no room was placed.
 ab-cmd-room-place-label = Room
 ab-cmd-room-place-description = Places a room on a storey at a point inside a region closed by walls. The boundary, area, perimeter and volume follow the walls; the room gets the next number of the storey.
 ab-cmd-room-place-all-label = Place all rooms
@@ -163,3 +165,28 @@ ab-cmd-clipboard-empty = Nothing has been copied yet. Select walls, floors, door
 ab-cmd-storey-not-selected = Select the target storey first (for example in the outliner), then paste to storey.
 ab-cmd-shortcuts-invalid = The file is not a shortcut table, or it binds a key that is not two letters or a command that does not exist.
 ab-cmd-object-not-found = No object has the id { $id }.
+ab-cmd-stair-create-label = Stair
+ab-cmd-stair-create-description = Creates a stair from a storey's level to the level above: straight, or with a landing and an L or U turn, with a width, a tread depth and a highest riser; the riser count and height follow from the levels.
+ab-prompt-stair-start = Stair on { $storey } ({ $shape ->
+    [l_turn] L turn to the { $turn ->
+        [right] right
+       *[left] left
+    }
+    [u_turn] U turn to the { $turn ->
+        [right] right
+       *[left] left
+    }
+   *[straight] straight
+}, { $risers } risers of { $riser }, width { $width }, tread { $tread }): specify the start, the middle of the first riser, or an option.
+ab-prompt-stair-direction = Stair ({ $risers } risers of { $riser }, width { $width }, tread { $tread }): specify the direction of the first run, or an option.
+ab-prompt-stair-turn = Turn to which side, seen walking up?
+ab-prompt-stair-width = Stair width (now { $width })
+ab-prompt-stair-tread = Tread depth (now { $tread })
+ab-keyword-stair-straight = Straight
+ab-keyword-stair-l-turn = L turn
+ab-keyword-stair-u-turn = U turn
+ab-keyword-stair-left = Left
+ab-keyword-stair-right = Right
+ab-keyword-stair-width = Width
+ab-keyword-stair-tread = Tread
+ab-prompt-stair-turn-again = "{ $typed }" is not a side. Answer Left (l) or Right (r), or press Enter for the side shown.

@@ -46,9 +46,31 @@ pub const WINDOW: &str = "archbuilder.window";
 /// The type key of the room.
 pub const ROOM: &str = "archbuilder.room";
 
+/// A stair on a storey: runs and landings from the storey's level up to the level above.
+pub const STAIR: &str = "archbuilder.stair";
+
+/// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
+/// storey (doors and windows through their wall). One list, so a new kind is added once.
+pub const ELEMENTS: [&str; 6] = [WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR];
+
+/// The elements a storey owns directly.
+pub const STOREY_ELEMENTS: [&str; 4] = [WALL, FLOOR, ROOM, STAIR];
+
+/// Whether `key` is one of [`ELEMENTS`].
+#[must_use]
+pub fn is_element(key: &str) -> bool {
+    ELEMENTS.contains(&key)
+}
+
+/// Whether `key` is one of [`STOREY_ELEMENTS`].
+#[must_use]
+pub fn is_storey_element(key: &str) -> bool {
+    STOREY_ELEMENTS.contains(&key)
+}
+
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 10] = [
-    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR, ROOM,
+pub const KEYS: [&str; 11] = [
+    PROJECT, SITE, BUILDING, STOREY, LEVEL, WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -239,6 +261,45 @@ pub mod room {
     pub const BASE_OFFSET: usize = 11;
 }
 
+/// The field positions of a stair record.
+pub mod stair {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The shape: straight, an L turn or a U turn.
+    pub const SHAPE: usize = 1;
+    /// The side an L or U turn goes to, seen walking up.
+    pub const TURN: usize = 2;
+    /// The x of the start: the middle of the first riser.
+    pub const X: usize = 3;
+    /// The y of the start.
+    pub const Y: usize = 4;
+    /// The direction of the first run, an angle from the x axis.
+    pub const DIRECTION: usize = 5;
+    /// The width of the runs and landings.
+    pub const WIDTH: usize = 6;
+    /// The tread depth.
+    pub const TREAD: usize = 7;
+    /// The highest riser allowed.
+    pub const MAX_RISER: usize = 8;
+    /// The waist thickness of the monolithic construction.
+    pub const WAIST: usize = 9;
+    /// Whether the left side (walking up) has a railing.
+    pub const RAILING_LEFT: usize = 10;
+    /// Whether the right side has a railing.
+    pub const RAILING_RIGHT: usize = 11;
+    /// The level the stair arrives at; the level above its storey when absent.
+    pub const TOP_LEVEL: usize = 12;
+}
+
+/// The range of a stair's width, in meters.
+pub const STAIR_WIDTH_RANGE: (f64, f64) = (0.5, 10.0);
+/// The range of a stair's tread depth, in meters.
+pub const TREAD_RANGE: (f64, f64) = (0.1, 2.0);
+/// The range of a stair's highest riser, in meters.
+pub const RISER_RANGE: (f64, f64) = (0.05, 0.5);
+/// The range of a stair's waist thickness, in meters.
+pub const WAIST_RANGE: (f64, f64) = (0.05, 1.0);
+
 /// The range of a floor's thickness, in meters.
 pub const FLOOR_THICKNESS_RANGE: (f64, f64) = (0.001, 5.0);
 /// The thickness of a floor created without one, in meters.
@@ -415,6 +476,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .in_aspect("geometry"),
     ];
     for (key, fields) in [
+        (STAIR, stair_fields()),
         (ROOM, room_fields()),
         (FLOOR, floor),
         (DOOR, insert_fields()),
@@ -429,6 +491,55 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(declaration(key, fields)?)?;
     }
     Ok(())
+}
+
+fn stair_fields() -> Vec<FieldDecl> {
+    use crate::stair::{
+        DEFAULT_MAX_RISER, DEFAULT_TREAD, DEFAULT_WAIST, DEFAULT_WIDTH, Shape, Turn,
+    };
+    let variants = |items: Vec<(&'static str, u32)>| {
+        ValueType::Enum(
+            items
+                .into_iter()
+                .map(|(n, c)| EnumVariant::new(n, c))
+                .collect(),
+        )
+    };
+    let flag = |name: &str| {
+        FieldDecl::new(name, ValueType::Bool)
+            .with_default(Value::Bool(true))
+            .in_aspect("geometry")
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "shape",
+            variants(Shape::ALL.iter().map(|s| (s.name(), s.code())).collect()),
+        )
+        .with_default(Value::Enum(Shape::Straight.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "turn",
+            variants(Turn::ALL.iter().map(|s| (s.name(), s.code())).collect()),
+        )
+        .with_default(Value::Enum(Turn::Left.code()))
+        .in_aspect("geometry"),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("direction", ValueType::Quantity(Dimension::ANGLE))
+            .with_default(Value::Quantity(Quantity::new(0.0, Dimension::ANGLE)))
+            .with_bound(real((-1000.0, 1000.0)))
+            .in_aspect("geometry"),
+        length_field("width", Some(real(STAIR_WIDTH_RANGE))).with_default(length(DEFAULT_WIDTH)),
+        length_field("tread", Some(real(TREAD_RANGE))).with_default(length(DEFAULT_TREAD)),
+        length_field("max_riser", Some(real(RISER_RANGE))).with_default(length(DEFAULT_MAX_RISER)),
+        length_field("waist", Some(real(WAIST_RANGE))).with_default(length(DEFAULT_WAIST)),
+        flag("railing_left"),
+        flag("railing_right"),
+        FieldDecl::new("top_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+    ]
 }
 
 fn room_fields() -> Vec<FieldDecl> {
@@ -565,6 +676,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_storey_element_is_an_element_and_stairs_are_both() {
+        assert!(STOREY_ELEMENTS.iter().all(|k| is_element(k)));
+        assert!(is_element(STAIR) && is_storey_element(STAIR));
+        assert!(!is_element(STOREY) && !is_storey_element(DOOR));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines, reason = "one table of every type")]
     fn field_positions_match_the_declarations() {
         let mut registry = TypeRegistry::new();
         register(&mut registry).unwrap();
@@ -580,7 +699,25 @@ mod tests {
             ("hand", insert::HAND),
             ("facing", insert::FACING),
         ];
-        let expect: [(&str, &[(&str, usize)]); 10] = [
+        let expect: [(&str, &[(&str, usize)]); 11] = [
+            (
+                STAIR,
+                &[
+                    ("name", stair::NAME),
+                    ("shape", stair::SHAPE),
+                    ("turn", stair::TURN),
+                    ("x", stair::X),
+                    ("y", stair::Y),
+                    ("direction", stair::DIRECTION),
+                    ("width", stair::WIDTH),
+                    ("tread", stair::TREAD),
+                    ("max_riser", stair::MAX_RISER),
+                    ("waist", stair::WAIST),
+                    ("railing_left", stair::RAILING_LEFT),
+                    ("railing_right", stair::RAILING_RIGHT),
+                    ("top_level", stair::TOP_LEVEL),
+                ],
+            ),
             (
                 ROOM,
                 &[

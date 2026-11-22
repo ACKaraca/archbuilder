@@ -15,7 +15,7 @@ application and a headless CLI on one pinned `arc-core`. Built so far: walls (cr
 joins derived with authored end styles, `snap.rs`), doors and windows hosted by walls, floors
 (picked walls or sketch, holes; wall-associated edges follow the wall faces), rooms
 (`archbuilder.room.place`, `place_all`: derived from the walls around a placement point, warnings
-for unenclosed, redundant and duplicate numbers), `archbuilder.modify.move|copy|rotate|mirror` and direct manipulation (drag, handles, temporary dimensions), everyday habits (Tab, context menu, double click, clipboard, typed shortcuts, temporary hide and isolate, more snaps),
+for unenclosed, redundant and duplicate numbers), stairs (straight, L, U; floor openings, railings), `archbuilder.modify.move|copy|rotate|mirror` and direct manipulation (drag, handles, temporary dimensions), everyday habits (Tab, context menu, double click, clipboard, typed shortcuts, temporary hide and isolate, more snaps),
 Delete, `archbuilder.property.set`, outliner, property grid, `inspect` lists, IFC4 export (rooms
 as spaces). No layers, types or slope yet; families, views and the rest are still specifications.
 Read in this order:

@@ -20,9 +20,7 @@ use arc_command::{
 use arc_doc::{Document, Snapshot};
 use archbuilder_commands::wall::WALL_CREATE;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{
-    DEFAULT_THICKNESS, DOOR, FLOOR, MIN_WALL_LENGTH, STOREY, WALL, WINDOW,
-};
+use archbuilder_model::types::{DEFAULT_THICKNESS, DOOR, MIN_WALL_LENGTH, STOREY, WINDOW};
 use serde_json::{Map, Value};
 
 /// What the tool reads from the outside: the commands, the document, the session (with the
@@ -99,7 +97,9 @@ pub fn storey_for(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Object
         let object = spatial::get(snapshot, *id)?;
         match spatial::type_of(snapshot, *id)?.as_str() {
             STOREY => Some(object),
-            WALL | FLOOR => spatial::get(snapshot, object.header.owner?),
+            k if archbuilder_model::types::is_storey_element(k) => {
+                spatial::get(snapshot, object.header.owner?)
+            }
             DOOR | WINDOW => spatial::get(
                 snapshot,
                 spatial::get(snapshot, object.header.owner?)?.header.owner?,

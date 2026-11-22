@@ -1,5 +1,5 @@
 //! What is under a point of a plan view, as one ordered list: doors and windows first, then
-//! walls, rooms, floors and levels. The application hovers the first one and a click selects it
+//! walls, stairs, rooms, floors and levels. The application hovers the first one and a click selects it
 //! (a repeated click steps down the list), so the highlighted object is the one picked.
 //!
 //! Within a kind the object of the higher storey comes first, as it is the one a view from above
@@ -60,6 +60,20 @@ pub fn stack(
         .collect();
     walls.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     out.extend(walls.into_iter().map(|(_, _, id)| id));
+    // Stairs come after walls: a stair stands between walls, in front of the room around it.
+    let mut stairs: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::STAIR)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let p = crate::stair::Placed::of(snapshot, o)?;
+            let outline = crate::floor::Boundary {
+                loops: vec![p.outline()],
+            };
+            outline.contains(at).then_some((-p.base, o.id))
+        })
+        .collect();
+    stairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(stairs.into_iter().map(|(_, id)| id));
     let mut hit_rooms: Vec<(f64, ObjectId)> = rooms
         .iter()
         .filter(|e| {
@@ -150,6 +164,9 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         }
         Some(FLOOR) => Derived::of(snapshot, &object)
             .map(|d| d.boundary.loops.iter().map(|l| close(l, d.top)).collect())
+            .unwrap_or_default(),
+        Some(crate::types::STAIR) => crate::stair::Placed::of(snapshot, &object)
+            .map(|p| vec![close(&p.outline(), p.base)])
             .unwrap_or_default(),
         Some(LEVEL) => {
             let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);

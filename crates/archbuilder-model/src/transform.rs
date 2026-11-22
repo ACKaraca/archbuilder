@@ -80,7 +80,7 @@ impl Xform {
 }
 
 /// The sine and cosine of `angle`, exact at the multiples of a quarter turn.
-fn sin_cos(angle: f64) -> (f64, f64) {
+pub(crate) fn sin_cos(angle: f64) -> (f64, f64) {
     let quarters = angle / FRAC_PI_2;
     let nearest = quarters.round();
     if (quarters - nearest).abs() < 1.0e-12 && nearest.abs() < 1.0e6 {

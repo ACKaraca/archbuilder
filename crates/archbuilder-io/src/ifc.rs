@@ -160,6 +160,11 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.room(&entry, storey, level);
         }
+        // No stair entities in the writer: each stair is named in the loss report, never written
+        // as a proxy. Its shaft opening is already a hole in the floors above.
+        for stair in spatial::children(self.snapshot, archbuilder_model::types::STAIR, storey) {
+            self.lose(reasons::STAIR_NOT_WRITTEN, "IFCSTAIR", &stair);
+        }
         Ok(())
     }
 

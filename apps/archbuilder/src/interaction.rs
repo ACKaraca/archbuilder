@@ -35,6 +35,7 @@ use arc_ui::{
 };
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::room::ROOM_PLACE;
+use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_io::command::EXPORT_IFC;
@@ -47,6 +48,7 @@ use crate::insert_tool::{Hover, InsertTool, command as insert_command, kind_name
 use crate::modify_tool::{ModifyTool, command_named};
 use crate::picker::Picker;
 use crate::room_tool::RoomTool;
+use crate::stair_tool::StairTool;
 use crate::wall_tool::{Env, Tool, storey_for};
 
 /// A message of the application, named by identifier.
@@ -92,6 +94,11 @@ const IFC_LOSS: Message = Message {
 /// What a delete says when floor edges lost their wall.
 const FLOOR_EDGES_FROZEN: Message = Message {
     message_id: "ab-notice-floor-edges-frozen",
+};
+
+/// What `place_all` says of the slivers it skipped.
+const ROOM_SLIVERS: Message = Message {
+    message_id: "ab-notice-room-slivers",
 };
 
 /// What a paste says when the new objects lie exactly on others.
@@ -285,6 +292,13 @@ pub struct WallInteraction {
     modify: ModifyTool,
     /// The room tool: rooms placed by clicking inside regions closed by walls.
     rooms: RoomTool,
+    /// The stair tool: stairs from a start and a direction.
+    stairs: StairTool,
+    /// The ghost of the stair the stair tool would make.
+    stair_ghost: Vec<ProductOverlay>,
+    /// The stair warnings the history last showed, and the snapshot they were found in, so each
+    /// change (a stair made, an edit of the grid, a paste, an undo) says only what is new.
+    stair_warnings: (Option<arc_doc::Snapshot>, Vec<String>),
     /// The size of the viewport's image in pixels, once a pointer event has shown it.
     view_size: Option<[f64; 2]>,
     /// What a click in a plan view picks, shared by the hover and the click.
@@ -362,6 +376,9 @@ impl WallInteraction {
             floors: FloorTool::new(),
             modify: ModifyTool::new(),
             rooms: RoomTool::new(),
+            stairs: StairTool::new(),
+            stair_ghost: Vec::new(),
+            stair_warnings: (None, Vec::new()),
             view_size: None,
             picker: Picker::default(),
             pick_hover: Vec::new(),
@@ -537,6 +554,36 @@ impl WallInteraction {
         })
     }
 
+    /// Runs `step` of the stair tool with the pieces the context gives.
+    fn with_stairs(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        step: impl FnOnce(
+            &mut StairTool,
+            &Env<'_>,
+            &mut dyn FnMut(Invocation) -> Result<arc_command::Outcome>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let (Some(registry), Ok(document)) = (self.registry.as_ref(), cx.document()) else {
+            return Ok(());
+        };
+        if cx.read_only() {
+            return Ok(());
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let session = Self::session(cx);
+        let env = Env {
+            registry,
+            document,
+            session: &session,
+            selection: cx.selection(),
+            seed: self.seed,
+        };
+        step(&mut self.stairs, &env, &mut |invocation| {
+            cx.invoke(invocation)
+        })
+    }
+
     /// Runs `step` of the modify tool with the pieces the context gives.
     fn with_modify(
         &mut self,
@@ -573,6 +620,8 @@ impl WallInteraction {
             self.modify.line()
         } else if self.rooms.running() {
             self.rooms.line()
+        } else if self.stairs.running() {
+            self.stairs.line()
         } else if self.floors.running() {
             self.floors.line()
         } else if self.inserts.running() {
@@ -598,6 +647,8 @@ impl WallInteraction {
         self.floors.stop();
         self.modify.stop();
         self.rooms.stop();
+        self.stairs.stop();
+        self.stair_ghost.clear();
         self.room_hover.clear();
         self.floor_hover.clear();
         self.hover = None;
@@ -781,7 +832,13 @@ impl WallInteraction {
 }
 
 /// The English shortcut letter of each keyword of the wall prompts.
-const ENGLISH_SHORTCUTS: [(&str, char); 21] = [
+const ENGLISH_SHORTCUTS: [(&str, char); 27] = [
+    ("straight", 's'),
+    ("l_turn", 'l'),
+    ("u_turn", 'u'),
+    ("tread", 't'),
+    ("left", 'l'),
+    ("right", 'r'),
     ("displacement", 'd'),
     ("reference", 'r'),
     ("yes", 'y'),
@@ -885,6 +942,7 @@ impl Interaction for WallInteraction {
             self.label_units = (unit, cx.decimal_separator());
         }
         self.habit_frame(cx);
+        self.say_stair_warnings(cx);
         self.refresh_highlight(cx);
         self.refresh_direct(cx);
     }
@@ -919,6 +977,7 @@ impl Interaction for WallInteraction {
             .or_else(|| self.inserts.take_error())
             .or_else(|| self.floors.take_error())
             .or_else(|| self.rooms.take_error())
+            .or_else(|| self.stairs.take_error())
             .or_else(|| self.modify.take_error());
         self.refresh_highlight(cx);
         self.update_view(cx, None);
@@ -932,7 +991,8 @@ impl Interaction for WallInteraction {
             LineAction::Submit(text) => self.shortcut_for(cx, text),
             _ => None,
         };
-        let rooming = self.rooms.running();
+        let rooming = self.rooms.running() || self.stairs.running();
+        let stairing = self.stairs.running();
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
         let modifying = self.modify.running();
@@ -954,6 +1014,9 @@ impl Interaction for WallInteraction {
                 Ok(())
             }
             LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
+            LineAction::Back if stairing => {
+                self.with_stairs(cx, |tool, env, run| tool.back(env, run))
+            }
             LineAction::Back if rooming => Ok(()),
             LineAction::Back if flooring => {
                 self.with_floors(cx, |tool, env, run| tool.back(env, run))
@@ -994,6 +1057,18 @@ impl Interaction for WallInteraction {
             {
                 self.stop_all();
                 self.intent(cx, &Intent::new(text.trim()))
+            }
+            LineAction::Submit(text) if stairing => {
+                let text = self.typed(cx, &text);
+                let r = self.with_stairs(cx, |tool, env, run| tool.text(env, run, &text));
+                // A refused answer is said here; the prompt stays.
+                if let Some(error) = self.stairs.take_error() {
+                    self.notice_error(cx, &error);
+                }
+                r
+            }
+            LineAction::Submit(text) if is_stair_word(&text) && !self.tool.active() => {
+                self.intent(cx, &Intent::new(STAIR_CREATE))
             }
             LineAction::Submit(text) if rooming => {
                 let text = self.typed(cx, &text);
@@ -1059,6 +1134,9 @@ impl Interaction for WallInteraction {
         if !self.rooms.running() {
             self.room_hover.clear();
         }
+        if !self.stairs.running() {
+            self.stair_ghost.clear();
+        }
         self.report_chains(cx);
         if !self.modify.running() {
             self.clear_modify_overlays();
@@ -1074,6 +1152,7 @@ impl Interaction for WallInteraction {
             .or_else(|| self.inserts.take_error())
             .or_else(|| self.floors.take_error())
             .or_else(|| self.rooms.take_error())
+            .or_else(|| self.stairs.take_error())
             .or_else(|| self.modify.take_error());
         result
             .and(pending.map_or(Ok(()), Err))
@@ -1107,6 +1186,7 @@ impl Interaction for WallInteraction {
                     || self.inserts.running()
                     || self.floors.running()
                     || self.rooms.running()
+                    || self.stairs.running()
                     || self.modify.running()
                     || self.direct.active()
                     || self.habits.rename.is_some(),
@@ -1127,6 +1207,7 @@ impl Interaction for WallInteraction {
                 .chain(self.insert_overlays())
                 .chain(self.floor_overlays())
                 .chain(self.room_hover.iter().cloned())
+                .chain(self.stair_ghost.iter().cloned())
                 .chain(self.pick_hover.iter().cloned())
                 .chain(self.ghost.iter().cloned())
                 .chain(self.direct_overlays.iter().cloned())
@@ -1141,6 +1222,7 @@ impl Interaction for WallInteraction {
                 .or(self.inserts.running().then_some(()))
                 .or(self.floors.running().then_some(()))
                 .or(self.rooms.running().then_some(()))
+                .or(self.stairs.running().then_some(()))
                 .or(self.modify.prompting().then_some(()))
                 .and(self.cursor),
             dynamic: self
@@ -1169,6 +1251,7 @@ impl Interaction for WallInteraction {
                 && !self.inserts.running()
                 && !self.floors.running()
                 && !self.rooms.running()
+                && !self.stairs.running()
                 && !self.modify.running(),
             // A chain of walls or of copies says once when it ends, not after each wall or copy.
             reports_results: self.just_reported
@@ -1195,6 +1278,9 @@ impl WallInteraction {
         }
         if self.rooms.running() {
             return self.room_pointer(cx, event);
+        }
+        if self.stairs.running() {
+            return self.stair_pointer(cx, event);
         }
         if self.floors.running() {
             return self.floor_pointer(cx, event);
@@ -1438,6 +1524,7 @@ impl WallInteraction {
             || self.inserts.running()
             || self.floors.running()
             || self.rooms.running()
+            || self.stairs.running()
             || self.modify.running()
     }
 
@@ -1618,6 +1705,10 @@ impl WallInteraction {
             self.stop_all();
             return self.with_rooms(cx, |tool, env, run| tool.begin(env, run));
         }
+        if command == STAIR_CREATE && intent.params.is_empty() {
+            self.stop_all();
+            return self.with_stairs(cx, |tool, env, run| tool.begin(env, run));
+        }
         if command == FLOOR_ADD_HOLE && intent.params.is_empty() {
             self.tool.stop();
             self.inserts.stop();
@@ -1652,7 +1743,8 @@ impl WallInteraction {
         );
         invocation.seed = self.next_seed();
         let outcome = cx.invoke(invocation)?;
-        self.say_room_warnings(cx);
+        self.after_command(cx);
+        self.say_slivers(cx, &outcome.value);
         // Floor edges that followed a deleted wall stay put: say so.
         let frozen = outcome
             .value
@@ -1687,6 +1779,80 @@ impl WallInteraction {
             self.push_notice(text);
         }
         Ok(())
+    }
+
+    /// After a command of the product: what the pointer outlined may be gone (a delete), so the
+    /// next move outlines again; the room warnings are said.
+    fn after_command(&mut self, cx: &InteractionContext<'_>) {
+        self.pick_hover.clear();
+        self.say_room_warnings(cx);
+    }
+
+    /// Says the stair warnings (stride, overlap, uncut opening) that a change of the document
+    /// brought, once each: checked when the snapshot changes, whatever changed it.
+    fn say_stair_warnings(&mut self, cx: &InteractionContext<'_>) {
+        let Ok(document) = cx.document() else {
+            return;
+        };
+        let snapshot = document.snapshot();
+        if self
+            .stair_warnings
+            .0
+            .as_ref()
+            .is_some_and(|s| s.ptr_eq(&snapshot))
+        {
+            return;
+        }
+        let first = self.stair_warnings.0.is_none();
+        let errors: Vec<Error> = spatial::objects(&snapshot, archbuilder_model::types::STAIR)
+            .iter()
+            .take(200)
+            .flat_map(|o| archbuilder_model::validate::stair_warnings(&snapshot, o))
+            .collect();
+        let Some(localizer) = self.localizer(cx.language()) else {
+            return;
+        };
+        let found: Vec<String> = errors
+            .iter()
+            .map(|e| localizer.format_error(e).text)
+            .collect();
+        let fresh: Vec<String> = found
+            .iter()
+            .filter(|t| !self.stair_warnings.1.contains(t))
+            .cloned()
+            .collect();
+        self.stair_warnings = (Some(snapshot), found);
+        // A document that opens with warnings does not repeat them all in the history.
+        if !first {
+            for text in fresh.into_iter().take(8) {
+                self.push_notice(text);
+            }
+        }
+    }
+
+    /// Says how many slivers between walls `place_all` skipped, when it skipped any.
+    fn say_slivers(&mut self, cx: &InteractionContext<'_>, value: &serde_json::Value) {
+        // Slivers between walls get no room: say how many were skipped.
+        if let Some(count) = value
+            .get("slivers")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|c| *c > 0)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let text = localizer
+                .format(
+                    ROOM_SLIVERS.message_id,
+                    &[
+                        ("count", arc_base::error::Value::Int(count)),
+                        (
+                            "least",
+                            format!("{:.2}", archbuilder_model::room::MIN_ROOM_AREA).into(),
+                        ),
+                    ],
+                )
+                .text;
+            self.push_notice(text);
+        }
     }
 
     /// Says in the history which rooms a command left unenclosed, redundant or with a duplicate
@@ -2138,6 +2304,14 @@ fn is_room_word(text: &str) -> bool {
         .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
 }
 
+/// Whether `text` asks for the stair tool.
+fn is_stair_word(text: &str) -> bool {
+    let t = text.trim();
+    [STAIR_CREATE, "stair", "merdiven"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
+}
+
 /// Whether `text` asks for the floor tool.
 fn is_floor_word(text: &str) -> bool {
     let t = text.trim();
@@ -2189,6 +2363,64 @@ impl WallInteraction {
                     if let Some(error) = self.rooms.take_error() {
                         self.notice_error(cx, &error);
                     }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The pointer while the stair tool runs: it snaps like the floor sketch (wall corners and
+    /// ends, tracking lines, the grid); once the start is given it draws the stair the pointer
+    /// would make; a click is the next point.
+    fn stair_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        let Some((storey, z)) = self.stairs.storey() else {
+            return false;
+        };
+        let Ok(document) = cx.document() else {
+            return false;
+        };
+        let snapshot = document.snapshot();
+        let walls = archbuilder_model::floor::storey_walls(&snapshot, storey);
+        let baselines: Vec<[[f64; 2]; 2]> = walls.iter().map(|(_, w)| [w.start, w.end]).collect();
+        let centers = self.room_centers(cx, storey);
+        let mut ends = vec![[0.0, 0.0]];
+        ends.extend(walls.iter().flat_map(|(_, w)| w.plain_footprint()));
+        let from = self.stairs.line().base_point().map(|p| [p.x, p.y]);
+        let hit = event.model.and_then(|m| {
+            crate::snap::snap(&self.snap_input(
+                [m.x, m.y],
+                event,
+                &ends,
+                &baselines,
+                from,
+                &centers,
+            ))
+        });
+        self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
+        self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
+        self.snap = hit
+            .as_ref()
+            .and_then(|h| h.kind.marker().map(|kind| (kind, h.point)));
+        let at = hit.map(|h| h.point);
+        if let Some(at) = at {
+            self.cursor = Some(at);
+        }
+        match event.kind {
+            PointerKind::Move => {
+                self.stair_ghost = at
+                    .and_then(|at| self.stairs.preview(&snapshot, at))
+                    .map(|stair| stair_ghost(&snapshot, storey, z, &stair))
+                    .unwrap_or_default();
+                false
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                if let Some(at) = at {
+                    let _ = self.with_stairs(cx, |tool, env, run| tool.click(env, run, at));
+                    if let Some(error) = self.stairs.take_error() {
+                        self.notice_error(cx, &error);
+                    }
+                    self.stair_ghost.clear();
                 }
                 true
             }
@@ -2452,6 +2684,42 @@ impl WallInteraction {
         }
         out
     }
+}
+
+/// The dashed outline and riser lines of the stair the stair tool would make on `storey`, at the
+/// elevation `z` of its level.
+fn stair_ghost(
+    snapshot: &arc_doc::Snapshot,
+    storey: ObjectId,
+    z: f64,
+    stair: &archbuilder_model::stair::Stair,
+) -> Vec<ProductOverlay> {
+    let Some(height) = spatial::get(snapshot, storey)
+        .and_then(|s| spatial::level_above(snapshot, &s))
+        .and_then(|l| {
+            archbuilder_model::types::meters(&l.values, archbuilder_model::types::level::ELEVATION)
+        })
+        .map(|top| top - z)
+    else {
+        return Vec::new();
+    };
+    let Ok(layout) = archbuilder_model::stair::Layout::new(stair, height) else {
+        return Vec::new();
+    };
+    let plan = layout.plan(archbuilder_model::stair::CUT_HEIGHT);
+    let path = |points: Vec<[f64; 2]>| ProductOverlay::Path {
+        points: points.iter().map(|p| Point3::new(p[0], p[1], z)).collect(),
+        dashed: true,
+    };
+    let mut out: Vec<ProductOverlay> = plan
+        .outline
+        .iter()
+        .map(|r| path(r.iter().chain(r.first()).copied().collect()))
+        .collect();
+    out.extend(plan.treads.iter().map(|(pair, _)| path(pair.to_vec())));
+    out.push(path(plan.walk.clone()));
+    out.push(path(plan.arrow.to_vec()));
+    out
 }
 
 #[cfg(test)]

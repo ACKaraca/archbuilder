@@ -511,9 +511,10 @@ pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()
         None => storey_in_selection(ctx).ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?,
     };
     let object = expect(ctx.snapshot(), id, STOREY)?;
-    let walls = spatial::walls(ctx.snapshot(), id).len()
-        + spatial::children(ctx.snapshot(), types::FLOOR, id).len()
-        + spatial::children(ctx.snapshot(), types::ROOM, id).len();
+    let walls: usize = types::STOREY_ELEMENTS
+        .iter()
+        .map(|k| spatial::children(ctx.snapshot(), k, id).len())
+        .sum();
     if walls > 0 {
         return Err(Error::new(codes::STOREY_HAS_WALLS).with_arg("count", walls.to_string()));
     }
@@ -741,6 +742,31 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
                     Some(types::length(height.max(types::HEIGHT_RANGE.0))),
                 )?;
                 txn.modify(id, FieldPath::new("top_level"), top.map(Value::Reference))?;
+                ensure_valid(ctx)?;
+            }
+            (types::STAIR, "top_constraint") => {
+                // 0 is the level above the storey; k is the k-th level above it.
+                let object =
+                    spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let storey = object
+                    .header
+                    .owner
+                    .and_then(|s| spatial::get(snapshot, s))
+                    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let above = archbuilder_model::room::levels_above(snapshot, &storey);
+                let top = match p.value.as_u64() {
+                    Some(0) => None,
+                    Some(k) => Some(
+                        usize::try_from(k - 1)
+                            .ok()
+                            .and_then(|k| above.get(k))
+                            .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                            .id,
+                    ),
+                    None => return Err(Error::new(codes::VALUE_INVALID)),
+                };
+                ctx.txn()?
+                    .modify(id, FieldPath::new("top_level"), top.map(Value::Reference))?;
                 ensure_valid(ctx)?;
             }
             (types::ROOM, "upper_constraint") => {

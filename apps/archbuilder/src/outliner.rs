@@ -93,6 +93,17 @@ impl<'a> Structure<'a> {
                         .collect();
                         floors.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
                         walls.extend(floors);
+                        // Then its stairs, by name.
+                        let mut stairs: Vec<_> = spatial::children(
+                            snapshot,
+                            archbuilder_model::types::STAIR,
+                            s.storey.id,
+                        )
+                        .iter()
+                        .map(|f| (f.id, name(f)))
+                        .collect();
+                        stairs.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
+                        walls.extend(stairs);
                         // The rooms come last, by number.
                         let mut rooms = spatial::children(
                             snapshot,

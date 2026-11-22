@@ -10,6 +10,7 @@ use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
 use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
+use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_commands::structure::{STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::WALL_CREATE;
 
@@ -169,6 +170,15 @@ pub fn toolbar() -> Vec<ToolItem> {
                 message_id: "ab-tool-room-all-hint",
             },
             ROOM_PLACE_ALL,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-stair",
+            },
+            Message {
+                message_id: "ab-tool-stair-hint",
+            },
+            STAIR_CREATE,
         ),
         ToolItem::Separator,
         button(

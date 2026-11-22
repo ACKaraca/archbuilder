@@ -17,6 +17,7 @@ pub mod names;
 pub mod pick;
 pub mod room;
 pub mod spatial;
+pub mod stair;
 pub mod transform;
 pub mod types;
 pub mod units;
@@ -110,6 +111,16 @@ pub mod defaults {
             format!("Döşeme {n}")
         } else {
             format!("Slab {n}")
+        }
+    }
+
+    /// The name of the stair numbered `n` on a storey in `language`: `Stair 3`, `Merdiven 3`.
+    #[must_use]
+    pub fn stair(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Merdiven {n}")
+        } else {
+            format!("Stair {n}")
         }
     }
 

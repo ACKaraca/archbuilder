@@ -90,9 +90,11 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
                         .and_then(wall_of)
                 })
             });
+            // The shaft openings of the stairs arriving at the floor's level are taken out.
+            let openings = crate::stairs::openings_of_floor(objects, &object["owner"]);
             let area = boundary
                 .as_ref()
-                .map(archbuilder_model::floor::Boundary::area);
+                .map(|b| b.with_openings(&openings).0.area());
             let walls: Vec<Value> = floor
                 .as_ref()
                 .map(Floor::walls)

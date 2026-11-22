@@ -31,9 +31,10 @@ use archbuilder_commands::modify::{
     MODIFY_ROTATE,
 };
 use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
+use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
-use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STAIR, WALL, WINDOW};
 
 pub mod chrome;
 pub mod clipboard;
@@ -41,6 +42,7 @@ pub mod direct;
 pub mod extract_floor;
 pub mod extract_insert;
 pub mod extract_level;
+pub mod extract_stair;
 pub mod extract_wall;
 pub mod floor_tool;
 pub mod insert_tool;
@@ -56,6 +58,8 @@ pub mod room_view;
 pub mod selection;
 pub mod shortcuts;
 pub mod snap;
+pub mod stair_tool;
+pub mod stair_view;
 pub mod visibility;
 pub mod wall_tool;
 
@@ -179,6 +183,9 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     builder.extraction_dependents(|snapshot, changes| {
         let mut out = extract_wall::dependents(snapshot, changes);
         out.extend(extract_floor::dependents(snapshot, changes));
+        out.extend(extract_stair::dependents(snapshot, changes));
+        out.sort_unstable();
+        out.dedup();
         out
     });
     shell::prefs::register_settings(&mut builder)?;
@@ -276,6 +283,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.stair".into(),
+        types: vec![STAIR.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_stair::extract_stair(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.insert".into(),
         types: vec![DOOR.to_owned(), WINDOW.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -339,6 +355,7 @@ fn menu() -> Result<Menu> {
             FLOOR_ADD_HOLE,
             ROOM_PLACE,
             ROOM_PLACE_ALL,
+            STAIR_CREATE,
             INSERT_FLIP_HAND,
             INSERT_FLIP_FACING,
         ]
@@ -417,7 +434,9 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
             let mut out = labels::overlays(app, tab, language);
             if let Ok(t) = app.tab(tab) {
-                out.extend(room_view::shared().overlays(&t.document().snapshot(), language));
+                let snapshot = t.document().snapshot();
+                out.extend(room_view::shared().overlays(&snapshot, language));
+                out.extend(stair_view::overlays(&snapshot, language));
             }
             out
         }))),

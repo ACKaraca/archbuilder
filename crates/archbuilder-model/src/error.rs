@@ -158,4 +158,47 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-floor-holes-overlap",
     };
+    /// Two walls of a storey lie on top of each other over a stretch: a warning. Rooms and floors
+    /// treat them as one wall.
+    pub const WALL_OVERLAP: ErrorCode = ErrorCode {
+        code: "ab.model.wall_overlap",
+        category: Category::Conflict,
+        message_id: "ab-model-wall-overlap",
+    };
+    /// A stair has no level above its base to arrive at.
+    pub const STAIR_NO_TOP: ErrorCode = ErrorCode {
+        code: "ab.model.stair_no_top",
+        category: Category::Conflict,
+        message_id: "ab-model-stair-no-top",
+    };
+    /// A stair's height and highest riser give too few or too many risers.
+    pub const STAIR_RISERS: ErrorCode = ErrorCode {
+        code: "ab.model.stair_risers",
+        category: Category::InvalidInput,
+        message_id: "ab-model-stair-risers",
+    };
+    /// A stair's record cannot be read.
+    pub const STAIR_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.stair_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-stair-malformed",
+    };
+    /// A stair's stride `2R + T` lies outside the comfortable range: a warning.
+    pub const STAIR_STRIDE: ErrorCode = ErrorCode {
+        code: "ab.model.stair_stride",
+        category: Category::InvalidInput,
+        message_id: "ab-model-stair-stride",
+    };
+    /// A stair's shaft opening reaches a floor but cannot be cut out of it: a warning.
+    pub const STAIR_OPENING_UNCUT: ErrorCode = ErrorCode {
+        code: "ab.model.stair_opening_uncut",
+        category: Category::Conflict,
+        message_id: "ab-model-stair-opening-uncut",
+    };
+    /// Two stairs of one storey overlap in plan: a warning.
+    pub const STAIR_OVERLAP: ErrorCode = ErrorCode {
+        code: "ab.model.stair_overlap",
+        category: Category::Conflict,
+        message_id: "ab-model-stair-overlap",
+    };
 }

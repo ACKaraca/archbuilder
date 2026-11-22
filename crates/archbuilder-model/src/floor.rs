@@ -14,7 +14,9 @@
 //! its two authored points. [`Floor::frozen`] gives the vertices after a wall is deleted: the
 //! edges that followed it keep their last derived position and lose the association.
 //!
-//! Nothing derived is stored: the area and the solid come from the boundary each time.
+//! Nothing derived is stored: the area and the solid come from the boundary each time. The
+//! boundary a floor shows ([`Derived`]) also has the shaft openings of the stairs that arrive at
+//! its level taken out ([`Boundary::with_openings`]).
 
 use std::collections::BTreeSet;
 
@@ -655,6 +657,22 @@ impl Boundary {
     /// The solid kernel's errors for a boundary it cannot make a solid of.
     pub fn solid(&self, top: f64, thickness: f64) -> Result<Polyhedron> {
         let tolerance = Tolerance::DEFAULT;
+        prism(
+            &self.region()?,
+            top - thickness,
+            thickness,
+            CHORD,
+            &tolerance,
+            &Limits::DEFAULT,
+        )
+    }
+
+    /// The boundary as a region of the solid kernel.
+    ///
+    /// # Errors
+    /// The solid kernel's errors for loops it cannot make a region of.
+    pub fn region(&self) -> Result<Region> {
+        let tolerance = Tolerance::DEFAULT;
         let mut parts = Vec::with_capacity(self.loops.len());
         for points in &self.loops {
             let pts: Vec<Point2> = points.iter().map(|p| Point2::new(p[0], p[1])).collect();
@@ -671,16 +689,119 @@ impl Boundary {
         let outer = loops
             .next()
             .ok_or_else(|| arc_base::Error::new(arc_geom::error::codes::REGION_EMPTY))?;
-        let region = Region::new(vec![RegionPart::new(outer, loops.collect())])?;
-        prism(
-            &region,
-            top - thickness,
-            thickness,
-            CHORD,
-            &tolerance,
+        Region::new(vec![RegionPart::new(outer, loops.collect())])
+    }
+
+    /// The boundary with the shaft `openings` taken out, and how many openings that reach the
+    /// boundary could not be cut. An opening inside the outer loop and clear of the holes is a new
+    /// hole; one that crosses an edge is subtracted, which leaves a notch, as long as the result
+    /// is one valid boundary. An opening that does not reach the boundary changes nothing.
+    #[must_use]
+    pub fn with_openings(&self, openings: &[Vec<[f64; 2]>]) -> (Self, usize) {
+        let mut out = self.clone();
+        let mut uncut = 0;
+        // Openings that overlap are cut as one, so two stairs side by side leave one hole.
+        let merged = merge_loops(openings);
+        for opening in merged.iter().take(MAX_LOOPS) {
+            let mut hole = out.clone();
+            hole.loops.push(opening.clone());
+            if hole.check().is_ok() {
+                out = hole;
+                continue;
+            }
+            let outer = &out.loops[0];
+            let reaches = opening.iter().any(|p| inside(outer, *p))
+                || outer.iter().any(|p| inside(opening, *p))
+                || loops_touch(outer, opening);
+            if !reaches {
+                continue;
+            }
+            match out.subtract(opening) {
+                Some(cut) => out = cut,
+                None => uncut += 1,
+            }
+        }
+        (out, uncut)
+    }
+
+    /// The boundary less the polygon `cut`, when the result is one valid boundary.
+    fn subtract(&self, cut: &[[f64; 2]]) -> Option<Self> {
+        let tool = Self {
+            loops: vec![cut.to_vec()],
+        }
+        .region()
+        .ok()?;
+        let result = arc_geom::boolean(
+            &self.region().ok()?,
+            &tool,
+            arc_geom::BooleanOp::Difference,
+            &Tolerance::DEFAULT,
             &Limits::DEFAULT,
         )
+        .ok()??;
+        let [part] = result.parts() else {
+            return None;
+        };
+        let points = |l: &Loop2| -> Option<Vec<[f64; 2]>> {
+            l.curves()
+                .iter()
+                .map(|c| c.start_point().map(|p| [p.x, p.y]))
+                .collect()
+        };
+        let mut loops = vec![points(part.outer())?];
+        for hole in part.holes() {
+            loops.push(points(hole)?);
+        }
+        let boundary = Self { loops };
+        boundary.check().is_ok().then_some(boundary)
     }
+}
+
+/// The union of `loops` as the outer loops of its parts (an enclosed gap is filled); `loops`
+/// as they are when the solid kernel cannot unite them.
+fn merge_loops(loops: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
+    if loops.len() < 2 {
+        return loops.to_vec();
+    }
+    let region = |l: &Vec<[f64; 2]>| {
+        Boundary {
+            loops: vec![l.clone()],
+        }
+        .region()
+        .ok()
+    };
+    let mut acc: Option<Region> = None;
+    for l in loops.iter().take(MAX_LOOPS) {
+        let Some(r) = region(l) else {
+            return loops.to_vec();
+        };
+        acc = Some(match acc {
+            None => r,
+            Some(a) => match arc_geom::boolean(
+                &a,
+                &r,
+                arc_geom::BooleanOp::Union,
+                &Tolerance::DEFAULT,
+                &Limits::DEFAULT,
+            ) {
+                Ok(Some(u)) => u,
+                _ => return loops.to_vec(),
+            },
+        });
+    }
+    let Some(acc) = acc else {
+        return loops.to_vec();
+    };
+    acc.parts()
+        .iter()
+        .map(|p| {
+            p.outer()
+                .curves()
+                .iter()
+                .filter_map(|c| c.start_point().map(|q| [q.x, q.y]))
+                .collect()
+        })
+        .collect()
 }
 
 /// What a floor reads from a snapshot: its data, the elevation of the top and the boundary.
@@ -690,8 +811,11 @@ pub struct Derived {
     pub floor: Floor,
     /// The elevation of the slab's top: the level plus the top offset, in meters.
     pub top: f64,
-    /// The boundary, derived from the walls.
+    /// The boundary, derived from the walls, with the shaft openings of the stairs that arrive at
+    /// the floor's level taken out.
     pub boundary: Boundary,
+    /// The shaft openings that reach the floor but could not be cut.
+    pub uncut: usize,
 }
 
 impl Derived {
@@ -704,11 +828,13 @@ impl Derived {
             .owner
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
-        let boundary = floor.boundary_in(snapshot)?;
+        let openings = crate::stair::openings_of_floor(snapshot, object);
+        let (boundary, uncut) = floor.boundary_in(snapshot)?.with_openings(&openings);
         Some(Self {
             top: level + floor.top_offset,
             floor,
             boundary,
+            uncut,
         })
     }
 
@@ -753,9 +879,10 @@ pub enum WallsRefusal {
 }
 
 /// Where two collinear walls that follow each other meet: the middle of their nearest ends, on
-/// the line of the second; `None` when the lines are not the same line or run opposite ways.
+/// the line of the second; `None` when the lines are not the same line. The walls may run either
+/// way (a wall drawn back over part of another).
 fn junction(w0: &Wall, w1: &Wall, a: &Line, b: &Line) -> Option<[f64; 2]> {
-    if dot(a.dir, b.dir) <= 0.0 || cross(sub(b.at, a.at), a.dir).abs() > 1.0e-3 {
+    if cross(a.dir, b.dir).abs() > 1.0e-9 || cross(sub(b.at, a.at), a.dir).abs() > 1.0e-3 {
         return None;
     }
     let ends = |w: &Wall| [w.start, w.end];
@@ -880,6 +1007,35 @@ pub fn wall_at(walls: &[(ObjectId, Wall)], p: [f64; 2]) -> Option<ObjectId> {
         .map(|(_, id)| id)
 }
 
+/// The pairs of walls that lie on top of each other: collinear within the region tolerance and
+/// sharing a stretch longer than it. A model-check finding; region finding counts each shared
+/// stretch once, so such walls bound regions as one wall.
+#[must_use]
+pub fn overlapping_walls(walls: &[(ObjectId, Wall)]) -> Vec<(ObjectId, ObjectId)> {
+    let tol = 1.0e-3;
+    let mut out = Vec::new();
+    for (i, (a_id, a)) in walls.iter().enumerate().take(MAX_PICKED) {
+        let Some(base) = Line::through(a.start, a.end) else {
+            continue;
+        };
+        let length = a.length();
+        for (b_id, b) in walls.iter().skip(i + 1).take(MAX_PICKED) {
+            let across = |q: [f64; 2]| cross(base.dir, sub(q, a.start)).abs();
+            if across(b.start) > tol || across(b.end) > tol {
+                continue;
+            }
+            let (s, e) = (
+                dot(sub(b.start, a.start), base.dir),
+                dot(sub(b.end, a.start), base.dir),
+            );
+            if s.max(e).min(length) - s.min(e).max(0.0) > tol {
+                out.push((*a_id, *b_id));
+            }
+        }
+    }
+    out
+}
+
 /// The directed piece of a wall between two nodes.
 #[derive(Debug, Clone, Copy)]
 struct Piece {
@@ -988,6 +1144,11 @@ pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
     // points where other walls cross it.
     let ends: Vec<[f64; 2]> = walls.iter().flat_map(|(_, w)| [w.start, w.end]).collect();
     let mut pieces: Vec<Piece> = Vec::new();
+    // Walls on top of each other make the same pieces; each stretch is kept once and belongs to
+    // the longest wall over it, so overlapping walls bound regions as their union instead of
+    // leaving a face of no width or a chain that turns back on one line.
+    let mut taken: std::collections::BTreeMap<(usize, usize), usize> =
+        std::collections::BTreeMap::new();
     for (k, (_, w)) in walls.iter().enumerate() {
         let base = Line::through(w.start, w.end)?;
         let length = w.length();
@@ -1011,7 +1172,17 @@ pub fn regions(walls: &[(ObjectId, Wall)]) -> Option<Vec<WallRegion>> {
         along.sort_by(|a, b| a.0.total_cmp(&b.0));
         let ids: Vec<usize> = along.iter().map(|(_, q)| node_of(*q, &mut nodes)).collect();
         for pair in ids.windows(2) {
-            if pair[0] != pair[1] {
+            if pair[0] == pair[1] {
+                continue;
+            }
+            let key = (pair[0].min(pair[1]), pair[0].max(pair[1]));
+            if let Some(&at) = taken.get(&key) {
+                if length > walls[pieces[at].wall].1.length() {
+                    pieces[at].wall = k;
+                    pieces[at + 1].wall = k;
+                }
+            } else {
+                taken.insert(key, pieces.len());
                 pieces.push(Piece {
                     from: pair[0],
                     to: pair[1],
@@ -1218,12 +1389,51 @@ mod tests {
     }
 
     #[test]
+    fn walls_on_top_of_each_other_count_as_one_and_are_reported() {
+        let mut walls = house(true);
+        walls.push((id(8), wall([6.0, 6.0], [6.0, 2.0])));
+        walls.push((id(9), wall([6.0, 2.0], [6.0, 6.0])));
+        let found = regions(&walls).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!((found[0].area - 60.0).abs() < 1e-9);
+        assert_eq!(overlapping_walls(&walls), vec![(id(8), id(9))]);
+        // An outer wall drawn twice still closes the house.
+        let mut walls = house(true);
+        walls.push((id(9), wall([0.0, 6.0], [0.0, 0.0])));
+        let found = regions(&walls).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!((found[0].area - 60.0).abs() < 1e-9);
+        assert_eq!(overlapping_walls(&walls), vec![(id(1), id(9))]);
+        // A partial overlap is reported; walls that only meet end to end are not.
+        let mut walls = house(true);
+        walls.push((id(8), wall([5.0, 0.0], [5.0, 4.0])));
+        walls.push((id(9), wall([5.0, 3.0], [5.0, 6.0])));
+        assert_eq!(overlapping_walls(&walls), vec![(id(8), id(9))]);
+        walls[5].1 = wall([5.0, 4.0], [5.0, 6.0]);
+        assert!(overlapping_walls(&walls).is_empty());
+    }
+
+    #[test]
     fn a_wall_that_divides_the_house_gives_the_smaller_room() {
         let mut walls = house(true);
         walls.push((id(9), wall([4.0, 0.0], [4.0, 6.0])));
         let picked = loop_around(&walls, [2.0, 3.0]).unwrap();
         assert!(picked.contains(&id(9)) && picked.contains(&id(1)));
         assert_eq!(picked.len(), 4);
+    }
+
+    #[test]
+    fn overlapping_openings_are_cut_as_one_hole() {
+        let rect =
+            |x0: f64, y0: f64, x1: f64, y1: f64| vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        let slab = Boundary {
+            loops: vec![rect(0.0, 0.0, 10.0, 6.0)],
+        };
+        let (cut, uncut) =
+            slab.with_openings(&[rect(1.0, 1.0, 3.0, 3.0), rect(2.0, 2.0, 4.0, 4.0)]);
+        assert_eq!(uncut, 0);
+        assert_eq!(cut.loops.len(), 2);
+        assert!((cut.area() - (60.0 - 7.0)).abs() < 1e-9, "{}", cut.area());
     }
 
     #[test]

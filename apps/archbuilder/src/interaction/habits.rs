@@ -21,7 +21,7 @@ use archbuilder_commands::structure::{OBJECT_SELECT, PROPERTY_SET};
 use archbuilder_commands::wall::WALL_CREATE;
 use archbuilder_io::command::{EXPORT_SHORTCUTS, IMPORT_SHORTCUTS};
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DOOR, FLOOR, ROOM, STOREY, WALL, WINDOW};
+use archbuilder_model::types::{FLOOR, ROOM, STOREY, WALL};
 
 use super::{GRID, WallInteraction, export_base, insert_command};
 use crate::shortcuts::{self, Table, ui};
@@ -196,6 +196,7 @@ fn repeatable(command: &str) -> bool {
         WINDOW_PLACE,
         FLOOR_CREATE,
         ROOM_PLACE,
+        archbuilder_commands::stair::STAIR_CREATE,
         MODIFY_MOVE,
         MODIFY_COPY,
         MODIFY_ROTATE,
@@ -221,6 +222,8 @@ impl WallInteraction {
             self.modify.current().map(|r| r.command)
         } else if self.rooms.running() {
             Some(ROOM_PLACE)
+        } else if self.stairs.running() {
+            Some(archbuilder_commands::stair::STAIR_CREATE)
         } else if self.floors.running() {
             Some(FLOOR_CREATE)
         } else if let Some(state) = self.inserts.state() {
@@ -282,8 +285,10 @@ impl WallInteraction {
         let snapshot = document.snapshot();
         self.habits.lists = self.habits.vis.lists(&snapshot).clone();
         let hidden_rooms: Vec<ObjectId> = if self.habits.vis.active() {
+            // The stairs' plan symbols are drawn with the rooms and hide with them.
             spatial::objects(&snapshot, ROOM)
                 .iter()
+                .chain(spatial::objects(&snapshot, archbuilder_model::types::STAIR).iter())
                 .map(|o| o.id)
                 .filter(|id| !self.habits.vis.shows(&snapshot, *id))
                 .collect()
@@ -634,10 +639,9 @@ impl WallInteraction {
             .iter()
             .copied()
             .filter(|id| {
-                matches!(
-                    spatial::type_of(&snapshot, *id).as_deref(),
-                    Some(WALL | DOOR | WINDOW | FLOOR | ROOM)
-                ) && self.habits.vis.shows(&snapshot, *id)
+                spatial::type_of(&snapshot, *id)
+                    .is_some_and(|k| archbuilder_model::types::is_element(&k))
+                    && self.habits.vis.shows(&snapshot, *id)
             })
             .collect();
         let Some(base) = selection::base_point(&snapshot, &objects) else {
@@ -651,7 +655,8 @@ impl WallInteraction {
         let count = i64::try_from(count).unwrap_or(0);
         crate::clipboard::set(content, base);
         // The paste shortcut reaches the application while the system clipboard holds something.
-        cx.ask_clipboard_text(&format!("ArchBuilder: {count} objects"));
+        let noun = if count == 1 { "object" } else { "objects" };
+        cx.ask_clipboard_text(&format!("ArchBuilder: {count} {noun}"));
         self.say(
             cx,
             COPIED.message_id,

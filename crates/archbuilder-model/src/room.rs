@@ -26,6 +26,10 @@ use crate::wall::Wall;
 pub const MAX_ROOMS: usize = 10_000;
 /// The number of the first room of a storey.
 pub const FIRST_NUMBER: u64 = 101;
+/// The least net area of a region that takes a room, in square meters: a region below it is a
+/// sliver between walls (a gap, a doubled wall drawn slightly apart), which `place_all` skips and
+/// counts and a click of the room tool refuses.
+pub const MIN_ROOM_AREA: f64 = 0.5;
 /// The height of a room whose storey has no level above it and that names no upper level, in
 /// meters.
 pub const DEFAULT_HEIGHT: f64 = crate::defaults::STOREY_HEIGHT;
@@ -209,21 +213,43 @@ pub fn footprints_ranked(
 /// The loops of a region: the outer loop, then the holes.
 pub type Loops = Vec<Vec<[f64; 2]>>;
 
-/// The loops of every enclosed region of `walls` (the outer loop first, then its holes), each
-/// with a point well inside it: what `place_all` puts a room in; and the number of regions whose
-/// boundary could not be resolved (reported, never skipped silently).
+/// The enclosed regions of a storey's walls, as `place_all` sees them.
+#[derive(Debug, Clone, Default)]
+pub struct Enclosed {
+    /// The loops of every region that takes a room (the outer loop first, then its holes), each
+    /// with a point well inside it.
+    pub regions: Vec<([f64; 2], Loops)>,
+    /// The regions whose boundary could not be resolved (reported, never skipped silently).
+    pub unresolved: usize,
+    /// The regions with a net area below [`MIN_ROOM_AREA`] (reported, never skipped silently).
+    pub slivers: usize,
+}
+
+/// The enclosed regions of `walls`: what `place_all` puts a room in.
 #[must_use]
-pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> (Vec<([f64; 2], Loops)>, usize) {
+pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> Enclosed {
     let regions = floor::regions(walls).unwrap_or_default();
-    let found: Vec<Option<([f64; 2], Loops)>> = regions
-        .iter()
-        .map(|r| {
-            let loops = boundary_of(r, walls)?.loops;
-            Some((pole_of(&loops)?, loops))
+    let mut out = Enclosed::default();
+    for r in &regions {
+        let Some(loops) = boundary_of(r, walls).map(|b| b.loops) else {
+            out.unresolved += 1;
+            continue;
+        };
+        if (Boundary {
+            loops: loops.clone(),
         })
-        .collect();
-    let unresolved = found.iter().filter(|f| f.is_none()).count();
-    (found.into_iter().flatten().collect(), unresolved)
+        .area()
+            < MIN_ROOM_AREA
+        {
+            out.slivers += 1;
+            continue;
+        }
+        match pole_of(&loops) {
+            Some(p) => out.regions.push((p, loops)),
+            None => out.unresolved += 1,
+        }
+    }
+    out
 }
 
 /// The distance from `p` to the nearest edge of `loops`, negative when `p` is outside the region
@@ -639,13 +665,66 @@ mod tests {
 
     #[test]
     fn every_enclosed_region_has_a_point_inside_it() {
-        let (regions, unresolved) = enclosed_regions(&house(true));
-        assert_eq!(unresolved, 0);
+        let Enclosed {
+            regions,
+            unresolved,
+            slivers,
+        } = enclosed_regions(&house(true));
+        assert_eq!((unresolved, slivers), (0, 0));
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {
             assert!((floor::signed_area(&loops[0]).abs() - 27.84).abs() < 1e-9);
             assert!(Boundary { loops }.contains(point));
         }
+    }
+
+    #[test]
+    fn a_sliver_between_two_walls_is_skipped_and_counted() {
+        // A wall 0.28 m inside the right wall leaves 0.08 x 5.8 = 0.464 m² clear: a sliver. At
+        // 0.30 m the strip has 0.1 x 5.8 = 0.58 m²: a room.
+        let mut walls = house(false);
+        walls.push((id(9), wall([9.72, 0.0], [9.72, 6.0])));
+        let found = enclosed_regions(&walls);
+        assert_eq!(found.slivers, 1);
+        assert_eq!(found.regions.len(), 1);
+        let mut walls = house(false);
+        walls.push((id(9), wall([9.7, 0.0], [9.7, 6.0])));
+        let found = enclosed_regions(&walls);
+        assert_eq!((found.slivers, found.regions.len()), (0, 2));
+    }
+
+    #[test]
+    fn a_wall_lying_partly_on_an_outer_wall_keeps_the_room() {
+        for extra in [
+            wall([3.0, 0.0], [8.0, 0.0]),
+            wall([2.0, 0.0], [4.0, 0.0]),
+            wall([10.0, 1.0], [10.0, 4.0]),
+        ] {
+            // The extra wall first: it is met before the outer wall it lies on.
+            let mut walls = vec![(id(9), extra)];
+            walls.extend(house(false));
+            let found = enclosed_regions(&walls);
+            assert_eq!((found.unresolved, found.slivers), (0, 0), "{extra:?}");
+            assert_eq!(found.regions.len(), 1, "{extra:?}");
+            let area = Boundary {
+                loops: found.regions[0].1.clone(),
+            }
+            .area();
+            assert!((area - 9.8 * 5.8).abs() < 1e-9, "{area}");
+            let prints = footprints(&walls, &[[5.0, 3.0]]);
+            assert_eq!(prints[0].state, State::Enclosed);
+        }
+        // Two walls that overlap in part, drawn opposite ways, close the south side together.
+        let mut walls = house(false);
+        walls[0].1 = wall([0.0, 0.0], [6.0, 0.0]);
+        walls.push((id(9), wall([10.0, 0.0], [5.0, 0.0])));
+        let found = enclosed_regions(&walls);
+        assert_eq!(found.regions.len(), 1);
+        let area = Boundary {
+            loops: found.regions[0].1.clone(),
+        }
+        .area();
+        assert!((area - 9.8 * 5.8).abs() < 1e-9, "{area}");
     }
 
     /// A 12 x 12 box with a closed 4 x 4 courtyard of walls in the middle.
@@ -688,7 +767,11 @@ mod tests {
         let at = pole_of(&around.loops()).unwrap();
         assert!(around.boundary().contains(at));
         // place_all finds both regions, each with a point inside it.
-        let (regions, unresolved) = enclosed_regions(&courtyard());
+        let Enclosed {
+            regions,
+            unresolved,
+            ..
+        } = enclosed_regions(&courtyard());
         assert_eq!(unresolved, 0);
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {

@@ -1,4 +1,4 @@
-//! Clipboard content: a copy of walls, doors and windows, floors and rooms that carries their field
+//! Clipboard content: a copy of walls, doors and windows, floors, rooms and stairs that carries their field
 //! values, so it can be pasted after the originals are deleted and into another document of the
 //! same product. [`capture`] reads the objects of a snapshot into JSON; the paste commands
 //! (`archbuilder.clipboard.paste`, `paste_to_storey`, with the `content` parameter) create new
@@ -17,7 +17,7 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Kind};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, ROOM, WALL, WINDOW};
+use archbuilder_model::types::{self, DOOR, FLOOR, ROOM, STAIR, WALL, WINDOW};
 use archbuilder_model::wall::Wall;
 use serde_json::{Value as Json, json};
 
@@ -109,6 +109,20 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     None,
                     Json::Array(values.iter().map(encode).collect()),
                     WALL,
+                );
+            }
+            STAIR => {
+                // The top follows the level above the storey the stair is pasted into.
+                let mut values = object.values.clone();
+                if let Some(slot) = values.get_mut(types::stair::TOP_LEVEL) {
+                    *slot = None;
+                }
+                push(
+                    &mut items,
+                    *id,
+                    None,
+                    Json::Array(values.iter().map(encode).collect()),
+                    STAIR,
                 );
             }
             FLOOR | ROOM => push(
@@ -282,6 +296,18 @@ pub(crate) fn paste_content(
         }
         created.push(create(ctx, ROOM, Some(storey), values)?);
     }
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != STAIR {
+            continue;
+        }
+        let mut moved = archbuilder_model::stair::Stair::from_values(&values)
+            .ok_or_else(invalid)?
+            .moved(&xf);
+        moved.top_level = None;
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::stair::next_stair_name(&seen, storey, &tongue);
+        created.push(create(ctx, STAIR, Some(storey), moved.values(&name))?);
+    }
     if created.is_empty() {
         return Err(Error::new(codes::CLIPBOARD_EMPTY));
     }
@@ -311,6 +337,14 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
         if key == WALL {
             if let Some(w) = Wall::from_values(&values) {
                 let f = w.plain_footprint();
+                out.push(f.iter().chain(f.first()).copied().collect());
+            }
+        } else if key == STAIR {
+            let stair = archbuilder_model::stair::Stair::from_values(&values);
+            // The outline at a rise of three meters stands for the stair; the storey sets the rise.
+            if let Some(Ok(layout)) = stair.map(|s| archbuilder_model::stair::Layout::new(&s, 3.0))
+            {
+                let f = layout.footprint();
                 out.push(f.iter().chain(f.first()).copied().collect());
             }
         } else if key == FLOOR

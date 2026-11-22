@@ -5,8 +5,8 @@
 //!
 //! - Running command: Enter (finish), Cancel, and Undo point when the command has an answer to
 //!   take back.
-//! - Idle, nothing selected: Repeat last command, Paste (with something on the clipboard),
-//!   Select all, Zoom extents, Unhide all.
+//! - Idle, nothing selected: Repeat last command, Paste (with something on the clipboard), New
+//!   stair, Select all, Zoom extents, Unhide all.
 //! - Idle with a selection: Delete, Move, Copy, Rotate, Mirror; Copy to clipboard; Hide, Isolate,
 //!   Hide kind, Isolate kind, Unhide all (while something is hidden); Select all of this kind, and
 //!   when the selection holds several kinds one Keep only entry per kind; Properties.
@@ -17,7 +17,7 @@ use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
 use archbuilder_commands::wall::OBJECT_DELETE;
-use archbuilder_model::types::{DOOR, FLOOR, ROOM, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, ROOM, STAIR, WALL, WINDOW};
 
 use crate::shortcuts::ui;
 
@@ -84,6 +84,12 @@ const KEEP_FLOORS: Label = Label {
 const KEEP_ROOMS: Label = Label {
     message_id: "ab-menu-keep-rooms",
 };
+const KEEP_STAIRS: Label = Label {
+    message_id: "ab-menu-keep-stairs",
+};
+const NEW_STAIR: Label = Label {
+    message_id: "ab-menu-new-stair",
+};
 const KEEP_WALLS: Label = Label {
     message_id: "ab-menu-keep-walls",
 };
@@ -132,6 +138,7 @@ fn keep_label(kind: &str) -> &'static str {
         WINDOW => KEEP_WINDOWS.message_id,
         FLOOR => KEEP_FLOORS.message_id,
         ROOM => KEEP_ROOMS.message_id,
+        STAIR => KEEP_STAIRS.message_id,
         _ => KEEP_WALLS.message_id,
     }
 }
@@ -166,6 +173,10 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
             out.push(ContextEntry::command(PASTE.message_id, CLIPBOARD_PASTE));
         }
         out.extend([
+            ContextEntry::command(
+                NEW_STAIR.message_id,
+                archbuilder_commands::stair::STAIR_CREATE,
+            ),
             ContextEntry::command(SELECT_ALL.message_id, ui::SELECT_ALL),
             ContextEntry::command(ZOOM_EXTENTS.message_id, ui::ZOOM_EXTENTS),
             unhide,
@@ -248,6 +259,7 @@ mod tests {
             labels(&s),
             [
                 "ab-menu-repeat",
+                "ab-menu-new-stair",
                 "ab-menu-select-all",
                 "ab-menu-zoom-extents",
                 "ab-menu-unhide-all"
@@ -255,7 +267,7 @@ mod tests {
         );
         // Repeat and Unhide all are disabled while there is nothing to repeat or show again.
         let e = entries(&s);
-        assert!(!e[0].enabled && !e[3].enabled && e[1].enabled && e[2].enabled);
+        assert!(!e[0].enabled && !e[4].enabled && e[1].enabled && e[2].enabled && e[3].enabled);
         let s = State {
             has_last: true,
             temporary: true,

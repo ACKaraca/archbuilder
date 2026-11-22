@@ -143,6 +143,11 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
                     add(r.point);
                 }
             }
+            Some(archbuilder_model::types::STAIR) => {
+                if let Some(p) = archbuilder_model::stair::Placed::of(snapshot, &object) {
+                    p.outline().into_iter().for_each(&mut add);
+                }
+            }
             Some(DOOR | WINDOW) => {
                 if let Some(host) = object
                     .header

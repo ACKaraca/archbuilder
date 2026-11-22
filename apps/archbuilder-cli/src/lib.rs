@@ -26,6 +26,7 @@ pub mod check;
 pub mod export;
 pub mod floors;
 pub mod rooms;
+pub mod stairs;
 pub mod walls;
 
 /// The product of the CLI: the commands of `archbuilder-commands` and the export command.
@@ -131,8 +132,10 @@ where
         let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
         let floors = floors::summary(dump.get("objects")?.as_array()?);
         let rooms = rooms::summary(dump.get("objects")?.as_array()?);
+        let stairs = stairs::summary(dump.get("objects")?.as_array()?);
         let mut found = check::findings(dump.get("objects")?.as_array()?);
         found.extend(rooms::findings(dump.get("objects")?.as_array()?));
+        found.extend(stairs::findings(dump.get("objects")?.as_array()?));
         let map = dump.as_object_mut()?;
         // The product's findings join the shared ones only when the check was asked for.
         if checked && let Some(list) = map.get_mut("findings").and_then(Value::as_array_mut) {
@@ -140,6 +143,7 @@ where
         }
         map.insert("floors".into(), floors.into());
         map.insert("rooms".into(), rooms.into());
+        map.insert("stairs".into(), stairs.into());
         map.insert("walls".into(), walls.into());
         map.insert("doors".into(), doors.into());
         map.insert("windows".into(), windows.into());
