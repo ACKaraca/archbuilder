@@ -13,10 +13,17 @@
 //! separated by a comma in the foundation's point entry, so a point is typed `3.5,2` in every
 //! language.
 
+mod habits;
+
+pub use habits::{GRID_SETTING, SNAP_SETTING};
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_app::application::{Application, TabId};
-use arc_app::shell::{Interaction, InteractionContext, InteractionOutput};
+use arc_app::shell::{
+    ContextEntry, Interaction, InteractionContext, InteractionOutput, KeyInput, KeyReply,
+    ViewRequest,
+};
 use arc_base::math::{Point3, Vector3};
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::Accept;
@@ -86,6 +93,30 @@ const IFC_LOSS: Message = Message {
 const FLOOR_EDGES_FROZEN: Message = Message {
     message_id: "ab-notice-floor-edges-frozen",
 };
+
+/// What a paste says when the new objects lie exactly on others.
+const PASTE_ON_TOP: Message = Message {
+    message_id: "ab-notice-paste-on-top",
+};
+
+/// Whether a wall among `created` (identifiers as text) has the same baseline as another wall.
+fn pasted_on_top(snapshot: &arc_doc::Snapshot, created: &[String]) -> bool {
+    let walls: Vec<(String, archbuilder_model::wall::Wall)> =
+        spatial::objects(snapshot, archbuilder_model::types::WALL)
+            .iter()
+            .filter_map(|o| {
+                archbuilder_model::wall::Wall::from_values(&o.values).map(|w| (o.id.to_string(), w))
+            })
+            .collect();
+    walls
+        .iter()
+        .filter(|(id, _)| created.contains(id))
+        .any(|(id, a)| {
+            walls
+                .iter()
+                .any(|(other, b)| other != id && a.start == b.start && a.end == b.end)
+        })
+}
 
 /// The view ray through the pointer, given the point it has on the level plane: from the eye
 /// through that point, or along the view direction in an orthographic view.
@@ -317,6 +348,8 @@ pub struct WallInteraction {
     ppu: f64,
     /// The project's length unit and the language's decimal separator, for the live labels.
     label_units: (archbuilder_model::units::LengthUnit, char),
+    /// Tab, the context menu, the clipboard, shortcuts, hide and isolate (see [`habits`]).
+    habits: habits::Habits,
 }
 
 impl WallInteraction {
@@ -361,6 +394,7 @@ impl WallInteraction {
             near_cube: false,
             right_xy: [1.0, 0.0],
             label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
+            habits: habits::Habits::default(),
         }
     }
 
@@ -548,6 +582,15 @@ impl WallInteraction {
         }
     }
 
+    /// Clears what the modify tool drew: the ghost, the rubber band's angle label, guides and marker.
+    fn clear_modify_overlays(&mut self) {
+        self.ghost.clear();
+        self.plane = None;
+        self.angle = None;
+        self.guides.clear();
+        self.snap = None;
+    }
+
     /// Ends both tools.
     fn stop_all(&mut self) {
         self.tool.stop();
@@ -646,6 +689,15 @@ impl WallInteraction {
                 })
                 .unwrap_or_default()
         };
+        // A paste that lies on its originals names that cause, not each collision it makes.
+        let on_top = command == archbuilder_commands::modify::CLIPBOARD_PASTE
+            && cx
+                .document()
+                .is_ok_and(|d| pasted_on_top(&d.snapshot(), &created));
+        if on_top {
+            lines.clear();
+            lines.push((PASTE_ON_TOP.message_id, Vec::new()));
+        }
         let unjoined = strings("unjoined");
         if !unjoined.is_empty() {
             lines.push((
@@ -655,6 +707,7 @@ impl WallInteraction {
         }
         for pair in done
             .get("meets")
+            .filter(|_| !on_top)
             .and_then(serde_json::Value::as_array)
             .into_iter()
             .flatten()
@@ -787,9 +840,41 @@ impl WallInteraction {
 impl Interaction for WallInteraction {
     fn pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         self.just_reported = false;
+        if event.kind == PointerKind::DoubleClick {
+            self.double_click(cx, event);
+            return false;
+        }
+        if matches!(event.kind, PointerKind::Move | PointerKind::Click) {
+            self.habits.pointer = Some(*event);
+        }
         let handled = self.pointer_inner(cx, event);
         self.report_chains(cx);
+        self.note_last();
+        if !self.modify.running() && !self.ghost.is_empty() {
+            self.clear_modify_overlays();
+        }
         handled
+    }
+
+    fn input_changed(&mut self, cx: &InteractionContext<'_>, text: &str) -> Option<LineAction> {
+        self.habit_input(cx, text)
+    }
+
+    fn handles(&self, command: &str) -> bool {
+        // Undo steps back inside a running command and cancels it at its first prompt.
+        command == arc_app::commands::EDIT_UNDO
+    }
+
+    fn key(&mut self, cx: &InteractionContext<'_>, input: &KeyInput) -> KeyReply {
+        self.habit_key(cx, input)
+    }
+
+    fn context_menu(&self, cx: &InteractionContext<'_>) -> Vec<ContextEntry> {
+        self.habit_menu(cx)
+    }
+
+    fn take_view(&mut self) -> Option<ViewRequest> {
+        self.habits.take_view()
     }
 
     fn frame(&mut self, cx: &InteractionContext<'_>) {
@@ -799,11 +884,15 @@ impl Interaction for WallInteraction {
             let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
             self.label_units = (unit, cx.decimal_separator());
         }
+        self.habit_frame(cx);
         self.refresh_highlight(cx);
         self.refresh_direct(cx);
     }
 
     fn dynamic(&mut self, cx: &InteractionContext<'_>, event: &DynamicEvent) {
+        if self.rename_event(cx, event) {
+            return;
+        }
         if let Some(done) = self.direct.edited(event) {
             self.run_direct(cx, done);
         }
@@ -838,6 +927,11 @@ impl Interaction for WallInteraction {
             self.direct.cancel();
             self.refresh_direct(cx);
         }
+        // A line that is exactly a shortcut starts its command, as Enter on it does.
+        let shortcut = match &action {
+            LineAction::Submit(text) => self.shortcut_for(cx, text),
+            _ => None,
+        };
         let rooming = self.rooms.running();
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
@@ -871,6 +965,25 @@ impl Interaction for WallInteraction {
                 self.with_inserts(cx, |tool, env, run| tool.back(env, run))
             }
             LineAction::Back => self.with_tool(cx, |tool, env, run| tool.back(env, run)),
+            LineAction::Submit(text) if text.trim() == arc_app::commands::EDIT_UNDO => {
+                self.undo(cx)
+            }
+            LineAction::Invoke(intent) if intent.command == arc_app::commands::EDIT_UNDO => {
+                self.undo(cx)
+            }
+            LineAction::Submit(_) if shortcut.is_some() => {
+                let command = shortcut.clone().unwrap_or_default();
+                self.intent(cx, &Intent::new(command))
+            }
+            LineAction::Submit(text)
+                if !(inserting || flooring || modifying || rooming || self.tool.active())
+                    && self.habit_word(&text).is_some() =>
+            {
+                let intent = self
+                    .habit_word(&text)
+                    .unwrap_or_else(|| Intent::new(WALL_CREATE));
+                self.intent(cx, &intent)
+            }
             LineAction::Submit(text) if export_line(&text).is_some() => {
                 self.stop_all();
                 self.export_ifc(cx, export_line(&text).flatten())
@@ -930,7 +1043,7 @@ impl Interaction for WallInteraction {
                 let text = self.typed(cx, &text);
                 self.with_tool(cx, |tool, env, run| tool.text(env, run, &text))
             }
-            LineAction::Repeat => self.with_tool(cx, |tool, env, run| tool.text(env, run, "wall")),
+            LineAction::Repeat => self.repeat(cx),
             LineAction::Invoke(intent) => self.intent(cx, &intent),
             LineAction::CancelThen(intent) => {
                 self.stop_all();
@@ -948,8 +1061,12 @@ impl Interaction for WallInteraction {
         }
         self.report_chains(cx);
         if !self.modify.running() {
-            self.ghost.clear();
-            self.plane = None;
+            self.clear_modify_overlays();
+        }
+        self.note_last();
+        if self.tool.take_undo() {
+            // The wall taken back is undone with the document's own undo.
+            cx.ask(Intent::new(arc_app::commands::EDIT_UNDO));
         }
         let fresh = self
             .tool
@@ -991,8 +1108,11 @@ impl Interaction for WallInteraction {
                     || self.floors.running()
                     || self.rooms.running()
                     || self.modify.running()
-                    || self.direct.active(),
-                answers: line.active().map_or(0, |s| s.answers().len()),
+                    || self.direct.active()
+                    || self.habits.rename.is_some(),
+                // The walls of a chain count: Back (Ctrl+Z, Undo last point) takes the last one back.
+                answers: line.active().map_or(0, |s| s.answers().len())
+                    + self.tool.chain().map_or(0, |c| c.walls),
                 has_selection: false,
                 has_last: line.last().is_some(),
             },
@@ -1029,8 +1149,19 @@ impl Interaction for WallInteraction {
                 .map(|(_, field)| arc_app::shell::DynamicOutput {
                     prompt: crate::direct::EDIT_PROMPT.message_id.to_owned(),
                     fields: vec![field],
+                })
+                .or_else(|| {
+                    self.habits
+                        .rename_field()
+                        .map(|field| arc_app::shell::DynamicOutput {
+                            prompt: habits::rename_label().to_owned(),
+                            fields: vec![field],
+                        })
                 }),
             pointer_icon: self.direct_icon,
+            banner: self.habits.banner.clone(),
+            hidden: self.habits.lists.hidden.clone(),
+            isolated: self.habits.lists.isolated.clone(),
             history: self.notices.clone(),
             history_first: self.notices_first,
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
@@ -1080,6 +1211,7 @@ impl WallInteraction {
             return self.pick_idle(cx, event);
         };
         let walls = baselines(cx, chain.storey);
+        let centers = self.room_centers(cx, chain.storey);
         // The origin, the start of the chain and the ends of the walls attract and track.
         let mut ends = vec![[0.0, 0.0]];
         ends.extend(chain.start.filter(|_| chain.walls >= 1));
@@ -1094,28 +1226,16 @@ impl WallInteraction {
             .or(chain.end)
             .filter(|_| self.tool.line().active().is_some());
         let hit = event.model.and_then(|m| {
-            crate::snap::snap(&crate::snap::Input {
-                pointer: [m.x, m.y],
-                pixels_per_unit: event.pixels_per_unit,
-                ends: &ends,
-                walls: &walls,
-                from,
-            })
+            crate::snap::snap(&self.snap_input([m.x, m.y], event, &ends, &walls, from, &centers))
         });
         self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
         self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
         let at = hit.as_ref().map(|h| h.point);
         match event.kind {
             PointerKind::Move => {
-                self.snap = hit.as_ref().and_then(|h| {
-                    let kind = match h.kind {
-                        crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
-                        crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
-                        crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
-                        _ => return None,
-                    };
-                    Some((kind, h.point))
-                });
+                self.snap = hit
+                    .as_ref()
+                    .and_then(|h| h.kind.marker().map(|kind| (kind, h.point)));
                 if at.is_some() {
                     self.cursor = at;
                 }
@@ -1132,17 +1252,12 @@ impl WallInteraction {
                 }
                 true
             }
-            // The secondary button is Enter.
-            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
-                self.tool.stop();
-                true
-            }
             _ => false,
         }
     }
 
     /// The pointer while the modify tool asks for points: it snaps like the wall tool, a click is
-    /// the next point and the secondary button is Enter.
+    /// the next point; the secondary button opens the context menu, whose first entry is Enter.
     fn modify_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         let Some(snapshot) = cx.document().ok().map(arc_doc::Document::snapshot) else {
             return false;
@@ -1152,37 +1267,29 @@ impl WallInteraction {
             .current()
             .map(|r| r.objects.clone())
             .unwrap_or_default();
-        let Some((storey, z)) = storey_for(&snapshot, &objects) else {
+        let fixed = self.modify.current().and_then(|r| r.storey).and_then(|s| {
+            spatial::get(&snapshot, s).map(|o| (s, spatial::storey_elevation(&snapshot, &o)))
+        });
+        let Some((storey, z)) = fixed.or_else(|| storey_for(&snapshot, &objects)) else {
             return false;
         };
         self.plane = Some(z);
         let walls = baselines(cx, storey);
+        let centers = self.room_centers(cx, storey);
         let mut ends = vec![[0.0, 0.0]];
         ends.extend(walls.iter().flatten().copied());
         let from = self.modify.line().base_point().map(|p| [p.x, p.y]);
         let hit = event.model.and_then(|m| {
-            crate::snap::snap(&crate::snap::Input {
-                pointer: [m.x, m.y],
-                pixels_per_unit: event.pixels_per_unit,
-                ends: &ends,
-                walls: &walls,
-                from,
-            })
+            crate::snap::snap(&self.snap_input([m.x, m.y], event, &ends, &walls, from, &centers))
         });
         self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
         self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
         let at = hit.as_ref().map(|h| h.point);
         match event.kind {
             PointerKind::Move => {
-                self.snap = hit.as_ref().and_then(|h| {
-                    let kind = match h.kind {
-                        crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
-                        crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
-                        crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
-                        _ => return None,
-                    };
-                    Some((kind, h.point))
-                });
+                self.snap = hit
+                    .as_ref()
+                    .and_then(|h| h.kind.marker().map(|kind| (kind, h.point)));
                 if let Some(at) = at {
                     self.cursor = Some(at);
                     self.modify.aim(at);
@@ -1199,13 +1306,6 @@ impl WallInteraction {
                     } else {
                         self.echo_point(cx, at);
                     }
-                }
-                true
-            }
-            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
-                let _ = self.with_modify(cx, |tool, env, run| tool.text(env, run, ""));
-                if let Some(error) = self.modify.take_error() {
-                    self.notice_error(cx, &error);
                 }
                 true
             }
@@ -1288,7 +1388,17 @@ impl WallInteraction {
             dashed: true,
         };
         // Walls as they would stand, the neighbors that stretch to keep their joins included.
-        let copying = run.command == archbuilder_commands::modify::MODIFY_COPY;
+        let copying = matches!(
+            run.command,
+            archbuilder_commands::modify::MODIFY_COPY
+                | archbuilder_commands::modify::CLIPBOARD_PASTE
+        );
+        if let Some(content) = &run.content {
+            for poly in archbuilder_commands::clip::outlines(content) {
+                out.push(path(&poly));
+            }
+            return out;
+        }
         if !copying {
             for wall in archbuilder_commands::modify::preview(snapshot, objects, &xf) {
                 out.push(ProductOverlay::Path {
@@ -1408,7 +1518,7 @@ impl WallInteraction {
             at: event.model.map(|m| [m.x, m.y]),
             shift: event.modifiers.shift,
             ctrl: event.modifiers.ctrl,
-            free: event.modifiers.alt,
+            free: event.modifiers.alt || !self.habits.snap_on,
             unit: archbuilder_model::spatial::length_unit(&snapshot),
             separator: cx.decimal_separator(),
         };
@@ -1480,6 +1590,10 @@ impl WallInteraction {
     /// starts the tool; any other command of the product runs with the selection and its
     /// parameters. Shell commands never arrive here.
     fn intent(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
+        if let Some(result) = self.ui_intent(cx, intent) {
+            return result;
+        }
+        self.note_intent(intent);
         let command = intent.command.as_str();
         if command == EXPORT_IFC {
             self.stop_all();
@@ -1677,7 +1791,9 @@ impl WallInteraction {
         let Some(snapshot) = cx.document().ok().map(arc_doc::Document::snapshot) else {
             return false;
         };
-        let Some(id) = archbuilder_model::insert::pick(&snapshot, ray) else {
+        let Some(id) = archbuilder_model::insert::pick(&snapshot, ray)
+            .filter(|id| self.habits.vis.shows(&snapshot, *id))
+        else {
             return false;
         };
         let mode = if event.modifiers.ctrl {
@@ -1706,12 +1822,17 @@ impl WallInteraction {
         // The plan symbols show in views from above (within about 12 degrees of straight down),
         // where the wall's top hides the insert; in other views they would float in the air.
         if cx.camera().forward().z < -0.98 {
-            if self
-                .symbols
-                .as_ref()
-                .is_none_or(|(s, _)| !s.ptr_eq(&snapshot))
+            if self.habits.vis.active()
+                || self
+                    .symbols
+                    .as_ref()
+                    .is_none_or(|(s, _)| !s.ptr_eq(&snapshot))
             {
-                self.symbols = Some((snapshot.clone(), crate::labels::symbols(&snapshot)));
+                let vis = &self.habits.vis;
+                self.symbols = Some((
+                    snapshot.clone(),
+                    crate::labels::symbols(&snapshot, &|id| vis.shows(&snapshot, id)),
+                ));
             }
         } else {
             self.symbols = None;
@@ -1745,7 +1866,7 @@ impl WallInteraction {
     }
 
     /// The pointer while the insert tool runs: it moves a wall highlight and the opening along the
-    /// wall under it, a click places the insert there, the secondary button ends the chain.
+    /// wall under it, a click places the insert there, a secondary click opens the context menu.
     fn insert_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         let Some(state) = self.inserts.state().cloned() else {
             return false;
@@ -1795,10 +1916,6 @@ impl WallInteraction {
                         self.notice_error(cx, &error);
                     }
                 }
-                true
-            }
-            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
-                self.stop_all();
                 true
             }
             _ => false,
@@ -2031,7 +2148,7 @@ fn is_floor_word(text: &str) -> bool {
 
 impl WallInteraction {
     /// The pointer while the room tool runs: it outlines the region under it, a click places a
-    /// room there, the secondary button ends the tool.
+    /// room there, a secondary click opens the context menu.
     fn room_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
         let Some(storey) = self.rooms.storey() else {
             return false;
@@ -2073,10 +2190,6 @@ impl WallInteraction {
                         self.notice_error(cx, &error);
                     }
                 }
-                true
-            }
-            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
-                self.stop_all();
                 true
             }
             _ => false,
@@ -2139,13 +2252,17 @@ impl WallInteraction {
             .pixels_per_unit
             .filter(|p| *p > 0.0)
             .map_or(0.05, |p| PICK_PIXELS / p);
+        let vis = &self.habits.vis;
         let target = self.picker.target(
             &snapshot,
-            event.pixel,
-            [model.x, model.y],
-            aperture,
-            view_ray(cx, model),
-            std::time::Instant::now(),
+            &crate::picker::Probe {
+                pixel: event.pixel,
+                at: [model.x, model.y],
+                aperture,
+                ray: view_ray(cx, model),
+                now: std::time::Instant::now(),
+                shown: &|id| vis.shows(&snapshot, id),
+            },
         );
         match event.kind {
             PointerKind::Move => {
@@ -2192,6 +2309,14 @@ impl WallInteraction {
                 cx.ask(intent);
                 true
             }
+            // A secondary click on an object that is not selected selects it, so the menu that
+            // opens is the menu of what is under the pointer.
+            PointerKind::Click if event.button == Some(PointerButton::Secondary) => {
+                if let Some(t) = target.filter(|t| !cx.selection().contains(&t.id)) {
+                    cx.ask(habits::select_intent(&[t.id], "replace"));
+                }
+                false
+            }
             _ => false,
         }
     }
@@ -2211,29 +2336,25 @@ impl WallInteraction {
         let at = if sketch {
             let baselines: Vec<[[f64; 2]; 2]> =
                 walls.iter().map(|(_, w)| [w.start, w.end]).collect();
+            let centers = self.room_centers(cx, state.storey);
             let mut ends = vec![[0.0, 0.0]];
             ends.extend(points.iter().copied());
             ends.extend(walls.iter().flat_map(|(_, w)| w.plain_footprint()));
             let hit = event.model.and_then(|m| {
-                crate::snap::snap(&crate::snap::Input {
-                    pointer: [m.x, m.y],
-                    pixels_per_unit: event.pixels_per_unit,
-                    ends: &ends,
-                    walls: &baselines,
-                    from: points.last().copied(),
-                })
+                crate::snap::snap(&self.snap_input(
+                    [m.x, m.y],
+                    event,
+                    &ends,
+                    &baselines,
+                    points.last().copied(),
+                    &centers,
+                ))
             });
             self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
             self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
-            self.snap = hit.as_ref().and_then(|h| {
-                let kind = match h.kind {
-                    crate::snap::Kind::Endpoint => arc_ui::SnapKind::Endpoint,
-                    crate::snap::Kind::Intersection => arc_ui::SnapKind::Intersection,
-                    crate::snap::Kind::Nearest => arc_ui::SnapKind::Nearest,
-                    _ => return None,
-                };
-                Some((kind, h.point))
-            });
+            self.snap = hit
+                .as_ref()
+                .and_then(|h| h.kind.marker().map(|kind| (kind, h.point)));
             hit.map(|h| h.point)
         } else {
             self.snap = None;
@@ -2259,11 +2380,6 @@ impl WallInteraction {
                         self.notice_error(cx, &error);
                     }
                 }
-                true
-            }
-            PointerKind::Press if event.button == Some(PointerButton::Secondary) => {
-                // Enter: the floor is made when it has enough points or picks.
-                let _ = self.with_floors(cx, |tool, env, run| tool.text(env, run, ""));
                 true
             }
             _ => false,

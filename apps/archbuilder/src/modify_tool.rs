@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{Accept, Point, PromptInput};
 use arc_command::{CommandLine, LineStep, Submitted};
-use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
+use archbuilder_commands::modify::{
+    CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
+};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{DOOR, FLOOR, WALL, WINDOW};
 use serde_json::{Map, Value};
@@ -74,6 +76,10 @@ pub struct Run {
     pub base: Option<[f64; 2]>,
     /// The copies made so far.
     pub copies: usize,
+    /// The clipboard content a paste creates from, in place of `objects`.
+    pub content: Option<Value>,
+    /// The storey a paste goes into.
+    pub storey: Option<ObjectId>,
 }
 
 /// The state of the modify tool of one tab.
@@ -160,10 +166,38 @@ impl ModifyTool {
             gathering,
             base: None,
             copies: 0,
+            content: None,
+            storey: None,
         });
         if gathering {
             return Ok(());
         }
+        self.next(env, run)
+    }
+
+    /// Starts a paste of the clipboard `content` into `storey`: the base point is `base`, the one
+    /// point asked for is the insertion point, and Enter pastes in place.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn begin_paste(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        content: Value,
+        base: [f64; 2],
+        storey: ObjectId,
+    ) -> Result<()> {
+        self.line.cancel();
+        self.run = Some(Run {
+            command: CLIPBOARD_PASTE,
+            objects: Vec::new(),
+            gathering: false,
+            base: Some(base),
+            copies: 0,
+            content: Some(content),
+            storey: Some(storey),
+        });
         self.next(env, run)
     }
 
@@ -191,17 +225,24 @@ impl ModifyTool {
             return Ok(());
         };
         let mut preset = Map::new();
-        preset.insert(
-            "objects".into(),
-            Value::from(
-                state
-                    .objects
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-            ),
-        );
-        let base = state.base.filter(|_| state.command == MODIFY_COPY);
+        if let (Some(content), Some(storey)) = (&state.content, state.storey) {
+            preset.insert("content".into(), content.clone());
+            preset.insert("storey".into(), Value::from(storey.to_string()));
+        } else {
+            preset.insert(
+                "objects".into(),
+                Value::from(
+                    state
+                        .objects
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                ),
+            );
+        }
+        let base = state
+            .base
+            .filter(|_| matches!(state.command, MODIFY_COPY | CLIPBOARD_PASTE));
         if let Some(b) = base {
             preset.insert("base".into(), Value::from(b.to_vec()));
         }
@@ -316,6 +357,17 @@ impl ModifyTool {
             .active()
             .and_then(|s| s.prompt())
             .is_some_and(|p| p.accepts.iter().any(|a| matches!(a, Accept::Point { .. })));
+        // Enter at the insertion point of a paste: the copy lands where it was copied from.
+        if text.is_empty()
+            && at_point
+            && let Some(base) = self
+                .run
+                .as_ref()
+                .filter(|r| r.command == CLIPBOARD_PASTE)
+                .and_then(|r| r.base)
+        {
+            return self.click(env, run, base);
+        }
         if text.is_empty() && at_point {
             self.cancelled = self.copies() == 0;
             self.stop();

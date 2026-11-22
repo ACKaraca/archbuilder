@@ -729,12 +729,7 @@ fn baselines(snapshot: &Snapshot, objects: &[ObjectId], exclude: &[ObjectId]) ->
 }
 
 fn snap_kind(kind: snap::Kind) -> Option<SnapKind> {
-    match kind {
-        snap::Kind::Endpoint => Some(SnapKind::Endpoint),
-        snap::Kind::Intersection => Some(SnapKind::Intersection),
-        snap::Kind::Nearest => Some(SnapKind::Nearest),
-        _ => None,
-    }
+    kind.marker()
 }
 
 /// The outlines of what a motion would leave, dashed: the walls as they would stand (neighbors
@@ -1099,13 +1094,7 @@ impl Direct {
                     let mut ends = vec![[0.0, 0.0]];
                     ends.extend(lines.iter().flatten().copied());
                     let at_of = |pointer: V2, from: Option<V2>| {
-                        snap::snap(&snap::Input {
-                            pointer,
-                            pixels_per_unit: ppu,
-                            ends: &ends,
-                            walls: &lines,
-                            from,
-                        })
+                        snap::snap(&snap::Input::new(pointer, ppu, &ends, &lines, from))
                     };
                     let base = at_of(drag.start_at, None)
                         .filter(|_| !i.free)
@@ -1138,14 +1127,8 @@ impl Direct {
                 let mut ends = vec![[0.0, 0.0]];
                 ends.extend(lines.iter().flatten().copied());
                 let fixed = if *end == 0 { w.wall.end } else { w.wall.start };
-                let hit = snap::snap(&snap::Input {
-                    pointer: at,
-                    pixels_per_unit: ppu,
-                    ends: &ends,
-                    walls: &lines,
-                    from: Some(fixed),
-                })
-                .filter(|_| !i.free);
+                let hit = snap::snap(&snap::Input::new(at, ppu, &ends, &lines, Some(fixed)))
+                    .filter(|_| !i.free);
                 let to = hit.as_ref().map_or(at, |h| h.point);
                 out.to = to;
                 out.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());

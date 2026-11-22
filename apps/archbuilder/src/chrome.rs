@@ -3,7 +3,9 @@
 //! the strip and the status bar.
 
 use arc_app::commands;
-use arc_app::shell::ToolItem;
+use arc_app::settings::SettingValue;
+use arc_app::shell::{StatusToggle, ToolItem};
+use arc_ui::Intent;
 use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
@@ -206,4 +208,34 @@ pub fn toolbar() -> Vec<ToolItem> {
             MODIFY_MIRROR,
         ),
     ]
+}
+
+const SNAP_LABEL: Message = Message {
+    message_id: "ab-snap-label",
+};
+const SNAP_HINT: Message = Message {
+    message_id: "ab-snap-hint",
+};
+
+/// The status bar toggles: snapping to points (a user setting, so it stays across sessions), which
+/// F3 also flips. The toggle reaches the controller as the interface command
+/// `archbuilder.view.snap`.
+#[must_use]
+pub fn status() -> Vec<StatusToggle> {
+    vec![StatusToggle {
+        label: SNAP_LABEL.message_id.to_owned(),
+        hint: Some(SNAP_HINT.message_id.to_owned()),
+        state: std::sync::Arc::new(|app, _| {
+            Some(!matches!(
+                app.settings()
+                    .get(crate::interaction::SNAP_SETTING)
+                    .map(|e| e.value),
+                Ok(SettingValue::Bool(false))
+            ))
+        }),
+        set: std::sync::Arc::new(|_, _, on| {
+            Some(Intent::new(crate::shortcuts::ui::SNAP).with("on", on))
+        }),
+        key: Some(arc_ui::egui::Key::F3),
+    }]
 }

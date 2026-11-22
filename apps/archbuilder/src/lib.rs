@@ -13,6 +13,7 @@ use std::sync::atomic::AtomicU64;
 use arc_app::product::{
     Entry, Extractor, FileType, PathDialog, PathFilter, PathMode, Product, ProductBuilder,
 };
+use arc_app::settings::{Scope, Setting, SettingType, SettingValue};
 use arc_app::shell::{
     self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel, WorkPlaneProbe,
 };
@@ -25,13 +26,17 @@ use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::insert::{
     DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
 };
-use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
+use archbuilder_commands::modify::{
+    CLIPBOARD_PASTE, CLIPBOARD_PASTE_TO_STOREY, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE,
+    MODIFY_ROTATE,
+};
 use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, WALL, WINDOW};
 
 pub mod chrome;
+pub mod clipboard;
 pub mod direct;
 pub mod extract_floor;
 pub mod extract_insert;
@@ -41,13 +46,17 @@ pub mod floor_tool;
 pub mod insert_tool;
 pub mod interaction;
 pub mod labels;
+pub mod menu;
 pub mod modify_tool;
 pub mod outliner;
 pub mod picker;
 pub mod properties;
 pub mod room_tool;
 pub mod room_view;
+pub mod selection;
+pub mod shortcuts;
 pub mod snap;
+pub mod visibility;
 pub mod wall_tool;
 
 /// The viewport panel.
@@ -58,6 +67,8 @@ pub const PROPERTIES: &str = "archbuilder.properties";
 pub const OUTLINER: &str = "archbuilder.outliner";
 /// The command line.
 pub const COMMAND_LINE: &str = "archbuilder.command_line";
+/// The settings panel.
+pub const SETTINGS: &str = "archbuilder.settings";
 
 /// A message of the application.
 struct Message {
@@ -73,8 +84,17 @@ const MENU_STRUCTURE: Message = Message {
 const MENU_MODIFY: Message = Message {
     message_id: "ab-menu-modify",
 };
+const SHORTCUTS_EXPORT_TITLE: Message = Message {
+    message_id: "ab-shortcuts-export-title",
+};
+const SHORTCUTS_IMPORT_TITLE: Message = Message {
+    message_id: "ab-shortcuts-import-title",
+};
 const MENU_EXPORT: Message = Message {
     message_id: "ab-menu-export",
+};
+const MENU_IMPORT: Message = Message {
+    message_id: "ab-menu-import",
 };
 
 fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry {
@@ -102,11 +122,50 @@ fn export_ifc_dialog() -> PathDialog {
     }
 }
 
+/// The dialog of the shortcut file commands: a JSON file.
+fn shortcuts_dialog(mode: PathMode, title: &str) -> PathDialog {
+    PathDialog {
+        mode,
+        title: title.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-shortcuts-filter".into(),
+            extensions: vec!["json".into()],
+        }],
+        default_name: Some("archbuilder-shortcuts.json".into()),
+    }
+}
+
+/// The settings of the application: the typed shortcuts, snapping and the fine grid step.
+fn register_settings(builder: &mut ProductBuilder) -> Result<()> {
+    builder.setting(Setting {
+        key: shortcuts::SETTING,
+        ty: SettingType::Text,
+        default: SettingValue::Text(String::new()),
+        scope: Scope::User,
+        message_id: "ab-setting-shortcuts",
+    })?;
+    builder.setting(Setting {
+        key: interaction::SNAP_SETTING,
+        ty: SettingType::Bool,
+        default: SettingValue::Bool(true),
+        scope: Scope::User,
+        message_id: "ab-setting-snap-enabled",
+    })?;
+    builder.setting(Setting {
+        key: interaction::GRID_SETTING,
+        ty: SettingType::Int { min: 1, max: 1000 },
+        default: SettingValue::Int(10),
+        scope: Scope::User,
+        message_id: "ab-setting-snap-grid",
+    })
+}
+
 /// The product of the application: the type set and commands of `archbuilder-commands`, the shell
 /// commands and settings, the `archb` package, four panels and the level extractor.
 ///
 /// # Errors
 /// The registries' errors; none occur for this set.
+#[allow(clippy::too_many_lines, reason = "one registration after another")]
 pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     let mut builder = ProductBuilder::new("archbuilder", env!("CARGO_PKG_VERSION"))
         .with_types(archbuilder_commands::types()?)
@@ -123,8 +182,18 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out
     });
     shell::prefs::register_settings(&mut builder)?;
+    register_settings(&mut builder)?;
     // File > Export > IFC asks for the file in a save dialog that starts with the document's name.
     builder.path_dialog(archbuilder_io::command::EXPORT_IFC, export_ifc_dialog());
+    // The shortcut table goes to and comes from a small JSON file.
+    builder.path_dialog(
+        archbuilder_io::command::EXPORT_SHORTCUTS,
+        shortcuts_dialog(PathMode::Save, SHORTCUTS_EXPORT_TITLE.message_id),
+    );
+    builder.path_dialog(
+        archbuilder_io::command::IMPORT_SHORTCUTS,
+        shortcuts_dialog(PathMode::Open, SHORTCUTS_IMPORT_TITLE.message_id),
+    );
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
     // step, and the document saves like any other.
@@ -162,6 +231,13 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
                 message_id: "ab-panel-outliner",
             },
             || shell::panel(outliner::OutlinerPanel::default()),
+        ),
+        entry(
+            SETTINGS,
+            Message {
+                message_id: "ab-panel-settings",
+            },
+            || shell::panel(shell::SettingsPanel::default()),
         ),
         entry(
             COMMAND_LINE,
@@ -232,8 +308,21 @@ fn menu() -> Result<Menu> {
             at,
             MenuItem::Submenu {
                 label: MENU_EXPORT.message_id.into(),
+                items: [
+                    archbuilder_io::command::EXPORT_IFC,
+                    archbuilder_io::command::EXPORT_SHORTCUTS,
+                ]
+                .into_iter()
+                .map(|c| MenuItem::Command { command: c.into() })
+                .collect(),
+            },
+        );
+        file.insert(
+            at + 1,
+            MenuItem::Submenu {
+                label: MENU_IMPORT.message_id.into(),
                 items: vec![MenuItem::Command {
-                    command: archbuilder_io::command::EXPORT_IFC.into(),
+                    command: archbuilder_io::command::IMPORT_SHORTCUTS.into(),
                 }],
             },
         );
@@ -264,6 +353,8 @@ fn menu() -> Result<Menu> {
             MODIFY_COPY,
             MODIFY_ROTATE,
             MODIFY_MIRROR,
+            CLIPBOARD_PASTE,
+            CLIPBOARD_PASTE_TO_STOREY,
             OBJECT_DELETE,
         ]
         .into_iter()
@@ -284,7 +375,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         axis: Axis::Vertical,
         fraction: 0.55,
         first: Box::new(tabs(&[OUTLINER])),
-        second: Box::new(tabs(&[PROPERTIES])),
+        second: Box::new(tabs(&[PROPERTIES, SETTINGS])),
     };
     let top = Dock::Split {
         axis: Axis::Horizontal,
@@ -336,7 +427,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
             toward_camera: [1.0, -1.4, 0.9],
         }),
         toolbar: chrome::toolbar(),
-        status: Vec::new(),
+        status: chrome::status(),
         seed,
     })
 }

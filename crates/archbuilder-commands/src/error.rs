@@ -143,4 +143,28 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-select-before-points",
     };
+    /// The clipboard holds nothing to paste.
+    pub const CLIPBOARD_EMPTY: ErrorCode = ErrorCode {
+        code: "ab.cmd.clipboard_empty",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-clipboard-empty",
+    };
+    /// Paste to storey needs a storey, and none is selected.
+    pub const STOREY_NOT_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.storey_not_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-storey-not-selected",
+    };
+    /// A shortcut file is not an exported table or names something that cannot be bound.
+    pub const SHORTCUTS_INVALID: ErrorCode = ErrorCode {
+        code: "ab.cmd.shortcuts_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-shortcuts-invalid",
+    };
+    /// An identifier typed to select objects names no object.
+    pub const OBJECT_NOT_FOUND: ErrorCode = ErrorCode {
+        code: "ab.cmd.object_not_found",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-object-not-found",
+    };
 }

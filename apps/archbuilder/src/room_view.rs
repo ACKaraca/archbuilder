@@ -303,6 +303,7 @@ struct Cache {
     language: String,
     active: Option<ObjectId>,
     view: Option<[i64; 6]>,
+    hidden: Vec<ObjectId>,
     rooms: Vec<Entry>,
     drawn: Vec<ProductOverlay>,
 }
@@ -314,6 +315,8 @@ pub struct RoomView {
     selection: Mutex<Vec<ObjectId>>,
     active: Mutex<Option<ObjectId>>,
     view: Mutex<Option<ViewRect>>,
+    /// The rooms a temporary hide or isolation does not show, sorted.
+    hidden: Mutex<Vec<ObjectId>>,
 }
 
 /// The room overlays the shell's probes feed and read.
@@ -342,6 +345,12 @@ impl RoomView {
         set(&self.active, storey);
     }
 
+    /// Remembers the rooms the tab does not show (a temporary hide or isolation).
+    pub fn set_hidden(&self, mut rooms: Vec<ObjectId>) {
+        rooms.sort_unstable();
+        set(&self.hidden, rooms);
+    }
+
     /// Remembers the visible area of a view from above, `None` for any other view.
     pub fn set_view(&self, view: Option<ViewRect>) {
         set(&self.view, view);
@@ -362,10 +371,12 @@ impl RoomView {
         language: &str,
         active: Option<ObjectId>,
         view: Option<ViewRect>,
+        hide_rooms: &[ObjectId],
     ) -> Cache {
-        let rooms = active.map_or_else(Vec::new, |s| {
+        let mut rooms = active.map_or_else(Vec::new, |s| {
             archbuilder_model::room::of_storey(snapshot, s)
         });
+        rooms.retain(|e| hide_rooms.binary_search(&e.id).is_err());
         let localizer = crate::localizer(&[language.to_owned()]).ok();
         let say = |id: &str, count: usize| {
             localizer.as_ref().map_or_else(
@@ -462,6 +473,7 @@ impl RoomView {
             language: language.to_owned(),
             active,
             view: view.map(|v| v.key()),
+            hidden: hide_rooms.to_vec(),
             rooms,
             drawn,
         }
@@ -472,17 +484,19 @@ impl RoomView {
     pub fn overlays(&self, snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
         let active = self.active.lock().ok().and_then(|a| *a);
         let view = self.view();
+        let hidden = self.hidden.lock().map(|h| h.clone()).unwrap_or_default();
         let Ok(mut guard) = self.cache.lock() else {
-            return Self::build(snapshot, language, active, view).drawn;
+            return Self::build(snapshot, language, active, view, &hidden).drawn;
         };
         let fresh = guard.as_ref().is_some_and(|c| {
             c.snapshot.ptr_eq(snapshot)
                 && c.language == language
                 && c.active == active
                 && c.view == view.map(|v| v.key())
+                && c.hidden == hidden
         });
         if !fresh {
-            *guard = Some(Self::build(snapshot, language, active, view));
+            *guard = Some(Self::build(snapshot, language, active, view, &hidden));
         }
         let Some(cache) = guard.as_ref() else {
             return Vec::new();

@@ -146,10 +146,16 @@ const MAX_SYMBOLS: usize = 5_000;
 /// swing, a window's frame and glass line, at a cut 1 m above the wall's base, so that an insert
 /// shows in a view from above, where the wall's top hides it.
 #[must_use]
-pub fn symbols(snapshot: &Snapshot) -> Vec<ProductOverlay> {
+pub fn symbols(
+    snapshot: &Snapshot,
+    shown: &dyn Fn(arc_base::ObjectId) -> bool,
+) -> Vec<ProductOverlay> {
     let mut out = Vec::new();
     for key in [types::DOOR, types::WINDOW] {
         for object in spatial::objects(snapshot, key).iter().take(MAX_SYMBOLS) {
+            if !shown(object.id) {
+                continue;
+            }
             let Some(host) = object.header.owner.and_then(|w| spatial::get(snapshot, w)) else {
                 continue;
             };

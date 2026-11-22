@@ -11,3 +11,7 @@ ab-io-loss-window-operation = Açılır pencere tek panel olarak yazıldı: IFC4
 ab-io-path-required = Dosya adı verilmedi. Komut satırına archbuilder.file.export_ifc path=<dosya> yazın.
 ab-io-loss-room-unenclosed = Bir oda IFC dosyasında yok: onu çevreleyen kapalı bir duvar halkası olmadığından mekan olarak yazılacak bir bölgesi yok.
 ab-io-loss-room-redundant = Bir oda IFC dosyasında yok: bölgesi başka bir odada olduğundan ve her bölge tek bir mekan olarak yazıldığından.
+ab-io-command-export-shortcuts-label = Kısayollar…
+ab-io-command-export-shortcuts-description = Yazılan komut kısayol tablosunu paylaşmak ya da geri yüklemek için bir dosyaya yazar.
+ab-io-command-import-shortcuts-label = Kısayollar…
+ab-io-command-import-shortcuts-description = Yazılan komut kısayol tablosunu bir dosyadan okur ve kullanır.

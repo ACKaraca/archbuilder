@@ -1,13 +1,17 @@
 //! Where the pointer lands on the level plane while a wall is placed.
 //!
 //! Precedence, strongest first: an end point (or the origin) of the chain or of a wall; the
-//! intersection of two guide lines (alignment tracking lines through end points, the direction
+//! nearest of a baseline's midpoint, a room's center and the foot of the perpendicular from the
+//! segment's start to a baseline; the intersection of two guide lines (alignment tracking lines through end points, the direction
 //! from the segment's start, a wall's baseline); the nearest point of a wall's baseline; one
 //! tracking line; the direction from the segment's start; the grid. A guide line keeps its own
 //! coordinate exactly, so a point on a tracking line is exactly aligned with the point that
 //! tracks it, and a length along a direction is not rounded when a tracking line fixes it.
 //!
-//! The grid is 10 mm, and a coarser 1-2-5 step (at least four apertures wide on the screen)
+//! Snapping can be switched off ([`Input::object_snaps`]): the pointer then lands on the 15 degree
+//! directions and the grid only, as the status bar toggle says.
+//!
+//! The grid is 10 mm by default ([`Input::grid`]), and a coarser 1-2-5 step (at least four apertures wide on the screen)
 //! when the pointer is within the aperture of one of its lines, so a click a few pixels off a
 //! whole meter lands on it.
 
@@ -27,6 +31,12 @@ type P = [f64; 2];
 pub enum Kind {
     /// An end point or the origin.
     Endpoint,
+    /// The middle of a wall's baseline.
+    Midpoint,
+    /// The center of a room.
+    Center,
+    /// The foot of the perpendicular from the segment's start to a wall's baseline.
+    Perpendicular,
     /// Where two guide lines meet.
     Intersection,
     /// The nearest point of a wall's baseline.
@@ -37,6 +47,23 @@ pub enum Kind {
     Direction,
     /// The grid.
     Grid,
+}
+
+impl Kind {
+    /// The marker the viewport draws for this kind; none for the guide-line kinds, which draw
+    /// their own lines.
+    #[must_use]
+    pub fn marker(self) -> Option<arc_ui::SnapKind> {
+        Some(match self {
+            Self::Endpoint => arc_ui::SnapKind::Endpoint,
+            Self::Midpoint => arc_ui::SnapKind::Midpoint,
+            Self::Center => arc_ui::SnapKind::Center,
+            Self::Perpendicular => arc_ui::SnapKind::Perpendicular,
+            Self::Intersection => arc_ui::SnapKind::Intersection,
+            Self::Nearest => arc_ui::SnapKind::Nearest,
+            Self::Tracking | Self::Direction | Self::Grid => return None,
+        })
+    }
 }
 
 /// A snapped point.
@@ -64,6 +91,52 @@ pub struct Input<'a> {
     pub walls: &'a [[P; 2]],
     /// The start of the segment being placed, when there is one.
     pub from: Option<P>,
+    /// The centers of the rooms.
+    pub centers: &'a [P],
+    /// The step of the fine grid, in meters ([`GRID`] by default).
+    pub grid: f64,
+    /// Whether the pointer snaps to points and guide lines; off leaves directions and the grid.
+    pub object_snaps: bool,
+}
+
+impl<'a> Input<'a> {
+    /// An input with the default grid, snapping on and no room centers.
+    #[must_use]
+    pub fn new(
+        pointer: P,
+        pixels_per_unit: Option<f64>,
+        ends: &'a [P],
+        walls: &'a [[P; 2]],
+        from: Option<P>,
+    ) -> Self {
+        Self {
+            pointer,
+            pixels_per_unit,
+            ends,
+            walls,
+            from,
+            centers: &[],
+            grid: GRID,
+            object_snaps: true,
+        }
+    }
+}
+
+/// The area-weighted center of a polygon; `None` for fewer than three points or no area.
+#[must_use]
+pub fn centroid(polygon: &[P]) -> Option<P> {
+    if polygon.len() < 3 {
+        return None;
+    }
+    let (mut area, mut cx, mut cy) = (0.0, 0.0, 0.0);
+    for (i, a) in polygon.iter().enumerate() {
+        let b = polygon.get((i + 1) % polygon.len())?;
+        let cross = a[0] * b[1] - b[0] * a[1];
+        area += cross;
+        cx += (a[0] + b[0]) * cross;
+        cy += (a[1] + b[1]) * cross;
+    }
+    (area.abs() > 1.0e-12).then(|| [cx / (3.0 * area), cy / (3.0 * area)])
 }
 
 /// A guide line: a point on it, its unit direction, the point that tracks it, and the angle.
@@ -158,6 +231,11 @@ fn nearest_on(seg: &[P; 2], p: P) -> Option<(f64, P)> {
     Some(((p[0] - q[0]).hypot(p[1] - q[1]), q))
 }
 
+/// The foot of the perpendicular from `from` to the baseline `seg`, strictly inside it.
+fn foot(seg: &[P; 2], from: P) -> Option<P> {
+    nearest_on(seg, from).map(|(_, q)| q)
+}
+
 /// The coarse grid step for a scale: the smallest of 1, 2, 5, 10, ... meters that is at least
 /// four apertures wide on the screen, so the grid does not catch the whole plane.
 fn major_step(pixels_per_unit: f64) -> Option<f64> {
@@ -179,14 +257,14 @@ fn major_step(pixels_per_unit: f64) -> Option<f64> {
 
 /// A coordinate on the coarse grid when within `reach` of one of its lines, else on the 10 mm
 /// grid.
-fn round_coordinate(v: f64, step: Option<f64>, reach: f64) -> f64 {
+fn round_coordinate(v: f64, step: Option<f64>, reach: f64, grid: f64) -> f64 {
     if let Some(step) = step {
         let r = (v / step).round() * step;
         if (r - v).abs() <= reach {
             return r;
         }
     }
-    (v / GRID).round() * GRID
+    (v / grid).round() * grid
 }
 
 /// Where the pointer lands; `None` for a pointer that is not a finite point.
@@ -208,15 +286,46 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
         guides: Vec::new(),
         degrees: None,
     };
+    let grid = if input.grid.is_finite() && input.grid > 0.0 {
+        input.grid
+    } else {
+        GRID
+    };
+    let on = input.object_snaps;
     // 1. An end point.
     let near = input
         .ends
         .iter()
         .map(|e| ((e[0] - p[0]).hypot(e[1] - p[1]), *e))
-        .filter(|(d, _)| *d <= reach)
+        .filter(|(d, _)| on && *d <= reach)
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, end)) = near {
         return Some(made(end, Kind::Endpoint));
+    }
+    // 1b. The nearest of a baseline's midpoint, a room's center and the foot of the perpendicular
+    // from the segment's start.
+    if on {
+        let mids = input.walls.iter().map(|w| {
+            (
+                [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0],
+                Kind::Midpoint,
+            )
+        });
+        let centers = input.centers.iter().map(|c| (*c, Kind::Center));
+        let feet = input
+            .from
+            .into_iter()
+            .flat_map(|from| input.walls.iter().filter_map(move |w| foot(w, from)))
+            .map(|f| (f, Kind::Perpendicular));
+        let best = mids
+            .chain(centers)
+            .chain(feet)
+            .map(|(q, kind)| ((q[0] - p[0]).hypot(q[1] - p[1]), q, kind))
+            .filter(|(d, _, _)| *d <= reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, q, kind)) = best {
+            return Some(made(q, kind));
+        }
     }
     // The guide lines: tracking lines through end points near the pointer, and the direction
     // from the segment's start.
@@ -233,7 +342,7 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
             guides.push(g);
         }
     };
-    for e in input.ends.iter().take(MAX_TRACKED) {
+    for e in input.ends.iter().take(MAX_TRACKED).filter(|_| on) {
         if (p[1] - e[1]).abs() <= reach {
             add(Guide {
                 at: *e,
@@ -284,7 +393,7 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
                 offer(at, vec![*a, *b], Kind::Intersection);
             }
         }
-        for wall in input.walls {
+        for wall in input.walls.iter().filter(|_| on) {
             let seg = [wall[0], wall[1]];
             let d = [seg[1][0] - seg[0][0], seg[1][1] - seg[0][1]];
             let len = d[0].hypot(d[1]);
@@ -317,6 +426,7 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
     let on_wall = input
         .walls
         .iter()
+        .filter(|_| on)
         .filter_map(|w| nearest_on(w, p))
         .filter(|(d, _)| *d <= reach)
         .min_by(|a, b| a.0.total_cmp(&b.0));
@@ -329,9 +439,9 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
         && let Some(horizontal) = g.axis()
     {
         let at = if horizontal {
-            [round_coordinate(p[0], step, reach), g.at[1]]
+            [round_coordinate(p[0], step, reach, grid), g.at[1]]
         } else {
-            [g.at[0], round_coordinate(p[1], step, reach)]
+            [g.at[0], round_coordinate(p[1], step, reach, grid)]
         };
         let refs = [g];
         return Some(Snapped {
@@ -345,11 +455,11 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
     // the length on the 10 mm grid.
     if let Some((from, dir, degrees)) = ray {
         let at = match (dir[0] == 0.0, dir[1] == 0.0) {
-            (_, true) => [round_coordinate(p[0], step, reach), from[1]],
-            (true, _) => [from[0], round_coordinate(p[1], step, reach)],
+            (_, true) => [round_coordinate(p[0], step, reach, grid), from[1]],
+            (true, _) => [from[0], round_coordinate(p[1], step, reach, grid)],
             _ => {
                 let t = (p[0] - from[0]) * dir[0] + (p[1] - from[1]) * dir[1];
-                let t = (t / GRID).round() * GRID;
+                let t = (t / grid).round() * grid;
                 [from[0] + dir[0] * t, from[1] + dir[1] * t]
             }
         };
@@ -363,8 +473,8 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
     // 6. The grid.
     Some(made(
         [
-            round_coordinate(p[0], step, reach),
-            round_coordinate(p[1], step, reach),
+            round_coordinate(p[0], step, reach, grid),
+            round_coordinate(p[1], step, reach, grid),
         ],
         Kind::Grid,
     ))
@@ -377,14 +487,7 @@ mod tests {
     const PPU: f64 = 20.0;
 
     fn at(pointer: P, ends: &[P], walls: &[[P; 2]], from: Option<P>) -> Snapped {
-        snap(&Input {
-            pointer,
-            pixels_per_unit: Some(PPU),
-            ends,
-            walls,
-            from,
-        })
-        .unwrap()
+        snap(&Input::new(pointer, Some(PPU), ends, walls, from)).unwrap()
     }
 
     #[test]
@@ -445,14 +548,15 @@ mod tests {
         let wall = [[[0.0, 0.0], [10.0, 0.0]]];
         let s = at([3.3, 0.2], &[[0.0, 0.0], [10.0, 0.0]], &wall, None);
         assert_eq!((s.point[1], s.kind), (0.0, Kind::Nearest));
-        // Coming up from a point at x = 4.2: the direction meets the baseline there.
+        // Coming up from a point at x = 4.2: the direction meets the baseline there, which is also
+        // the foot of the perpendicular, the stronger name.
         let s = at(
             [4.25, 0.15],
             &[[0.0, 0.0], [10.0, 0.0]],
             &wall,
             Some([4.2, 3.0]),
         );
-        assert_eq!((s.point, s.kind), ([4.2, 0.0], Kind::Intersection));
+        assert_eq!((s.point, s.kind), ([4.2, 0.0], Kind::Perpendicular));
     }
 
     #[test]
@@ -463,5 +567,80 @@ mod tests {
         let s = at([7.4, 3.33], &[], &[], None);
         assert!((s.point[0] - 7.4).abs() < 1e-9 && (s.point[1] - 3.33).abs() < 1e-9);
         assert_eq!(s.kind, Kind::Grid);
+    }
+
+    #[test]
+    fn a_midpoint_is_exact_and_beats_the_baseline_under_it() {
+        let wall = [[[1.0, 2.0], [8.0, 2.0]]];
+        // The ends are far; the pointer is a few pixels from the middle, off the line.
+        let s = at([4.55, 2.2], &[[1.0, 2.0], [8.0, 2.0]], &wall, None);
+        assert_eq!((s.point, s.kind), ([4.5, 2.0], Kind::Midpoint));
+        // A skewed baseline's midpoint is the exact mean of its ends.
+        let skew = [[[0.1, 0.3], [4.7, 2.9]]];
+        let s = at([2.45, 1.7], &[[0.1, 0.3], [4.7, 2.9]], &skew, None);
+        assert_eq!(s.kind, Kind::Midpoint);
+        assert_eq!(s.point, [(0.1 + 4.7) / 2.0, (0.3 + 2.9) / 2.0]);
+    }
+
+    #[test]
+    fn the_foot_of_the_perpendicular_from_the_start_is_exact() {
+        // From (3, 5) to the baseline y = 1: the foot is (3, 1).
+        let wall = [[[0.0, 1.0], [10.0, 1.0]]];
+        let s = at(
+            [3.1, 1.15],
+            &[[0.0, 1.0], [10.0, 1.0]],
+            &wall,
+            Some([3.0, 5.0]),
+        );
+        assert_eq!((s.point, s.kind), ([3.0, 1.0], Kind::Perpendicular));
+        // A slanted baseline: the foot is the projection, and the vector from the start to it
+        // is at right angles to the baseline.
+        let slant = [[[0.0, 0.0], [6.0, 3.0]]];
+        let from = [1.0, 4.0];
+        let foot = {
+            let d = [6.0, 3.0];
+            let t = (from[0] * d[0] + from[1] * d[1]) / (d[0] * d[0] + d[1] * d[1]);
+            [d[0] * t, d[1] * t]
+        };
+        let s = at(
+            [foot[0] + 0.05, foot[1] - 0.05],
+            &[[0.0, 0.0], [6.0, 3.0]],
+            &slant,
+            Some(from),
+        );
+        assert_eq!((s.point, s.kind), (foot, Kind::Perpendicular));
+        let dot = (s.point[0] - from[0]) * 6.0 + (s.point[1] - from[1]) * 3.0;
+        assert!(dot.abs() < 1e-12, "{dot}");
+    }
+
+    #[test]
+    fn a_room_center_snaps_and_the_centroid_is_the_polygon_center() {
+        let square = [[0.0, 0.0], [4.0, 0.0], [4.0, 2.0], [0.0, 2.0]];
+        let c = centroid(&square).unwrap();
+        assert_eq!(c, [2.0, 1.0]);
+        let centers = [c];
+        let mut input = Input::new([2.1, 1.1], Some(PPU), &[], &[], None);
+        input.centers = &centers;
+        let s = snap(&input).unwrap();
+        assert_eq!((s.point, s.kind), ([2.0, 1.0], Kind::Center));
+        assert_eq!(centroid(&[[0.0, 0.0], [1.0, 1.0]]), None);
+    }
+
+    #[test]
+    fn with_snapping_off_only_directions_and_the_grid_remain_and_the_grid_step_is_a_setting() {
+        let wall = [[[0.0, 0.0], [10.0, 0.0]]];
+        let mut input = Input::new([4.97, 0.73], Some(PPU), &[[0.0, 0.0]], &wall, None);
+        input.object_snaps = false;
+        let s = snap(&input).unwrap();
+        assert_eq!(s.kind, Kind::Grid);
+        assert!(
+            (s.point[1] - 0.73).abs() < 1e-9,
+            "no pull onto the baseline"
+        );
+        // A 50 mm grid rounds to 50 mm.
+        input.grid = 0.05;
+        input.pointer = [3.337, 7.211];
+        let s = snap(&input).unwrap();
+        assert!((s.point[0] - 3.35).abs() < 1e-9 && (s.point[1] - 7.2).abs() < 1e-9);
     }
 }

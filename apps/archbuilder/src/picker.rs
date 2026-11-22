@@ -3,6 +3,10 @@
 //! click, so the highlighted object is the one a click selects. A click within a few pixels of
 //! the last one, with the document unchanged, steps down the list; the hover shows what that
 //! next click would select.
+//!
+//! Tab steps the hover down the same list ([`Picker::step`]) while the pointer stays within a few
+//! pixels; a click then selects the candidate the hover shows. Objects the view does not show
+//! ([`crate::visibility`]) are not in the list.
 
 use std::time::{Duration, Instant};
 
@@ -14,6 +18,9 @@ use archbuilder_model::room::Entry;
 const CYCLE_PIXELS: f64 = 4.0;
 /// How long after a click a repeated click still steps down the list.
 const CYCLE_TIME: Duration = Duration::from_millis(1500);
+/// A second click sooner than this is the second click of a double click: it picks the same
+/// object again instead of stepping down.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 struct Last {
     pixel: [f64; 2],
@@ -23,11 +30,41 @@ struct Last {
     at: Instant,
 }
 
+/// The candidates under the pointer when it last moved, for Tab to step through.
+struct Under {
+    pixel: [f64; 2],
+    stack: Vec<ObjectId>,
+}
+
+/// Where and when the pointer asks what it would pick.
+#[derive(Clone, Copy)]
+pub struct Probe<'a> {
+    /// The pointer's pixel.
+    pub pixel: [f64; 2],
+    /// The model point under it, in meters.
+    pub at: [f64; 2],
+    /// How far from an outline a point still counts, in meters.
+    pub aperture: f64,
+    /// The view ray through the pointer, when the view has one.
+    pub ray: Option<([f64; 3], [f64; 3])>,
+    /// The time of the event.
+    pub now: Instant,
+    /// Whether an object is shown (hidden objects are not candidates).
+    pub shown: &'a dyn Fn(ObjectId) -> bool,
+}
+
 /// The picker of one tab.
 #[derive(Default)]
 pub struct Picker {
     last: Option<Last>,
     rooms: Option<(Snapshot, Vec<Entry>)>,
+    under: Option<Under>,
+    /// The candidate Tab chose: where the pointer was and the index into the list.
+    tab: Option<([f64; 2], usize)>,
+}
+
+fn near(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) <= CYCLE_PIXELS
 }
 
 /// What a click would pick: the object and where it stands in its candidate list.
@@ -50,24 +87,33 @@ impl Picker {
         self.rooms.as_ref().map_or(&[], |(_, r)| r.as_slice())
     }
 
-    /// What a click at `pixel` (model point `at`) would pick now: the hover and the click both
-    /// ask this.
-    pub fn target(
-        &mut self,
-        snapshot: &Snapshot,
-        pixel: [f64; 2],
-        at: [f64; 2],
-        aperture: f64,
-        ray: Option<([f64; 3], [f64; 3])>,
-        now: Instant,
-    ) -> Option<Target> {
-        if let Some(last) = &self.last
+    /// What a click at `probe.pixel` (model point `probe.at`) would pick now: the hover and the
+    /// click both ask this.
+    pub fn target(&mut self, snapshot: &Snapshot, probe: &Probe<'_>) -> Option<Target> {
+        let Probe {
+            pixel,
+            at,
+            aperture,
+            ray,
+            now,
+            shown,
+        } = *probe;
+        if self.tab.as_ref().is_some_and(|(p, _)| !near(*p, pixel)) {
+            self.tab = None;
+        }
+        if self.tab.is_none()
+            && let Some(last) = &self.last
             && last.snapshot.ptr_eq(snapshot)
             && (last.pixel[0] - pixel[0]).hypot(last.pixel[1] - pixel[1]) <= CYCLE_PIXELS
             && !last.stack.is_empty()
             && now.saturating_duration_since(last.at) <= CYCLE_TIME
         {
-            let index = (last.index + 1) % last.stack.len();
+            let quick = now.saturating_duration_since(last.at) < DOUBLE_CLICK;
+            let index = if quick {
+                last.index
+            } else {
+                (last.index + 1) % last.stack.len()
+            };
             return Some(Target {
                 id: *last.stack.get(index)?,
                 stack: last.stack.clone(),
@@ -75,12 +121,51 @@ impl Picker {
             });
         }
         let rooms = self.rooms(snapshot).to_vec();
-        let stack = archbuilder_model::pick::stack(snapshot, &rooms, at, aperture, ray);
+        let mut stack = archbuilder_model::pick::stack(snapshot, &rooms, at, aperture, ray);
+        stack.retain(|id| shown(*id));
+        self.under = Some(Under {
+            pixel,
+            stack: stack.clone(),
+        });
+        let index = self.tab.map_or(0, |(_, i)| i % stack.len().max(1));
         Some(Target {
-            id: *stack.first()?,
+            id: *stack.get(index)?,
             stack,
-            index: 0,
+            index,
         })
+    }
+
+    /// Tab: the hover moves to the next candidate under the pointer (and back to the first after
+    /// the last). Returns whether there is more than one candidate to step through.
+    pub fn step(&mut self) -> bool {
+        let Some(under) = self.under.as_ref().filter(|u| u.stack.len() > 1) else {
+            return false;
+        };
+        let at = self
+            .tab
+            .filter(|(p, _)| near(*p, under.pixel))
+            .map_or(0, |(_, i)| i);
+        self.tab = Some((under.pixel, (at + 1) % under.stack.len()));
+        true
+    }
+
+    /// The object the last click picked, when `pixel` is where it was.
+    #[must_use]
+    pub fn last_picked(&self, pixel: [f64; 2]) -> Option<ObjectId> {
+        let last = self.last.as_ref().filter(|l| near(l.pixel, pixel))?;
+        last.stack.get(last.index).copied()
+    }
+
+    /// The centers of the rooms of `storey` (the area-weighted center of each footprint).
+    pub fn centers(&mut self, snapshot: &Snapshot, storey: ObjectId) -> Vec<[f64; 2]> {
+        self.rooms(snapshot)
+            .iter()
+            .filter(|e| {
+                archbuilder_model::spatial::get(snapshot, e.id)
+                    .is_some_and(|o| o.header.owner == Some(storey))
+            })
+            .filter_map(|e| crate::snap::centroid(&e.footprint.polygon))
+            .collect()
     }
 
     /// Records a click that picked `target`, so the next one nearby steps down the list.
@@ -92,11 +177,13 @@ impl Picker {
             index: target.index,
             at: now,
         });
+        self.tab = None;
     }
 
     /// Forgets the last click (Escape): the next click starts at the top of the list.
     pub fn reset(&mut self) {
         self.last = None;
+        self.tab = None;
     }
 
     /// The outlines that mark `id` for the hover.

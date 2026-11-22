@@ -11,7 +11,7 @@ use arc_command::{Invocation, Invoker, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Snapshot};
 use arc_ui::ProductOverlay;
-use archbuilder::picker::Picker;
+use archbuilder::picker::{Picker, Probe};
 use archbuilder::room_tool::RoomTool;
 use archbuilder::room_view::{RoomView, ViewRect};
 use archbuilder::wall_tool::Env;
@@ -140,11 +140,14 @@ fn pick(
 ) -> Option<archbuilder::picker::Target> {
     picker.target(
         snapshot,
-        [at[0] * 20.0, at[1] * 20.0],
-        at,
-        0.1,
-        None,
-        Instant::now(),
+        &Probe {
+            pixel: [at[0] * 20.0, at[1] * 20.0],
+            at,
+            aperture: 0.1,
+            ray: None,
+            now: Instant::now(),
+            shown: &|_| true,
+        },
     )
 }
 
@@ -168,7 +171,17 @@ fn the_hover_and_the_click_see_one_list_walls_before_rooms_before_floors() {
     // Inside the house: the room, then the floor on the next click, then back to the room.
     let inside = pick(&mut picker, &snapshot, [2.5, 3.0]).unwrap();
     assert_eq!(kind(inside.id), ROOM);
+    // A second click within a double click's time picks the same object again.
     picker.commit(&snapshot, [50.0, 60.0], &inside, Instant::now());
+    assert_eq!(
+        pick(&mut picker, &snapshot, [2.5, 3.0]).unwrap().id,
+        inside.id
+    );
+    // A repeated click a moment later steps down.
+    let earlier = Instant::now()
+        .checked_sub(Duration::from_millis(600))
+        .unwrap();
+    picker.commit(&snapshot, [50.0, 60.0], &inside, earlier);
     let next = pick(&mut picker, &snapshot, [2.5, 3.0]).unwrap();
     assert_eq!(kind(next.id), FLOOR);
     // Nothing but the level outline lies beyond the house.
@@ -199,7 +212,18 @@ fn a_repeated_click_steps_down_the_list_until_escape_the_pointer_or_time_resets_
     let now = Instant::now();
     let mut picker = Picker::default();
     let ask = |p: &mut Picker, pixel: [f64; 2], when: Instant| {
-        p.target(&snapshot, pixel, at, 0.1, None, when).unwrap()
+        p.target(
+            &snapshot,
+            &Probe {
+                pixel,
+                at,
+                aperture: 0.1,
+                ray: None,
+                now: when,
+                shown: &|_| true,
+            },
+        )
+        .unwrap()
     };
     let first = ask(&mut picker, pixel, now);
     assert_eq!(kind(first.id), ROOM);

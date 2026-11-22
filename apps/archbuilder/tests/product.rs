@@ -182,8 +182,28 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(label, "ab-menu-export");
     assert_eq!(
         export,
+        &[
+            MenuItem::Command {
+                command: "archbuilder.file.export_ifc".into()
+            },
+            MenuItem::Command {
+                command: "archbuilder.shortcuts.export".into()
+            }
+        ]
+    );
+    // The shortcut table comes back through File > Import.
+    let MenuItem::Submenu {
+        label,
+        items: import,
+    } = &items[save_as + 2]
+    else {
+        panic!("no Import submenu");
+    };
+    assert_eq!(label, "ab-menu-import");
+    assert_eq!(
+        import,
         &[MenuItem::Command {
-            command: "archbuilder.file.export_ifc".into()
+            command: "archbuilder.shortcuts.import".into()
         }]
     );
     let owner = LockOwner {

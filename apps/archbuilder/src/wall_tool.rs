@@ -66,6 +66,8 @@ pub struct Chain {
     pub location: Option<String>,
     /// Whether the next wall is flipped, once a wall carried it.
     pub flip: bool,
+    /// The start of each wall placed, in order: where the chain goes back to on undo.
+    pub trail: Vec<[f64; 2]>,
 }
 
 /// The state of the wall tool of one tab.
@@ -74,6 +76,8 @@ pub struct Tool {
     line: CommandLine,
     chain: Option<Chain>,
     error: Option<Error>,
+    /// The last placed wall was taken back and the host must undo its transaction.
+    undo_wanted: bool,
 }
 
 pub(crate) fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -174,6 +178,7 @@ impl Tool {
             top_level: None,
             location: None,
             flip: false,
+            trail: Vec::new(),
         });
         self.next(env, run)
     }
@@ -248,6 +253,7 @@ impl Tool {
         chain.start = chain.start.or(start);
         chain.end = end;
         chain.walls += 1;
+        chain.trail.extend(start);
         chain.thickness = wall
             .get("thickness")
             .and_then(Value::as_f64)
@@ -354,11 +360,38 @@ impl Tool {
         if !self.active() {
             return Ok(());
         }
+        // Nothing answered in the segment in progress: take back the last wall placed. The host
+        // undoes its transaction ([`Self::take_undo`]) and the chain goes on from that wall's start.
+        let answered = self.line.active().is_some_and(|s| !s.answers().is_empty());
+        if !answered && let Some(chain) = self.chain.as_mut().filter(|c| c.walls > 0) {
+            let from = chain.trail.pop();
+            chain.walls -= 1;
+            chain.end = from;
+            if chain.walls == 0 {
+                chain.start = None;
+                chain.end = None;
+            }
+            let last = chain.end.map(|p| Point {
+                x: p[0],
+                y: p[1],
+                z: None,
+            });
+            self.undo_wanted = true;
+            self.line.cancel();
+            self.line.set_last_point(last)?;
+            return self.next(env, run);
+        }
         let localized = BTreeMap::new();
         let result = self
             .line
             .drive(&target(env, &localized), LineStep::Back, run);
         self.follow(env, run, result)
+    }
+
+    /// Whether a wall was taken back since the last call, so the host must undo its transaction;
+    /// taken once.
+    pub fn take_undo(&mut self) -> bool {
+        std::mem::take(&mut self.undo_wanted)
     }
 
     /// Points the direct distance of a typed length along the line from the segment's start to

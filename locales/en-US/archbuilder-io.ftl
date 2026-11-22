@@ -11,3 +11,7 @@ ab-io-loss-window-operation = A casement window is written as a single panel: IF
 ab-io-path-required = No file name was given. Type archbuilder.file.export_ifc path=<file> in the command line.
 ab-io-loss-room-unenclosed = A room is not in the IFC file: no closed loop of walls encloses it, so it has no region to write as a space.
 ab-io-loss-room-redundant = A room is not in the IFC file: another room already holds its region, and each region is written as one space.
+ab-io-command-export-shortcuts-label = Shortcuts…
+ab-io-command-export-shortcuts-description = Writes the typed command shortcut table to a file, so it can be shared or restored.
+ab-io-command-import-shortcuts-label = Shortcuts…
+ab-io-command-import-shortcuts-description = Reads a typed command shortcut table from a file and uses it.

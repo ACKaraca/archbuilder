@@ -16,6 +16,7 @@
 //!
 //! No function in this crate panics.
 
+pub mod clip;
 pub mod error;
 pub mod floor;
 pub mod insert;

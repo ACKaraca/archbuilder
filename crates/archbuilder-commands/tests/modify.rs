@@ -645,3 +645,173 @@ fn a_wall_turned_ten_degrees_closes_its_corners_exactly() {
     let after = env.dump();
     env.undo_redo(&before, &after, 1);
 }
+
+#[test]
+fn paste_at_a_displacement_is_one_undo_step_and_in_place_keeps_the_position() {
+    let env = Env::new();
+    env.room();
+    let all = env.all();
+    let before = env.dump();
+    let made = env
+        .run(
+            "archbuilder.clipboard.paste",
+            json!({"objects": ids(&all), "displacement": [10.0, 5.0], "base": [0.0, 0.0]}),
+        )
+        .unwrap()
+        .value;
+    // 4 walls, 1 door, 1 floor, all selected after the command.
+    assert_eq!(made["created"].as_array().unwrap().len(), 6);
+    let moved = env
+        .walls()
+        .iter()
+        .filter(|(_, w)| w.start[0] >= 10.0 && w.start[1] >= 5.0)
+        .count();
+    assert_eq!(moved, 4);
+    let after = env.dump();
+    env.undo_redo(&before, &after, 1);
+    // Without a displacement the copy lands on the original (paste in place).
+    env.run("archbuilder.clipboard.paste", json!({"objects": ids(&all)}))
+        .unwrap();
+    assert_eq!(env.walls().len(), 12);
+    let starts: Vec<_> = env.walls().iter().map(|(_, w)| w.start).collect();
+    assert_eq!(starts.iter().filter(|s| **s == [0.0, 0.0]).count(), 2);
+}
+
+#[test]
+fn paste_to_storey_puts_the_copy_in_that_storey_at_the_same_plan_position() {
+    let env = Env::new();
+    let walls = env.room();
+    let s = env.snapshot();
+    let building = spatial::buildings(&s)[0].id;
+    let upper = spatial::storeys(&s, building)[1].storey.id;
+    let ground = spatial::get(&s, walls[0]).unwrap().header.owner.unwrap();
+    assert_ne!(upper, ground);
+    let all = env.all();
+    let before = env.dump();
+    let made = env
+        .run(
+            "archbuilder.clipboard.paste_to_storey",
+            json!({"objects": ids(&all), "storey": upper}),
+        )
+        .unwrap()
+        .value;
+    assert_eq!(made["created"].as_array().unwrap().len(), 6);
+    let s = env.snapshot();
+    let upper_walls: Vec<_> = spatial::objects(&s, WALL)
+        .into_iter()
+        .filter(|o| o.header.owner == Some(upper))
+        .collect();
+    assert_eq!(upper_walls.len(), 4);
+    for o in &upper_walls {
+        let w = Wall::from_values(&o.values).unwrap();
+        // The plan position is the original's; the elevation comes from the storey.
+        assert!(walls.iter().any(|id| {
+            let a = Wall::from_values(&spatial::get(&s, *id).unwrap().values).unwrap();
+            (a.start, a.end) == (w.start, w.end)
+        }));
+        // Joins re-derive on the new storey: the corners are closed like the original's.
+        let f = archbuilder_model::join::footprint_of(&s, o).unwrap();
+        assert_ne!(f, w.plain_footprint());
+    }
+    assert_eq!(
+        spatial::objects(&s, FLOOR)
+            .iter()
+            .filter(|o| o.header.owner == Some(upper))
+            .count(),
+        1
+    );
+    let doors: Vec<_> = spatial::objects(&s, DOOR);
+    assert_eq!(doors.len(), 2);
+    let after = env.dump();
+    env.undo_redo(&before, &after, 1);
+
+    // A door alone has no wall up there, and the storey is required.
+    let door = env
+        .all()
+        .into_iter()
+        .find(|id| spatial::type_of(&env.snapshot(), *id).as_deref() == Some(DOOR));
+    let err = env
+        .run(
+            "archbuilder.clipboard.paste_to_storey",
+            json!({"objects": ids(&door.into_iter().collect::<Vec<_>>()), "storey": upper}),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "ab.cmd.not_movable");
+    let err = env
+        .run(
+            "archbuilder.clipboard.paste_to_storey",
+            json!({"objects": ids(&all)}),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "cmd.params.invalid");
+}
+
+#[test]
+fn clipboard_content_pastes_after_the_originals_are_deleted_and_into_another_document() {
+    let source = Env::new();
+    let walls = source.room();
+    let all = source.all();
+    let content = archbuilder_commands::clip::capture(&source.snapshot(), &all).unwrap();
+    // Delete the originals: the content does not depend on them.
+    let delete = Invocation {
+        seed: 7,
+        selection: all.clone(),
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&source.registry)
+        .invoke(&source.document, &source.session, delete)
+        .unwrap();
+    assert!(source.walls().is_empty());
+    let storey_of = |env: &Env| {
+        let s = env.snapshot();
+        spatial::storeys(&s, spatial::buildings(&s)[0].id)[0]
+            .storey
+            .id
+    };
+    let before = source.dump();
+    let made = source
+        .run(
+            "archbuilder.clipboard.paste",
+            json!({"content": content, "displacement": [10.0, 0.0], "storey": storey_of(&source)}),
+        )
+        .unwrap()
+        .value;
+    // 4 walls, the door, the floor.
+    assert_eq!(made["created"].as_array().unwrap().len(), 6);
+    let starts: Vec<[f64; 2]> = source.walls().iter().map(|(_, w)| w.start).collect();
+    assert!(starts.contains(&[10.0, 0.0]) && starts.contains(&[10.0, 3.0]));
+    let s = source.snapshot();
+    let d = Derived::of(&s, &spatial::objects(&s, FLOOR)[0]).unwrap();
+    near(d.area(), 3.8 * 2.8);
+    assert_eq!(
+        hosted(&s, source.walls()[0].0).len()
+            + hosted(&s, source.walls()[1].0).len()
+            + hosted(&s, source.walls()[2].0).len()
+            + hosted(&s, source.walls()[3].0).len(),
+        1
+    );
+    let after = source.dump();
+    source.undo_redo(&before, &after, 1);
+
+    // Another document of the product: the walls land at the same plan position.
+    let other = Env::new();
+    other
+        .run(
+            "archbuilder.clipboard.paste",
+            json!({"content": content, "storey": storey_of(&other)}),
+        )
+        .unwrap();
+    let (a, b) = (other.walls(), walls.len());
+    assert_eq!(a.len(), b);
+    let f = other.floor();
+    near(f.area(), 3.8 * 2.8);
+    f.boundary.check().unwrap();
+    // A content that is not ours is refused.
+    let err = other
+        .run(
+            "archbuilder.clipboard.paste",
+            json!({"content": {"format": "x", "items": []}, "storey": storey_of(&other)}),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "cmd.params.invalid");
+}

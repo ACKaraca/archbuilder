@@ -502,3 +502,39 @@ fn every_prompt_and_menu_message_of_the_wall_is_in_both_catalogs() {
         }
     }
 }
+
+#[test]
+fn undo_inside_a_chain_takes_back_the_last_wall_and_goes_on_from_its_start() {
+    let mut rig = Rig::new();
+    rig.text("archbuilder.wall.create");
+    rig.text("0,0");
+    rig.text("4,0");
+    rig.text("@0,3");
+    assert_eq!(rig.walls().len(), 2);
+    // Back: the last wall is taken back (the host undoes it) and the chain continues from its start.
+    rig.step(|t, env, run| t.back(env, run));
+    assert!(rig.tool.take_undo());
+    rig.document.undo().wait().unwrap();
+    assert_eq!(rig.walls().len(), 1);
+    assert!(rig.tool.active() && rig.tool.chain().is_some_and(|c| c.end == Some([4.0, 0.0])));
+    rig.click([4.0, 2.0]);
+    let walls = rig.walls();
+    assert_eq!(walls.len(), 2);
+    assert!(
+        near(walls[1].1, [4.0, 0.0]) && near(walls[1].2, [4.0, 2.0]),
+        "{walls:?}"
+    );
+    // Repeated steps back reach the start prompt, where nothing is left to take back.
+    for expected in [1, 0] {
+        rig.step(|t, env, run| t.back(env, run));
+        assert!(rig.tool.take_undo());
+        rig.document.undo().wait().unwrap();
+        assert_eq!(rig.walls().len(), expected);
+    }
+    assert!(rig.tool.chain().is_some_and(|c| c.end.is_none()));
+    rig.step(|t, env, run| t.back(env, run));
+    assert!(
+        !rig.tool.take_undo(),
+        "nothing left to take back; the host cancels the tool"
+    );
+}

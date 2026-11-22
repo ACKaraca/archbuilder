@@ -314,6 +314,101 @@ Shift) still starts the selection band. A drag shorter than 4 pixels is a click.
 - Handles and dimensions are overlays, hit-tested within 7 pixels and highlighted on hover; over a
   handle the mouse pointer changes.
 
+### Everyday habits of the viewport
+
+These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `menu.rs`, `shortcuts.rs`,
+`selection.rs`, `visibility.rs`); everything that changes the document is still a command and one undo step.
+
+- **Tab** with the pointer over a view from above and no command running steps the hover to the next
+  candidate under the pointer (the list of the picker: doors and windows, walls, rooms, floors, levels)
+  and back to the first after the last; a click then selects the candidate the hover shows. A move of
+  more than 4 pixels starts again at the top. A second click within 0.4 s of a click picks the same
+  object (it is the second click of a double click); a repeated click after that still steps down.
+- **Secondary click** opens a context menu; nothing happens silently on the secondary button any more.
+  While a command runs the entries are Enter (the old secondary-click action, now the first entry),
+  Cancel and, when an answer can be taken back, Undo last point. Idle with nothing selected: Repeat last
+  command, Paste (when the clipboard holds something), Select all, Zoom extents, Unhide all. With a
+  selection: Delete, Move, Copy, Rotate, Mirror; Copy to clipboard; Hide, Isolate, Hide this kind,
+  Isolate this kind, Unhide all; Select all of this kind and, when the selection holds several kinds,
+  one Keep only entry per kind (the selection filter); Properties. A secondary click on an unselected
+  object selects it first.
+- **Double click** (primary, view from above, no command running): on a wall it selects the walls joined
+  to it end to end; on a floor it starts the add-hole flow for that floor (there is no sketch edit mode
+  yet); on a room it opens an inline rename of the room (Enter renames, Escape cancels).
+- **Clipboard.** Ctrl+C copies the selected walls (with their doors and windows), floors, doors,
+  windows and rooms as content, a snapshot of their field values (`archbuilder.clipboard` content,
+  JSON), with the lower left corner of their plan extent as the base point, and puts a short text on
+  the system clipboard (the platform reports the paste shortcut only while that clipboard holds
+  something). A wall's level-constrained top is stored as its effective height. Ctrl+X copies and
+  deletes in one undo step. Ctrl+V asks for an insertion point with the base at the pointer and a
+  ghost of the copy; Enter or Space pastes in place (`archbuilder.clipboard.paste` with `content`,
+  a copy translated by the displacement from the base to the point) into the storey the selection is
+  in, else the lowest. `archbuilder.clipboard.paste_to_storey` pastes into the selected storey at
+  the same plan position. The clipboard is one for the whole application and its content does not
+  depend on the originals, so a paste works after they are deleted and in another open document
+  (another tab). Each paste is one undo step and the joins re-derive. A
+  paste in place over identical walls says once that the pasted objects lie on top of their
+  originals instead of listing each collision. Copying with nothing selected, or pasting before
+  anything was copied, says so.
+- **Undo inside a command.** Ctrl+Z, the Undo button and the menu entry Undo last point step back one
+  answer inside a running command. In a wall chain they take back the last wall (its transaction is
+  undone) and go on from that wall's start; a floor sketch drops its last point. At the first prompt
+  they cancel the command; they undo the document only when no command runs.
+- **Enter and Space.** Space does what Enter does while a command runs, and repeats the last command
+  otherwise; the menu entry Repeat last command does the same.
+- **Typed shortcuts.** Letters typed while the viewport has the focus or the pointer is over it go to
+  the command line, where the text shows as it accumulates. With no command running, a complete
+  shortcut starts its command at once, unless a longer command name begins with it (`wa` waits
+  because `wall` is a name; `mv` starts at once). The names are read from the registered commands
+  (identifier parts, aliases, labels in both languages), so a new command, such as `save`, never
+  has a shortcut fire early. Anything else waits for Enter or Space: Enter
+  starts the shortcut the text is, else the command name or alias it names (`wall`, `m`, `duvar`,
+  `snap`). The same resolution applies to text typed in the command line itself. Escape on an empty
+  command line returns the keyboard to the viewport. The setting
+  `archbuilder.shortcuts` holds overrides as `XX=command` pairs separated by `;` (an empty command
+  removes a default); the settings panel edits it, and File > Export > Shortcuts and File > Import >
+  Shortcuts write and read the effective table as a small JSON file
+  (`archbuilder.shortcuts.export`, `archbuilder.shortcuts.import`; typed `exportkeys <file>`,
+  `importkeys <file>`; a relative name is taken in the document's folder, else Documents, else the
+  home folder, for both).
+
+  | Keys | Command | Keys | Command |
+  |---|---|---|---|
+  | WA | wall | HD | hide the selection |
+  | DR | door | IS | isolate the selection |
+  | WN | window | HK | hide this kind |
+  | FL | floor | IK | isolate this kind |
+  | RM | room | RV | unhide all |
+  | MV | move | SA | select all |
+  | CP | copy | SK | select all of this kind |
+  | RT | rotate | SP | previous selection |
+  | MR | mirror | CB | copy to the clipboard |
+  | DL | delete | PS | paste |
+  | RR | repeat last command | PT | paste to storey |
+  | ZE | zoom extents | SN | switch snapping |
+  | UD | undo | CU | cut |
+
+  Typed in the command line: `selectid <id> ...` selects objects by identifier, and `selectall`,
+  `paste`, `pastestorey`, `hide`, `isolate`, `unhide` do what their shortcuts do.
+- **Selection.** Select all, select all of this kind (the kinds in the selection: wall, door, window,
+  floor, room), keep one kind of the selection, previous selection (restores the selection before the
+  last change; an empty selection never replaces it) and select by identifier. They skip hidden objects.
+- **Temporary hide and isolate** are state of one tab's view, not of the document: they are not saved
+  and not undone, and end with Unhide all or when the tab closes. Hiding or isolating a wall takes its
+  doors and windows with it; a kind can be hidden or isolated as a whole. A framed banner at the top of
+  the viewport says what is hidden or isolated. Hidden objects are not drawn, hovered, picked or
+  selected, in plan and in 3D, and a hidden room draws no tag.
+- **Snaps** add the midpoint of a wall's baseline, the center of a room (the centroid of its
+  footprint) and the foot of the perpendicular from the segment's start to a baseline, each exact, with
+  the markers of the viewport; an end point still wins, then the nearest of these three. The status bar
+  toggle Snap (F3; the setting `archbuilder.snap.enabled`) switches them, the guide lines and the
+  nearest point off, leaving the 15 degree directions and the grid. The setting
+  `archbuilder.snap.grid_mm` (1 to 1000, default 10) is the step of the fine grid.
+
+Not done: a band never selects rooms (a room has no scene geometry; a click, Tab and Select all of
+this kind do, also while isolated); Tab does not step the snap candidates of a point prompt; there is no sketch edit mode for a
+floor; a copied selection is not written to the system clipboard as data.
+
 `archbuilder.modify.move`, `copy`, `rotate` and `mirror` (rotate's `angle`: a JSON number is radians, a text with a unit such as `"90 deg"` says its own, a bare text number is degrees; typed `m`, `co`, `ro`, `mi`, or the
 Turkish `taşı`, `kopyala`, `döndür`, `aynala`) work on the selection, or ask for objects first and
 take the selection on Enter. Each run is one transaction. Walls move by their baselines and their

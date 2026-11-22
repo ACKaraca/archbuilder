@@ -24,6 +24,12 @@
 //!   copying a wall copies its doors and windows. Copied inserts of a wall that is not copied
 //!   (an insert alone) go to the same wall at the projected distance.
 //!
+//! - Paste (`archbuilder.clipboard.paste`, `archbuilder.clipboard.paste_to_storey`) is a copy of the
+//!   named objects (the host's clipboard) by the displacement from the clipboard's base point to the
+//!   insertion point, or, with `storey`, into another storey at the same plan position. Elevations
+//!   belong to the storey, so they follow it. A door or window alone cannot go to another storey
+//!   (`ab.cmd.not_movable`).
+//!
 //! The prompt machine ([`ModifyPrompts`]) asks for the base point and the second point (move and
 //! copy; the keyword `displacement` takes the displacement alone), the base point and the angle
 //! (rotate, with the keyword `reference`), the two points of the mirror line and whether to erase
@@ -61,6 +67,12 @@ pub const MODIFY_ROTATE: &str = "archbuilder.modify.rotate";
 /// The identifier of the mirror command.
 pub const MODIFY_MIRROR: &str = "archbuilder.modify.mirror";
 
+/// The identifier of the paste command: a copy of the clipboard objects by a displacement.
+pub const CLIPBOARD_PASTE: &str = "archbuilder.clipboard.paste";
+/// The identifier of the command that pastes the clipboard objects into another storey at the
+/// same plan position.
+pub const CLIPBOARD_PASTE_TO_STOREY: &str = "archbuilder.clipboard.paste_to_storey";
+
 /// The most objects one modify command takes.
 pub const MAX_OBJECTS: usize = 5_000;
 
@@ -76,6 +88,28 @@ pub struct Displace {
     /// A prompt aid: the base point the copy prompts measure from. The command ignores it.
     #[serde(default)]
     pub base: Option<[f64; 2]>,
+}
+
+/// Parameters of `archbuilder.clipboard.paste` and `archbuilder.clipboard.paste_to_storey`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Paste {
+    /// The objects to paste; else the selection.
+    #[serde(default)]
+    pub objects: Option<Vec<IdParam>>,
+    /// The displacement `[dx, dy]` in meters; `[0, 0]` (paste in place) when absent.
+    #[serde(default)]
+    pub displacement: Option<[f64; 2]>,
+    /// A prompt aid: the base point of the clipboard. The command ignores it.
+    #[serde(default)]
+    pub base: Option<[f64; 2]>,
+    /// The storey to paste into, at the same plan position; required by `paste_to_storey`.
+    #[serde(default)]
+    pub storey: Option<IdParam>,
+    /// Clipboard content made by [`crate::clip::capture`]: when given, new objects are created from
+    /// it (in `storey`, which is then required) and `objects` is not read.
+    #[serde(default)]
+    pub content: Option<Json>,
 }
 
 /// Parameters of `archbuilder.modify.rotate`.
@@ -226,7 +260,7 @@ fn slide(snapshot: &Snapshot, id: ObjectId, xf: &Xform) -> Result<(Insert, f64)>
 /// derived (`boundary`), so a vertex of an edge that follows a wall keeps where it is. An edge
 /// stays associated only to the wall `keep` returns for its wall; the others are dissociated.
 /// Returns the vertices and the number of edges dissociated.
-fn floor_vertices(
+pub(crate) fn floor_vertices(
     floor: &Floor,
     boundary: Option<&Boundary>,
     xf: &Xform,
@@ -264,7 +298,7 @@ fn floor_vertices(
 
 /// The wall `wall` under `xf`: its baseline moved, reversed under a reflection (the join styles
 /// swap with the ends).
-fn moved_wall(wall: &Wall, xf: &Xform) -> Wall {
+pub(crate) fn moved_wall(wall: &Wall, xf: &Xform) -> Wall {
     let (a, b) = (xf.point(wall.start), xf.point(wall.end));
     if xf.reflects() {
         Wall {
@@ -677,7 +711,7 @@ pub(crate) fn shifted_inserts(
 
 /// Runs the model's rules on the open transaction; what is only a warning (a door or window that
 /// now opens into another wall) is returned as `[name, other]` pairs instead of refusing.
-fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String; 2]>> {
+pub(crate) fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String; 2]>> {
     let txn = ctx.txn()?;
     let mut meets = Vec::new();
     for error in archbuilder_model::validate::check(txn.snapshot(), txn.touched()) {
@@ -795,9 +829,65 @@ fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Mo
     })
 }
 
+/// The storey an object belongs to.
+fn storey_of_source(object: &arc_doc::Object) -> Option<ObjectId> {
+    object.header.owner
+}
+
+/// The field values of the copy of the wall `object` under `xf`, named `name`. When the copy goes
+/// to another storey (`elsewhere`) a top constrained to a level keeps its height and becomes
+/// unconnected: the level may be the new storey's own.
+fn copied_wall_values(
+    snapshot: &Snapshot,
+    object: &arc_doc::Object,
+    wall: &Wall,
+    xf: &Xform,
+    name: String,
+    elsewhere: bool,
+) -> Vec<Option<Value>> {
+    let moved = moved_wall(wall, xf);
+    let mut values = object.values.clone();
+    let mut put = |at: usize, value: Value| {
+        if let Some(slot) = values.get_mut(at) {
+            *slot = Some(value);
+        }
+    };
+    put(types::wall::NAME, Value::String(name));
+    if elsewhere {
+        let height = Wall::of(snapshot, object).map_or(wall.height, |w| w.height);
+        put(types::wall::HEIGHT, types::length(height));
+    }
+    for (at, v) in [
+        (types::wall::START_X, moved.start[0]),
+        (types::wall::START_Y, moved.start[1]),
+        (types::wall::END_X, moved.end[0]),
+        (types::wall::END_Y, moved.end[1]),
+    ] {
+        put(at, types::length(v));
+    }
+    put(
+        types::wall::START_JOIN,
+        Value::Enum(moved.start_join.code()),
+    );
+    put(types::wall::END_JOIN, Value::Enum(moved.end_join.code()));
+    if elsewhere && let Some(slot) = values.get_mut(types::wall::TOP_LEVEL) {
+        *slot = None;
+    }
+    values
+}
+
 /// Creates copies of the objects of `set` under `xf`, and selects them after the command.
-fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
+fn copy_set(
+    ctx: &mut Context<'_>,
+    set: &Set,
+    xf: &Xform,
+    target: Option<ObjectId>,
+) -> Result<Modified> {
     let snapshot = ctx.snapshot().clone();
+    // A door or window alone has no wall in another storey.
+    if target.is_some() && !set.inserts.is_empty() {
+        return Err(Error::new(codes::NOT_MOVABLE));
+    }
     let tongue = language(ctx);
     let mut created: Vec<ObjectId> = Vec::new();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
@@ -807,8 +897,7 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
         let wall =
             Wall::from_values(&object.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-        let storey = object.header.owner;
-        let moved = moved_wall(&wall, xf);
+        let storey = target.or(object.header.owner);
         let name = match storey {
             Some(s) => {
                 let seen = ctx.txn()?.snapshot().clone();
@@ -816,26 +905,8 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
             }
             None => return Err(Error::new(codes::KIND_MISMATCH)),
         };
-        let mut values = object.values.clone();
-        let mut put = |at: usize, value: Value| {
-            if let Some(slot) = values.get_mut(at) {
-                *slot = Some(value);
-            }
-        };
-        put(types::wall::NAME, Value::String(name));
-        for (at, v) in [
-            (types::wall::START_X, moved.start[0]),
-            (types::wall::START_Y, moved.start[1]),
-            (types::wall::END_X, moved.end[0]),
-            (types::wall::END_Y, moved.end[1]),
-        ] {
-            put(at, types::length(v));
-        }
-        put(
-            types::wall::START_JOIN,
-            Value::Enum(moved.start_join.code()),
-        );
-        put(types::wall::END_JOIN, Value::Enum(moved.end_join.code()));
+        let elsewhere = target.is_some_and(|t| Some(t) != storey_of_source(&object));
+        let values = copied_wall_values(&snapshot, &object, &wall, xf, name, elsewhere);
         let new = create(ctx, WALL, storey, values)?;
         map.insert(*id, new);
         created.push(new);
@@ -867,7 +938,7 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
         let (vertices, lost) =
             floor_vertices(&floor, boundary.as_ref(), xf, &|w| map.get(&w).copied());
         dissociated += lost;
-        let storey = object.header.owner;
+        let storey = target.or(object.header.owner);
         let name = match storey {
             Some(s) => {
                 let seen = ctx.txn()?.snapshot().clone();
@@ -885,7 +956,7 @@ fn copy_set(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
         created.push(create(ctx, FLOOR, storey, values)?);
     }
     for id in &set.rooms {
-        created.push(copy_room(ctx, &snapshot, *id, xf)?);
+        created.push(copy_room(ctx, &snapshot, *id, xf, target)?);
     }
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
@@ -904,11 +975,12 @@ fn copy_room(
     snapshot: &Snapshot,
     id: ObjectId,
     xf: &Xform,
+    target: Option<ObjectId>,
 ) -> Result<ObjectId> {
     let object = spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let room = archbuilder_model::room::Room::from_values(&object.values)
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-    let storey = object.header.owner;
+    let storey = target.or(object.header.owner);
     let at = xf.point(room.point);
     let mut values = object.values.clone();
     let number = {
@@ -979,7 +1051,7 @@ fn run(
     }
     let set = gather(ctx, objects)?;
     if copy {
-        copy_set(ctx, &set, &xf)
+        copy_set(ctx, &set, &xf, None)
     } else {
         transform_in_place(ctx, &set, &xf)
     }
@@ -991,6 +1063,39 @@ fn move_objects(ctx: &mut Context<'_>, p: Displace) -> Result<Modified> {
 
 fn copy_objects(ctx: &mut Context<'_>, p: Displace) -> Result<Modified> {
     run(ctx, p.objects, Xform::Translate(p.displacement), true)
+}
+
+/// Pastes `p.objects` as a copy by the displacement, into the storey `p.storey` when named.
+fn paste_objects(ctx: &mut Context<'_>, p: Paste, into_storey: bool) -> Result<Modified> {
+    if let Some(content) = &p.content {
+        let IdParam(storey) = p.storey.ok_or_else(invalid)?;
+        if spatial::type_of(ctx.snapshot(), storey).as_deref() != Some(types::STOREY) {
+            return Err(invalid());
+        }
+        return crate::clip::paste_content(
+            ctx,
+            content,
+            p.displacement.unwrap_or([0.0, 0.0]),
+            storey,
+        );
+    }
+    let storey = match p.storey {
+        Some(IdParam(id)) => {
+            if spatial::type_of(ctx.snapshot(), id).as_deref() != Some(types::STOREY) {
+                return Err(invalid());
+            }
+            Some(id)
+        }
+        None if into_storey => return Err(invalid()),
+        None => None,
+    };
+    let displacement = p.displacement.unwrap_or([0.0, 0.0]);
+    let xf = Xform::Translate(displacement);
+    if !xf.is_finite() {
+        return Err(invalid());
+    }
+    let set = gather(ctx, p.objects)?;
+    copy_set(ctx, &set, &xf, storey)
 }
 
 fn rotate_objects(ctx: &mut Context<'_>, p: Rotate) -> Result<Modified> {
@@ -1030,6 +1135,9 @@ const PROMPT_SECOND_MOVE: Msg = Msg {
 };
 const PROMPT_SECOND_COPY: Msg = Msg {
     message_id: "ab-prompt-modify-second-copy",
+};
+const PROMPT_PASTE_POINT: Msg = Msg {
+    message_id: "ab-prompt-paste-point",
 };
 const PROMPT_DISPLACEMENT: Msg = Msg {
     message_id: "ab-prompt-modify-displacement",
@@ -1078,6 +1186,7 @@ enum Which {
     Copy,
     Rotate,
     Mirror,
+    Paste,
 }
 
 /// The prompts of the modify commands; see the module documentation.
@@ -1160,10 +1269,10 @@ impl ModifyPrompts {
         let Some(base) = base else {
             return Step::Ask(point_prompt("base-0".to_owned(), &PROMPT_BASE, Vec::new()));
         };
-        let message = if self.which == Which::Copy {
-            &PROMPT_SECOND_COPY
-        } else {
-            &PROMPT_SECOND_MOVE
+        let message = match self.which {
+            Which::Copy => &PROMPT_SECOND_COPY,
+            Which::Paste => &PROMPT_PASTE_POINT,
+            _ => &PROMPT_SECOND_MOVE,
         };
         match state.answers.get(at).map(|a| &a.input) {
             Some(PromptInput::Point(p)) => Step::Done(displacement([p.x - base[0], p.y - base[1]])),
@@ -1295,7 +1404,7 @@ fn displacement(d: [f64; 2]) -> Map<String, Json> {
 impl PromptMachine for ModifyPrompts {
     fn next(&self, state: &PromptState<'_>) -> Result<Step> {
         Ok(match self.which {
-            Which::Move | Which::Copy => self.displace(state),
+            Which::Move | Which::Copy | Which::Paste => self.displace(state),
             Which::Rotate => self.rotate(state),
             Which::Mirror => Self::mirror(state),
         })
@@ -1340,6 +1449,13 @@ fn spec(id: &str, label: Msg, description: Msg, which: Which) -> CommandSpec {
             CommandSpec::new(id, label.message_id, description.message_id, mirror_objects)
                 .with_prompt(Arc::new(ModifyPrompts { which }))
         }
+        Which::Paste => CommandSpec::new(
+            id,
+            label.message_id,
+            description.message_id,
+            |ctx: &mut Context<'_>, p: Paste| paste_objects(ctx, p, false),
+        )
+        .with_prompt(Arc::new(ModifyPrompts { which })),
     }
 }
 
@@ -1401,6 +1517,30 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             message_id: "ab-cmd-modify-mirror-description",
         },
         Which::Mirror,
+    ))?;
+    registry.register(spec(
+        CLIPBOARD_PASTE,
+        Msg {
+            message_id: "ab-cmd-clipboard-paste-label",
+        },
+        Msg {
+            message_id: "ab-cmd-clipboard-paste-description",
+        },
+        Which::Paste,
+    ))?;
+    let (storey_label, storey_description) = (
+        Msg {
+            message_id: "ab-cmd-clipboard-paste-storey-label",
+        },
+        Msg {
+            message_id: "ab-cmd-clipboard-paste-storey-description",
+        },
+    );
+    registry.register(CommandSpec::new(
+        CLIPBOARD_PASTE_TO_STOREY,
+        storey_label.message_id,
+        storey_description.message_id,
+        |ctx: &mut Context<'_>, p: Paste| paste_objects(ctx, p, true),
     ))?;
     for (alias, id) in [
         ("m", MODIFY_MOVE),
