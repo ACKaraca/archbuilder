@@ -311,3 +311,55 @@ ab-notice-types-resynced = Bu dosyada { $count ->
         [one] bir nesne tipiyle uyuşmuyordu ve değerlerini tipinden yeniden aldı
        *[other] { $count } nesne tipleriyle uyuşmuyordu ve değerlerini tiplerinden yeniden aldı
     }. Kaydetmek düzeltmeyi korur.
+
+## Düzenleme araçları, sabitleme ve uyarılar paneli
+
+ab-menu-align = Hizala
+ab-menu-trim = Köşeye kırp
+ab-menu-split = Duvarı böl
+ab-menu-offset = Ötele
+ab-menu-array = Dizi
+ab-menu-pin = Sabitle
+ab-menu-unpin = Sabitlemeyi kaldır
+ab-tool-align = Hizala
+ab-tool-align-hint = Bir elemanın yüzünü veya kenarını bir referans çizgisine hizala (AL)
+ab-tool-offset = Ötele
+ab-tool-offset-hint = Seçilen duvarları ve döşemeleri bir mesafe kadar yana taşı veya kopyala (OF)
+ab-tool-trim = Kırp
+ab-tool-trim-hint = İki duvarı bir köşeye kırp veya uzat (TR)
+ab-tool-trim-to = Sınıra kırp
+ab-tool-trim-to-hint = Duvarları birer birer bir sınır çizgisine kırp veya uzat (TB); birden çoğu için: TM
+ab-tool-split = Böl
+ab-tool-split-hint = Bir duvarı bir noktada, isteğe bağlı boşlukla böl (SL)
+ab-tool-merge = Birleştir
+ab-tool-merge-hint = Değen, aynı doğrultudaki iki duvarı birleştir (MG)
+ab-tool-array = Dizi
+ab-tool-array-hint = Seçimi sıra halinde kopyala (AR)
+ab-tool-array-radial = Dairesel dizi
+ab-tool-array-radial-hint = Seçimi bir merkez çevresinde kopyala (RA)
+ab-tool-pin = Sabitle
+ab-tool-pin-hint = Seçilen elemanları sabitle; komutlar onları taşıyamaz ve silemez (PN)
+ab-tool-unpin = Sabitlemeyi kaldır
+ab-tool-unpin-hint = Seçilen elemanların sabitlemesini kaldır (UP)
+ab-prop-pinned = Sabitlenmiş
+ab-panel-warnings = Uyarılar
+ab-warnings-count = { $count ->
+    [0] Uyarı yok
+    [one] 1 uyarı
+   *[other] { $count } uyarı
+}
+ab-warnings-none = Gösterilecek bir şey yok.
+ab-warnings-hint = Bir satıra çift tıklayarak elemanlarını seçin ve onlara yakınlaştırın.
+ab-warnings-kind-all = Tüm türler
+ab-warnings-kind-stair = Merdivenler
+ab-warnings-kind-room = Odalar
+ab-warnings-kind-wall = Duvarlar
+ab-warnings-kind-floor = Döşemeler
+ab-warnings-kind-insert = Kapılar ve pencereler
+ab-warnings-kind-type = Tipler
+ab-warnings-severity-error = Hata
+ab-warnings-severity-warning = Uyarı
+ab-warnings-count-filtered = { $count ->
+    [one] 1 uyarıdan { $shown }
+   *[other] { $count } uyarıdan { $shown }
+}

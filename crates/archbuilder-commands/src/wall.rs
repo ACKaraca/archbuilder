@@ -396,7 +396,7 @@ pub struct MoveEnd {
 /// stays, and so do its doors and windows (their distance from that end), and the openings of the
 /// neighbors keep their place. The command is refused, naming the opening and telling the range of
 /// the wall as it would stand, when an opening would no longer fit.
-fn move_end(ctx: &mut Context<'_>, p: MoveEnd) -> Result<()> {
+fn move_end(ctx: &mut Context<'_>, p: MoveEnd) -> Result<crate::modify::Modified> {
     let IdParam(id) = p.wall;
     expect(ctx.snapshot(), id, WALL)?;
     if !p.to.iter().all(|v| v.is_finite()) {
@@ -406,7 +406,12 @@ fn move_end(ctx: &mut Context<'_>, p: MoveEnd) -> Result<()> {
         BaselineEnd::Start => 0,
         BaselineEnd::End => 1,
     };
-    crate::modify::move_end_of(ctx, id, end, p.to).map(|_| ())
+    let (followed, meets) = crate::modify::move_end_of(ctx, id, end, p.to)?;
+    Ok(crate::modify::Modified {
+        objects: 1 + followed,
+        meets,
+        ..crate::modify::Modified::default()
+    })
 }
 
 /// Flips walls: the baseline is reversed (start and end swap) and the location line stays. The

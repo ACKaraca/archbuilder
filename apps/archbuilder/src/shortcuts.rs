@@ -73,11 +73,16 @@ pub mod ui {
     pub const MATCH_TYPE: &str = "archbuilder.type.match_pick";
     /// Opens the type editor on the type of the selection.
     pub const EDIT_TYPE: &str = "archbuilder.type.edit";
+    /// Brings the warnings panel to the front.
+    pub const WARNINGS: &str = "archbuilder.view.warnings";
+    /// Selects the objects of the `objects` parameter and frames them in the view.
+    pub const ZOOM_TO: &str = "archbuilder.view.zoom_to";
 }
 
 /// The default bindings: two letters and the command each starts.
 #[must_use]
 pub fn defaults() -> Vec<(&'static str, &'static str)> {
+    use archbuilder_commands::edit;
     use archbuilder_commands::floor::FLOOR_CREATE;
     use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
     use archbuilder_commands::modify::{
@@ -97,6 +102,18 @@ pub fn defaults() -> Vec<(&'static str, &'static str)> {
         ("CP", MODIFY_COPY),
         ("RT", MODIFY_ROTATE),
         ("MR", MODIFY_MIRROR),
+        ("AL", edit::MODIFY_ALIGN),
+        ("OF", edit::MODIFY_OFFSET),
+        ("TR", edit::MODIFY_TRIM),
+        ("TB", edit::MODIFY_TRIM_TO),
+        ("TM", edit::MODIFY_TRIM_MANY),
+        ("SL", edit::WALL_SPLIT),
+        ("MG", edit::WALL_MERGE),
+        ("AR", edit::MODIFY_ARRAY),
+        ("RA", edit::MODIFY_ARRAY_RADIAL),
+        ("PN", edit::ELEMENT_PIN),
+        ("UP", edit::ELEMENT_UNPIN),
+        ("WR", ui::WARNINGS),
         ("DL", OBJECT_DELETE),
         ("CB", ui::COPY),
         ("CU", ui::CUT),
@@ -259,6 +276,16 @@ const TYPED_WORDS: &[&str] = &[
     "tasi",
     "taşı",
     "dondur",
+    "hizala",
+    "otele",
+    "ötele",
+    "kirp",
+    "kırp",
+    "bol",
+    "böl",
+    "birlestir",
+    "birleştir",
+    "dizi",
     "erase",
     "sil",
     "cut",

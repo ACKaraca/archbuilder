@@ -22,6 +22,7 @@ use arc_command::Clock;
 use arc_doc::package::LockOwner;
 use arc_gpu::extract;
 use arc_ui::{Axis, Binding, Dock, DockLayout, Menu, MenuItem};
+use archbuilder_commands::edit;
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
 use archbuilder_commands::insert::{
     DOOR_PLACE, INSERT_FLIP_FACING, INSERT_FLIP_HAND, WINDOW_PLACE,
@@ -64,6 +65,7 @@ pub mod tool_type;
 pub mod type_panel;
 pub mod visibility;
 pub mod wall_tool;
+pub mod warnings_panel;
 
 /// The viewport panel.
 pub const VIEWPORT: &str = "archbuilder.viewport";
@@ -77,6 +79,8 @@ pub const COMMAND_LINE: &str = "archbuilder.command_line";
 pub const SETTINGS: &str = "archbuilder.settings";
 /// The type editor.
 pub const TYPES: &str = "archbuilder.types";
+/// The warnings panel.
+pub const WARNINGS: &str = "archbuilder.warnings";
 
 /// A message of the application.
 struct Message {
@@ -258,6 +262,13 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             || shell::panel(shell::SettingsPanel::default()),
         ),
         entry(
+            WARNINGS,
+            Message {
+                message_id: "ab-panel-warnings",
+            },
+            || shell::panel(warnings_panel::WarningsPanel::default()),
+        ),
+        entry(
             COMMAND_LINE,
             Message {
                 message_id: "ab-panel-command-line",
@@ -381,6 +392,17 @@ fn menu() -> Result<Menu> {
             MODIFY_COPY,
             MODIFY_ROTATE,
             MODIFY_MIRROR,
+            edit::MODIFY_ALIGN,
+            edit::MODIFY_OFFSET,
+            edit::MODIFY_TRIM,
+            edit::MODIFY_TRIM_TO,
+            edit::MODIFY_TRIM_MANY,
+            edit::WALL_SPLIT,
+            edit::WALL_MERGE,
+            edit::MODIFY_ARRAY,
+            edit::MODIFY_ARRAY_RADIAL,
+            edit::ELEMENT_PIN,
+            edit::ELEMENT_UNPIN,
             CLIPBOARD_PASTE,
             CLIPBOARD_PASTE_TO_STOREY,
             OBJECT_DELETE,
@@ -413,9 +435,9 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
     };
     let root = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.82,
+        fraction: 0.74,
         first: Box::new(top),
-        second: Box::new(tabs(&[COMMAND_LINE])),
+        second: Box::new(tabs(&[COMMAND_LINE, WARNINGS])),
     };
     let binding = |keys: &str, command: &str| Binding {
         keys: keys.into(),
@@ -448,6 +470,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                 let snapshot = t.document().snapshot();
                 out.extend(room_view::shared().overlays(&snapshot, language));
                 out.extend(stair_view::overlays(&snapshot, language));
+                out.extend(pin_marks(&snapshot));
             }
             out
         }))),
@@ -460,6 +483,71 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         status: chrome::status(),
         seed,
     })
+}
+
+/// A small pin drawn at the middle of every pinned element, so pinned elements stand out in plan:
+/// a ring with a needle below it.
+fn pin_marks(snapshot: &arc_doc::Snapshot) -> Vec<arc_ui::ProductOverlay> {
+    use arc_base::math::Point3;
+    let mut out = Vec::new();
+    for key in archbuilder_model::types::ELEMENTS {
+        for object in archbuilder_model::spatial::objects(snapshot, key)
+            .iter()
+            .take(2000)
+        {
+            if !archbuilder_model::types::is_pinned(key, &object.values) {
+                continue;
+            }
+            let Some(([x0, y0], [x1, y1])) = warnings_panel::bounds(snapshot, &[object.id]) else {
+                continue;
+            };
+            let z = archbuilder_model::spatial::objects(snapshot, archbuilder_model::types::STOREY)
+                .iter()
+                .find(|s| Some(s.id) == storey_of(snapshot, object))
+                .map_or(0.0, |s| {
+                    archbuilder_model::spatial::storey_elevation(snapshot, s)
+                })
+                + 0.05;
+            let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+            let r = 0.25;
+            let ring: Vec<Point3> = (0..=16)
+                .map(|k| {
+                    let a = f64::from(k) * std::f64::consts::TAU / 16.0;
+                    Point3::new(cx + r * a.cos(), cy + 0.7 + r * a.sin(), z)
+                })
+                .collect();
+            let color = arc_ui::OverlayColor::Warning;
+            for item in [
+                arc_ui::ProductOverlay::Path {
+                    points: ring,
+                    dashed: false,
+                },
+                arc_ui::ProductOverlay::Line {
+                    from: Point3::new(cx, cy, z),
+                    to: Point3::new(cx, cy + 0.7 - r, z),
+                },
+            ] {
+                out.push(arc_ui::ProductOverlay::Styled {
+                    color,
+                    item: Box::new(item),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The storey an element stands on (a door or window through its wall).
+fn storey_of(snapshot: &arc_doc::Snapshot, object: &arc_doc::Object) -> Option<arc_base::ObjectId> {
+    let owner = object.header.owner?;
+    match archbuilder_model::spatial::type_of(snapshot, owner).as_deref() {
+        Some(archbuilder_model::types::WALL) => {
+            archbuilder_model::spatial::get(snapshot, owner)?
+                .header
+                .owner
+        }
+        _ => Some(owner),
+    }
 }
 
 /// The languages the operating system asks for, in the order the environment names them.

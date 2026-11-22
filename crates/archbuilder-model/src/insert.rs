@@ -314,7 +314,8 @@ fn meets_wall(
                     .with_arg(
                         "other",
                         types::text(&other.values, 0).unwrap_or_default().to_owned(),
-                    ),
+                    )
+                    .with_detail("other_object", other.id.to_string()),
             );
         }
     }
@@ -378,7 +379,10 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
                 .with_arg("top", format!("{:.2}", wall.height - HEAD_CLEARANCE)),
         );
     }
-    out.extend(meets_wall(snapshot, &wall_object, &wall, &item, &name));
+    out.extend(
+        meets_wall(snapshot, &wall_object, &wall, &item, &name)
+            .map(|e| e.with_detail("object", object.id.to_string())),
+    );
     for (other, theirs) in hosted(snapshot, wall_object.id) {
         let (a, b) = (item.extent(), theirs.extent());
         if other.id != object.id && a.0 < b.1 + MIN_GAP && b.0 < a.1 + MIN_GAP {

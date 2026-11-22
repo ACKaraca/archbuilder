@@ -247,3 +247,42 @@ fn a_file_whose_walls_disagree_with_their_type_is_resynchronized_on_open() {
         .unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_document_from_before_the_pinned_flag_opens_unpinned_and_can_be_pinned() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-pins-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let old = dir.join("pre-types.archb");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/pre-types.archb"
+        ),
+        &old,
+    )
+    .unwrap();
+    let mut app = app(&dir);
+    let tab = app.open(&old).unwrap();
+    let snapshot = app.tab(tab).unwrap().document().snapshot();
+    let walls = spatial::objects(&snapshot, WALL);
+    assert_eq!(walls.len(), 4);
+    assert!(
+        walls
+            .iter()
+            .all(|w| !archbuilder_model::types::is_pinned(WALL, &w.values))
+    );
+    let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+    app.invoke(
+        tab,
+        &session,
+        Invocation::new(
+            archbuilder_commands::edit::ELEMENT_PIN,
+            json!({"objects": [walls[0].id.to_string()]}),
+        ),
+    )
+    .unwrap();
+    let snapshot = app.tab(tab).unwrap().document().snapshot();
+    let wall = spatial::get(&snapshot, walls[0].id).unwrap();
+    assert!(archbuilder_model::types::is_pinned(WALL, &wall.values));
+}

@@ -45,7 +45,7 @@ use arc_command::prompt::{
     Accept, KeywordOption, Point, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
-use arc_doc::{FieldPath, Header, Snapshot, Value};
+use arc_doc::{FieldPath, Snapshot, Value};
 use archbuilder_model::floor::{Association, Boundary, Floor, Vertex};
 use archbuilder_model::insert::{self, Insert, Kind};
 use archbuilder_model::spatial;
@@ -166,25 +166,25 @@ pub struct Modified {
 
 /// The movable objects a command works on.
 #[derive(Debug, Default)]
-struct Set {
+pub(crate) struct Set {
     /// The walls.
-    walls: Vec<ObjectId>,
+    pub(crate) walls: Vec<ObjectId>,
     /// The floors.
-    floors: Vec<ObjectId>,
+    pub(crate) floors: Vec<ObjectId>,
     /// The rooms (their placement points move).
-    rooms: Vec<ObjectId>,
+    pub(crate) rooms: Vec<ObjectId>,
     /// The stairs (their start and direction move).
-    stairs: Vec<ObjectId>,
+    pub(crate) stairs: Vec<ObjectId>,
     /// The doors and windows whose wall is not in the set.
-    inserts: Vec<ObjectId>,
+    pub(crate) inserts: Vec<ObjectId>,
 }
 
-fn invalid() -> Error {
+pub(crate) fn invalid() -> Error {
     Error::new(arc_command::error::codes::PARAMS_INVALID)
 }
 
 /// The objects a command works on: `given`, else the selection; each once, sorted into kinds.
-fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
+pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<Set> {
     let explicit = given.is_some();
     let ids: Vec<ObjectId> = match given {
         Some(list) if list.len() > MAX_OBJECTS => return Err(invalid()),
@@ -335,7 +335,12 @@ fn moved_insert(item: &Insert, length: f64, xf: &Xform) -> (f64, u32) {
     }
 }
 
-fn set_length(ctx: &mut Context<'_>, id: ObjectId, field: &str, value: f64) -> Result<()> {
+pub(crate) fn set_length(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    field: &str,
+    value: f64,
+) -> Result<()> {
     ctx.txn()?
         .modify(id, FieldPath::new(field), Some(types::length(value)))
 }
@@ -363,7 +368,7 @@ fn gap(a: [f64; 2], b: [f64; 2]) -> f64 {
 
 /// The distance along the baseline of `wall` from `old.start` to `new.start`, for a start that
 /// moved along the line.
-fn start_shift(old: &Wall, new: &Wall) -> f64 {
+pub(crate) fn start_shift(old: &Wall, new: &Wall) -> f64 {
     let length = old.length();
     if length <= 0.0 {
         return 0.0;
@@ -637,13 +642,13 @@ pub fn preview_end(snapshot: &Snapshot, id: ObjectId, end: usize, to: [f64; 2]) 
 
 /// Moves one end of wall `id` (see [`end_plan`]); the openings of the wall keep their distance
 /// from the end that stays and those of the neighbors keep their place along them. Returns the
-/// number of neighbors that followed.
+/// number of neighbors that followed and the doors and windows that now open into a wall.
 pub(crate) fn move_end_of(
     ctx: &mut Context<'_>,
     id: ObjectId,
     end: usize,
     to: [f64; 2],
-) -> Result<usize> {
+) -> Result<(usize, Vec<[String; 2]>)> {
     let snapshot = ctx.snapshot().clone();
     let plan = end_plan(&snapshot, id, end, to)?;
     // The range a refused opening is told is the wall as it would stand after the move.
@@ -675,8 +680,9 @@ pub(crate) fn move_end_of(
             set_length(ctx, insert, "distance", distance)?;
         }
     }
-    crate::structure::ensure_valid(ctx)?;
-    Ok(count)
+    // A door that now opens into the wall is said, not refused, as a trim says it.
+    let meets = ensure_valid_lenient(ctx)?;
+    Ok((count, meets))
 }
 
 /// The doors and windows of `wall` with their distance after the wall's start moved by `shift`
@@ -719,10 +725,19 @@ pub(crate) fn shifted_inserts(
 /// now opens into another wall) is returned as `[name, other]` pairs instead of refusing.
 pub(crate) fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String; 2]>> {
     let txn = ctx.txn()?;
+    if let Some(error) =
+        archbuilder_model::validate::pin_refusal(txn.base(), txn.snapshot(), txn.touched())
+    {
+        return Err(error);
+    }
     let mut meets = Vec::new();
     for error in archbuilder_model::validate::check(txn.snapshot(), txn.touched()) {
         if !archbuilder_model::validate::is_warning(&error) {
             return Err(error);
+        }
+        // A warning this command did not cause is the register's, not this command's.
+        if !crate::structure::caused(txn, &error) {
+            continue;
         }
         let arg = |k: &str| {
             error
@@ -771,7 +786,7 @@ fn move_stairs(
 }
 
 /// Applies `xf` to the objects of `set` in place.
-fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
+pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
     // The transaction's view: a command may move walls after it changed others.
     let snapshot = ctx.txn()?.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
@@ -935,7 +950,7 @@ fn copied_wall_values(
 }
 
 /// Creates copies of the objects of `set` under `xf`, and selects them after the command.
-fn copy_set(
+pub(crate) fn copy_set(
     ctx: &mut Context<'_>,
     set: &Set,
     xf: &Xform,
@@ -1084,7 +1099,7 @@ fn copy_room(
 
 /// A copy of the insert `source` on the wall `host` at `distance`, with the next free name and,
 /// when given, the hand `hand`.
-fn copy_insert(
+pub(crate) fn copy_insert(
     ctx: &mut Context<'_>,
     source: &arc_doc::Object,
     host: ObjectId,
@@ -1108,13 +1123,7 @@ fn copy_insert(
     if let Some(code) = hand {
         put(types::insert::HAND, Value::Enum(code));
     }
-    let id: ObjectId = ctx.new_id();
-    let header = Header {
-        owner: Some(host),
-        ..Header::default()
-    };
-    ctx.txn()?.create(&key, id, header, values)?;
-    Ok(id)
+    create(ctx, &key, Some(host), values)
 }
 
 fn run(

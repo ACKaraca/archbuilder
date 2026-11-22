@@ -12,6 +12,10 @@ use std::collections::BTreeMap;
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{Accept, Point, PromptInput};
 use arc_command::{CommandLine, LineStep, Submitted};
+use archbuilder_commands::edit::{
+    MODIFY_ALIGN, MODIFY_ARRAY, MODIFY_ARRAY_RADIAL, MODIFY_OFFSET, MODIFY_TRIM, MODIFY_TRIM_MANY,
+    MODIFY_TRIM_TO, PICK_COMMANDS, WALL_MERGE, WALL_SPLIT,
+};
 use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
@@ -33,13 +37,17 @@ pub fn movable(snapshot: &arc_doc::Snapshot, selection: &[ObjectId]) -> Vec<Obje
 }
 
 /// The command a typed word names: `m`, `move`, `co`, `copy`, `ro`, `rotate`, `mi`, `mirror` and
-/// the identifiers (what a toolbar button submits) and the Turkish `taşı`, `kopyala`, `döndür`, `aynala`, in any case.
+/// `al`, `of`, `tr`, `split`, `merge`, `ar` and the identifiers of the editing commands (what a
+/// toolbar button submits) and the Turkish `taşı`, `kopyala`, `döndür`, `aynala`, `hizala`,
+/// `ötele`, `kırp`, `böl`, `birleştir`, `dizi`, in any case.
 #[must_use]
 pub fn command_named(text: &str) -> Option<&'static str> {
     let word: String = text
         .trim()
         .chars()
         .flat_map(char::to_lowercase)
+        // The dotted capital İ lowers to i and a combining dot, which goes.
+        .filter(|c| *c != '\u{307}')
         .map(|c| match c {
             'ş' => 's',
             'ı' => 'i',
@@ -55,6 +63,15 @@ pub fn command_named(text: &str) -> Option<&'static str> {
         "co" | "cp" | "copy" | "kopyala" | MODIFY_COPY => MODIFY_COPY,
         "ro" | "rotate" | "dondur" | MODIFY_ROTATE => MODIFY_ROTATE,
         "mi" | "mirror" | "aynala" | MODIFY_MIRROR => MODIFY_MIRROR,
+        "al" | "align" | "hizala" | MODIFY_ALIGN => MODIFY_ALIGN,
+        "of" | "offset" | "otele" | MODIFY_OFFSET => MODIFY_OFFSET,
+        "tr" | "trim" | "kirp" | MODIFY_TRIM => MODIFY_TRIM,
+        MODIFY_TRIM_TO => MODIFY_TRIM_TO,
+        MODIFY_TRIM_MANY => MODIFY_TRIM_MANY,
+        "split" | "bol" | WALL_SPLIT => WALL_SPLIT,
+        "merge" | "birlestir" | WALL_MERGE => WALL_MERGE,
+        "ar" | "array" | "dizi" | MODIFY_ARRAY => MODIFY_ARRAY,
+        MODIFY_ARRAY_RADIAL => MODIFY_ARRAY_RADIAL,
         _ => return None,
     })
 }
@@ -74,8 +91,27 @@ pub struct Run {
     pub copies: usize,
     /// The clipboard content a paste creates from, in place of `objects`.
     pub content: Option<Value>,
-    /// The storey a paste goes into.
+    /// The storey a paste goes into, and the storey the picks of an editing command look in.
     pub storey: Option<ObjectId>,
+    /// The pick radius in meters of an editing command that picks walls and lines.
+    pub radius: Option<f64>,
+    /// What the next run of a repeating editing command keeps (its reference, boundary or gap).
+    pub keep: Map<String, Value>,
+}
+
+/// Whether `command` acts on picked walls and lines rather than on the selection.
+#[must_use]
+pub fn picks(command: &str) -> bool {
+    PICK_COMMANDS.contains(&command)
+}
+
+/// Whether `command` starts again after each run until Enter or Escape: a copy, offset, trim to
+/// corner, and the editing commands that keep their reference, boundary or gap.
+fn repeats(command: &str) -> bool {
+    matches!(
+        command,
+        MODIFY_COPY | MODIFY_ALIGN | MODIFY_TRIM_TO | WALL_SPLIT | MODIFY_OFFSET | MODIFY_TRIM
+    )
 }
 
 /// The state of the modify tool of one tab.
@@ -161,9 +197,30 @@ impl ModifyTool {
     /// # Errors
     /// The errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, command: &'static str) -> Result<()> {
+        self.begin_in(env, run, command, None, None)
+    }
+
+    /// Starts `command`; an editing command that picks walls and lines looks in `storey` within
+    /// `radius` meters and takes no objects.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn begin_in(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        storey: Option<ObjectId>,
+        radius: Option<f64>,
+    ) -> Result<()> {
         self.line.cancel();
-        let objects = movable(&env.document.snapshot(), env.selection);
-        let gathering = objects.is_empty();
+        let picking = picks(command);
+        let objects = if picking {
+            Vec::new()
+        } else {
+            movable(&env.document.snapshot(), env.selection)
+        };
+        let gathering = objects.is_empty() && !picking;
         self.run = Some(Run {
             command,
             objects,
@@ -171,7 +228,9 @@ impl ModifyTool {
             base: None,
             copies: 0,
             content: None,
-            storey: None,
+            storey: storey.filter(|_| picking),
+            radius: radius.filter(|_| picking),
+            keep: Map::new(),
         });
         if gathering {
             return Ok(());
@@ -201,6 +260,8 @@ impl ModifyTool {
             copies: 0,
             content: Some(content),
             storey: Some(storey),
+            radius: None,
+            keep: Map::new(),
         });
         self.next(env, run)
     }
@@ -228,8 +289,15 @@ impl ModifyTool {
         let Some(state) = &self.run else {
             return Ok(());
         };
-        let mut preset = Map::new();
-        if let (Some(content), Some(storey)) = (&state.content, state.storey) {
+        let mut preset = state.keep.clone();
+        if picks(state.command) {
+            if let Some(storey) = state.storey {
+                preset.insert("storey".into(), Value::from(storey.to_string()));
+            }
+            if let Some(radius) = state.radius {
+                preset.insert("radius".into(), Value::from(radius));
+            }
+        } else if let (Some(content), Some(storey)) = (&state.content, state.storey) {
             preset.insert("content".into(), content.clone());
             preset.insert("storey".into(), Value::from(storey.to_string()));
         } else {
@@ -267,6 +335,11 @@ impl ModifyTool {
 
     fn follow(&mut self, env: &Env<'_>, run: Runner<'_>, result: Result<Submitted>) -> Result<()> {
         match result {
+            // A refused run of a repeating command says why and asks again with what it keeps.
+            Err(error) if self.run.as_ref().is_some_and(|r| repeats(r.command)) => {
+                self.error = Some(error);
+                self.next(env, run)
+            }
             Err(error) => {
                 self.run = None;
                 Err(error)
@@ -279,8 +352,23 @@ impl ModifyTool {
                 let command = self.run.as_ref().map_or(MODIFY_MOVE, |r| r.command);
                 self.ran.push((command, outcome.value.clone()));
                 let again = match &mut self.run {
-                    Some(r) if r.command == MODIFY_COPY => {
+                    Some(r) if repeats(r.command) => {
                         r.copies += 1;
+                        if let Some(keep) = outcome.value.get("keep").and_then(Value::as_object) {
+                            r.keep.extend(keep.clone());
+                        }
+                        // The next offset of a run starts from the copies the last one made.
+                        let created: Vec<ObjectId> = outcome
+                            .value
+                            .get("created")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| v.as_str()?.parse().ok())
+                            .collect();
+                        if r.command == MODIFY_OFFSET && !created.is_empty() {
+                            r.objects = created;
+                        }
                         true
                     }
                     _ => false,
@@ -298,6 +386,19 @@ impl ModifyTool {
                 Ok(())
             }
             Ok(Submitted::Prompt(_)) => {
+                // A picked reference or boundary stays for the next pick, even after a refusal.
+                if let (Some(r), Some(state)) = (&mut self.run, self.line.active()) {
+                    for answer in state.answers() {
+                        let name = answer.key.split('-').next().unwrap_or_default();
+                        if let ("reference" | "boundary", PromptInput::Point(p)) =
+                            (name, &answer.input)
+                        {
+                            r.keep
+                                .entry(name.to_owned())
+                                .or_insert_with(|| Value::from(vec![p.x, p.y]));
+                        }
+                    }
+                }
                 // The first point of a copy is the base of the next copies.
                 if let (Some(r), Some(PromptInput::Point(p))) = (
                     &mut self.run,
@@ -356,11 +457,14 @@ impl ModifyTool {
                 ))
             };
         }
+        // A point prompt with a default (the end of a list of picks) takes Enter as its answer.
         let at_point = self
             .line
             .active()
             .and_then(|s| s.prompt())
-            .is_some_and(|p| p.accepts.iter().any(|a| matches!(a, Accept::Point { .. })));
+            .is_some_and(|p| {
+                p.default.is_none() && p.accepts.iter().any(|a| matches!(a, Accept::Point { .. }))
+            });
         // Enter at the insertion point of a paste: the copy lands where it was copied from.
         if text.is_empty()
             && at_point
@@ -412,5 +516,17 @@ impl ModifyTool {
     pub fn stop(&mut self) {
         self.line.cancel();
         self.run = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turkish_command_words_are_read_in_any_case() {
+        assert_eq!(command_named("HİZALA"), Some(MODIFY_ALIGN));
+        assert_eq!(command_named("KIRP"), Some(MODIFY_TRIM));
+        assert_eq!(command_named("Böl"), Some(WALL_SPLIT));
     }
 }

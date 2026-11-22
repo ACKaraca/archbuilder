@@ -6,6 +6,7 @@ use arc_app::commands;
 use arc_app::settings::SettingValue;
 use arc_app::shell::{StatusToggle, ToolItem};
 use arc_ui::Intent;
+use archbuilder_commands::edit;
 use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
 use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
@@ -218,8 +219,83 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             MODIFY_MIRROR,
         ),
+        button(TOOL_ALIGN, TOOL_ALIGN_HINT, edit::MODIFY_ALIGN),
+        button(TOOL_OFFSET, TOOL_OFFSET_HINT, edit::MODIFY_OFFSET),
+        button(TOOL_TRIM, TOOL_TRIM_HINT, edit::MODIFY_TRIM),
+        button(TOOL_TRIM_TO, TOOL_TRIM_TO_HINT, edit::MODIFY_TRIM_TO),
+        button(TOOL_SPLIT, TOOL_SPLIT_HINT, edit::WALL_SPLIT),
+        button(TOOL_MERGE, TOOL_MERGE_HINT, edit::WALL_MERGE),
+        button(TOOL_ARRAY, TOOL_ARRAY_HINT, edit::MODIFY_ARRAY),
+        button(
+            TOOL_ARRAY_RADIAL,
+            TOOL_ARRAY_RADIAL_HINT,
+            edit::MODIFY_ARRAY_RADIAL,
+        ),
+        button(TOOL_PIN, TOOL_PIN_HINT, edit::ELEMENT_PIN),
+        button(TOOL_UNPIN, TOOL_UNPIN_HINT, edit::ELEMENT_UNPIN),
     ]
 }
+
+const TOOL_ALIGN: Message = Message {
+    message_id: "ab-tool-align",
+};
+const TOOL_ALIGN_HINT: Message = Message {
+    message_id: "ab-tool-align-hint",
+};
+const TOOL_OFFSET: Message = Message {
+    message_id: "ab-tool-offset",
+};
+const TOOL_OFFSET_HINT: Message = Message {
+    message_id: "ab-tool-offset-hint",
+};
+const TOOL_TRIM: Message = Message {
+    message_id: "ab-tool-trim",
+};
+const TOOL_TRIM_HINT: Message = Message {
+    message_id: "ab-tool-trim-hint",
+};
+const TOOL_TRIM_TO: Message = Message {
+    message_id: "ab-tool-trim-to",
+};
+const TOOL_TRIM_TO_HINT: Message = Message {
+    message_id: "ab-tool-trim-to-hint",
+};
+const TOOL_SPLIT: Message = Message {
+    message_id: "ab-tool-split",
+};
+const TOOL_SPLIT_HINT: Message = Message {
+    message_id: "ab-tool-split-hint",
+};
+const TOOL_MERGE: Message = Message {
+    message_id: "ab-tool-merge",
+};
+const TOOL_MERGE_HINT: Message = Message {
+    message_id: "ab-tool-merge-hint",
+};
+const TOOL_ARRAY: Message = Message {
+    message_id: "ab-tool-array",
+};
+const TOOL_ARRAY_HINT: Message = Message {
+    message_id: "ab-tool-array-hint",
+};
+const TOOL_ARRAY_RADIAL: Message = Message {
+    message_id: "ab-tool-array-radial",
+};
+const TOOL_ARRAY_RADIAL_HINT: Message = Message {
+    message_id: "ab-tool-array-radial-hint",
+};
+const TOOL_PIN: Message = Message {
+    message_id: "ab-tool-pin",
+};
+const TOOL_PIN_HINT: Message = Message {
+    message_id: "ab-tool-pin-hint",
+};
+const TOOL_UNPIN: Message = Message {
+    message_id: "ab-tool-unpin",
+};
+const TOOL_UNPIN_HINT: Message = Message {
+    message_id: "ab-tool-unpin-hint",
+};
 
 const SNAP_LABEL: Message = Message {
     message_id: "ab-snap-label",

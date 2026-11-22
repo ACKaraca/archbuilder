@@ -209,4 +209,58 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-type-kind",
     };
+    /// No wall lies at the picked point.
+    pub const NO_WALL_AT: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_wall_at",
+        category: Category::NotFound,
+        message_id: "ab-cmd-no-wall-at",
+    };
+    /// No wall face, wall center line or floor edge lies at the picked point.
+    pub const NO_LINE_AT: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_line_at",
+        category: Category::NotFound,
+        message_id: "ab-cmd-no-line-at",
+    };
+    /// The two lines are parallel and never meet.
+    pub const PARALLEL: ErrorCode = ErrorCode {
+        code: "ab.cmd.parallel",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-parallel",
+    };
+    /// The same wall was picked twice.
+    pub const SAME_WALL: ErrorCode = ErrorCode {
+        code: "ab.cmd.same_wall",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-same-wall",
+    };
+    /// A split would leave a piece shorter than the shortest wall.
+    pub const SPLIT_END: ErrorCode = ErrorCode {
+        code: "ab.cmd.split_end",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-split-end",
+    };
+    /// A door or window lies across the split point.
+    pub const SPLIT_INSERT: ErrorCode = ErrorCode {
+        code: "ab.cmd.split_insert",
+        category: Category::Conflict,
+        message_id: "ab-cmd-split-insert",
+    };
+    /// Two walls are not collinear, do not touch end to end, or differ in type, height, base, top or location line.
+    pub const MERGE_REFUSED: ErrorCode = ErrorCode {
+        code: "ab.cmd.merge_refused",
+        category: Category::Conflict,
+        message_id: "ab-cmd-merge-refused",
+    };
+    /// A door or window can only be arrayed along its own wall.
+    pub const ARRAY_INSERT: ErrorCode = ErrorCode {
+        code: "ab.cmd.array_insert",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-array-insert",
+    };
+    /// The selection holds no wall or floor to offset, or the side point lies on its line.
+    pub const NOTHING_TO_OFFSET: ErrorCode = ErrorCode {
+        code: "ab.cmd.nothing_to_offset",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-nothing-to-offset",
+    };
 }

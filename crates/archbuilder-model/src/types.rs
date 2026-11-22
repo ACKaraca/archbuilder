@@ -215,6 +215,8 @@ pub mod wall {
     pub const CORE_EXTERIOR: usize = 13;
     /// The same on the interior side; appended in schema 1.2.
     pub const CORE_INTERIOR: usize = 14;
+    /// Whether the wall is pinned: the modify commands refuse to change it.
+    pub const PINNED: usize = 15;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -241,6 +243,8 @@ pub mod insert {
     pub const FACING: usize = 9;
     /// The door or window type; appended in schema 1.1.
     pub const INSERT_TYPE: usize = 10;
+    /// Whether the door or window is pinned.
+    pub const PINNED: usize = 11;
 }
 
 /// Field positions of `archbuilder.wall_type` and `archbuilder.floor_type` (a floor type has the
@@ -302,6 +306,8 @@ pub mod floor {
     pub const VERTICES: usize = 3;
     /// The floor type; appended in schema 1.1.
     pub const FLOOR_TYPE: usize = 4;
+    /// Whether the floor is pinned.
+    pub const PINNED: usize = 5;
 
     /// Field positions of one vertex record.
     pub mod vertex {
@@ -346,6 +352,8 @@ pub mod room {
     pub const UPPER_OFFSET: usize = 10;
     /// The offset of the base from the level of the storey, in meters.
     pub const BASE_OFFSET: usize = 11;
+    /// Whether the room is pinned.
+    pub const PINNED: usize = 12;
 }
 
 /// The field positions of a stair record.
@@ -376,6 +384,8 @@ pub mod stair {
     pub const RAILING_RIGHT: usize = 11;
     /// The level the stair arrives at; the level above its storey when absent.
     pub const TOP_LEVEL: usize = 12;
+    /// Whether the stair is pinned.
+    pub const PINNED: usize = 13;
 }
 
 /// The range of a stair's width, in meters.
@@ -554,6 +564,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         type_field("wall_type", WALL_TYPE, 2),
         length_field("core_exterior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
         length_field("core_interior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
+        pinned_field(3),
     ];
     let floor = vec![
         name_field("identity"),
@@ -566,6 +577,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             })
             .in_aspect("geometry"),
         type_field("floor_type", FLOOR_TYPE, 1),
+        pinned_field(2),
     ];
     for (key, fields) in [
         (STAIR, stair_fields()),
@@ -641,6 +653,7 @@ fn stair_fields() -> Vec<FieldDecl> {
         FieldDecl::new("top_level", ValueType::Reference(optional_level()))
             .optional()
             .in_aspect("geometry"),
+        pinned_field(1),
     ]
 }
 
@@ -660,7 +673,37 @@ fn room_fields() -> Vec<FieldDecl> {
             .in_aspect("geometry"),
         length_field("upper_offset", Some(real(BASE_OFFSET_RANGE))),
         length_field("base_offset", Some(real(BASE_OFFSET_RANGE))),
+        pinned_field(1),
     ]
+}
+
+/// The pinned flag of an element, appended in schema 1.`minor`: optional, so older files load
+/// with every element unpinned.
+fn pinned_field(minor: u32) -> FieldDecl {
+    FieldDecl::new("pinned", ValueType::Bool)
+        .optional()
+        .in_aspect("identity")
+        .since_minor(minor)
+}
+
+/// The position of the pinned flag in the fields of the element type `key`; `None` for a type
+/// that cannot be pinned.
+#[must_use]
+pub fn pinned_slot(key: &str) -> Option<usize> {
+    Some(match key {
+        WALL => wall::PINNED,
+        DOOR | WINDOW => insert::PINNED,
+        FLOOR => floor::PINNED,
+        ROOM => room::PINNED,
+        STAIR => stair::PINNED,
+        _ => return None,
+    })
+}
+
+/// Whether the element of type `key` with `values` is pinned.
+#[must_use]
+pub fn is_pinned(key: &str, values: &[Option<Value>]) -> bool {
+    pinned_slot(key).is_some_and(|at| matches!(values.get(at), Some(Some(Value::Bool(true)))))
 }
 
 /// One boundary vertex of a floor: the loop, the authored point and the optional wall face the
@@ -742,6 +785,7 @@ fn insert_fields(type_key: &str) -> Vec<FieldDecl> {
         .with_default(Value::Enum(Facing::Exterior.code()))
         .in_aspect("geometry"),
         type_field("insert_type", type_key, 1),
+        pinned_field(2),
     ]
 }
 
@@ -813,6 +857,7 @@ mod tests {
             ("hand", insert::HAND),
             ("facing", insert::FACING),
             ("insert_type", insert::INSERT_TYPE),
+            ("pinned", insert::PINNED),
         ];
         let expect: [(&str, &[(&str, usize)]); 13] = [
             (
@@ -831,6 +876,7 @@ mod tests {
                     ("railing_left", stair::RAILING_LEFT),
                     ("railing_right", stair::RAILING_RIGHT),
                     ("top_level", stair::TOP_LEVEL),
+                    ("pinned", stair::PINNED),
                 ],
             ),
             (
@@ -848,6 +894,7 @@ mod tests {
                     ("upper_level", room::UPPER_LEVEL),
                     ("upper_offset", room::UPPER_OFFSET),
                     ("base_offset", room::BASE_OFFSET),
+                    ("pinned", room::PINNED),
                 ],
             ),
             (
@@ -858,6 +905,7 @@ mod tests {
                     ("top_offset", floor::TOP_OFFSET),
                     ("vertices", floor::VERTICES),
                     ("floor_type", floor::FLOOR_TYPE),
+                    ("pinned", floor::PINNED),
                 ],
             ),
             (DOOR, insert_fields),
@@ -910,6 +958,7 @@ mod tests {
                     ("wall_type", wall::WALL_TYPE),
                     ("core_exterior", wall::CORE_EXTERIOR),
                     ("core_interior", wall::CORE_INTERIOR),
+                    ("pinned", wall::PINNED),
                 ],
             ),
             (

@@ -243,4 +243,10 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-type-operation",
     };
+    /// A command would move, reshape or delete a pinned element.
+    pub const PINNED: ErrorCode = ErrorCode {
+        code: "ab.model.pinned",
+        category: Category::Conflict,
+        message_id: "ab-model-pinned",
+    };
 }

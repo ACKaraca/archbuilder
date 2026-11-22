@@ -255,14 +255,36 @@ fn enter_right_after_a_typed_paste_pastes_in_place() {
 }
 
 #[test]
-fn enter_right_after_a_typed_instant_command_repeats_the_last_command() {
+fn enter_right_after_a_typed_instant_command_is_dropped_and_the_next_one_repeats() {
     let mut ui = Ui::new("ze");
     ui.draw_walls();
-    // The wall command is the last one: ZE is done at once, so Enter repeats the wall command.
+    // ZE is done at once: the Enter that confirms it is dropped, it does not restart the wall
+    // command; a later Enter repeats the last command.
     ui.type_text("ze");
     ui.key(egui::Key::Enter);
     let prompt = ui.prompt();
+    assert!(!prompt.contains("specify the start point"), "{prompt}");
+    ui.key(egui::Key::Enter);
+    let prompt = ui.prompt();
     assert!(prompt.contains("specify the start point"), "{prompt}");
+}
+
+#[test]
+fn enter_right_after_a_typed_pin_pins_without_restarting_the_last_tool() {
+    let mut ui = Ui::new("pn");
+    ui.draw_walls();
+    ui.menu(ui::SELECT_ALL);
+    ui.type_text("pn");
+    ui.key(egui::Key::Enter);
+    let prompt = ui.prompt();
+    assert!(!prompt.contains("specify"), "{prompt}");
+    let tab = ui.app.active().unwrap();
+    let snapshot = ui.app.tab(tab).unwrap().document().snapshot();
+    assert!(
+        spatial::objects(&snapshot, WALL)
+            .iter()
+            .all(|w| archbuilder_model::types::is_pinned(WALL, &w.values))
+    );
 }
 
 #[test]
@@ -279,4 +301,40 @@ fn a_command_started_during_match_type_ends_it() {
     );
     ui.key(egui::Key::Escape);
     assert!(!ui.prompt().contains("specify"), "{}", ui.prompt());
+}
+
+impl Ui {
+    /// Every label the window shows, joined.
+    fn labels(&mut self) -> String {
+        self.frame(Vec::new(), Vec::new())
+            .iter()
+            .filter(|n| n.role() == accesskit::Role::Label)
+            .filter_map(|n| n.label().or_else(|| n.value()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+#[test]
+fn a_refused_modify_step_says_why_at_once() {
+    let mut ui = Ui::new("refuse");
+    ui.draw_walls();
+    // A split across nothing: the pick misses every wall.
+    ui.line("split");
+    ui.line("20,20");
+    let text = ui.labels();
+    assert!(text.contains("No wall at that point"), "{text}");
+    // A clicked pick that misses says so once.
+    ui.click_viewport();
+    let text = ui.labels();
+    assert_eq!(text.matches("No wall at that point").count(), 2, "{text}");
+    ui.key(egui::Key::Escape);
+    // A pinned wall refuses a move, and says so before anything else is typed.
+    ui.menu(ui::SELECT_ALL);
+    ui.line("pin");
+    ui.line("m");
+    ui.line("0,0");
+    ui.line("1,0");
+    let text = ui.labels();
+    assert!(text.contains("is pinned"), "{text}");
 }

@@ -327,3 +327,55 @@ ab-notice-types-resynced = { $count ->
         [one] One object disagreed with its type in this file and took its type's values again
        *[other] { $count } objects disagreed with their types in this file and took their types' values again
     }. Saving keeps the correction.
+
+## Editing tools, pin and the warnings panel
+
+ab-menu-align = Align
+ab-menu-trim = Trim to corner
+ab-menu-split = Split wall
+ab-menu-offset = Offset
+ab-menu-array = Array
+ab-menu-pin = Pin
+ab-menu-unpin = Unpin
+ab-tool-align = Align
+ab-tool-align-hint = Align an element's face or edge to a reference line (AL)
+ab-tool-offset = Offset
+ab-tool-offset-hint = Move or copy the selected walls and floors across by a distance (OF)
+ab-tool-trim = Trim
+ab-tool-trim-hint = Trim or extend two walls to a corner (TR)
+ab-tool-trim-to = Trim to boundary
+ab-tool-trim-to-hint = Trim or extend walls to a boundary line, one at a time (TB); several at once: TM
+ab-tool-split = Split
+ab-tool-split-hint = Split a wall at a point, optionally with a gap (SL)
+ab-tool-merge = Merge
+ab-tool-merge-hint = Merge two collinear walls that touch into one (MG)
+ab-tool-array = Array
+ab-tool-array-hint = Copy the selection in a row (AR)
+ab-tool-array-radial = Radial array
+ab-tool-array-radial-hint = Copy the selection around a center (RA)
+ab-tool-pin = Pin
+ab-tool-pin-hint = Pin the selected elements so commands cannot move or delete them (PN)
+ab-tool-unpin = Unpin
+ab-tool-unpin-hint = Unpin the selected elements (UP)
+ab-prop-pinned = Pinned
+ab-panel-warnings = Warnings
+ab-warnings-count = { $count ->
+    [0] No warnings
+    [one] 1 warning
+   *[other] { $count } warnings
+}
+ab-warnings-none = Nothing to show.
+ab-warnings-hint = Double-click a row to select its elements and zoom to them.
+ab-warnings-kind-all = All kinds
+ab-warnings-kind-stair = Stairs
+ab-warnings-kind-room = Rooms
+ab-warnings-kind-wall = Walls
+ab-warnings-kind-floor = Floors
+ab-warnings-kind-insert = Doors and windows
+ab-warnings-kind-type = Types
+ab-warnings-severity-error = Error
+ab-warnings-severity-warning = Warning
+ab-warnings-count-filtered = { $count ->
+    [one] { $shown } of 1 warning
+   *[other] { $shown } of { $count } warnings
+}

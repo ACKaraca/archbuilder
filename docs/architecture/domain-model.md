@@ -78,6 +78,7 @@ meters:
 | `location_line` | Which line of the wall the baseline is: `center`, `exterior` (the exterior finish face), `interior` (the interior finish face), `core_center`, `core_exterior` or `core_interior` (the middle and the faces of the type's core layers; schema 1.2) | `center` by default; changing it keeps the wall's physical position: the stored baseline moves across by the difference of the offsets, and the joins are kept as a move keeps them (neighbors stretch along their own lines to the new corners), so the rooms and floors around the wall stay |
 | `wall_type` | The wall type (schema 1.2) | A reference to a wall type of the project; a type in use cannot be deleted; absent only in files from before types until they are upgraded |
 | `core_exterior`, `core_interior` | The thickness of the type's layers outside the core on the exterior and the interior side (schema 1.2) | Copies of the type, written only with it; 0 when absent |
+| `pinned` | Whether the wall is pinned (schema 1.3) | Absent or false in older files: unpinned; see pin below |
 
 The solid is derived, never stored: a prism over the rectangle of the baseline and the thickness,
 from the storey's level elevation plus the base offset, up by the height. With a `top_level` the
@@ -134,6 +135,7 @@ inserts back. Authored data only, lengths in meters, one layout for both kinds:
 | `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall | 10 mm to 0.5 m and 10 mm to 2 m; copies of the type; the solids, the plan symbol and the IFC body use the depth clamped to the host wall's thickness; the frame leaves at least 20 mm clear |
 | `operation` | `single_swing`, `double_swing` or `sliding` for a door; `fixed`, `casement` or `sliding` for a window | A copy of the type; the kind decides what is allowed |
 | `insert_type` | The door or window type (schema 1.1) | A reference to a type of the kind; absent only in files from before types until they are upgraded |
+| `pinned` | Whether the door or window is pinned (schema 1.2) | Absent: unpinned |
 | `hand` | `left` or `right`: the hinge side seen from the side the leaf swings toward | `left` by default |
 | `facing` | `exterior` or `interior`: the side of the wall the leaf swings toward | `exterior` by default |
 
@@ -189,6 +191,7 @@ points yet.
 | `top_offset` | The top's distance above the storey's level | -1000 m to 1000 m; 0 by default |
 | `vertices` | The boundary: the outer loop, then the holes, each loop in order, straight edges only. Each vertex is a record of the loop number (0 outer), the authored point, and the optional association of the edge that starts there: `wall` (reference, cleared when the wall is deleted), `face` (`interior`, `exterior` or `center`) and `offset` | At most 1000 vertices and 64 loops |
 | `floor_type` | The floor type (schema 1.1) | A reference to a floor type of the project; absent only in files from before types until they are upgraded |
+| `pinned` | Whether the floor is pinned (schema 1.2) | Absent: unpinned |
 
 An edge associated with a wall lies on the line of the chosen face of that wall (the center face is
 the center line of the wall type's core), moved by the offset; a vertex that
@@ -227,6 +230,7 @@ do not bound.
 | `department`, `floor_finish`, `wall_finish`, `ceiling_finish`, `base_finish` | Text | Optional |
 | `upper_level`, `upper_offset` | The top: the named level, else the level above the storey, else 3 m above the storey's level; plus the offset | The reference is cleared when the level is deleted |
 | `base_offset` | The base's distance above the storey's level | -1000 m to 1000 m; 0 by default |
+| `pinned` | Whether the room is pinned (schema 1.1) | Absent: unpinned |
 
 The boundary is the smallest closed loop of walls around the point (the floor's loop finding: walls
 are split where an end lies on another wall and where two walls cross, so a wall that runs past
@@ -287,6 +291,7 @@ the shaft opening are derived each time (`archbuilder_model::stair`).
 | `waist` | The waist of the monolithic construction | 0.05 m to 1 m; 0.15 m by default |
 | `railing_left`, `railing_right` | A railing on that side | On by default |
 | `top_level` | The level it arrives at; else the level above the storey | Cleared when the level is deleted |
+| `pinned` | Whether the stair is pinned (schema 1.1) | Absent: unpinned |
 
 Derived: the height (top level minus the storey's level; refused without a level above,
 `ab.model.stair_no_top`), the riser count `ceil(height / max_riser)` (at least 2, or 4 for a
@@ -359,6 +364,73 @@ fully inside, a crossing dragged right to left those it touches, with the same m
 clears. A band that takes a wall also takes the doors and windows in it. The property grid shows the
 fields the selected objects share and "(mixed)" where their values differ; one edit applies to all
 of them as one undo step.
+
+### Editing tools
+
+`archbuilder-commands/src/edit.rs` adds editing commands to move, copy, rotate and mirror. Each is
+one transaction and one undo step, starts from the Modify menu, the toolbar, the context menu where
+it applies, or a typed name, and runs in the modify tool (pick first or pick later, Enter and
+Escape as for move). Commands that pick take points: a point picks the nearest wall face, wall
+center line or floor edge, or the wall whose body is nearest, within about ten pixels.
+
+- **Align** (`archbuilder.modify.align`, `AL`): pick a reference line, then lines of other walls or
+  floors; each element turns about the picked point by the smallest angle that makes its line
+  parallel, then moves across onto the reference. The reference stays for the next pick until
+  Escape. Walls keep their joins and their doors and windows follow, as a move does. There are no
+  grid lines yet.
+- **Offset** (`archbuilder.modify.offset`, `OF`): the selected walls and floors are copied (the
+  default) or, with the Move option, moved across by a typed distance or by the distance of a picked point, toward
+  the side of the point. Selected walls joined end to end offset as a chain whose corners meet
+  again; a floor's boundary grows when the point is outside it and shrinks inside (its edges become
+  free edges). A dashed outline shows the result while the side is chosen; the tool repeats until
+  Escape, keeping the Copy or Move choice and offering the last distance (Enter takes it); after
+  a copy the next offset starts from the copies.
+- **Trim and extend**: to corner (`archbuilder.modify.trim`, `TR`: two walls meet at the corner of
+  their baselines; repeats until Escape), to a boundary one wall at a time (`trim_to`, `TB`, the boundary stays until
+  Escape) or several at once (`trim_many`, `TM`, Enter ends the picks). The picked part of each
+  wall stays. Doors and windows keep their place in plan; one the wall no longer reaches refuses
+  the command, naming it. Rooms follow, being derived.
+- **Split** (`archbuilder.wall.split`, `SL`): at a picked point (snaps apply) or at a typed distance
+  from the end nearest a second pick, with an optional gap. The wall keeps its identifier as the
+  first piece; the second is a new wall with the same values. Doors and windows go to the piece
+  that holds them and keep their identifiers; one across the cut (with the side clearance the fit
+  rule asks for) refuses the split. A floor edge that followed the wall follows the piece it lies
+  along; one across the cut gets a vertex there (two with a gap, the edge across the gap following
+  no wall), so the floor keeps its outline and no edge runs past its wall. A merge joins such
+  edges again. The outer ends keep their join styles. **Merge** (`archbuilder.wall.merge`, `MG`): two walls that are collinear,
+  touch end to end and have the same type, thickness, height, base, top and location line become
+  the first; the second's doors and windows (and floor edges that followed it) move to it.
+- **Arrays** (`archbuilder.modify.array`, `AR`; `array_radial`, `RA`): independent copies of the
+  selection, no group. Linear: a count, a base point and the second item, or with Last the last
+  item. Radial: a count, a center and the angle covered (a full turn spaces the items evenly). A
+  door or window alone arrays along its wall: the step is projected onto the wall, and a step
+  across the wall is refused with a message.
+
+### Pin
+
+`archbuilder.element.pin` (`PN`) and `unpin` (`UP`) set the optional `pinned` field that every
+element kind carries (schema versions above; older files load unpinned and need no upgrade). A command that would move, reshape or delete a
+pinned element is refused with `ab.model.pinned`, which names it and points to Unpin: the rule is
+checked on every transaction against the state before it (`validate::pin_refusal`), so it covers
+the modify and editing commands, Delete, dragging and handles, and property edits. A pinned element
+may still be renamed, selected, copied and retyped by editing its type; a room keeps its number and
+finishes editable. A pinned element shows a small pin mark in plan; the property grid shows the flag,
+and the context menu offers Pin or Unpin.
+
+### Warnings register
+
+`validate::register` lists the model's warnings over the whole document with the rules the commands
+already apply: stairs (no layout, stride, overlap, uncut opening), rooms (not enclosed, redundant,
+duplicate number), walls on top of each other and open corners, floor edges whose wall no longer
+bounds them, doors and windows that open into another wall, and instances whose copies of their
+type's values differ. Each entry has a kind, a severity and the elements involved. It is derived:
+the Warnings panel recomputes it whenever the document changes, so a fixed problem disappears; the
+panel filters by kind, shows the count in its heading (the shown and the total count while
+filtered), and a double click selects the elements and frames them. A warning never refuses an
+unrelated command: a command is refused for a door or window that opens into a wall only when it
+placed or changed that door or window, or drew that wall. Reshaping an existing wall (a modify
+command, a handle, a property) warns instead: the history names the door, and it stays listed here. A refused pick of the modify tools is said in the command line right after
+the picked point.
 
 ### Direct manipulation
 
@@ -446,9 +518,10 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
   the command line, where the text shows as it accumulates. With no command running, a complete
   shortcut starts its command at once, unless a longer command name begins with it (`wa` waits
   because `wall` is a name; `mv` starts at once). An empty Enter that is the very next input after a shortcut
-  started a command confirms the shortcut and is dropped, so it does not end that command; it is
-  taken as usual when anything came between (a click, a key, a change of view), when the command
-  has moved past its first prompt or already finished (Enter then repeats), and when Enter
+  started a command confirms the shortcut and is dropped, so it does not end that command; after a
+  command that finishes at once (`PN`, `ZE`) it is dropped too instead of repeating the last
+  command (a later Enter repeats). It is taken as usual when anything came between (a click, a key,
+  a change of view), when the command has moved past its first prompt, and when Enter
   answers that prompt (a default, a selection to take, paste in place). The names are read from the registered commands
   (identifier parts, aliases, labels in both languages), so a new command, such as `save`, never
   has a shortcut fire early. Anything else waits for Enter or Space: Enter

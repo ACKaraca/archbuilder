@@ -41,3 +41,4 @@ ab-model-type-core = The core needs at least one layer: tick the Core column of 
 ab-model-type-total = The layers add up to { $total } mm; the total must be between { $least } mm and { $most } mm.
 ab-model-type-mismatch = "{ $name }" does not match its type in { $field }. That value comes from the type: edit the type or choose another one.
 ab-model-type-operation = The type "{ $name }" cannot operate as { $operation }: a door swings with one or two leaves or slides, and a window is fixed, casement or sliding.
+ab-model-pinned = "{ $name }" is pinned. Unpin it (UP) to change it.

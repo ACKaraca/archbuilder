@@ -196,7 +196,8 @@ pub fn stair_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
             out.push(
                 Error::new(codes::STAIR_OVERLAP)
                     .with_arg("name", display_name(object))
-                    .with_arg("other", display_name(other)),
+                    .with_arg("other", display_name(other))
+                    .with_detail(OTHER, other.id.to_string()),
             );
         }
     }
@@ -230,11 +231,16 @@ pub fn stair_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
     with_object(out, object.id)
 }
 
+/// The detail of a finding that names the element it is about, as an identifier.
+const OBJECT: &str = "object";
+/// The detail of a finding that names the second element it involves.
+const OTHER: &str = "other_object";
+
 /// `errors` with the detail `object` set to `id`.
 fn with_object(errors: Vec<Error>, id: ObjectId) -> Vec<Error> {
     errors
         .into_iter()
-        .map(|e| e.with_detail("object", id.to_string()))
+        .map(|e| e.with_detail(OBJECT, id.to_string()))
         .collect()
 }
 
@@ -253,6 +259,8 @@ pub fn overlap_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
             Error::new(codes::WALL_OVERLAP)
                 .with_arg("name", name(a))
                 .with_arg("other", name(b))
+                .with_detail(OBJECT, a.to_string())
+                .with_detail(OTHER, b.to_string())
         })
         .collect()
 }
@@ -523,7 +531,9 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
                 out.push(
                     Error::new(codes::WALL_CORNER_OPEN)
                         .with_arg("name", display_name(a))
-                        .with_arg("other", display_name(b)),
+                        .with_arg("other", display_name(b))
+                        .with_detail(OBJECT, a.id.to_string())
+                        .with_detail(OTHER, b.id.to_string()),
                 );
             }
         }
@@ -547,7 +557,9 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
                             get(candidate, wall)
                                 .map(|w| display_name(&w))
                                 .unwrap_or_default(),
-                        ),
+                        )
+                        .with_detail(OBJECT, floor.id.to_string())
+                        .with_detail(OTHER, wall.to_string()),
                 );
             }
         }
@@ -577,11 +589,234 @@ pub fn room_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
             out.push(
                 Error::new(code)
                     .with_arg("name", name.clone())
-                    .with_arg("number", number.clone()),
+                    .with_arg("number", number.clone())
+                    .with_detail(OBJECT, e.id.to_string()),
             );
         }
     }
     out
+}
+
+/// The fields of an element of type `key` that a pinned element may still change: its name, its
+/// flag, the values copied from its type (a type edit reaches every instance) and, for a room, its
+/// number and finishes.
+fn pin_free(key: &str) -> &'static [usize] {
+    use types::{floor, insert, room, wall};
+    match key {
+        WALL => &[
+            wall::NAME,
+            wall::THICKNESS,
+            wall::CORE_EXTERIOR,
+            wall::CORE_INTERIOR,
+            wall::PINNED,
+        ],
+        DOOR | WINDOW => &[
+            insert::NAME,
+            insert::WIDTH,
+            insert::HEIGHT,
+            insert::FRAME_WIDTH,
+            insert::FRAME_DEPTH,
+            insert::OPERATION,
+            insert::PINNED,
+        ],
+        FLOOR => &[floor::NAME, floor::THICKNESS, floor::PINNED],
+        ROOM => &[
+            room::NAME,
+            room::NUMBER,
+            room::DEPARTMENT,
+            room::FLOOR_FINISH,
+            room::WALL_FINISH,
+            room::CEILING_FINISH,
+            room::BASE_FINISH,
+            room::PINNED,
+        ],
+        _ => &[types::stair::NAME, types::stair::PINNED],
+    }
+}
+
+/// The refusal of a change that moves, reshapes or deletes an element that was pinned in `base`:
+/// every field but the ones of [`pin_free`] and the container must stay as they were. The error
+/// names the element; `None` when no pinned element changed that way.
+#[must_use]
+pub fn pin_refusal(
+    base: &Snapshot,
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+) -> Option<Error> {
+    for (id, change) in touched {
+        let (Some(key), Some(before)) = (type_of(base, *id), get(base, *id)) else {
+            continue;
+        };
+        if !types::is_pinned(&key, &before.values) {
+            continue;
+        }
+        let changed = match (change, get(candidate, *id)) {
+            (Change::Deleted, _) | (_, None) => true,
+            (_, Some(after)) => {
+                let free = pin_free(&key);
+                after.header.owner != before.header.owner
+                    || (0..before.values.len().max(after.values.len()))
+                        .any(|k| !free.contains(&k) && before.values.get(k) != after.values.get(k))
+            }
+        };
+        if changed {
+            return Some(Error::new(codes::PINNED).with_arg("name", display_name(&before)));
+        }
+    }
+    None
+}
+
+/// What a warning of the register is about; the warnings panel filters by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WarningKind {
+    /// A stair: no layout, its stride, an overlap or an uncut opening.
+    Stair,
+    /// A room: not enclosed, redundant or a duplicate number.
+    Room,
+    /// Walls on top of each other or an open corner.
+    Wall,
+    /// A floor edge that follows a wall that no longer bounds it.
+    Floor,
+    /// A door or window that opens into another wall.
+    Insert,
+    /// An instance whose copies of its type's values differ from the type.
+    Type,
+}
+
+impl WarningKind {
+    /// Every kind, in the order the panel lists them.
+    pub const ALL: [Self; 6] = [
+        Self::Stair,
+        Self::Room,
+        Self::Wall,
+        Self::Floor,
+        Self::Insert,
+        Self::Type,
+    ];
+
+    /// The kind of a finding, by its code.
+    fn of(error: &Error) -> Self {
+        let code = error.code();
+        if code.starts_with("ab.model.stair") {
+            Self::Stair
+        } else if code.starts_with("ab.model.room") {
+            Self::Room
+        } else if code.starts_with("ab.model.floor") {
+            Self::Floor
+        } else if code == codes::INSERT_MEETS_WALL.code {
+            Self::Insert
+        } else if code.starts_with("ab.model.type") {
+            Self::Type
+        } else {
+            Self::Wall
+        }
+    }
+}
+
+/// One entry of the warnings register: what is wrong, how serious it is and the elements involved.
+#[derive(Debug)]
+pub struct Warning {
+    /// What it is about.
+    pub kind: WarningKind,
+    /// [`Severity::Error`] for an element the model cannot build (a stair without a layout),
+    /// [`Severity::Warning`] for the rest.
+    pub severity: Severity,
+    /// The finding, with the arguments its message names.
+    pub error: Error,
+    /// The elements involved, the first one the finding is about.
+    pub objects: Vec<ObjectId>,
+}
+
+/// The most entries the register lists.
+pub const MAX_WARNINGS: usize = 2_000;
+
+/// The warnings register of `snapshot`: every finding the commands report as a warning, found
+/// over the whole model with the same rules ([`warnings`], [`stair_problem`], the checks of doors
+/// and windows and of types), so a condition that no longer holds is no longer listed. Recomputed
+/// from the document; nothing of it is stored.
+#[must_use]
+pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
+    let mut touched = BTreeMap::new();
+    for key in types::ELEMENTS {
+        for object in objects(snapshot, key) {
+            touched.insert(object.id, Change::Modified);
+        }
+    }
+    let ids = |error: &Error| -> Vec<ObjectId> {
+        [OBJECT, OTHER]
+            .iter()
+            .filter_map(|k| match error.details().get(k) {
+                Some(arc_base::error::Value::Text(t)) => t.parse().ok(),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut out: Vec<Warning> = Vec::new();
+    let mut push = |severity, error: Error, objects: Vec<ObjectId>| {
+        if out.len() < MAX_WARNINGS {
+            out.push(Warning {
+                kind: WarningKind::of(&error),
+                severity,
+                error,
+                objects,
+            });
+        }
+    };
+    for stair in objects(snapshot, STAIR) {
+        if let Some(error) = stair_problem(snapshot, &stair) {
+            push(Severity::Error, error, vec![stair.id]);
+        }
+    }
+    // A pair of stairs that overlap is one problem, though each stair reports it.
+    let mut pairs = std::collections::BTreeSet::new();
+    for error in warnings(snapshot, &touched) {
+        let found = ids(&error);
+        if error.code() == codes::STAIR_OVERLAP.code {
+            let mut pair = found.clone();
+            pair.sort();
+            if !pairs.insert(pair) {
+                continue;
+            }
+        }
+        push(Severity::Warning, error, found);
+    }
+    for key in [DOOR, WINDOW] {
+        for object in objects(snapshot, key) {
+            for error in crate::insert::problems(snapshot, &object) {
+                if is_warning(&error) {
+                    let mut found = vec![object.id];
+                    found.extend(ids(&error).into_iter().filter(|id| *id != object.id));
+                    push(Severity::Warning, error, found);
+                }
+            }
+        }
+    }
+    for key in [WALL, FLOOR, DOOR, WINDOW] {
+        for object in objects(snapshot, key) {
+            if let Some(error) = type_problem(snapshot, key, &object) {
+                push(Severity::Warning, error, vec![object.id]);
+            }
+        }
+    }
+    out
+}
+
+/// The element a finding is about (the door that opens into a wall).
+#[must_use]
+pub fn object_of(error: &Error) -> Option<ObjectId> {
+    match error.details().get(OBJECT) {
+        Some(arc_base::error::Value::Text(t)) => t.parse().ok(),
+        _ => None,
+    }
+}
+
+/// The element a warning involves besides the one it is about (the wall a door opens into).
+#[must_use]
+pub fn other_object(error: &Error) -> Option<ObjectId> {
+    match error.details().get(OTHER) {
+        Some(arc_base::error::Value::Text(t)) => t.parse().ok(),
+        _ => None,
+    }
 }
 
 /// Whether `error` is a warning of the structure: it is reported, never refused.
@@ -594,9 +829,10 @@ pub fn is_warning(error: &Error) -> bool {
 /// warnings ([`is_warning`]), which are findings of the lower severity.
 #[must_use]
 pub fn validator() -> DocumentValidator {
-    Arc::new(|_, candidate, touched| {
-        check(candidate, touched)
+    Arc::new(|base, candidate, touched| {
+        pin_refusal(base, candidate, touched)
             .into_iter()
+            .chain(check(candidate, touched))
             .map(|error| Finding {
                 severity: if is_warning(&error) {
                     Severity::Warning

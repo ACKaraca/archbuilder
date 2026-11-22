@@ -207,10 +207,20 @@ pub(super) fn select_intent(ids: &[ObjectId], mode: &str) -> Intent {
 
 /// Whether the command is one Repeat starts again.
 fn repeatable(command: &str) -> bool {
+    use archbuilder_commands::edit;
     use archbuilder_commands::insert::{DOOR_PLACE, WINDOW_PLACE};
     use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
     use archbuilder_commands::wall::OBJECT_DELETE;
     [
+        edit::MODIFY_ALIGN,
+        edit::MODIFY_OFFSET,
+        edit::MODIFY_TRIM,
+        edit::MODIFY_TRIM_TO,
+        edit::MODIFY_TRIM_MANY,
+        edit::WALL_SPLIT,
+        edit::WALL_MERGE,
+        edit::MODIFY_ARRAY,
+        edit::MODIFY_ARRAY_RADIAL,
         WALL_CREATE,
         DOOR_PLACE,
         WINDOW_PLACE,
@@ -242,7 +252,9 @@ impl WallInteraction {
         };
         let out = self.output();
         let Some(now) = out.prompt else {
-            return false;
+            // An instant command: nothing runs now. Its own view change (zoom extents) does not
+            // count as something between.
+            return prompt.is_empty() && !self.line_active();
         };
         let enter_answers = now.default.is_some()
             || now
@@ -596,6 +608,15 @@ impl WallInteraction {
             clipboard: crate::clipboard::get().is_some(),
             has_last: self.habits.last.is_some(),
             temporary: self.habits.vis.active(),
+            pinned: snapshot.as_ref().map_or((false, false), |s| {
+                let flags = cx.selection().iter().filter_map(|id| {
+                    let key = spatial::type_of(s, *id)?;
+                    let object = spatial::get(s, *id)?;
+                    archbuilder_model::types::pinned_slot(&key)
+                        .map(|_| archbuilder_model::types::is_pinned(&key, &object.values))
+                });
+                flags.fold((false, false), |(p, u), f| (p || f, u || !f))
+            }),
         })
     }
 
@@ -893,6 +914,30 @@ impl WallInteraction {
                 cx.ask_panel(crate::PROPERTIES);
                 Ok(())
             }
+            ui::WARNINGS => {
+                cx.ask_panel(crate::WARNINGS);
+                Ok(())
+            }
+            ui::ZOOM_TO => cx.document().map(|d| {
+                let snapshot = d.snapshot();
+                let ids: Vec<ObjectId> = intent
+                    .params
+                    .get("objects")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(serde_json::Value::as_str)
+                    .filter_map(|t| t.parse::<ObjectId>().ok())
+                    .filter(|id| spatial::get(&snapshot, *id).is_some())
+                    .take(selection::MAX_SELECTED)
+                    .collect();
+                if !ids.is_empty() {
+                    cx.ask(select_intent(&ids, "replace"));
+                }
+                if let Some((a, b)) = crate::warnings_panel::bounds(&snapshot, &ids) {
+                    self.habits.view = Some(ViewRequest::Window { a, b });
+                }
+            }),
             EXPORT_SHORTCUTS => self.export_shortcuts(cx, intent),
             IMPORT_SHORTCUTS => self.import_shortcuts(cx, intent),
             _ => return None,

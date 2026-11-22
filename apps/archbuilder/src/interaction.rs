@@ -320,6 +320,8 @@ pub struct WallInteraction {
     just_reported: bool,
     /// The copies the copy command had when it last changed, to say once when it ends.
     copy_count: usize,
+    /// The label of the repeating command those runs belong to (copy, align, trim to, split).
+    copy_label: String,
     /// What the pointer would pick for a floor, outlined while the floor tool runs.
     floor_hover: Vec<ProductOverlay>,
     /// The wall under the pointer and the opening that follows it, while the insert tool runs.
@@ -376,7 +378,13 @@ pub struct WallInteraction {
     match_type_name: String,
     /// Whether the tab's document was checked for types once (see [`upgrade_invocation`]).
     upgrade_tried: bool,
+    /// Frames still to ask for after a click was refused, so its message shows at once.
+    wake: u8,
 }
+
+/// The frames a refused click asks for: a click is no action of the shell, so nothing else would
+/// draw the message (and scroll the history to it) before the next input.
+const WAKE_FRAMES: u8 = 3;
 
 impl WallInteraction {
     /// The interaction of a new tab.
@@ -398,6 +406,7 @@ impl WallInteraction {
             chain_walls: 0,
             just_reported: false,
             copy_count: 0,
+            copy_label: String::new(),
             floor_hover: Vec::new(),
             hover: None,
             highlight: Vec::new(),
@@ -427,6 +436,7 @@ impl WallInteraction {
             matching: None,
             match_type_name: String::new(),
             upgrade_tried: false,
+            wake: 0,
         }
     }
 
@@ -679,9 +689,22 @@ impl WallInteraction {
     fn report_chains(&mut self, cx: &InteractionContext<'_>) {
         let walls = self.tool.chain().map_or(0, |c| c.walls);
         let copies = self.modify.copies();
+        if let Some(label) = self
+            .modify
+            .current()
+            .and_then(|r| self.registry.as_ref()?.get(r.command))
+            .map(|spec| spec.label().to_owned())
+        {
+            self.copy_label = label;
+        }
+        let copy_label = if self.copy_label.is_empty() {
+            "ab-cmd-modify-copy-label".to_owned()
+        } else {
+            self.copy_label.clone()
+        };
         for (now, before, label) in [
             (walls, self.chain_walls, "ab-cmd-wall-create-label"),
-            (copies, self.copy_count, "ab-cmd-modify-copy-label"),
+            (copies, self.copy_count, copy_label.as_str()),
         ] {
             if now < before
                 && let Some(l) = self.localizer(cx.language())
@@ -727,7 +750,10 @@ impl WallInteraction {
                     .collect()
             })
             .unwrap_or_default();
-        if !created.is_empty() && command != archbuilder_commands::modify::MODIFY_MIRROR {
+        if !created.is_empty()
+            && command != archbuilder_commands::modify::MODIFY_MIRROR
+            && command != archbuilder_commands::edit::WALL_SPLIT
+        {
             let mut intent = Intent::new(archbuilder_commands::structure::OBJECT_SELECT);
             intent.params = serde_json::json!({"objects": created, "mode": "replace"})
                 .as_object()
@@ -961,6 +987,11 @@ impl Interaction for WallInteraction {
             let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
             self.label_units = (unit, cx.decimal_separator());
         }
+        if self.wake > 0 {
+            // Bringing the command line forward is an action of the shell, which draws again.
+            self.wake -= 1;
+            cx.ask_panel(crate::COMMAND_LINE);
+        }
         self.habit_frame(cx);
         self.type_frame(cx);
         self.say_stair_warnings(cx);
@@ -1000,7 +1031,8 @@ impl Interaction for WallInteraction {
         };
         // Every line action uses up the mark of a typed shortcut; only its own start re-arms it.
         let mark = self.habits.swallow_enter.take();
-        if matches!(&action, LineAction::Submit(t) if t.trim().is_empty())
+        if (matches!(&action, LineAction::Submit(t) if t.trim().is_empty())
+            || matches!(action, LineAction::Repeat))
             && self.confirms_shortcut(cx, mark.as_ref())
         {
             return Ok(());
@@ -1207,8 +1239,10 @@ impl Interaction for WallInteraction {
             .or_else(|| self.stairs.take_error())
             .or_else(|| self.modify.take_error());
         if started {
-            self.habits.swallow_enter = self.output().prompt.map(|p| habits::EnterMark::Waiting {
-                prompt: p.key,
+            // A command that finished at once (pin, zoom extents) waits at no prompt: the key is
+            // empty, and the Enter that confirms its shortcut is dropped all the same.
+            self.habits.swallow_enter = Some(habits::EnterMark::Waiting {
+                prompt: self.output().prompt.map(|p| p.key).unwrap_or_default(),
                 camera: *cx.camera(),
             });
         }
@@ -1445,11 +1479,12 @@ impl WallInteraction {
             PointerKind::Click if event.button == Some(PointerButton::Primary) => {
                 if let Some(at) = at {
                     self.cursor = Some(at);
-                    let _ = self.with_modify(cx, |tool, env, run| tool.click(env, run, at));
-                    if let Some(error) = self.modify.take_error() {
+                    let ran = self.with_modify(cx, |tool, env, run| tool.click(env, run, at));
+                    // The picked point, then why it was refused, right after it.
+                    self.echo_point(cx, at);
+                    if let Some(error) = ran.err().or_else(|| self.modify.take_error()) {
                         self.notice_error(cx, &error);
-                    } else {
-                        self.echo_point(cx, at);
+                        self.wake = WAKE_FRAMES;
                     }
                 }
                 true
@@ -1478,6 +1513,43 @@ impl WallInteraction {
         }
     }
 
+    /// The outlines an offset would make toward the pointer at `at`, at the typed distance once
+    /// there is one; `None` when no offset runs.
+    fn offset_ghost(
+        &self,
+        snapshot: &arc_doc::Snapshot,
+        objects: &[ObjectId],
+        at: [f64; 2],
+        z: f64,
+    ) -> Option<Vec<ProductOverlay>> {
+        let at3 = |p: [f64; 2]| Point3::new(p[0], p[1], z);
+        // An offset shows the walls and floor outlines it would make toward the pointer, at the
+        // typed distance once there is one.
+        if self
+            .modify
+            .current()
+            .is_some_and(|r| r.command == archbuilder_commands::edit::MODIFY_OFFSET && !r.gathering)
+        {
+            let typed = self.modify.line().active().and_then(|s| {
+                s.answers().iter().find_map(|a| match a.input {
+                    arc_command::prompt::PromptInput::Distance(d) => Some(d),
+                    _ => None,
+                })
+            });
+            Some(
+                archbuilder_commands::edit::offset_outlines(snapshot, objects, at, typed)
+                    .iter()
+                    .map(|poly| ProductOverlay::Path {
+                        points: poly.iter().chain(poly.first()).map(|p| at3(*p)).collect(),
+                        dashed: true,
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        }
+    }
+
     /// The outline of the objects as the command would leave them with the pointer at `at`, and
     /// the line from the base point.
     fn make_ghost(
@@ -1488,6 +1560,10 @@ impl WallInteraction {
         z: f64,
     ) -> Vec<ProductOverlay> {
         use archbuilder_model::transform::Xform;
+        let at3 = |p: [f64; 2]| Point3::new(p[0], p[1], z);
+        if let Some(ghost) = self.offset_ghost(snapshot, objects, at, z) {
+            return ghost;
+        }
         let (Some(run), Some(base)) = (self.modify.current(), self.modify.line().base_point())
         else {
             return Vec::new();
@@ -1516,7 +1592,6 @@ impl WallInteraction {
             key.starts_with("second")
                 .then(|| Xform::Translate([at[0] - base[0], at[1] - base[1]]))
         };
-        let at3 = |p: [f64; 2]| Point3::new(p[0], p[1], z);
         let mut out = vec![ProductOverlay::Line {
             from: at3(base),
             to: at3(at),
@@ -1787,7 +1862,20 @@ impl WallInteraction {
         }
         if let Some(id) = modify_id(command).filter(|_| intent.params.is_empty()) {
             self.stop_all();
-            return self.with_modify(cx, |tool, env, run| tool.begin(env, run, id));
+            // Picks look in the storey of the selection (else the lowest) within about ten pixels.
+            let storey = cx
+                .document()
+                .ok()
+                .and_then(|d| storey_for(&d.snapshot(), cx.selection()))
+                .map(|(s, _)| s);
+            let radius = if self.ppu > 0.0 {
+                (10.0 / self.ppu).clamp(0.05, 2.0)
+            } else {
+                0.3
+            };
+            return self.with_modify(cx, |tool, env, run| {
+                tool.begin_in(env, run, id, storey, Some(radius))
+            });
         }
         if let Some(kind) = kind_named(command).filter(|_| intent.params.is_empty()) {
             self.tool.stop();
@@ -2380,10 +2468,28 @@ impl WallInteraction {
 
 /// The identifier of a modify command, as `'static`.
 fn modify_id(command: &str) -> Option<&'static str> {
+    use archbuilder_commands::edit::{
+        MODIFY_ALIGN, MODIFY_ARRAY, MODIFY_ARRAY_RADIAL, MODIFY_OFFSET, MODIFY_TRIM,
+        MODIFY_TRIM_MANY, MODIFY_TRIM_TO, WALL_MERGE, WALL_SPLIT,
+    };
     use archbuilder_commands::modify::{MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE};
-    [MODIFY_MOVE, MODIFY_COPY, MODIFY_ROTATE, MODIFY_MIRROR]
-        .into_iter()
-        .find(|c| *c == command)
+    [
+        MODIFY_MOVE,
+        MODIFY_COPY,
+        MODIFY_ROTATE,
+        MODIFY_MIRROR,
+        MODIFY_ALIGN,
+        MODIFY_OFFSET,
+        MODIFY_TRIM,
+        MODIFY_TRIM_TO,
+        MODIFY_TRIM_MANY,
+        WALL_SPLIT,
+        WALL_MERGE,
+        MODIFY_ARRAY,
+        MODIFY_ARRAY_RADIAL,
+    ]
+    .into_iter()
+    .find(|c| *c == command)
 }
 
 /// Whether `text` asks for the room tool.

@@ -283,6 +283,7 @@ fn the_default_table_names_only_commands_that_exist_and_a_custom_table_goes_thro
         ui::SNAP,
         ui::CREATE_SIMILAR,
         ui::MATCH_TYPE,
+        ui::WARNINGS,
         arc_app::commands::EDIT_UNDO,
     ];
     let known = |c: &str| interface.contains(&c) || rig.registry.get(c).is_some();

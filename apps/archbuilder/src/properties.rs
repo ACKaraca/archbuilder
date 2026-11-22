@@ -92,6 +92,12 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "pinned",
+        Message {
+            message_id: "ab-prop-pinned",
+        },
+    ),
+    (
         "railing_left",
         Message {
             message_id: "ab-prop-stair-railing-left",
@@ -1114,6 +1120,14 @@ fn shown(
         // The building's base elevation has no effect yet: the levels carry the elevations.
         BUILDING => read_only.push("elevation".to_owned()),
         _ => {}
+    }
+    // Every element shows its pinned flag last, whatever the arms above kept of its record.
+    if let Some(at) = types::pinned_slot(key)
+        && !fields.iter().any(|f| f.name == "pinned")
+        && let Some(decl) = decl.schema.fields.get(at)
+    {
+        fields.push(decl.clone());
+        values.push(object.values.get(at).cloned().flatten());
     }
     Some(Shown {
         key: key.to_owned(),

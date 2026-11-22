@@ -6,14 +6,16 @@
 //! - Running command: Enter (finish), Cancel, and Undo point when the command has an answer to
 //!   take back.
 //! - Idle, nothing selected: Repeat last command, Paste (with something on the clipboard), New
-//!   stair, Select all, Zoom extents, Unhide all.
-//! - Idle with a selection: Delete, Move, Copy, Rotate, Mirror; Copy to clipboard; Hide, Isolate,
+//!   stair, Align, Trim to corner, Split wall, Select all, Zoom extents, Unhide all.
+//! - Idle with a selection: Delete, Move, Copy, Rotate, Mirror, Offset, Array, Pin (when an
+//!   element is not pinned), Unpin (when one is); Copy to clipboard; Hide, Isolate,
 //!   Hide kind, Isolate kind, Unhide all (while something is hidden); Select all of this kind, and
 //!   when the selection holds several kinds one Keep only entry per kind; Create similar, Match
 //!   type and Edit type when it holds walls, floors, doors or windows; Properties.
 
 use arc_app::shell::ContextEntry;
 use arc_ui::{Intent, LineAction};
+use archbuilder_commands::edit;
 use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
@@ -39,6 +41,8 @@ pub struct State {
     pub has_last: bool,
     /// Objects are hidden or isolated.
     pub temporary: bool,
+    /// Whether the selection holds pinned elements, and whether it holds unpinned ones.
+    pub pinned: (bool, bool),
 }
 
 /// A message of the catalog, named by identifier.
@@ -139,6 +143,27 @@ const UNDO_POINT: Label = Label {
 const UNHIDE_ALL: Label = Label {
     message_id: "ab-menu-unhide-all",
 };
+const OFFSET: Label = Label {
+    message_id: "ab-menu-offset",
+};
+const ARRAY: Label = Label {
+    message_id: "ab-menu-array",
+};
+const SPLIT: Label = Label {
+    message_id: "ab-menu-split",
+};
+const PIN: Label = Label {
+    message_id: "ab-menu-pin",
+};
+const UNPIN: Label = Label {
+    message_id: "ab-menu-unpin",
+};
+const ALIGN: Label = Label {
+    message_id: "ab-menu-align",
+};
+const TRIM: Label = Label {
+    message_id: "ab-menu-trim",
+};
 const ZOOM_EXTENTS: Label = Label {
     message_id: "ab-menu-zoom-extents",
 };
@@ -158,6 +183,7 @@ fn keep_label(kind: &str) -> &'static str {
 
 /// The entries for `state`, in order.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one list per state")]
 pub fn entries(state: &State) -> Vec<ContextEntry> {
     if state.running {
         let mut out = vec![
@@ -190,6 +216,9 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
                 NEW_STAIR.message_id,
                 archbuilder_commands::stair::STAIR_CREATE,
             ),
+            ContextEntry::command(ALIGN.message_id, edit::MODIFY_ALIGN),
+            ContextEntry::command(TRIM.message_id, edit::MODIFY_TRIM),
+            ContextEntry::command(SPLIT.message_id, edit::WALL_SPLIT),
             ContextEntry::command(SELECT_ALL.message_id, ui::SELECT_ALL),
             ContextEntry::command(ZOOM_EXTENTS.message_id, ui::ZOOM_EXTENTS),
             unhide,
@@ -202,6 +231,17 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
         ContextEntry::command(COPY.message_id, MODIFY_COPY),
         ContextEntry::command(ROTATE.message_id, MODIFY_ROTATE),
         ContextEntry::command(MIRROR.message_id, MODIFY_MIRROR),
+        ContextEntry::command(OFFSET.message_id, edit::MODIFY_OFFSET),
+        ContextEntry::command(ARRAY.message_id, edit::MODIFY_ARRAY),
+    ];
+    // Pin what is not pinned, unpin what is; a mixed selection offers both.
+    if state.pinned.1 {
+        out.push(ContextEntry::command(PIN.message_id, edit::ELEMENT_PIN));
+    }
+    if state.pinned.0 {
+        out.push(ContextEntry::command(UNPIN.message_id, edit::ELEMENT_UNPIN));
+    }
+    out.extend([
         ContextEntry::separator(),
         ContextEntry::command(COPY_CLIPBOARD.message_id, ui::COPY),
         ContextEntry::command(CUT.message_id, ui::CUT),
@@ -212,7 +252,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
         unhide,
         ContextEntry::separator(),
         ContextEntry::command(SELECT_KIND.message_id, ui::SELECT_KIND),
-    ];
+    ]);
     if state
         .kinds
         .iter()
@@ -296,6 +336,9 @@ mod tests {
             [
                 "ab-menu-repeat",
                 "ab-menu-new-stair",
+                "ab-menu-align",
+                "ab-menu-trim",
+                "ab-menu-split",
                 "ab-menu-select-all",
                 "ab-menu-zoom-extents",
                 "ab-menu-unhide-all"
@@ -303,7 +346,7 @@ mod tests {
         );
         // Repeat and Unhide all are disabled while there is nothing to repeat or show again.
         let e = entries(&s);
-        assert!(!e[0].enabled && !e[4].enabled && e[1].enabled && e[2].enabled && e[3].enabled);
+        assert!(!e[0].enabled && !e[7].enabled && e[1..7].iter().all(|e| e.enabled));
         let s = State {
             has_last: true,
             temporary: true,
@@ -329,6 +372,8 @@ mod tests {
             "ab-menu-copy",
             "ab-menu-rotate",
             "ab-menu-mirror",
+            "ab-menu-offset",
+            "ab-menu-array",
             "ab-menu-hide",
             "ab-menu-isolate",
             "ab-menu-select-kind",
@@ -340,6 +385,15 @@ mod tests {
         ] {
             assert!(names.contains(&want.to_owned()), "{want}");
         }
+        // Pin while nothing is pinned, Unpin once something is.
+        assert!(names.contains(&"ab-menu-pin".to_owned()) || !one.pinned.1);
+        let pinned = State {
+            pinned: (true, false),
+            ..one.clone()
+        };
+        let names_pinned = labels(&pinned);
+        assert!(names_pinned.contains(&"ab-menu-unpin".to_owned()));
+        assert!(!names_pinned.contains(&"ab-menu-pin".to_owned()));
         // Keep only entries appear only when the selection holds several kinds.
         assert!(!names.iter().any(|n| n.starts_with("ab-menu-keep")));
         let mixed = State {

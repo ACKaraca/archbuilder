@@ -41,3 +41,4 @@ ab-model-type-core = Çekirdekte en az bir katman olmalıdır: art arda gelen bi
 ab-model-type-total = Katmanların toplamı { $total } mm; toplam { $least } mm ile { $most } mm arasında olmalıdır.
 ab-model-type-mismatch = "{ $name }", { $field } değerinde tipiyle uyuşmuyor. Bu değer tipten gelir: tipi düzenleyin ya da başka bir tip seçin.
 ab-model-type-operation = "{ $name }" tipi { $operation } olarak çalışamaz: kapı tek ya da çift kanatla açılır ya da kayar, pencere sabit, menteşeli ya da sürmelidir.
+ab-model-pinned = "{ $name }" sabitlenmiş. Değiştirmek için sabitlemesini kaldırın (UP).

@@ -243,23 +243,75 @@ pub(crate) fn named(name: &str) -> Value {
 }
 
 /// Runs the model's rules on the open transaction.
+/// Whether the open transaction `txn` created `id` or changed it in more than its name and pinned
+/// flag.
+fn changed_by(txn: &arc_doc::Txn, id: ObjectId) -> bool {
+    let (base, candidate) = (txn.base(), txn.snapshot());
+    txn.touched()
+        .get(&id)
+        .is_some_and(|c| *c != arc_doc::Change::Deleted)
+        && match (spatial::get(base, id), spatial::get(candidate, id)) {
+            (Some(before), Some(after)) => {
+                let pin = spatial::type_of(base, id).and_then(|k| types::pinned_slot(&k));
+                before.header.owner != after.header.owner
+                    || (1..before.values.len().max(after.values.len()))
+                        .any(|k| Some(k) != pin && before.values.get(k) != after.values.get(k))
+            }
+            _ => true,
+        }
+}
+
+/// Whether the open transaction caused the warning `error`: it placed or changed the door or
+/// window, or drew or reshaped the wall it opens into. A warning it did not cause belongs to the
+/// warnings register and is not reported again.
+pub(crate) fn caused(txn: &arc_doc::Txn, error: &arc_base::Error) -> bool {
+    validate::object_of(error).is_some_and(|id| changed_by(txn, id))
+        || validate::other_object(error).is_some_and(|id| changed_by(txn, id))
+}
+
+/// Whether the warning `error` refuses the open transaction: it placed or changed the door or
+/// window, or drew the wall the door opens into. Reshaping an existing wall (trim, a handle, a
+/// property) only warns.
+fn refuses(txn: &arc_doc::Txn, error: &arc_base::Error) -> bool {
+    validate::object_of(error).is_some_and(|id| changed_by(txn, id))
+        || validate::other_object(error)
+            .is_some_and(|id| spatial::get(txn.base(), id).is_none() && changed_by(txn, id))
+}
+
 pub(crate) fn ensure_valid(ctx: &mut Context<'_>) -> Result<()> {
     let txn = ctx.txn()?;
-    match validate::check(txn.snapshot(), txn.touched())
-        .into_iter()
-        .next()
-    {
-        Some(error) => Err(error),
-        None => Ok(()),
+    if let Some(error) = validate::pin_refusal(txn.base(), txn.snapshot(), txn.touched()) {
+        return Err(error);
     }
+    // A warning refuses only when this command placed the door or drew the wall.
+    if let Some(error) = validate::check(txn.snapshot(), txn.touched())
+        .into_iter()
+        .find(|e| !validate::is_warning(e) || refuses(txn, e))
+    {
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub(crate) fn create(
     ctx: &mut Context<'_>,
     key: &str,
     owner: Option<ObjectId>,
-    values: Vec<Option<Value>>,
+    mut values: Vec<Option<Value>>,
 ) -> Result<ObjectId> {
+    // Values made for an older layout get the fields appended since then absent; a new object
+    // (a copy, a paste, a piece of a split) is never pinned.
+    let fields = ctx
+        .snapshot()
+        .registry()
+        .get(key)
+        .map_or(values.len(), |d| d.schema.fields.len());
+    if values.len() < fields {
+        values.resize(fields, None);
+    }
+    if let Some(slot) = types::pinned_slot(key).and_then(|at| values.get_mut(at)) {
+        *slot = None;
+    }
     let id: ObjectId = ctx.new_id();
     let header = Header {
         owner,
