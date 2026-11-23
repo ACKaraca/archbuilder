@@ -12,6 +12,8 @@ publish.workspace = true
 arc-base = { workspace = true }
 arc-doc = { workspace = true }
 arc-geom = { workspace = true }
+arc-draft = { workspace = true }
+arc-view = { workspace = true }
 
 [lints]
 workspace = true

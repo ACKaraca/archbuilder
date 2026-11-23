@@ -15,7 +15,7 @@ use arc_app::product::{
 };
 use arc_app::settings::{Scope, Setting, SettingType, SettingValue};
 use arc_app::shell::{
-    self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, ViewportPanel, WorkPlaneProbe,
+    self, CommandLinePanel, InitialView, OverlayProbe, ShellConfig, WorkPlaneProbe,
 };
 use arc_base::{Error, Result};
 use arc_command::Clock;
@@ -48,6 +48,7 @@ pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_roof;
 pub mod extract_stair;
+pub mod extract_view;
 pub mod extract_wall;
 pub mod floor_sketch;
 pub mod floor_tool;
@@ -59,6 +60,7 @@ pub mod modify_tool;
 pub mod opening_view;
 pub mod outliner;
 pub mod picker;
+pub mod plan_state;
 pub mod properties;
 pub mod roof_view;
 pub mod room_tool;
@@ -70,6 +72,7 @@ pub mod stair_tool;
 pub mod stair_view;
 pub mod tool_type;
 pub mod type_panel;
+pub mod viewport_panel;
 pub mod visibility;
 pub mod wall_tool;
 pub mod warnings_panel;
@@ -201,6 +204,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_stair::dependents(snapshot, changes));
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
+        out.extend(extract_view::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
         out
@@ -237,9 +241,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             || {
                 // A click in the viewport selects through the product's command, so a level
                 // outline selects its storey.
-                let mut viewport = ViewportPanel::new();
-                viewport.commands.select = OBJECT_SELECT.into();
-                shell::panel(viewport)
+                shell::panel(viewport_panel::HeaderViewport::new(OBJECT_SELECT))
             },
         ),
         entry(
@@ -359,6 +361,19 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_insert::extract_insert(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.plan_view".into(),
+        // A storey stands for its default view while it has none of its own.
+        types: vec![
+            archbuilder_model::types::PLAN_VIEW.to_owned(),
+            archbuilder_model::types::STOREY.to_owned(),
+        ],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_view::extract_view(snapshot, object, cancel)
             })
         }),
     })?;
@@ -513,14 +528,26 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         // The rooms' fills and tags follow the level labels; the shared room view learns the
         // selection and the active storey from the work-plane probe.
         overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
-            let mut out = labels::overlays(app, tab, language);
+            // A plan view draws the lines of stairs, roofs, ceilings and openings itself; what stays
+            // here is text (room tags, stair texts) and the marks of pinned elements.
+            let planned = plan_state::current(tab).is_some();
+            let mut out = if planned {
+                Vec::new()
+            } else {
+                labels::overlays(app, tab, language)
+            };
             if let Ok(t) = app.tab(tab) {
                 let snapshot = t.document().snapshot();
                 out.extend(room_view::shared().overlays(&snapshot, language));
-                out.extend(stair_view::overlays(&snapshot, language));
-                out.extend(roof_view::overlays(&snapshot, language));
-                out.extend(ceiling_view::overlays(&snapshot, language));
-                out.extend(opening_view::overlays(&snapshot));
+                if planned {
+                    // The roofs are in the drawing (overhead when above the cut): no tint here.
+                    out.extend(stair_view::labels(&snapshot, language));
+                } else {
+                    out.extend(stair_view::overlays(&snapshot, language));
+                    out.extend(roof_view::overlays(&snapshot, language));
+                    out.extend(ceiling_view::overlays(&snapshot, language));
+                    out.extend(opening_view::overlays(&snapshot));
+                }
                 out.extend(pin_marks(&snapshot));
             }
             out

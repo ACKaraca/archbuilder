@@ -54,6 +54,13 @@ pub mod ui {
     pub const ISOLATE_KIND: &str = "archbuilder.view.isolate_category";
     /// Ends the temporary hide and isolation.
     pub const RESET_VISIBILITY: &str = "archbuilder.view.reset";
+    /// Makes a plan view (the `view` parameter) or the 3D view (`3d`) the view of the viewport.
+    pub const OPEN_VIEW: &str = "archbuilder.view.open";
+    /// Hides the selected elements in the plan view that is open: the view's own list, saved and
+    /// undone with the document.
+    pub const HIDE_IN_VIEW: &str = "archbuilder.view.hide_in_view";
+    /// Shows every element the open plan view's own list hides again.
+    pub const SHOW_IN_VIEW: &str = "archbuilder.view.show_in_view";
     /// Frames the whole drawing.
     pub const ZOOM_EXTENTS: &str = "archbuilder.view.zoom_extents";
     /// Switches snapping on or off (the `on` parameter, else the opposite of now).

@@ -11,7 +11,7 @@ use arc_app::shell::{Action, Panel, PanelContext};
 use arc_base::ObjectId;
 use arc_doc::Snapshot;
 use arc_ui::Localize;
-use arc_ui::egui::Ui;
+use arc_ui::egui::{self, Ui};
 use arc_ui::{Intent, TreeCommands, TreeItem, TreeSource, TreeView, matches_filter};
 use archbuilder_commands::structure::{OBJECT_RENAME, OBJECT_SELECT, PROJECT_NEW};
 use archbuilder_model::spatial;
@@ -27,6 +27,24 @@ const NO_PROJECT: Message = Message {
 };
 const CREATE_PROJECT: Message = Message {
     message_id: "ab-outliner-create-project",
+};
+const VIEWS: Message = Message {
+    message_id: "ab-outliner-views",
+};
+const VIEW_3D: Message = Message {
+    message_id: "ab-outliner-view-3d",
+};
+const VIEW_OPEN: Message = Message {
+    message_id: "ab-view-open",
+};
+const VIEW_DUPLICATE: Message = Message {
+    message_id: "ab-view-duplicate",
+};
+const VIEW_RENAME: Message = Message {
+    message_id: "ab-view-rename",
+};
+const VIEW_DELETE: Message = Message {
+    message_id: "ab-view-delete",
 };
 
 fn say(localize: &dyn Localize, message: &Message) -> String {
@@ -268,6 +286,8 @@ pub struct OutlinerPanel {
     opened: BTreeSet<ObjectId>,
     /// The tab the tree was drawn for: the tree forgets the nodes of another document.
     tab: Option<arc_app::application::TabId>,
+    /// The view being renamed in the Views branch, with the text typed so far.
+    renaming: Option<(ObjectId, String)>,
 }
 
 impl Default for OutlinerPanel {
@@ -285,11 +305,120 @@ impl Default for OutlinerPanel {
             },
             opened: BTreeSet::new(),
             tab: None,
+            renaming: None,
         }
     }
 }
 
 impl OutlinerPanel {
+    /// The Views branch: the 3D view and the plan views. A click, a double click or Open makes a
+    /// view the view of the viewport; the property grid shows the settings of the open plan view
+    /// while nothing is selected.
+    #[allow(clippy::too_many_lines, reason = "one row per view with its menu")]
+    fn views(
+        &mut self,
+        ui: &mut Ui,
+        cx: &mut PanelContext<'_>,
+        tab: arc_app::application::TabId,
+        snapshot: &Snapshot,
+    ) {
+        use crate::shortcuts::ui as cmd;
+        use archbuilder_commands::view as vc;
+        let current = crate::plan_state::current_in(tab, snapshot);
+        // The controller carries the switch out; it is no command of the document, so the history
+        // does not list it.
+        let open = |id: Option<ObjectId>| {
+            Action::Line(arc_ui::LineAction::Invoke(
+                Intent::new(cmd::OPEN_VIEW).with(
+                    "view",
+                    id.map_or_else(|| "3d".to_owned(), |i| i.to_string()),
+                ),
+            ))
+        };
+        let open_storey = |storey: ObjectId| {
+            Action::Line(arc_ui::LineAction::Invoke(
+                Intent::new(cmd::OPEN_VIEW).with("storey", storey.to_string()),
+            ))
+        };
+        let views = archbuilder_model::view::all(snapshot);
+        egui::CollapsingHeader::new(say(cx.localize, &VIEWS))
+            .default_open(true)
+            .show(ui, |ui| {
+                let r = ui.selectable_label(current.is_none(), say(cx.localize, &VIEW_3D));
+                if r.clicked() || r.double_clicked() {
+                    cx.actions.push(open(None));
+                }
+                // A storey without a view (a document from before plan views) is listed by its
+                // name: its default view, which the document does not hold. Duplicate and rename
+                // work on it (they make its view in the same step); delete does not.
+                let defaults = spatial::objects(snapshot, archbuilder_model::types::STOREY)
+                    .into_iter()
+                    .filter(|s| archbuilder_model::view::of_storey(snapshot, s.id).is_empty())
+                    .take(archbuilder_model::view::MAX_VIEWS)
+                    .map(|s| (s, false));
+                let rows: Vec<(std::sync::Arc<arc_doc::Object>, bool)> = defaults
+                    .chain(views.iter().map(|v| (v.clone(), true)))
+                    .collect();
+                for (v, real) in &rows {
+                    let name = name(v);
+                    let (v_id, real_row) = (v.id, *real);
+                    let opening = || {
+                        if real_row {
+                            open(Some(v_id))
+                        } else {
+                            open_storey(v_id)
+                        }
+                    };
+                    if let Some((id, text)) = self.renaming.as_mut()
+                        && *id == v.id
+                    {
+                        let edit = ui.text_edit_singleline(text);
+                        if edit.lost_focus() {
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                cx.actions.push(Action::Intent(
+                                    Intent::new(vc::VIEW_RENAME)
+                                        .with("view", v.id.to_string())
+                                        .with("name", text.trim()),
+                                ));
+                            }
+                            self.renaming = None;
+                        } else {
+                            edit.request_focus();
+                        }
+                        continue;
+                    }
+                    let r = ui.selectable_label(current == Some(v.id), &name);
+                    if r.clicked() || r.double_clicked() {
+                        cx.actions.push(opening());
+                    }
+                    r.context_menu(|ui| {
+                        let id = v.id.to_string();
+                        if ui.button(say(cx.localize, &VIEW_OPEN)).clicked() {
+                            cx.actions.push(opening());
+                            ui.close();
+                        }
+                        if ui.button(say(cx.localize, &VIEW_DUPLICATE)).clicked() {
+                            cx.actions.push(Action::Intent(
+                                Intent::new(vc::VIEW_DUPLICATE).with("view", id.clone()),
+                            ));
+                            ui.close();
+                        }
+                        if ui.button(say(cx.localize, &VIEW_RENAME)).clicked() {
+                            self.renaming = Some((v.id, name.clone()));
+                            ui.close();
+                        }
+                        // The last view of a storey stays; a default view is none to delete.
+                        if *real && ui.button(say(cx.localize, &VIEW_DELETE)).clicked() {
+                            cx.actions.push(Action::Intent(
+                                Intent::new(vc::VIEW_DELETE).with("view", id),
+                            ));
+                            ui.close();
+                        }
+                    });
+                }
+            });
+    }
+
     /// Opens every node that has children the first time it is seen.
     fn open_new(&mut self, source: &Structure<'_>) {
         let mut parents: Vec<Option<ObjectId>> = vec![None];
@@ -318,7 +447,7 @@ impl OutlinerPanel {
 
 impl Panel for OutlinerPanel {
     fn show(&mut self, ui: &mut Ui, cx: &mut PanelContext<'_>) {
-        let (Some(view), Some(tab)) = (cx.view.as_deref(), cx.tab) else {
+        let (Some(_), Some(tab)) = (cx.view.as_deref(), cx.tab) else {
             return;
         };
         let Ok(tab) = cx.app.tab(tab) else {
@@ -332,17 +461,38 @@ impl Panel for OutlinerPanel {
             }
             return;
         }
-        let source = Structure::new(&snapshot, view.selection(), cx.language);
-        if self.tab != cx.tab {
-            // The tree dropped the expanded nodes of the other document: open this one again.
-            self.tab = cx.tab;
-            self.opened.clear();
-        }
-        self.open_new(&source);
-        if let Some(intent) = self.tree.show(ui, &source, &self.commands, cx.localize) {
-            cx.actions
-                .push(Action::Intent(without_type(&snapshot, intent)));
-        }
+        // The Views branch and the tree scroll together; the tree keeps a box one panel tall, in
+        // which it scrolls its own rows (so a large model draws only the rows in sight).
+        let height = ui.available_height();
+        egui::ScrollArea::vertical()
+            .id_salt("ab-outliner")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if let Some(t) = cx.tab {
+                    self.views(ui, cx, t, &snapshot);
+                }
+                let Some(view) = cx.view.as_deref() else {
+                    return;
+                };
+                let source = Structure::new(&snapshot, view.selection(), cx.language);
+                if self.tab != cx.tab {
+                    // The tree dropped the expanded nodes of the other document: open this one
+                    // again.
+                    self.tab = cx.tab;
+                    self.opened.clear();
+                }
+                self.open_new(&source);
+                let size = egui::vec2(ui.available_width(), height.max(120.0));
+                let intent = ui
+                    .allocate_ui(size, |ui| {
+                        self.tree.show(ui, &source, &self.commands, cx.localize)
+                    })
+                    .inner;
+                if let Some(intent) = intent {
+                    cx.actions
+                        .push(Action::Intent(without_type(&snapshot, intent)));
+                }
+            });
     }
 }
 

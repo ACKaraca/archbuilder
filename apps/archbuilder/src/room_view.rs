@@ -381,17 +381,16 @@ impl RoomView {
         clippy::too_many_lines,
         reason = "one pass: filter, lay out, budget, notice"
     )]
+    /// The cache for `rooms` (derived already, with their areas in `areas`).
     fn build(
         snapshot: &Snapshot,
         language: &str,
-        active: Option<ObjectId>,
-        view: Option<ViewRect>,
+        (active, view): (Option<ObjectId>, Option<ViewRect>),
         hide_rooms: &[ObjectId],
+        (mut rooms, areas): Derived,
     ) -> Cache {
-        let mut rooms = active.map_or_else(Vec::new, |s| {
-            archbuilder_model::room::of_storey(snapshot, s)
-        });
         rooms.retain(|e| hide_rooms.binary_search(&e.id).is_err());
+        let net_area = |e: &Entry| areas.get(&e.id).copied().flatten();
         let localizer = crate::localizer(&[language.to_owned()]).ok();
         let say = |id: &str, count: usize| {
             localizer.as_ref().map_or_else(
@@ -416,14 +415,7 @@ impl RoomView {
             .collect();
         let texts: Vec<String> = seen
             .iter()
-            .map(|e| {
-                tag(
-                    e,
-                    archbuilder_model::room::net_area(snapshot, e),
-                    language,
-                    &|id| say(id, 0),
-                )
-            })
+            .map(|e| tag(e, net_area(e), language, &|id| say(id, 0)))
             .collect();
         let shown: Vec<Option<[f64; 2]>> = match view {
             None => vec![Some([0.0, 0.0]); seen.len()],
@@ -441,7 +433,7 @@ impl RoomView {
                             .iter()
                             .map(|h| h.iter().map(|p| v.to_pixel(*p)).collect())
                             .collect(),
-                        area: archbuilder_model::room::net_area(snapshot, e).unwrap_or(0.0),
+                        area: net_area(e).unwrap_or(0.0),
                         alt: archbuilder_model::room::pole_of(&e.footprint.loops())
                             .map(|p| v.to_pixel(p)),
                     })
@@ -508,7 +500,7 @@ impl RoomView {
         let view = self.view();
         let hidden = self.hidden.lock().map(|h| h.clone()).unwrap_or_default();
         let Ok(mut guard) = self.cache.lock() else {
-            return Self::build(snapshot, language, active, view, &hidden).drawn;
+            return Vec::new();
         };
         let fresh = guard.as_ref().is_some_and(|c| {
             c.snapshot.ptr_eq(snapshot)
@@ -517,8 +509,16 @@ impl RoomView {
                 && c.view == view.map(|v| v.key())
                 && c.hidden == hidden
         });
-        if !fresh {
-            *guard = Some(Self::build(snapshot, language, active, view, &hidden));
+        // The rooms and their areas are derived on the extraction workers after an edit: until
+        // they are, the tags of before stay, and the next frame looks again.
+        if !fresh && let Some(derived) = ready(snapshot, active) {
+            *guard = Some(Self::build(
+                snapshot,
+                language,
+                (active, view),
+                &hidden,
+                derived,
+            ));
         }
         let Some(cache) = guard.as_ref() else {
             return Vec::new();
@@ -532,6 +532,22 @@ impl RoomView {
     }
 }
 
+/// The rooms of a storey with the net area of each.
+type Derived = (Vec<Entry>, std::collections::HashMap<ObjectId, Option<f64>>);
+
+/// The rooms of `active` and their net areas, when every one is derived already for `snapshot`.
+fn ready(snapshot: &Snapshot, active: Option<ObjectId>) -> Option<Derived> {
+    let Some(storey) = active else {
+        return Some((Vec::new(), std::collections::HashMap::new()));
+    };
+    let rooms = archbuilder_model::room::of_storey_ready(snapshot, storey)?;
+    let areas = rooms
+        .iter()
+        .map(|e| Some((e.id, archbuilder_model::room::net_area_ready(snapshot, e)?)))
+        .collect::<Option<_>>()?;
+    Some((rooms, areas))
+}
+
 /// The wireframe of a selected room: base loop, top loop and the corner edges. The top follows
 /// the room's solid: under a sloped ceiling or a roof it is the outline of each piece of the top.
 fn volume(snapshot: &Snapshot, entry: &Entry) -> Vec<ProductOverlay> {
@@ -539,7 +555,7 @@ fn volume(snapshot: &Snapshot, entry: &Entry) -> Vec<ProductOverlay> {
     if polygon.is_empty() {
         return Vec::new();
     }
-    if let Some(shape) = archbuilder_model::room::shape(snapshot, entry)
+    if let Some(shape) = archbuilder_model::room::shape_ready(snapshot, entry).flatten()
         && shape.flat_top().is_none()
     {
         let mut out: Vec<ProductOverlay> = Vec::new();
@@ -596,7 +612,8 @@ fn volume(snapshot: &Snapshot, entry: &Entry) -> Vec<ProductOverlay> {
         }
         return out;
     }
-    let top = archbuilder_model::room::shape(snapshot, entry)
+    let top = archbuilder_model::room::shape_ready(snapshot, entry)
+        .flatten()
         .and_then(|s| s.flat_top())
         .unwrap_or(entry.top);
     let ring = |l: &Vec<[f64; 2]>, z: f64| ProductOverlay::Path {

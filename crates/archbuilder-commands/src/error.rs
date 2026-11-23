@@ -312,4 +312,10 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-no-host-selected",
     };
+    /// The last plan view of a storey is deleted.
+    pub const LAST_VIEW: ErrorCode = ErrorCode {
+        code: "ab.cmd.last_view",
+        category: Category::Conflict,
+        message_id: "ab-cmd-last-view",
+    };
 }

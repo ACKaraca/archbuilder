@@ -33,6 +33,9 @@ pub const STOREY: &str = "archbuilder.storey";
 /// The type key of the level.
 pub const LEVEL: &str = "archbuilder.level";
 
+/// The type key of the plan view of a storey.
+pub const PLAN_VIEW: &str = "archbuilder.plan_view";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -123,7 +126,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 22] = [
+pub const KEYS: [&str; 23] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -146,6 +149,7 @@ pub const KEYS: [&str; 22] = [
     SHAFT,
     VERTICAL_OPENING,
     CEILING_TYPE,
+    PLAN_VIEW,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -456,6 +460,43 @@ pub mod roof {
         pub const OVERHANG: usize = 7;
     }
 }
+
+/// Field positions of `archbuilder.plan_view`.
+pub mod plan_view {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The cut plane's height above the storey's level, in meters.
+    pub const CUT: usize = 1;
+    /// The top of the view range above the level; absent takes the next level, else 3 m.
+    pub const TOP: usize = 2;
+    /// Whether what lies between the cut and the top is drawn (overhead).
+    pub const OVERHEAD: usize = 3;
+    /// The scale denominator (100 is 1:100).
+    pub const SCALE: usize = 4;
+    /// The detail level: coarse, medium or fine.
+    pub const DETAIL: usize = 5;
+    /// Whether the storey below is shown faint under the plan.
+    pub const UNDERLAY: usize = 6;
+    /// The first category flag (see [`crate::view::Category`]); one flag per category follows.
+    pub const CATEGORIES: usize = 7;
+    /// The elements hidden in this view (records with one optional reference each).
+    pub const HIDDEN: usize = 16;
+    /// The field of the reference inside one entry of [`HIDDEN`].
+    pub const HIDDEN_OBJECT: usize = 0;
+    /// The bottom of the view range relative to the level, in meters (0 is the level).
+    pub const BOTTOM: usize = 17;
+    /// The view depth relative to the level, in meters: elements down to it draw beyond the cut.
+    pub const DEPTH: usize = 18;
+}
+
+/// The range of a plan view's cut height and top, in meters above the level.
+pub const VIEW_HEIGHT_RANGE: (f64, f64) = (0.05, 1000.0);
+/// The range of a plan view's bottom and view depth, in meters relative to the level.
+pub const VIEW_DEPTH_RANGE: (f64, f64) = (-1000.0, 1000.0);
+/// The range of a plan view's scale denominator.
+pub const VIEW_SCALE_RANGE: (f64, f64) = (1.0, 10_000.0);
+/// The most elements one view hides.
+pub const MAX_HIDDEN: usize = 100_000;
 
 /// Field positions of `archbuilder.ceiling`. The first seven are those of a floor, so the
 /// boundary is read and edited by the floor's code.
@@ -803,6 +844,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         arcs_field(3),
     ];
     for (key, fields) in [
+        (PLAN_VIEW, plan_view_fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
         (SHAFT, shaft_fields()),
@@ -837,6 +879,76 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(decl)?;
     }
     Ok(())
+}
+
+/// The fields of a plan view: the range, the scale, the detail level, the underlay, one flag per
+/// category and the elements hidden in the view.
+fn plan_view_fields() -> Vec<FieldDecl> {
+    let mut hidden = reference_to(ELEMENTS[0]);
+    hidden.targets = ELEMENTS
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    hidden.rule.on_delete = OnDelete::Clear;
+    hidden.rule.cardinality = Cardinality::Optional;
+    let flag = |name: &str, on: bool| {
+        FieldDecl::new(name, ValueType::Bool)
+            .with_default(Value::Bool(on))
+            .in_aspect("graphics")
+    };
+    let mut fields = vec![
+        name_field("identity"),
+        length_field("cut", Some(real(VIEW_HEIGHT_RANGE)))
+            .with_default(length(crate::view::DEFAULT_CUT))
+            .in_aspect("range"),
+        optional_length("top", VIEW_HEIGHT_RANGE).in_aspect("range"),
+        flag("overhead", true).in_aspect("range"),
+        FieldDecl::new("scale", ValueType::F64)
+            .with_default(Value::F64(crate::view::DEFAULT_SCALE))
+            .with_bound(real(VIEW_SCALE_RANGE))
+            .in_aspect("graphics"),
+        FieldDecl::new(
+            "detail",
+            ValueType::Enum(
+                crate::view::Detail::ALL
+                    .iter()
+                    .map(|d| EnumVariant::new(d.name(), d.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(crate::view::Detail::Medium.code()))
+        .in_aspect("graphics"),
+        flag("underlay", false),
+    ];
+    fields.extend(
+        crate::view::Category::ALL
+            .iter()
+            .map(|c| flag(c.field(), c.shown_by_default())),
+    );
+    fields.push(
+        FieldDecl::new(
+            "hidden",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("object", ValueType::Reference(hidden)).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_HIDDEN as u64,
+        })
+        .optional()
+        .in_aspect("graphics"),
+    );
+    fields.push(
+        length_field("bottom", Some(real(VIEW_DEPTH_RANGE)))
+            .with_default(length(0.0))
+            .in_aspect("range"),
+    );
+    fields.push(
+        length_field("depth", Some(real(VIEW_DEPTH_RANGE)))
+            .with_default(length(-crate::view::BOTTOM_MARGIN))
+            .in_aspect("range"),
+    );
+    fields
 }
 
 /// The boundary vertices of a floor, ceiling, shaft or vertical opening.

@@ -97,6 +97,15 @@ pub(super) struct Habits {
     pub(super) rename: Option<Rename>,
     pub(super) banner: Option<String>,
     view: Option<ViewRequest>,
+    /// The plan view this tab shows, refreshed each frame.
+    pub(super) plan: Option<ObjectId>,
+    /// The camera of the 3D view while a plan view is shown: switching back restores it.
+    camera_3d: Option<arc_geom::view::ViewFrame>,
+    /// The plan view the last frame showed, to notice when it is gone.
+    shown_plan: Option<ObjectId>,
+    /// The temporary lists alone (without what a plan view or a top view adds): the banner counts
+    /// them.
+    temporary: Lists,
     /// Whether snapping to points is on.
     pub(super) snap_on: bool,
     /// The fine grid step, in meters.
@@ -131,6 +140,10 @@ impl Default for Habits {
             rename: None,
             banner: None,
             view: None,
+            plan: None,
+            camera_3d: None,
+            shown_plan: None,
+            temporary: Lists::default(),
             snap_on: true,
             grid: GRID,
             swallow_enter: None,
@@ -355,7 +368,8 @@ impl WallInteraction {
             return;
         };
         let snapshot = document.snapshot();
-        self.habits.lists = self.habits.vis.lists(&snapshot).clone();
+        self.habits.temporary = self.habits.vis.lists(&snapshot).clone();
+        self.habits.lists = self.habits.temporary.clone();
         // In a view from above the roofs of the storey are drawn as their plan symbol, so the
         // walls the plan cuts stay in view.
         let rooms = crate::room_view::shared();
@@ -381,6 +395,49 @@ impl WallInteraction {
             Vec::new()
         };
         crate::room_view::shared().set_hidden(hidden_rooms);
+        // The drawings of the plan views are objects of their own: the 3D view hides them, a plan
+        // view shows only its own drawing, which the temporary state filters instead.
+        self.habits.plan = crate::plan_state::current_in(cx.tab(), &snapshot);
+        match self.habits.plan {
+            Some(view) => {
+                self.habits.shown_plan = Some(view);
+                let temporary = &self.habits.temporary;
+                let filter = archbuilder_model::plan::Filter {
+                    hidden: temporary.hidden.iter().copied().collect(),
+                    only: temporary
+                        .isolated
+                        .as_ref()
+                        .map(|l| l.iter().copied().collect()),
+                };
+                if crate::plan_state::set_filter(view, filter) {
+                    cx.ask_extraction(&[view]);
+                }
+                self.habits.lists = Lists {
+                    hidden: Vec::new(),
+                    isolated: Some(vec![view]),
+                };
+            }
+            None => {
+                // The view shown is gone (an undo removed it, or its storey): back to the 3D view
+                // and its camera.
+                if self.habits.shown_plan.take().is_some() {
+                    crate::plan_state::set(cx.tab(), None);
+                    self.habits.view = Some(
+                        self.habits
+                            .camera_3d
+                            .take()
+                            .map_or(ViewRequest::Extents, ViewRequest::Camera),
+                    );
+                }
+                // The drawings are objects of their own (a storey's for its default view).
+                self.habits.lists.hidden.extend(
+                    archbuilder_model::view::all(&snapshot)
+                        .iter()
+                        .chain(spatial::objects(&snapshot, STOREY).iter())
+                        .map(|v| v.id),
+                );
+            }
+        }
         self.habits.banner = self.banner(cx);
     }
 
@@ -390,8 +447,8 @@ impl WallInteraction {
             return None;
         }
         let (hidden, isolated) = (
-            self.habits.lists.hidden.len(),
-            self.habits.lists.isolated.as_ref().map(Vec::len),
+            self.habits.temporary.hidden.len(),
+            self.habits.temporary.isolated.as_ref().map(Vec::len),
         );
         let count = |n: usize| {
             (
@@ -614,6 +671,16 @@ impl WallInteraction {
 
     // ----- the context menu ------------------------------------------------------------------
 
+    /// Whether the open plan view hides elements of its own.
+    fn hidden_in_view(&self, cx: &InteractionContext<'_>) -> bool {
+        let (Some(view), Ok(document)) = (self.habits.plan, cx.document()) else {
+            return false;
+        };
+        spatial::get(&document.snapshot(), view)
+            .and_then(|o| archbuilder_model::view::PlanView::from_values(&o.values))
+            .is_some_and(|v| !v.hidden.is_empty())
+    }
+
     /// The entries of the context menu for the state the tab is in.
     pub(super) fn habit_menu(&self, cx: &InteractionContext<'_>) -> Vec<ContextEntry> {
         let running = self.tool_running() || self.modify.running();
@@ -635,6 +702,9 @@ impl WallInteraction {
             clipboard: crate::clipboard::get().is_some(),
             has_last: self.habits.last.is_some(),
             temporary: self.habits.vis.active(),
+            hidden_in_view: self.hidden_in_view(cx),
+            // Hide in view on a storey's default view makes the view in the same step.
+            in_plan: self.habits.plan.is_some(),
             pinned: snapshot.as_ref().map_or((false, false), |s| {
                 let flags = cx.selection().iter().filter_map(|id| {
                     let key = spatial::type_of(s, *id)?;
@@ -841,6 +911,101 @@ impl WallInteraction {
         Ok((snapshot, ids))
     }
 
+    /// Makes the plan view of the `view` parameter (or the 3D view, for `3d`) the viewport's;
+    /// with a `storey` parameter, that storey's first view, or its default view when it has none
+    /// (a document from before plan views), which is not written to the document. A plan view looks straight down, framed on the
+    /// storey's elements, and asks for its drawing; the 3D view gets its own camera back.
+    fn open_view(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
+        let document = cx.document()?;
+        let param = |k: &str| intent.params.get(k).and_then(serde_json::Value::as_str);
+        let mismatch = || Error::new(codes::KIND_MISMATCH);
+        let view = match (param("view"), param("storey")) {
+            (_, Some(storey)) => {
+                let storey: ObjectId = storey.parse().map_err(|_| mismatch())?;
+                if spatial::type_of(&document.snapshot(), storey).as_deref() != Some(STOREY) {
+                    return Err(mismatch());
+                }
+                // A storey without a view of its own shows its default view, which the document
+                // does not hold: opening it changes nothing.
+                let first = archbuilder_model::view::of_storey(&document.snapshot(), storey)
+                    .first()
+                    .map(|v| v.id);
+                Some(first.unwrap_or(storey))
+            }
+            (Some("3d") | None, None) => None,
+            (Some(text), None) => {
+                let id: ObjectId = text.parse().map_err(|_| mismatch())?;
+                if spatial::type_of(&document.snapshot(), id).as_deref()
+                    != Some(archbuilder_model::types::PLAN_VIEW)
+                {
+                    return Err(mismatch());
+                }
+                Some(id)
+            }
+        };
+        let was = self.habits.plan;
+        crate::plan_state::set(cx.tab(), view);
+        self.habits.plan = view;
+        self.habits.shown_plan = view;
+        self.habits.vis.reset();
+        self.picker.reset();
+        self.pick_hover.clear();
+        match view {
+            Some(id) => {
+                if was.is_none() {
+                    self.habits.camera_3d = Some(*cx.camera());
+                }
+                self.habits.view = Some(plan_framing(&document.snapshot(), id));
+                // A view is drawn only while it is open: it is built now.
+                cx.ask_extraction(&[id]);
+            }
+            None => {
+                self.habits.view = Some(
+                    self.habits
+                        .camera_3d
+                        .take()
+                        .map_or(ViewRequest::Extents, ViewRequest::Camera),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Hides the selected elements in the open plan view: the view's own hidden list, saved and
+    /// undone with the document (the temporary hide is [`ui::HIDE`]).
+    fn hide_in_view(&mut self, cx: &InteractionContext<'_>) -> Result<()> {
+        let (_, ids) = self.hideable(cx)?;
+        let view = self
+            .habits
+            .plan
+            .ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?;
+        let mut invocation = Invocation::new(
+            archbuilder_commands::view::VIEW_HIDE,
+            serde_json::json!({
+                "view": view.to_string(),
+                "objects": ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            }),
+        );
+        invocation.seed = self.next_seed();
+        let r = cx.invoke(invocation).map(drop);
+        cx.ask(Intent::new(arc_app::commands::SELECT_CLEAR));
+        r
+    }
+
+    /// Shows every element hidden in the open plan view's own list again (one undo step).
+    fn show_in_view(&mut self, cx: &InteractionContext<'_>) -> Result<()> {
+        let view = self
+            .habits
+            .plan
+            .ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?;
+        let mut invocation = Invocation::new(
+            archbuilder_commands::view::VIEW_SHOW,
+            serde_json::json!({"view": view.to_string()}),
+        );
+        invocation.seed = self.next_seed();
+        cx.invoke(invocation).map(drop)
+    }
+
     /// Switches snapping to `on`, or to the opposite of now.
     fn toggle_snap(&mut self, cx: &InteractionContext<'_>, on: Option<bool>) {
         let on = on.unwrap_or(!self.habits.snap_on);
@@ -870,6 +1035,9 @@ impl WallInteraction {
         let command = intent.command.as_str();
         let plain = intent.params.is_empty();
         let result = match command {
+            ui::OPEN_VIEW => self.open_view(cx, intent),
+            ui::HIDE_IN_VIEW => self.hide_in_view(cx),
+            ui::SHOW_IN_VIEW => self.show_in_view(cx),
             ui::REPEAT => self.repeat(cx),
             ui::COPY => self.copy_to_clipboard(cx),
             ui::CUT => self.cut(cx),
@@ -929,7 +1097,11 @@ impl WallInteraction {
                 Ok(())
             }
             ui::ZOOM_EXTENTS => {
-                self.habits.view = Some(ViewRequest::Extents);
+                // A plan view frames its storey's elements, not everything in the scene.
+                self.habits.view = Some(match (self.habits.plan, cx.document()) {
+                    (Some(view), Ok(d)) => plan_framing(&d.snapshot(), view),
+                    _ => ViewRequest::Extents,
+                });
                 Ok(())
             }
             ui::SNAP => {
@@ -1086,4 +1258,20 @@ impl WallInteraction {
     pub(super) fn habit_word(&self, text: &str) -> Option<Intent> {
         typed_word(text)
     }
+}
+
+/// The camera of the plan view `view`: straight down at its level, framed on the elements of its
+/// storey (the whole scene when the storey has none).
+fn plan_framing(snapshot: &arc_doc::Snapshot, view: ObjectId) -> ViewRequest {
+    let Some((storey, level)) = crate::plan_state::storey_of(snapshot, view) else {
+        return ViewRequest::Extents;
+    };
+    let ids: Vec<ObjectId> = archbuilder_model::types::ELEMENTS
+        .iter()
+        .flat_map(|k| spatial::children(snapshot, k, storey))
+        .map(|o| o.id)
+        .collect();
+    crate::warnings_panel::extent(snapshot, &ids).map_or(ViewRequest::Extents, |(a, b)| {
+        ViewRequest::Plan { a, b, z: level }
+    })
 }

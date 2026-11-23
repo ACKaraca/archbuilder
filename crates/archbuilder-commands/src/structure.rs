@@ -353,6 +353,7 @@ fn create_storey(
         Some(building),
         vec![Some(named(name)), Some(Value::Reference(level))],
     )?;
+    crate::view::create_default(ctx, storey, name)?;
     Ok((storey, level))
 }
 
@@ -695,6 +696,7 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
     match value_type {
         ValueType::String => Some(Value::String(json.as_str()?.trim().to_owned())),
         ValueType::Bool => Some(Value::Bool(json.as_bool()?)),
+        ValueType::F64 => json.as_f64().filter(|v| v.is_finite()).map(Value::F64),
         ValueType::Enum(variants) => {
             let code = match json.as_str() {
                 Some(name) => variants.iter().find(|v| v.name == name)?.code,
@@ -717,7 +719,7 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
     clippy::too_many_lines,
     reason = "one arm per special field of the property command"
 )]
-fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
+pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
     for IdParam(id) in p.objects {
         let snapshot = ctx.snapshot();
         let key = spatial::type_of(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;

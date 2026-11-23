@@ -59,3 +59,5 @@ ab-model-opening-outside-host = The opening "{ $name }" reaches outside "{ $host
 ab-model-ceiling-slope = The slope of the ceiling "{ $name }" is steeper than 85°. Give it a lower slope, a longer arrow or a smaller end height.
 ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the height of its storey: it would lie below the level or above the level over it. Move the slope arrow or lower the slope.
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.
+
+ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.

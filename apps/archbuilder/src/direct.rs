@@ -311,6 +311,11 @@ pub struct Input<'a> {
     pub unit: LengthUnit,
     /// The decimal separator of the interface language.
     pub separator: char,
+    /// In a plan view, the objects its drawing has under the pointer, in picking order (the
+    /// candidates a click or a hover there takes); `None` in the 3D view, where the view ray
+    /// picks. A plan view's ray goes straight down through every storey, so it cannot tell a wall
+    /// of this storey from one above it.
+    pub plan: Option<&'a [ObjectId]>,
 }
 
 /// What the pointer is over.
@@ -731,6 +736,18 @@ fn insert_dims(snapshot: &Snapshot, id: ObjectId) -> Vec<Dim> {
 /// The object a press at the pointer takes: a door or window, else the nearest wall, else a
 /// selected floor.
 pub fn body_at(i: &Input<'_>) -> Option<ObjectId> {
+    if let Some(candidates) = i.plan {
+        // The plan view's own candidates, in picking order: an insert or a wall, else a selected
+        // floor, stair or roof.
+        return candidates
+            .iter()
+            .copied()
+            .find(|id| match kind_of(i.snapshot, *id).as_deref() {
+                Some(WALL | DOOR | WINDOW | types::WALL_OPENING) => true,
+                Some(FLOOR | STAIR | ROOF) => i.selection.contains(id),
+                _ => false,
+            });
+    }
     let ray = i.ray?;
     if let Some(id) = insert::pick(i.snapshot, ray) {
         return Some(id);

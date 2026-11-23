@@ -13,10 +13,12 @@ arc-app = { workspace = true, features = ["window"] }
 arc-base = { workspace = true }
 arc-command = { workspace = true }
 arc-doc = { workspace = true }
+arc-draft = { workspace = true }
 arc-geom = { workspace = true }
-arc-gpu = { workspace = true }
+arc-gpu = { workspace = true, features = ["draft"] }
 arc-mesh = { workspace = true }
 arc-ui = { workspace = true }
+arc-view = { workspace = true }
 archbuilder-commands = { path = "../../crates/archbuilder-commands" }
 archbuilder-io = { path = "../../crates/archbuilder-io" }
 archbuilder-model = { path = "../../crates/archbuilder-model" }

@@ -45,6 +45,11 @@ pub struct State {
     pub temporary: bool,
     /// Whether the selection holds pinned elements, and whether it holds unpinned ones.
     pub pinned: (bool, bool),
+    /// A plan view is open: Hide in view (the view's own list) is offered beside the temporary
+    /// Hide.
+    pub in_plan: bool,
+    /// The open plan view hides elements of its own: Show hidden in view is offered.
+    pub hidden_in_view: bool,
 }
 
 /// A message of the catalog, named by identifier.
@@ -72,6 +77,12 @@ const ENTER: Label = Label {
 };
 const HIDE: Label = Label {
     message_id: "ab-menu-hide",
+};
+const HIDE_IN_VIEW: Label = Label {
+    message_id: "ab-menu-hide-in-view",
+};
+const SHOW_IN_VIEW: Label = Label {
+    message_id: "ab-menu-show-in-view",
 };
 const HIDE_KIND: Label = Label {
     message_id: "ab-menu-hide-kind",
@@ -258,6 +269,12 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
             ContextEntry::command(ZOOM_EXTENTS.message_id, ui::ZOOM_EXTENTS),
             unhide,
         ]);
+        if state.hidden_in_view {
+            out.push(ContextEntry::command(
+                SHOW_IN_VIEW.message_id,
+                ui::SHOW_IN_VIEW,
+            ));
+        }
         return out;
     }
     let mut out = vec![
@@ -296,6 +313,14 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
         ContextEntry::command(HIDE_KIND.message_id, ui::HIDE_KIND),
         ContextEntry::command(ISOLATE_KIND.message_id, ui::ISOLATE_KIND),
         unhide,
+    ]);
+    if state.in_plan {
+        out.push(ContextEntry::command(
+            HIDE_IN_VIEW.message_id,
+            ui::HIDE_IN_VIEW,
+        ));
+    }
+    out.extend([
         ContextEntry::separator(),
         ContextEntry::command(SELECT_KIND.message_id, ui::SELECT_KIND),
     ]);
@@ -413,6 +438,33 @@ mod tests {
         let e = entries(&s);
         assert!(e.iter().all(|e| e.enabled));
         assert!(labels(&s).contains(&"ab-menu-paste".to_owned()));
+    }
+
+    #[test]
+    fn in_a_plan_view_hide_stays_temporary_and_hide_in_view_is_offered_beside_it() {
+        let s = State {
+            selected: 1,
+            kinds: vec![WALL],
+            in_plan: true,
+            ..State::default()
+        };
+        let names = labels(&s);
+        assert!(names.contains(&"ab-menu-hide-in-view".to_owned()));
+        assert!(names.contains(&"ab-menu-hide".to_owned()));
+        let idle = State {
+            in_plan: true,
+            hidden_in_view: true,
+            ..State::default()
+        };
+        assert!(labels(&idle).contains(&"ab-menu-show-in-view".to_owned()));
+        let hide = entries(&s)
+            .into_iter()
+            .find(|e| e.label == "ab-menu-hide-in-view")
+            .unwrap();
+        assert_eq!(
+            hide.action,
+            LineAction::Invoke(Intent::new(ui::HIDE_IN_VIEW))
+        );
     }
 
     #[test]

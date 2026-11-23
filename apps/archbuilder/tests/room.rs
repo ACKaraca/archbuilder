@@ -286,6 +286,11 @@ fn rooms_beyond_the_budget_are_counted_in_a_notice_and_other_storeys_do_not_use_
         ppu: 80.0,
         size: [1300.0, 900.0],
     }));
+    // The interface thread does not derive rooms: until the extraction workers did (here, the
+    // storey's extraction), no tag shows.
+    assert!(view.overlays(&snapshot, "en-US").is_empty());
+    let storey = spatial::get(&snapshot, storeys[0].storey.id).unwrap();
+    archbuilder::extract_view::extract_view(&snapshot, &storey, &arc_base::Cancel::new()).unwrap();
     let overlays = view.overlays(&snapshot, "en-US");
     let labels: Vec<&str> = overlays
         .iter()

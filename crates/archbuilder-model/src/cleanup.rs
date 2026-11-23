@@ -94,6 +94,29 @@ pub(crate) fn cached<T>(
     })
 }
 
+/// The result kept in `store` for (`id`, `extra`) when it was made from `deps`; nothing is made.
+pub(crate) fn lookup<T>(store: &Store<T>, id: ObjectId, extra: u64, deps: &Deps) -> Option<Arc<T>> {
+    store.lock().ok().and_then(|c| {
+        c.iter()
+            .find(|e| e.id == id && e.extra == extra && same(&e.deps, deps))
+            .map(|e| Arc::clone(&e.value))
+    })
+}
+
+/// Drops the results kept for `id` under another key than `extra`.
+pub(crate) fn keep_only<T>(store: &Store<T>, id: ObjectId, extra: u64) {
+    if let Ok(mut c) = store.lock() {
+        c.retain(|e| e.id != id || e.extra == extra);
+    }
+}
+
+/// Drops the result kept for (`id`, `extra`).
+pub(crate) fn forget<T>(store: &Store<T>, id: ObjectId, extra: u64) {
+    if let Ok(mut c) = store.lock() {
+        c.retain(|e| !(e.id == id && e.extra == extra));
+    }
+}
+
 /// The walls of `storey` with their types, and with their doors and windows when `inserts`: what
 /// the layers of the storey are made from.
 pub(crate) fn storey_deps(snapshot: &Snapshot, storey: ObjectId, inserts: bool) -> Deps {
@@ -558,6 +581,26 @@ pub struct Piece {
     pub class: PieceClass,
     /// The solid.
     pub solid: Polyhedron,
+    /// The layer, by index in the wall type's layers.
+    pub layer: usize,
+    /// A key of the piece that stays the same while its wall's openings and layers stay: the
+    /// band of heights, the layer and the part of the layer packed in one number.
+    pub key: u32,
+}
+
+/// The material of each layer of the wall record `object`, by layer index; empty for a wall
+/// whose type does not give its layers (a plain wall).
+#[must_use]
+pub fn layer_materials(snapshot: &Snapshot, object: &Object) -> Vec<String> {
+    use crate::element_type::{Layers, TypeKind, type_of};
+    let wall = Wall::of(snapshot, object);
+    type_of(snapshot, TypeKind::Wall, &object.values)
+        .and_then(|t| Layers::from_values(&t.values))
+        .filter(|l| {
+            wall.is_some_and(|w| (l.total() - w.thickness).abs() <= 1.0e-6) && !l.layers.is_empty()
+        })
+        .map(|l| l.layers.into_iter().map(|l| l.material).collect())
+        .unwrap_or_default()
 }
 
 /// The solids of the wall record `object`, layer by layer: the cleaned layer polygons of its
@@ -589,6 +632,16 @@ pub fn wall_net_volume(snapshot: &Snapshot, object: &Object) -> Option<f64> {
     Some(pieces.iter().map(|p| p.solid.volume()).sum())
 }
 
+/// [`wall_net_volume`] when the layers of the wall's storey are already derived for `snapshot`;
+/// `None` while they are not, so an interface thread never derives them itself (the extraction
+/// workers do, and the caller asks again on a later frame).
+#[must_use]
+pub fn wall_net_volume_ready(snapshot: &Snapshot, object: &Object) -> Option<Option<f64>> {
+    let storey = object.header.owner?;
+    lookup(&LAYERS, storey, 0, &storey_deps(snapshot, storey, false))?;
+    Some(wall_net_volume(snapshot, object))
+}
+
 fn pieces_in(
     snapshot: &Snapshot,
     object: &Object,
@@ -615,7 +668,7 @@ fn pieces_in(
     let level = base - wall.base_offset;
     let mut out = Vec::new();
     let tolerance = Tolerance::DEFAULT;
-    for band in marks.windows(2) {
+    for (band_at, band) in marks.windows(2).enumerate() {
         let (Some(&a), Some(&b)) = (band.first(), band.get(1)) else {
             continue;
         };
@@ -640,7 +693,12 @@ fn pieces_in(
                 && let Some(surface) = &roof
                 && let Some(solid) = clipped(&wall, &region, level, a, surface)
             {
-                out.push(Piece { class, solid });
+                out.push(Piece {
+                    class,
+                    solid,
+                    layer: p.layer,
+                    key: piece_key(band_at, p.layer, 0),
+                });
                 continue;
             }
             // The ranges of heights this layer keeps, as (region, from, to).
@@ -652,18 +710,29 @@ fn pieces_in(
                     .flat_map(|(r, z0, z1)| split_by_floor(r, z0, z1, f, own, p.core))
                     .collect();
             }
-            for (region, z0, z1) in parts {
+            for (part_at, (region, z0, z1)) in parts.into_iter().enumerate() {
                 if z1 - z0 < 1.0e-6 {
                     continue;
                 }
                 match prism(&region, z0, z1 - z0, CHORD, &tolerance, &Limits::DEFAULT) {
-                    Ok(solid) => out.push(Piece { class, solid }),
+                    Ok(solid) => out.push(Piece {
+                        class,
+                        solid,
+                        layer: p.layer,
+                        key: piece_key(band_at, p.layer, part_at),
+                    }),
                     Err(e) => return Some(Err(e)),
                 }
             }
         }
     }
     Some(Ok(out))
+}
+
+/// The key of a piece: band, layer and part, each clamped to its share of the number.
+fn piece_key(band: usize, layer: usize, part: usize) -> u32 {
+    let pack = |v: usize, max: u32| u32::try_from(v).unwrap_or(max).min(max);
+    (pack(band, 1023) << 14) | (pack(layer, 255) << 6) | pack(part, 63)
 }
 
 /// The solid of the layer `region` from `a` above the wall's base up under the roof `surface`.

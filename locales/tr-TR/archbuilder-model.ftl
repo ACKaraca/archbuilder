@@ -59,3 +59,5 @@ ab-model-opening-outside-host = "{ $name }" boşluğu, onu barındıran "{ $host
 ab-model-ceiling-slope = "{ $name }" tavanının eğimi 85°'den dik. Daha düşük bir eğim, daha uzun bir ok ya da daha küçük bir uç yüksekliği verin.
 ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğinin dışına çıkıyor: kotun altına ya da üstündeki kotun üzerine geçiyor. Eğim okunu taşıyın ya da eğimi azaltın.
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
+
+ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.

@@ -143,4 +143,38 @@ fn the_cost_of_a_wall_move_and_of_a_room_rename() {
         "room rename: commit {committed:?}, redraw {:?}",
         t.elapsed()
     );
+    // The plan view of the storey the walls stand on: the drawing of 220 walls, then what a wall
+    // move and a room rename build again.
+    let view = |snapshot: &Snapshot| {
+        let storey = spatial::get(snapshot, wall).unwrap().header.owner.unwrap();
+        archbuilder_model::view::of_storey(snapshot, storey).remove(0)
+    };
+    let cancel = arc_base::Cancel::new();
+    let t = Instant::now();
+    let built = archbuilder_model::plan::build(&after, &view(&after), &Default::default(), &cancel)
+        .unwrap();
+    println!(
+        "plan view first build {:?} ({} primitives, {} diagnostics)",
+        t.elapsed(),
+        built.geometry.list.primitives.len(),
+        built.geometry.diagnostics.len()
+    );
+    run(
+        "archbuilder.modify.move",
+        json!({"objects": [wall], "displacement": [0.0, -0.4]}),
+    );
+    let moved = document.snapshot();
+    let t = Instant::now();
+    let _ = archbuilder_model::plan::build(&moved, &view(&moved), &Default::default(), &cancel)
+        .unwrap();
+    println!("plan view after a wall move {:?}", t.elapsed());
+    run(
+        "archbuilder.property.set",
+        json!({"objects": [room], "field": "name", "value": "Library"}),
+    );
+    let renamed = document.snapshot();
+    let t = Instant::now();
+    let _ = archbuilder_model::plan::build(&renamed, &view(&renamed), &Default::default(), &cancel)
+        .unwrap();
+    println!("plan view after a room rename {:?}", t.elapsed());
 }

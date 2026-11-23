@@ -43,6 +43,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         SITE => Some(&[PROJECT]),
         BUILDING => Some(&[SITE]),
         STOREY | LEVEL => Some(&[BUILDING]),
+        types::PLAN_VIEW => Some(&[STOREY]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
@@ -86,6 +87,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
+    }
+    if key == types::PLAN_VIEW {
+        out.extend(crate::view::problem(object));
     }
     out.extend(type_problem(candidate, key, object));
     let own = folded(object);

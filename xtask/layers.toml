@@ -30,6 +30,7 @@ third_party = [
   "arc-io-ifc",
   "arc-mesh",
   "arc-ui",
+  "arc-view",
   "fluent-bundle",
   "schemars",
   "serde",

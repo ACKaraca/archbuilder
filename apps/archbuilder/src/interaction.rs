@@ -177,12 +177,83 @@ const CANCELLED: &str = "app-history-cancel";
 /// The snap step of the cursor on the level plane, in meters.
 pub const GRID: f64 = 0.01;
 
+/// The outlines that mark the selected elements in the open plan view: their own lines and the
+/// boundaries of their own cut regions, from the drawing's back-links. A fill joined with other
+/// elements (one region of a material across several walls) is not outlined: it is not the
+/// element's alone, and the element's own cut lines mark it.
+fn plan_highlight(
+    snapshot: &arc_doc::Snapshot,
+    view: ObjectId,
+    selection: &[ObjectId],
+) -> Vec<ProductOverlay> {
+    use arc_draft::display::Shape;
+    let Some(built) = crate::plan_state::peek(snapshot, view) else {
+        return Vec::new();
+    };
+    let z = built.level + 0.02;
+    let mut out = Vec::new();
+    let path = |points: &[[f64; 2]], closed: bool| ProductOverlay::Path {
+        points: points
+            .iter()
+            .chain(closed.then(|| points.first()).flatten())
+            .map(|p| Point3::new(p[0], p[1], z))
+            .collect(),
+        dashed: false,
+    };
+    for id in selection.iter().take(1000) {
+        for (pass, index) in built.primitives_of(*id).into_iter().take(4000) {
+            let Some(result) = built.results().get(pass).copied() else {
+                continue;
+            };
+            let (Some(primitive), Some(link)) =
+                (result.list.primitives.get(index), result.links.get(index))
+            else {
+                continue;
+            };
+            if link.source != *id || !link.joined.is_empty() {
+                continue;
+            }
+            match &primitive.shape {
+                Shape::Stroke { curve, .. } => {
+                    out.push(path(&archbuilder_model::plan::flatten(curve), false));
+                }
+                Shape::Region(region) => {
+                    for (outer, holes) in archbuilder_model::cleanup::flatten_parts(region) {
+                        out.push(path(&outer, true));
+                        out.extend(holes.iter().map(|h| path(h, true)));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// The objects the drawing of the plan view `view` has under `at` (within `aperture`), in the
+/// picking order of the model: what a click, a hover and a drag in a plan view take. Empty while
+/// the drawing is not built.
+fn plan_candidates(
+    snapshot: &arc_doc::Snapshot,
+    view: ObjectId,
+    at: [f64; 2],
+    aperture: f64,
+) -> Vec<ObjectId> {
+    crate::plan_state::peek(snapshot, view).map_or_else(Vec::new, |built| {
+        let stack = archbuilder_model::pick::stack(snapshot, &[], at, aperture, None);
+        archbuilder_model::plan::hits(&built, at, aperture).filter(stack)
+    })
+}
+
 /// The plane point input lands on: the level plane of the storey the wall tool draws on (the
 /// selection's storey, else the lowest), for [`arc_app::shell::ShellConfig::work_plane`].
 #[must_use]
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
-    let (storey, elevation) = storey_for(&snapshot, selection)?;
+    // In a plan view the tools work on the view's storey.
+    let (storey, elevation) = crate::plan_state::current_in(tab, &snapshot)
+        .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
+        .or_else(|| storey_for(&snapshot, selection))?;
     // The room drawing follows the storey the viewport works on and the selection.
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
@@ -236,11 +307,55 @@ fn baselines(cx: &InteractionContext<'_>, storey: ObjectId) -> Vec<[[f64; 2]; 2]
     let Ok(document) = cx.document() else {
         return Vec::new();
     };
-    spatial::walls(&document.snapshot(), storey)
+    let snapshot = document.snapshot();
+    let mut out: Vec<[[f64; 2]; 2]> = spatial::walls(&snapshot, storey)
         .iter()
         .filter_map(|w| archbuilder_model::wall::Wall::from_values(&w.values))
         .map(|w| [w.start, w.end])
-        .collect()
+        .collect();
+    // In a plan view the cut lines of its drawing attract too: their corners are end points, their
+    // middles and crossings the other snaps.
+    out.extend(cut_segments(&snapshot, cx.tab(), storey));
+    out
+}
+
+/// The most cut-line segments the snaps look at.
+const MAX_CUT_SEGMENTS: usize = 4_000;
+
+/// The segments of the cut lines of the open plan view of `storey`; none without one.
+fn cut_segments(snapshot: &arc_doc::Snapshot, tab: TabId, storey: ObjectId) -> Vec<[[f64; 2]; 2]> {
+    use arc_view::{PrimitiveKind, VisibilityClass};
+    let Some(built) = crate::plan_state::current_in(tab, snapshot)
+        .and_then(|v| crate::plan_state::peek(snapshot, v))
+        .filter(|b| b.storey == storey)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (p, link) in built
+        .geometry
+        .list
+        .primitives
+        .iter()
+        .zip(&built.geometry.links)
+    {
+        if link.class != VisibilityClass::Cut || link.kind != PrimitiveKind::Line {
+            continue;
+        }
+        if let arc_draft::display::Shape::Stroke { curve, .. } = &p.shape {
+            let points = archbuilder_model::plan::flatten(curve);
+            out.extend(
+                points
+                    .windows(2)
+                    .filter_map(|w| Some([*w.first()?, *w.get(1)?])),
+            );
+        }
+        if out.len() >= MAX_CUT_SEGMENTS {
+            out.truncate(MAX_CUT_SEGMENTS);
+            break;
+        }
+    }
+    out
 }
 
 /// The folder a relative export path is taken in: the folder of the document's file when it was
@@ -1804,6 +1919,15 @@ impl WallInteraction {
         if let Some(ppu) = event.pixels_per_unit.filter(|p| *p > 0.0) {
             self.ppu = ppu;
         }
+        // In a plan view the drawing says what is under the pointer, as for a click or a hover.
+        let candidates = self.habits.plan.zip(event.model).map(|(view, m)| {
+            plan_candidates(
+                &snapshot,
+                view,
+                [m.x, m.y],
+                PICK_PIXELS / self.ppu.max(1.0e-6),
+            )
+        });
         let input = crate::direct::Input {
             snapshot: &snapshot,
             selection: cx.selection(),
@@ -1816,6 +1940,7 @@ impl WallInteraction {
             free: event.modifiers.alt || !self.habits.snap_on,
             unit: archbuilder_model::spatial::length_unit(&snapshot),
             separator: cx.decimal_separator(),
+            plan: candidates.as_deref(),
         };
         let primary = event.button == Some(PointerButton::Primary);
         let taken = match event.kind {
@@ -2300,7 +2425,7 @@ impl WallInteraction {
         let snapshot = document.snapshot();
         // The plan symbols show in views from above (within about 12 degrees of straight down),
         // where the wall's top hides the insert; in other views they would float in the air.
-        if cx.camera().forward().z < -0.98 {
+        if cx.camera().forward().z < -0.98 && self.habits.plan.is_none() {
             if self.habits.vis.active()
                 || self
                     .symbols
@@ -2315,6 +2440,10 @@ impl WallInteraction {
             }
         } else {
             self.symbols = None;
+        }
+        if let Some(view) = self.habits.plan {
+            self.highlight = plan_highlight(&snapshot, view, cx.selection());
+            return;
         }
         for id in cx.selection().iter().take(1000) {
             let Some(object) = spatial::get(&snapshot, *id) else {
@@ -2859,6 +2988,14 @@ impl WallInteraction {
             .pixels_per_unit
             .filter(|p| *p > 0.0)
             .map_or(0.05, |p| PICK_PIXELS / p);
+        // In a plan view only what its drawing has under the pointer is a candidate.
+        // While the drawing is still being built after an edit, nothing is under the pointer.
+        let hits = self.habits.plan.map(|view| {
+            crate::plan_state::peek(&snapshot, view).map_or_else(Default::default, |built| {
+                archbuilder_model::plan::hits(&built, [model.x, model.y], aperture)
+            })
+        });
+        self.picker.set_view_hits(hits);
         let vis = &self.habits.vis;
         let target = self.picker.target(
             &snapshot,
@@ -2873,9 +3010,14 @@ impl WallInteraction {
         );
         match event.kind {
             PointerKind::Move => {
+                let plan = self.habits.plan;
                 self.pick_hover = target
                     .as_ref()
                     .map(|t| {
+                        // A plan view outlines what its drawing shows of the element.
+                        if let Some(view) = plan {
+                            return plan_highlight(&snapshot, view, &[t.id]);
+                        }
                         self.picker
                             .outline(&snapshot, t.id)
                             .into_iter()

@@ -609,6 +609,73 @@ body (an extrusion when the top is level). The result is kept per room while the
 of its storey with their types, the ceilings of the storey, the roofs, the floors above, the levels,
 the storeys, the stairs and the openings are the same objects.
 
+#### The plan view of the first slice
+
+`archbuilder.plan_view` (schema 1.0) is the plan view of a storey, owned by it (deleting the storey
+deletes its views). Its record holds authored settings only: the cut height above the storey's level
+(1.2 m by default), an optional top above the level (else the next level, else 3 m), whether the
+overhead range between the cut and the top is drawn, the scale denominator (100), the detail level
+(`coarse`, `medium`, `fine`), whether the storey below shows faint underneath, one flag per category
+(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts; ceilings are off
+in a new view, since they belong to ceiling plans), the elements hidden in this view (one optional
+reference each; deleting an element drops its entry), the bottom of the range relative to the level
+(0 by default) and the view depth below it (1 cm under the level by default, so a slab whose top is
+the level is beyond the cut). Everything below the cut down to the view depth draws beyond the cut.
+Names are unique within a storey; the view depth must not lie above the bottom, the bottom must lie
+below the cut and the cut below the top.
+
+Every storey has one default view named after it, made with the storey (`archbuilder.project.new`,
+`archbuilder.storey.add`). `archbuilder.view.duplicate` copies a view under a new name,
+`archbuilder.view.rename` renames it, `archbuilder.view.delete` deletes it (the last view of a storey
+stays), `archbuilder.view.hide_elements` and `archbuilder.view.show_elements` change the elements
+hidden in it, and the property grid edits the other settings through `archbuilder.property.set`; each
+is one undo step. A document saved before views existed has none and opens unmodified: the outliner
+lists its storeys among the views, and opening one shows the storey's default view (the settings of a
+new view), which exists only while it is shown and is never written, so opening it is no edit and no
+undo step. The property grid shows its settings with a note that it is the storey's default view.
+The first change of a setting (`archbuilder.view.set`), a rename, a duplicate (which keeps the default
+as a view beside its copy) or a hide in view makes the view and applies the change in one undo step;
+undoing it shows the default view again and, back at the saved state, the document is unmodified.
+It cannot be deleted. The record type is a backward-compatible addition to the `.archb`
+format: an older application reading a newer file sees the views as records it does not know.
+
+The drawing is derived ([`archbuilder_model::plan`]) and never stored: an implementation of the
+`arc-view` source interface for one view. A wall gives one part per layer of its cleaned solids, with
+the layer's material as the join key, so the layers of one material join across walls and a seam shows
+only where materials differ (coarse detail joins all layers of all walls); a floor gives a part per
+layer of its type; roofs, ceilings, stairs, doors and windows (at fine detail) give bodies. Symbols,
+which are curves, come with their objects: the door swing and leaf line, the glass lines of a window,
+the walking line, arrow and break line of a stair, the outlines and crosses of shafts and openings, and
+the outline of a room. Text (room tags, stair texts) and the room fill stay with the application,
+which draws them over the drawing. What lies below the cut draws beyond (thin), what is cut draws
+thick, what lies above up to the top draws dashed, and nothing is drawn as hidden. An element the cut
+crosses draws none of its own parts above the cut (the wall over a door head, the head of a door
+frame are not repeated as overhead lines). Besides its storey's elements a view draws the walls (with
+their doors and windows) and roofs of the storeys below that rise past its level, classified against
+its range like its own; a stair arriving from the storey below draws its treads as lines beyond the
+cut with its walking line and arrow. Line weights scale with the view scale. The drawing is built in
+two passes, the geometry and the rooms, each kept while the objects it reads are the same objects:
+the geometry reads the walls, doors, windows, wall openings, floors, roofs, ceilings, stairs, shafts,
+vertical openings, every element type, the levels and storeys; the rooms read the rooms, the walls
+and the wall types (which walls bound rooms). Renaming a room builds only the rooms again. A build that
+fails gives an empty pass whose diagnostic the warnings panel lists while the view is open. A
+drawing's primitives link back to their objects; a click in a plan view picks among the objects whose
+drawing lies under the pointer, in the order of the picking list, and a selected element is outlined
+by its own lines and fills, not by a fill it shares with other elements.
+
+The application draws only the views a tab shows: a view builds when it opens and after a commit that
+changes what it reads, on the shell's extraction workers, never on the interface thread. The rooms of
+every storey and their solids are derived there too after a commit; the room tags and the property
+grid's derived values (room areas and volumes, wall volumes) show what is derived already and wait
+for the rest rather than derive it on the interface thread. In a plan view a click, a hover and a
+drag take what the view's drawing has under the pointer, never an element of another storey above
+it. When an undo removes the view being shown, the 3D view and its camera come back. Opening a
+plan view sets a camera looking straight down, framed on the storey's elements, with rotation locked;
+going back to the 3D view restores the 3D camera. Temporary hide, isolate and hide by kind work in a
+plan view as in the 3D view: they are the tab's state, never saved or undone, and filter the drawing
+through object overrides of its definition. Hide in view is the view's own list, a document edit;
+Unhide all ends only the temporary state, and Show hidden in view empties the view's list.
+
 ## Selection and modify commands
 
 Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles
@@ -1000,6 +1067,7 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 
 | Type | Key properties | Relationships |
 |---|---|---|
+| `PlanView` | Cut height, top, overhead flag, scale, detail level, underlay flag, category flags, hidden elements, bottom, view depth | Owned by its storey; first slice of `ModelView` |
 | `ModelView` | Kind, definition (range, plane, camera), scale, detail level, style, phase, template, parent | Owns one `DetailLayer`; see [views-and-documentation.md](views-and-documentation.md) |
 | `ViewTemplate`, `ViewFilter` | Controlled properties, rule tree | Bound by views |
 | `DetailLayer` | Drafting entities, annotations | Owned by one model view |

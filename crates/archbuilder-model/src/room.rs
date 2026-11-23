@@ -566,9 +566,38 @@ pub fn net_volume(snapshot: &Snapshot, entry: &Entry) -> Option<f64> {
         .or_else(|| entry.volume())
 }
 
-/// The rooms of `storey` with their derived data, in identifier order.
+type Rooms = crate::cleanup::Store<Vec<Entry>>;
+static ROOMS: Rooms = std::sync::Mutex::new(Vec::new());
+
+/// What the rooms of `storey` are derived from: its rooms, its walls with their types (which bound
+/// rooms), the storeys and the levels.
+fn rooms_deps(snapshot: &Snapshot, storey: ObjectId) -> crate::cleanup::Deps {
+    let mut deps = crate::cleanup::storey_deps(snapshot, storey, false);
+    deps.extend(spatial::children(snapshot, ROOM, storey));
+    deps.extend(spatial::objects(snapshot, types::STOREY));
+    deps.extend(spatial::objects(snapshot, types::LEVEL));
+    deps
+}
+
+/// The rooms of `storey` with their derived data, in identifier order: derived once, and again
+/// only when what they are derived from changed.
 #[must_use]
 pub fn of_storey(snapshot: &Snapshot, storey: ObjectId) -> Vec<Entry> {
+    let deps = rooms_deps(snapshot, storey);
+    crate::cleanup::cached(&ROOMS, storey, 0, deps, || derive_storey(snapshot, storey))
+        .as_ref()
+        .clone()
+}
+
+/// [`of_storey`] when it is derived already for `snapshot`; `None` while it is not, so an
+/// interface thread never derives it itself (the extraction workers do).
+#[must_use]
+pub fn of_storey_ready(snapshot: &Snapshot, storey: ObjectId) -> Option<Vec<Entry>> {
+    crate::cleanup::lookup(&ROOMS, storey, 0, &rooms_deps(snapshot, storey))
+        .map(|rooms| rooms.as_ref().clone())
+}
+
+fn derive_storey(snapshot: &Snapshot, storey: ObjectId) -> Vec<Entry> {
     let Some(owner) = spatial::get(snapshot, storey) else {
         return Vec::new();
     };
@@ -944,6 +973,29 @@ static SHAPES: Shapes = std::sync::Mutex::new(Vec::new());
 /// changed. A room renamed elsewhere, or a ceiling of another storey edited, finds it again.
 #[must_use]
 pub fn shape(snapshot: &Snapshot, entry: &Entry) -> Option<Arc<Shape>> {
+    let (storey, deps) = shape_deps(snapshot, entry)?;
+    let stored = crate::cleanup::cached(&SHAPES, entry.id, 0, deps, || {
+        compute_shape(snapshot, entry, &storey).map(Arc::new)
+    });
+    stored.as_ref().clone()
+}
+
+/// [`shape`] when it is derived already for `snapshot` (`Some` of the shape, or of `None` for a
+/// room without one); `None` while it is not.
+#[must_use]
+pub fn shape_ready(snapshot: &Snapshot, entry: &Entry) -> Option<Option<Arc<Shape>>> {
+    let (_, deps) = shape_deps(snapshot, entry)?;
+    crate::cleanup::lookup(&SHAPES, entry.id, 0, &deps).map(|s| s.as_ref().clone())
+}
+
+/// [`net_area`] when the room's shape is derived already; `None` while it is not.
+#[must_use]
+pub fn net_area_ready(snapshot: &Snapshot, entry: &Entry) -> Option<Option<f64>> {
+    shape_ready(snapshot, entry).map(|s| s.map(|s| s.area).or_else(|| entry.area()))
+}
+
+/// The storey of the room `entry` and what its solid is derived from.
+fn shape_deps(snapshot: &Snapshot, entry: &Entry) -> Option<(Arc<Object>, crate::cleanup::Deps)> {
     let room = spatial::get(snapshot, entry.id)?;
     let storey = room.header.owner.and_then(|s| spatial::get(snapshot, s))?;
     let mut deps = crate::cleanup::storey_deps(snapshot, storey.id, false);
@@ -984,10 +1036,7 @@ pub fn shape(snapshot: &Snapshot, entry: &Entry) -> Option<Arc<Shape>> {
     ] {
         deps.extend(spatial::objects(snapshot, key));
     }
-    let stored = crate::cleanup::cached(&SHAPES, entry.id, 0, deps, || {
-        compute_shape(snapshot, entry, &storey).map(Arc::new)
-    });
-    stored.as_ref().clone()
+    Some((storey, deps))
 }
 
 #[cfg(test)]

@@ -34,6 +34,12 @@ const NONE: Message = Message {
 const ALL: Message = Message {
     message_id: "ab-warnings-kind-all",
 };
+const VIEW_FAILED: Message = Message {
+    message_id: "ab-warnings-view-failed",
+};
+const VIEW_LEFT_OUT: Message = Message {
+    message_id: "ab-warnings-view-left-out",
+};
 const HINT: Message = Message {
     message_id: "ab-warnings-hint",
 };
@@ -99,13 +105,29 @@ fn kind_label(kind: WarningKind) -> &'static str {
         .map_or(ALL.message_id, |(_, m)| m.message_id)
 }
 
-/// The rectangle in plan around the elements `ids`, for framing them: walls by their footprint,
-/// floors by their boundary, rooms by their point, stairs by their outline, doors and windows by
-/// their place in their wall. `None` when none of them has a place.
+/// The rectangle in plan around the elements `ids` with a margin, for framing them (see
+/// [`extent`]).
 #[must_use]
 pub fn bounds(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 2])> {
+    let (lo, hi) = extent(snapshot, ids)?;
+    // A margin, so the elements do not touch the edge of the view.
+    let margin = ((hi[0] - lo[0]).max(hi[1] - lo[1]) * 0.25).max(1.0);
+    Some((
+        [lo[0] - margin, lo[1] - margin],
+        [hi[0] + margin, hi[1] + margin],
+    ))
+}
+
+/// The most elements [`extent`] measures.
+const MAX_MEASURED: usize = 20_000;
+
+/// The rectangle in plan around the elements `ids`: walls by their footprint, floors by their
+/// boundary, rooms by their point, stairs by their outline, doors and windows by their place in
+/// their wall. `None` when none of them has a place.
+#[must_use]
+pub fn extent(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 2])> {
     let mut points: Vec<[f64; 2]> = Vec::new();
-    for id in ids.iter().take(1000) {
+    for id in ids.iter().take(MAX_MEASURED) {
         let Some(object) = spatial::get(snapshot, *id) else {
             continue;
         };
@@ -186,19 +208,17 @@ pub fn bounds(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 
         lo = [lo[0].min(p[0]), lo[1].min(p[1])];
         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
     }
-    // A margin, so the elements do not touch the edge of the view.
-    let margin = ((hi[0] - lo[0]).max(hi[1] - lo[1]) * 0.25).max(1.0);
-    Some((
-        [lo[0] - margin, lo[1] - margin],
-        [hi[0] + margin, hi[1] + margin],
-    ))
+    Some((lo, hi))
 }
 
 /// One row as shown.
 struct Row {
-    kind: WarningKind,
+    /// The kind of a finding of the model; `None` for a diagnostic of the open plan view's drawing,
+    /// listed under every kind.
+    kind: Option<WarningKind>,
     severity: Severity,
-    error: arc_base::Error,
+    message_id: &'static str,
+    args: Vec<(&'static str, arc_base::error::Value)>,
     objects: Vec<ObjectId>,
     names: String,
 }
@@ -213,9 +233,10 @@ impl Row {
             .collect::<Vec<_>>()
             .join(", ");
         Self {
-            kind: w.kind,
+            kind: Some(w.kind),
             severity: w.severity,
-            error: w.error,
+            message_id: w.error.message_id(),
+            args: arguments(&w.error),
             objects: w.objects,
             names,
         }
@@ -227,8 +248,42 @@ impl Row {
 pub struct WarningsPanel {
     /// The rows of the snapshot they were found in.
     rows: Option<(Snapshot, Vec<Row>)>,
+    /// The rows of the open plan view's drawing, with the drawing they came from.
+    view_rows: Option<(std::sync::Arc<archbuilder_model::plan::Built>, Vec<Row>)>,
     /// The kind shown; every kind when `None`.
     filter: Option<WarningKind>,
+}
+
+impl WarningsPanel {
+    /// The rows of the model's findings, found again when the document changed, and the rows of
+    /// the open plan view's drawing. The drawing is built on the extraction workers:
+    /// its diagnostics come when it does (a failed build is an error, an element it left out a
+    /// warning).
+    fn refresh(&mut self, tab: Option<arc_app::application::TabId>, snapshot: &Snapshot) {
+        if !self.rows.as_ref().is_some_and(|(s, _)| s.ptr_eq(snapshot)) {
+            let rows = register(snapshot)
+                .into_iter()
+                .map(|w| Row::of(snapshot, w))
+                .collect();
+            self.rows = Some((snapshot.clone(), rows));
+        }
+        let view = tab.and_then(|t| crate::plan_state::current_in(t, snapshot));
+        let built = view.and_then(|v| crate::plan_state::peek(snapshot, v));
+        let fresh = match (&self.view_rows, &built) {
+            (Some((old, _)), Some(new)) => {
+                std::sync::Arc::ptr_eq(&old.geometry, &new.geometry)
+                    && std::sync::Arc::ptr_eq(&old.notes, &new.notes)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if !fresh {
+            self.view_rows = built.zip(view).map(|(built, view)| {
+                let rows = view_rows(snapshot, view, &built);
+                (built, rows)
+            });
+        }
+    }
 }
 
 impl Panel for WarningsPanel {
@@ -237,19 +292,19 @@ impl Panel for WarningsPanel {
             return;
         };
         let snapshot = tab.document().snapshot();
-        if !self.rows.as_ref().is_some_and(|(s, _)| s.ptr_eq(&snapshot)) {
-            let rows = register(&snapshot)
-                .into_iter()
-                .map(|w| Row::of(&snapshot, w))
-                .collect();
-            self.rows = Some((snapshot, rows));
-        }
+        self.refresh(cx.tab, &snapshot);
         let Some((_, rows)) = &self.rows else {
             return;
         };
+        let view_rows = self
+            .view_rows
+            .as_ref()
+            .map_or(&[][..], |(_, r)| r.as_slice());
+        let rows: Vec<&Row> = view_rows.iter().chain(rows).collect();
         let shown: Vec<&Row> = rows
             .iter()
-            .filter(|r| self.filter.is_none_or(|k| k == r.kind))
+            .copied()
+            .filter(|r| self.filter.is_none() || self.filter == r.kind)
             .collect();
         let localize = cx.localize;
         ui.horizontal(|ui| {
@@ -306,13 +361,7 @@ impl Panel for WarningsPanel {
                     } else {
                         (WARNING.message_id, Color32::from_rgb(0xe0, 0xb0, 0x30))
                     };
-                    let args: Vec<(&str, arc_base::error::Value)> = row
-                        .error
-                        .arguments()
-                        .iter()
-                        .map(|(k, v)| (*k, v.clone()))
-                        .collect();
-                    let message = say(localize, row.error.message_id(), &args);
+                    let message = say(localize, row.message_id, &row.args);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(say(localize, label, &[])).color(color));
                         let text = if row.names.is_empty() {
@@ -334,4 +383,50 @@ impl Panel for WarningsPanel {
             )));
         }
     }
+}
+
+/// The rows of the diagnostics of the drawing of the plan view `view`.
+fn view_rows(
+    snapshot: &Snapshot,
+    view: ObjectId,
+    built: &archbuilder_model::plan::Built,
+) -> Vec<Row> {
+    built
+        .diagnostics()
+        .into_iter()
+        .take(archbuilder_model::validate::MAX_WARNINGS)
+        .map(|d| {
+            let failed = d.object == view;
+            let names = spatial::get(snapshot, d.object)
+                .and_then(|o| types::text(&o.values, 0).map(str::to_owned))
+                .unwrap_or_default();
+            Row {
+                kind: None,
+                severity: if failed {
+                    Severity::Error
+                } else {
+                    Severity::Warning
+                },
+                // The drawing's own message catalog is not the application's: its stable code
+                // is named in a message of ours.
+                message_id: if failed {
+                    VIEW_FAILED.message_id
+                } else {
+                    VIEW_LEFT_OUT.message_id
+                },
+                args: vec![("code", d.error.code().into())],
+                objects: if failed { Vec::new() } else { vec![d.object] },
+                names,
+            }
+        })
+        .collect()
+}
+
+/// The arguments of `error`'s message.
+fn arguments(error: &arc_base::Error) -> Vec<(&'static str, arc_base::error::Value)> {
+    error
+        .arguments()
+        .iter()
+        .map(|(k, v)| (*k, v.clone()))
+        .collect()
 }

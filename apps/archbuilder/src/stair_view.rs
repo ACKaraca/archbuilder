@@ -76,6 +76,16 @@ type Text<'a> = (arc_base::ObjectId, f64, &'a String, [f64; 2], [f64; 2]);
 /// The plan symbols of the stairs on and arriving at the active storey, in a view from above.
 #[must_use]
 pub fn overlays(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
+    overlays_with(snapshot, language, true)
+}
+
+/// The texts of the stairs ("up", "down") only: a plan view draws their lines itself.
+#[must_use]
+pub fn labels(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
+    overlays_with(snapshot, language, false)
+}
+
+fn overlays_with(snapshot: &Snapshot, language: &str, lines: bool) -> Vec<ProductOverlay> {
     let view = crate::room_view::shared();
     let (Some(storey), Some(frame)) = (view.active(), view.view()) else {
         return Vec::new();
@@ -130,17 +140,23 @@ pub fn overlays(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
         };
         for ring in &plan.outline {
             let closed: Vec<[f64; 2]> = ring.iter().chain(ring.first()).copied().collect();
-            out.push(line(&closed, z, NORMAL, false));
+            if lines {
+                out.push(line(&closed, z, NORMAL, false));
+            }
             outlines.push((object.id, ring.clone()));
         }
         for (pair, light) in &plan.treads {
-            out.push(line(pair, z, if *light { LIGHT } else { NORMAL }, *light));
+            if lines {
+                out.push(line(pair, z, if *light { LIGHT } else { NORMAL }, *light));
+            }
         }
-        if let Some(cut) = &plan.cut {
-            out.push(line(cut, z, NORMAL, false));
+        if lines {
+            if let Some(cut) = &plan.cut {
+                out.push(line(cut, z, NORMAL, false));
+            }
+            out.push(line(&plan.walk, z, WALK, false));
+            out.push(line(&plan.arrow, z, WALK, false));
         }
-        out.push(line(&plan.walk, z, WALK, false));
-        out.push(line(&plan.arrow, z, WALK, false));
         texts.push((object.id, z, text, at, toward));
     }
     // A text goes beyond its edge, else to either side; one that would lie over another stair

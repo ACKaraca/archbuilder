@@ -9,7 +9,7 @@ use arc_base::{Dimension, DisplayUnits};
 use arc_doc::schema::FieldDecl;
 use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
-use arc_ui::{GridContext, Localize, PropertyGrid, PropertyModel, PropertyObject};
+use arc_ui::{GridContext, Intent, Localize, PropertyGrid, PropertyModel, PropertyObject};
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::element_type::{self as et, TypeKind};
 use archbuilder_model::spatial;
@@ -17,14 +17,150 @@ use archbuilder_model::types::{
     self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY,
     WALL, WINDOW, level, storey,
 };
+use archbuilder_model::view::PlanView;
 
 /// A message of the application.
 struct Message {
     message_id: &'static str,
 }
 
+/// What a derived value shows while the extraction workers still derive it.
+const PENDING: &str = "…";
+
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "cut",
+        Message {
+            message_id: "ab-prop-view-cut",
+        },
+    ),
+    (
+        "bottom",
+        Message {
+            message_id: "ab-prop-view-bottom",
+        },
+    ),
+    (
+        "depth",
+        Message {
+            message_id: "ab-prop-view-depth",
+        },
+    ),
+    (
+        "top",
+        Message {
+            message_id: "ab-prop-view-top",
+        },
+    ),
+    (
+        "overhead",
+        Message {
+            message_id: "ab-prop-view-overhead",
+        },
+    ),
+    (
+        "scale",
+        Message {
+            message_id: "ab-prop-view-scale",
+        },
+    ),
+    (
+        "detail",
+        Message {
+            message_id: "ab-prop-view-detail",
+        },
+    ),
+    (
+        "underlay",
+        Message {
+            message_id: "ab-prop-view-underlay",
+        },
+    ),
+    (
+        "show_walls",
+        Message {
+            message_id: "ab-prop-view-show-walls",
+        },
+    ),
+    (
+        "show_floors",
+        Message {
+            message_id: "ab-prop-view-show-floors",
+        },
+    ),
+    (
+        "show_roofs",
+        Message {
+            message_id: "ab-prop-view-show-roofs",
+        },
+    ),
+    (
+        "show_ceilings",
+        Message {
+            message_id: "ab-prop-view-show-ceilings",
+        },
+    ),
+    (
+        "show_doors",
+        Message {
+            message_id: "ab-prop-view-show-doors",
+        },
+    ),
+    (
+        "show_windows",
+        Message {
+            message_id: "ab-prop-view-show-windows",
+        },
+    ),
+    (
+        "show_stairs",
+        Message {
+            message_id: "ab-prop-view-show-stairs",
+        },
+    ),
+    (
+        "show_rooms",
+        Message {
+            message_id: "ab-prop-view-show-rooms",
+        },
+    ),
+    (
+        "show_openings",
+        Message {
+            message_id: "ab-prop-view-show-openings",
+        },
+    ),
+    (
+        "view_storey",
+        Message {
+            message_id: "ab-prop-view-view-storey",
+        },
+    ),
+    (
+        "view_hidden",
+        Message {
+            message_id: "ab-prop-view-view-hidden",
+        },
+    ),
+    (
+        "coarse",
+        Message {
+            message_id: "ab-prop-view-coarse",
+        },
+    ),
+    (
+        "medium",
+        Message {
+            message_id: "ab-prop-view-medium",
+        },
+    ),
+    (
+        "fine",
+        Message {
+            message_id: "ab-prop-view-fine",
+        },
+    ),
     (
         "height_offset",
         Message {
@@ -824,6 +960,18 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "range",
+        Message {
+            message_id: "ab-aspect-range",
+        },
+    ),
+    (
+        "graphics",
+        Message {
+            message_id: "ab-aspect-graphics",
+        },
+    ),
+    (
         "geometry",
         Message {
             message_id: "ab-aspect-geometry",
@@ -924,6 +1072,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::PLAN_VIEW,
+        Message {
+            message_id: "ab-kind-plan-view",
+        },
+    ),
+    (
         types::WALL_OPENING,
         Message {
             message_id: "ab-kind-wall-opening",
@@ -954,6 +1108,9 @@ const EMPTY: Message = Message {
 /// editable.
 const NOT_EDITABLE: Message = Message {
     message_id: "ab-prop-not-editable",
+};
+const DEFAULT_VIEW: Message = Message {
+    message_id: "ab-prop-view-default-note",
 };
 
 /// The readable name of a field or variant; the rows of a roof's edges are numbered from 1.
@@ -1031,6 +1188,43 @@ fn shown(
     let mut values = object.values.clone();
     let mut read_only = Vec::new();
     match key {
+        types::PLAN_VIEW => {
+            // The hidden elements are counted, not listed (Show hidden in view of the context
+            // menu shows them again); the storey is shown for orientation.
+            if fields.len() > types::plan_view::HIDDEN && values.len() > types::plan_view::HIDDEN {
+                fields.remove(types::plan_view::HIDDEN);
+                values.remove(types::plan_view::HIDDEN);
+            }
+            // A top the view does not set shows the one it takes: the next level, else 3 m.
+            if let Some(slot) = values.get_mut(types::plan_view::TOP)
+                && slot.is_none()
+                && let Some(settings) =
+                    archbuilder_model::view::PlanView::from_values(&object.values)
+                && let Some((_, level, above)) =
+                    archbuilder_model::view::levels_of(snapshot, object)
+            {
+                let top = PlanView {
+                    overhead: true,
+                    ..settings
+                }
+                .range(level, above)
+                .2;
+                *slot = top.map(|t| types::length(t - level));
+            }
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+            fields.push(text_field("view_storey"));
+            values.push(storey.map(Value::String));
+            read_only.push("view_storey".to_owned());
+            let hidden = archbuilder_model::view::PlanView::from_values(&object.values)
+                .map_or(0, |v| v.hidden.len());
+            fields.push(text_field("view_hidden"));
+            values.push(Some(Value::String(hidden.to_string())));
+            read_only.push("view_hidden".to_owned());
+        }
         STOREY => {
             let level = spatial::level_of(snapshot, object);
             fields = vec![
@@ -1079,9 +1273,14 @@ fn shown(
             read_only.push("wall_storey".to_owned());
             // The volume of the joined solid, which counts a corner once, minus the openings.
             // Openings of the wall's doors and windows are subtracted.
-            let volume = archbuilder_model::cleanup::wall_net_volume(snapshot, object);
+            // The layers of the storey are derived on the extraction workers after an edit: until
+            // they are, the volume shows as pending rather than holding the frame up.
+            let volume = match archbuilder_model::cleanup::wall_net_volume_ready(snapshot, object) {
+                Some(v) => v.map(|v| Value::String(format!("{v:.3} m³"))),
+                None => Some(Value::String(PENDING.to_owned())),
+            };
             fields.push(text_field("wall_volume"));
-            values.push(volume.map(|v| Value::String(format!("{v:.3} m³"))));
+            values.push(volume);
             read_only.push("wall_volume".to_owned());
             // The top level is a choice below; editing the height disconnects the top.
             // A constrained wall shows the height its level gives.
@@ -1207,11 +1406,19 @@ fn shown(
                     }
                 }
             }
-            let entry = object.header.owner.and_then(|owner| {
-                archbuilder_model::room::of_storey(snapshot, owner)
-                    .into_iter()
-                    .find(|e| e.id == object.id)
-            });
+            // The rooms and their solids are derived on the extraction workers after an edit: until
+            // they are, the derived values show as pending rather than holding the frame up.
+            let rooms = object
+                .header
+                .owner
+                .and_then(|owner| archbuilder_model::room::of_storey_ready(snapshot, owner));
+            let entry = rooms
+                .as_ref()
+                .and_then(|r| r.iter().find(|e| e.id == object.id).cloned());
+            let shape_ready = entry
+                .as_ref()
+                .and_then(|e| archbuilder_model::room::shape_ready(snapshot, e));
+            let pending = rooms.is_none() || (entry.is_some() && shape_ready.is_none());
             let order = [
                 r::NAME,
                 r::NUMBER,
@@ -1236,9 +1443,7 @@ fn shown(
                 values.push(vals.get(k).cloned().flatten());
             }
             // The room's solid: under the lowest ceiling, roof or slab above it.
-            let shape = entry
-                .as_ref()
-                .and_then(|e| archbuilder_model::room::shape(snapshot, e));
+            let shape = shape_ready.flatten();
             let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, unit: &str| {
                 entry
                     .as_ref()
@@ -1250,7 +1455,7 @@ fn shown(
                     "room_area",
                     entry
                         .as_ref()
-                        .and_then(|e| archbuilder_model::room::net_area(snapshot, e))
+                        .and_then(|e| shape.as_ref().map(|s| s.area).or_else(|| e.area()))
                         .map(|a| Value::String(format!("{a:.3} m²"))),
                 ),
                 (
@@ -1297,7 +1502,11 @@ fn shown(
                 ),
             ] {
                 fields.push(text_field(name));
-                values.push(value);
+                values.push(if pending {
+                    Some(Value::String(PENDING.to_owned()))
+                } else {
+                    value
+                });
                 read_only.push(name.to_owned());
             }
             let state = entry.as_ref().map(|e| e.state());
@@ -1832,11 +2041,42 @@ impl Panel for PropertiesPanel {
             .filter_map(|storey| spatial::level_of(&snapshot, &storey))
             .map(|level| level.id)
             .collect();
-        let items: Vec<(Shown, &arc_base::ObjectId)> = view
-            .selection()
+        // With nothing selected, the grid shows the settings of the open plan view.
+        let open_view: Vec<arc_base::ObjectId> = cx
+            .tab
+            .filter(|_| view.selection().is_empty())
+            .and_then(|t| crate::plan_state::current_in(t, &snapshot))
+            .into_iter()
+            .collect();
+        // A storey shown as its default view: its settings are those of a new view, and the first
+        // edit makes the view (`archbuilder.view.set`).
+        let default_view = open_view
+            .first()
+            .copied()
+            .filter(|id| spatial::type_of(&snapshot, *id).as_deref() == Some(STOREY));
+        let shown_ids = if open_view.is_empty() {
+            view.selection()
+        } else {
+            open_view.as_slice()
+        };
+        let items: Vec<(Shown, &arc_base::ObjectId)> = shown_ids
             .iter()
             .filter(|id| !covered.contains(id))
             .filter_map(|id| {
+                if default_view == Some(*id) {
+                    let storey = spatial::get(&snapshot, *id)?;
+                    let settings = archbuilder_model::view::settings_of(&snapshot, &storey)?;
+                    let object = Object::new(
+                        *id,
+                        storey.version,
+                        arc_doc::Header {
+                            owner: Some(*id),
+                            ..arc_doc::Header::default()
+                        },
+                        settings.values(),
+                    );
+                    return Some((shown(&snapshot, types::PLAN_VIEW, &object, &label_of)?, id));
+                }
                 let key = spatial::type_of(&snapshot, *id)?;
                 let object = spatial::get(&snapshot, *id)?;
                 Some((shown(&snapshot, &key, &object, &label_of)?, id))
@@ -1900,8 +2140,11 @@ impl Panel for PropertiesPanel {
             edit_command: PROPERTY_SET,
         };
         let grid = &mut self.grid;
-        let note =
-            matches!(first_key.as_str(), BUILDING | LEVEL).then(|| say(cx.localize, &NOT_EDITABLE));
+        let note = if default_view.is_some() {
+            Some(say(cx.localize, &DEFAULT_VIEW))
+        } else {
+            matches!(first_key.as_str(), BUILDING | LEVEL).then(|| say(cx.localize, &NOT_EDITABLE))
+        };
         let intent = ScrollArea::vertical()
             .id_salt("archbuilder-properties")
             .auto_shrink([false, false])
@@ -1915,6 +2158,20 @@ impl Panel for PropertiesPanel {
             })
             .inner;
         if let Some(intent) = intent {
+            // An edit of a storey's default view sets the view, made by the same step.
+            let intent = match default_view {
+                Some(storey) => Intent::new(archbuilder_commands::view::VIEW_SET)
+                    .with("view", storey.to_string())
+                    .with(
+                        "field",
+                        intent.params.get("field").cloned().unwrap_or_default(),
+                    )
+                    .with(
+                        "value",
+                        intent.params.get("value").cloned().unwrap_or_default(),
+                    ),
+                None => intent,
+            };
             cx.actions.push(Action::Intent(intent));
         }
     }

@@ -61,6 +61,9 @@ pub struct Picker {
     under: Option<Under>,
     /// The candidate Tab chose: where the pointer was and the index into the list.
     tab: Option<([f64; 2], usize)>,
+    /// The objects a plan view's drawing has under the pointer, when a plan view is open: only
+    /// these are candidates, in the order of the list.
+    view_hits: Option<archbuilder_model::plan::Hits>,
 }
 
 fn near(a: [f64; 2], b: [f64; 2]) -> bool {
@@ -120,9 +123,20 @@ impl Picker {
                 index,
             });
         }
-        let rooms = self.rooms(snapshot).to_vec();
+        // A plan view's drawing has the rooms already (its back-links): the model's room
+        // derivation of every storey, slow after an edit, is not needed for its candidates.
+        let rooms = if self.view_hits.is_some() {
+            Vec::new()
+        } else {
+            self.rooms(snapshot).to_vec()
+        };
         let mut stack = archbuilder_model::pick::stack(snapshot, &rooms, at, aperture, ray);
         stack.retain(|id| shown(*id));
+        if let Some(hits) = &self.view_hits {
+            // What the drawing shows under the pointer, in the order of the list.
+            stack = hits.filter(stack);
+            stack.retain(|id| shown(*id));
+        }
         self.under = Some(Under {
             pixel,
             stack: stack.clone(),
@@ -133,6 +147,12 @@ impl Picker {
             stack,
             index,
         })
+    }
+
+    /// Sets the objects the open plan view's drawing has under the pointer (`None` without a
+    /// plan view): the next [`Picker::target`] looks only at them.
+    pub fn set_view_hits(&mut self, hits: Option<archbuilder_model::plan::Hits>) {
+        self.view_hits = hits;
     }
 
     /// Tab: the hover moves to the next candidate under the pointer (and back to the first after

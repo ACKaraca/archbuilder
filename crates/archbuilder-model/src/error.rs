@@ -351,4 +351,10 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-ceiling-range-element",
     };
+    /// A plan view's range is out of order: view depth, bottom, cut and top must rise.
+    pub const VIEW_RANGE: ErrorCode = ErrorCode {
+        code: "ab.model.view_range",
+        category: Category::InvalidInput,
+        message_id: "ab-model-view-range",
+    };
 }

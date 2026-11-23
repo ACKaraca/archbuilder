@@ -65,6 +65,7 @@ pub mod layered;
 pub mod names;
 pub mod opening;
 pub mod pick;
+pub mod plan;
 pub mod roof;
 pub mod room;
 pub mod sketch;
@@ -75,6 +76,7 @@ pub mod transform;
 pub mod types;
 pub mod units;
 pub mod validate;
+pub mod view;
 pub mod wall;
 
 use arc_base::Result;

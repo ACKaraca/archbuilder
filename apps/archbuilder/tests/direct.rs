@@ -182,6 +182,7 @@ impl Pointer {
             free: false,
             unit: LengthUnit::Meter,
             separator: '.',
+            plan: None,
         }
     }
 }
@@ -639,4 +640,57 @@ fn escape_in_the_dimension_input_closes_it_and_changes_nothing() {
     assert!(direct.edited(&DynamicEvent::Cancel { index: 0 }).is_none());
     assert!(direct.input().is_none());
     assert_eq!(rig.wall_now(w2).start, [0.0, 4.0]);
+}
+
+#[test]
+fn in_a_plan_view_a_drag_takes_the_wall_the_drawing_shows_not_the_one_above_it() {
+    let rig = Rig::new();
+    let ground = rig.wall([5.0, 0.0], [5.0, 6.0]);
+    let snapshot = rig.document.snapshot();
+    let upper_storey = archbuilder_model::spatial::storeys(
+        &snapshot,
+        archbuilder_model::spatial::buildings(&snapshot)[0].id,
+    )[1]
+    .storey
+    .id;
+    rig.run(
+        "archbuilder.wall.create",
+        json!({"start": [5.0, 0.0], "end": [5.0, 6.0], "height": 3.0,
+               "storey": upper_storey.to_string()}),
+    )
+    .unwrap();
+    let snapshot = rig.document.snapshot();
+    let upper = rig
+        .walls()
+        .into_iter()
+        .map(|(id, _)| id)
+        .find(|id| *id != ground)
+        .unwrap();
+    let pointer = Pointer::plan(&[]);
+    let input = pointer.at(&rig, &snapshot, [5.0, 3.0], 0.0);
+    // Straight down, the view ray meets the upper wall first: the 3D pick takes it.
+    assert_eq!(archbuilder::direct::body_at(&input), Some(upper));
+    // A plan view of the ground storey picks from its drawing, which has only the ground wall.
+    let drawn = [ground];
+    let in_plan = Input {
+        plan: Some(&drawn),
+        ..pointer.at(&rig, &snapshot, [5.0, 3.0], 0.0)
+    };
+    assert_eq!(archbuilder::direct::body_at(&in_plan), Some(ground));
+    let mut direct = Direct::new();
+    assert!(direct.press(&in_plan));
+    let to = Input {
+        plan: Some(&drawn),
+        ..pointer.at(&rig, &snapshot, [5.6, 3.0], 0.0)
+    };
+    direct.moved(&to);
+    let done = direct.release(&to).unwrap();
+    rig.execute(&done);
+    // The ground wall moved (to the snap step near the pointer), the upper one stayed.
+    assert!(
+        rig.wall_now(ground).start[0] > 5.3,
+        "{:?}",
+        rig.wall_now(ground)
+    );
+    assert!((rig.wall_now(upper).start[0] - 5.0).abs() < 1e-9);
 }
