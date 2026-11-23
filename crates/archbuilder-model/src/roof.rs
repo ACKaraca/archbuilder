@@ -650,9 +650,35 @@ pub struct Derived {
     pub roof: Roof,
     /// The surface.
     pub surface: Surface,
+    /// The footprints of the shafts and vertical openings that cut the roof.
+    pub cuts: Vec<Vec<[f64; 2]>>,
 }
 
 impl Derived {
+    /// The slab with the openings cut out when the solid kernel can cut them (a cut that crosses
+    /// a ridge, a hip or a valley it cannot), else the whole slab; the flag says whether the cuts
+    /// are in it.
+    ///
+    /// # Errors
+    /// The solid kernel's errors for the slab itself.
+    pub fn solid_cut(&self) -> Result<(Polyhedron, bool)> {
+        match self.solid() {
+            Ok(body) => Ok((body, true)),
+            Err(_) if !self.cuts.is_empty() => Ok((self.surface.solid()?, false)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The slab with the shafts and vertical openings cut out.
+    ///
+    /// # Errors
+    /// The solid kernel's errors.
+    pub fn solid(&self) -> Result<Polyhedron> {
+        let body = self.surface.solid()?;
+        let z = (self.surface.base - self.surface.drop, self.surface.top());
+        crate::opening::cut_vertical(body, &self.cuts, z)
+    }
+
     /// Reads the roof `object` of `snapshot`.
     ///
     /// # Errors
@@ -691,7 +717,16 @@ impl Derived {
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
         let footprint = roof.footprint_in(snapshot).ok_or(Refusal::Malformed)?;
         let surface = Surface::compute(&roof, footprint, level + roof.base_offset)?;
-        Ok(Self { roof, surface })
+        let cuts = crate::opening::cuts(
+            snapshot,
+            object,
+            (surface.base - surface.drop, surface.top()),
+        );
+        Ok(Self {
+            roof,
+            surface,
+            cuts,
+        })
     }
 }
 

@@ -64,6 +64,21 @@ const GENERIC_FLOOR: Msg = Msg {
 const SLAB_FLOOR: Msg = Msg {
     message_id: "ab-type-floor-slab",
 };
+const GENERIC_CEILING: Msg = Msg {
+    message_id: "ab-type-ceiling-generic",
+};
+const GRID_CEILING: Msg = Msg {
+    message_id: "ab-type-ceiling-grid",
+};
+const GENERATED_CEILING: Msg = Msg {
+    message_id: "ab-type-ceiling-generated",
+};
+const M_BOARD: Msg = Msg {
+    message_id: "ab-material-ceiling-board",
+};
+const M_TILE: Msg = Msg {
+    message_id: "ab-material-ceiling-tile",
+};
 const GENERIC_ROOF: Msg = Msg {
     message_id: "ab-type-roof-generic",
 };
@@ -387,7 +402,57 @@ pub(crate) fn create_defaults(ctx: &mut Context<'_>) -> Result<()> {
     ] {
         create_type(ctx, kind, t.values(&n.text(name, &[])))?;
     }
-    create_roof_defaults(ctx, &n)
+    create_roof_defaults(ctx, &n)?;
+    create_ceiling_defaults(ctx, &n)
+}
+
+/// The two ceiling types of a new project: a generic board of 20 mm, and a suspended grid of
+/// 600 by 600 mm tiles. Also made for a document from before ceiling types the first time it needs
+/// one ([`ensure_ceiling_types`]).
+fn create_ceiling_defaults(ctx: &mut Context<'_>, n: &Names) -> Result<()> {
+    use archbuilder_model::element_type::{CeilingType, Grid};
+    let height = types::DEFAULT_CEILING_HEIGHT;
+    let types = [
+        (
+            &GENERIC_CEILING,
+            CeilingType {
+                layers: Layers::single(&n.text(&M_BOARD, &[]), 0.02),
+                height_offset: height,
+                grid: None,
+            },
+        ),
+        (
+            &GRID_CEILING,
+            CeilingType {
+                layers: Layers::single(&n.text(&M_TILE, &[]), 0.015),
+                height_offset: height,
+                grid: Some(Grid {
+                    spacing: [0.6, 0.6],
+                    angle: 0.0,
+                }),
+            },
+        ),
+    ];
+    for (name, t) in &types {
+        create_type(
+            ctx,
+            TypeKind::Ceiling,
+            et::ceiling_type_values(&n.text(name, &[]), t),
+        )?;
+    }
+    Ok(())
+}
+
+/// Makes the default ceiling types in a document that has none yet.
+///
+/// # Errors
+/// The errors of the transaction.
+pub(crate) fn ensure_ceiling_types(ctx: &mut Context<'_>) -> Result<()> {
+    if et::of_kind(ctx.txn()?.snapshot(), TypeKind::Ceiling).is_empty() {
+        let n = Names::new(&language(ctx));
+        create_ceiling_defaults(ctx, &n)?;
+    }
+    Ok(())
 }
 
 /// The two roof types of a new project: one generic layer of 300 mm, and timber rafters with
@@ -452,6 +517,10 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
         TypeKind::Roof => vec![(
             types::roof::THICKNESS,
             types::length(archbuilder_model::roof::DEFAULT_THICKNESS),
+        )],
+        TypeKind::Ceiling => vec![(
+            types::ceiling::THICKNESS,
+            types::length(archbuilder_model::ceiling::DEFAULT_THICKNESS),
         )],
         TypeKind::Door | TypeKind::Window => {
             let window = kind == TypeKind::Window;
@@ -522,6 +591,7 @@ pub(crate) fn layered_for(
         match kind {
             TypeKind::Wall => types::wall::THICKNESS,
             TypeKind::Roof => types::roof::THICKNESS,
+            TypeKind::Ceiling => types::ceiling::THICKNESS,
             _ => types::floor::THICKNESS,
         },
         types::length(thickness),
@@ -594,6 +664,7 @@ fn wanted(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, Value)> {
         ],
         TypeKind::Floor => &[types::floor::THICKNESS],
         TypeKind::Roof => &[types::roof::THICKNESS],
+        TypeKind::Ceiling => &[types::ceiling::THICKNESS],
         TypeKind::Door | TypeKind::Window => &[
             types::insert::WIDTH,
             types::insert::HEIGHT,
@@ -626,6 +697,7 @@ fn same(a: &Value, b: &Value) -> bool {
 ///
 /// # Errors
 /// The errors of the transaction.
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of type")]
 pub fn ensure(
     ctx: &mut Context<'_>,
     kind: TypeKind,
@@ -697,6 +769,18 @@ pub fn ensure(
             et::floor_type_values(
                 &free_name(&snapshot, kind, &name, &n),
                 &Layers::single(&generic, total),
+            )
+        }
+        TypeKind::Ceiling => {
+            let total = length(types::ceiling::THICKNESS);
+            let name = n.text(&GENERATED_CEILING, &[("mm", mm(total))]);
+            et::ceiling_type_values(
+                &free_name(&snapshot, kind, &name, &n),
+                &et::CeilingType {
+                    layers: Layers::single(&generic, total),
+                    height_offset: types::DEFAULT_CEILING_HEIGHT,
+                    grid: None,
+                },
             )
         }
         TypeKind::Door | TypeKind::Window => {
@@ -1182,6 +1266,7 @@ fn kind_named(name: &str) -> Option<TypeKind> {
         TypeKind::Door => name == "door",
         TypeKind::Window => name == "window",
         TypeKind::Roof => name == "roof",
+        TypeKind::Ceiling => name == "ceiling",
     })
 }
 

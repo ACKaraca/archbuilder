@@ -53,6 +53,19 @@ pub const STAIR: &str = "archbuilder.stair";
 /// A roof by footprint on a storey: edges with slopes and overhangs, a base offset and a type.
 pub const ROOF: &str = "archbuilder.roof";
 
+/// A ceiling on a storey: a boundary, a height above the level, a type and optionally a slope.
+pub const CEILING: &str = "archbuilder.ceiling";
+/// A rectangular or arched opening cut in a wall, without a door or window; hosted by the wall.
+pub const WALL_OPENING: &str = "archbuilder.wall_opening";
+/// A vertical shaft: one footprint cut through every floor, roof and ceiling between a base and a
+/// top; owned by the storey it starts on.
+pub const SHAFT: &str = "archbuilder.shaft";
+/// A vertical opening: a sketched cut in one floor, roof or ceiling, which hosts it.
+pub const VERTICAL_OPENING: &str = "archbuilder.vertical_opening";
+/// A ceiling type: layers, a core, the height above the level and the grid pattern; owned by the
+/// project.
+pub const CEILING_TYPE: &str = "archbuilder.ceiling_type";
+
 /// A wall type: layers, a core and the function flags; owned by the project.
 pub const WALL_TYPE: &str = "archbuilder.wall_type";
 /// A floor type: layers and a core; owned by the project.
@@ -66,14 +79,36 @@ pub const WINDOW_TYPE: &str = "archbuilder.window_type";
 pub const ROOF_TYPE: &str = "archbuilder.roof_type";
 
 /// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
-pub const TYPE_KEYS: [&str; 5] = [WALL_TYPE, FLOOR_TYPE, DOOR_TYPE, WINDOW_TYPE, ROOF_TYPE];
+pub const TYPE_KEYS: [&str; 6] = [
+    WALL_TYPE,
+    FLOOR_TYPE,
+    DOOR_TYPE,
+    WINDOW_TYPE,
+    ROOF_TYPE,
+    CEILING_TYPE,
+];
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 7] = [WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR, ROOF];
+pub const ELEMENTS: [&str; 11] = [
+    WALL,
+    DOOR,
+    WINDOW,
+    FLOOR,
+    ROOM,
+    STAIR,
+    ROOF,
+    CEILING,
+    WALL_OPENING,
+    SHAFT,
+    VERTICAL_OPENING,
+];
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 5] = [WALL, FLOOR, ROOM, STAIR, ROOF];
+pub const STOREY_ELEMENTS: [&str; 7] = [WALL, FLOOR, ROOM, STAIR, ROOF, CEILING, SHAFT];
+
+/// The elements that host a vertical opening.
+pub const VERTICAL_HOSTS: [&str; 3] = [FLOOR, ROOF, CEILING];
 
 /// Whether `key` is one of [`ELEMENTS`].
 #[must_use]
@@ -88,7 +123,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 17] = [
+pub const KEYS: [&str; 22] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -106,6 +141,11 @@ pub const KEYS: [&str; 17] = [
     DOOR_TYPE,
     WINDOW_TYPE,
     ROOF_TYPE,
+    CEILING,
+    WALL_OPENING,
+    SHAFT,
+    VERTICAL_OPENING,
+    CEILING_TYPE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -417,6 +457,112 @@ pub mod roof {
     }
 }
 
+/// Field positions of `archbuilder.ceiling`. The first seven are those of a floor, so the
+/// boundary is read and edited by the floor's code.
+pub mod ceiling {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The thickness of the body above the underside, a copy of the type's total, in meters.
+    pub const THICKNESS: usize = 1;
+    /// The underside's height above the storey's level, in meters.
+    pub const HEIGHT_OFFSET: usize = 2;
+    /// The boundary vertices ([`crate::floor::Vertex`] records).
+    pub const VERTICES: usize = 3;
+    /// The ceiling type.
+    pub const CEILING_TYPE: usize = 4;
+    /// Whether the ceiling is pinned.
+    pub const PINNED: usize = 5;
+    /// The arc edges, as in a floor.
+    pub const ARCS: usize = 6;
+    /// The grid pattern's origin offset along x, in meters.
+    pub const GRID_X: usize = 7;
+    /// The grid pattern's origin offset along y, in meters.
+    pub const GRID_Y: usize = 8;
+    /// The grid pattern's rotation added to the type's angle.
+    pub const GRID_ROTATION: usize = 9;
+    /// The x of a point on the slope arrow's start line; absent for a flat ceiling.
+    pub const SLOPE_X: usize = 10;
+    /// The y of that point.
+    pub const SLOPE_Y: usize = 11;
+    /// The direction of the slope arrow, an angle from the x axis.
+    pub const SLOPE_DIRECTION: usize = 12;
+    /// The length of the slope arrow, in meters.
+    pub const SLOPE_LENGTH: usize = 13;
+    /// The slope as an angle; absent when the end height gives it.
+    pub const SLOPE: usize = 14;
+    /// The underside's height above the level at the arrow's end, in meters.
+    pub const END_HEIGHT: usize = 15;
+}
+
+/// Field positions of `archbuilder.wall_opening`.
+pub mod wall_opening {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The distance from the wall's baseline start to the center of the opening, in meters.
+    pub const DISTANCE: usize = 1;
+    /// The width, in meters.
+    pub const WIDTH: usize = 2;
+    /// The height of the opening's highest point above its sill (the rise included), in meters.
+    pub const HEIGHT: usize = 3;
+    /// The sill's height above the wall's base, in meters.
+    pub const SILL: usize = 4;
+    /// The rise of the arched top, in meters; 0 for a rectangle.
+    pub const RISE: usize = 5;
+    /// Whether the opening is pinned.
+    pub const PINNED: usize = 6;
+}
+
+/// Field positions of `archbuilder.shaft`.
+pub mod shaft {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The base's offset from its level, in meters.
+    pub const BASE_OFFSET: usize = 1;
+    /// The top's offset from its level, in meters.
+    pub const TOP_OFFSET: usize = 2;
+    /// The footprint vertices.
+    pub const VERTICES: usize = 3;
+    /// The arc edges.
+    pub const ARCS: usize = 4;
+    /// Whether the shaft is pinned.
+    pub const PINNED: usize = 5;
+    /// The level of the base; the level of the shaft's storey when absent.
+    pub const BASE_LEVEL: usize = 6;
+    /// The level of the top; the level above the shaft's storey when absent.
+    pub const TOP_LEVEL: usize = 7;
+}
+
+/// Field positions of `archbuilder.vertical_opening`.
+pub mod vertical_opening {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The footprint vertices.
+    pub const VERTICES: usize = 1;
+    /// The arc edges.
+    pub const ARCS: usize = 2;
+    /// Whether the opening is pinned.
+    pub const PINNED: usize = 3;
+}
+
+/// Field positions of `archbuilder.ceiling_type`: the layered fields, then these.
+pub mod ceiling_type {
+    /// The height of the underside above the level a new ceiling gets, in meters.
+    pub const HEIGHT_OFFSET: usize = 4;
+    /// The grid's tile size along its first axis, in meters; 0 for no pattern.
+    pub const GRID_X: usize = 5;
+    /// The grid's tile size along its second axis, in meters.
+    pub const GRID_Y: usize = 6;
+    /// The grid's angle from the x axis.
+    pub const GRID_ANGLE: usize = 7;
+}
+
+/// The default height of a ceiling's underside above its level, in meters.
+pub const DEFAULT_CEILING_HEIGHT: f64 = 2.6;
+/// The range of a wall opening's rise, in meters.
+pub const RISE_RANGE: (f64, f64) = (0.0, 20.0);
+/// The range of the grid tile size of a ceiling type, in meters; 0 is no pattern.
+pub const GRID_RANGE: (f64, f64) = (0.0, 10.0);
+
 /// The field positions of a stair record.
 pub mod stair {
     /// The name.
@@ -651,30 +797,17 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         length_field("thickness", Some(real(FLOOR_THICKNESS_RANGE)))
             .with_default(length(DEFAULT_FLOOR_THICKNESS)),
         length_field("top_offset", Some(real(BASE_OFFSET_RANGE))),
-        FieldDecl::new("vertices", ValueType::List(Box::new(vertex_type())))
-            .with_bound(Bound::Length {
-                max: crate::floor::MAX_VERTICES as u64,
-            })
-            .in_aspect("geometry"),
+        vertices_field(),
         type_field("floor_type", FLOOR_TYPE, 1),
         pinned_field(2),
-        FieldDecl::new(
-            "arcs",
-            ValueType::List(Box::new(ValueType::Record(vec![
-                FieldDecl::new("vertex", ValueType::I64).with_default(Value::I64(0)),
-                FieldDecl::new("bulge", ValueType::F64)
-                    .with_default(Value::F64(0.0))
-                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
-            ]))),
-        )
-        .with_bound(Bound::Length {
-            max: crate::floor::MAX_VERTICES as u64,
-        })
-        .optional()
-        .in_aspect("geometry")
-        .since_minor(3),
+        arcs_field(3),
     ];
     for (key, fields) in [
+        (CEILING, ceiling_fields()),
+        (WALL_OPENING, wall_opening_fields()),
+        (SHAFT, shaft_fields()),
+        (VERTICAL_OPENING, vertical_opening_fields()),
+        (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
         (ROOF_TYPE, crate::element_type::floor_type_fields()),
         (STAIR, stair_fields()),
@@ -695,7 +828,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     ] {
         let mut decl = declaration(key, fields)?;
         match key {
-            WALL_TYPE | FLOOR_TYPE | ROOF_TYPE => {
+            WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
                 decl.validators.push(crate::element_type::layer_findings);
             }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
@@ -704,6 +837,114 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(decl)?;
     }
     Ok(())
+}
+
+/// The boundary vertices of a floor, ceiling, shaft or vertical opening.
+fn vertices_field() -> FieldDecl {
+    FieldDecl::new("vertices", ValueType::List(Box::new(vertex_type())))
+        .with_bound(Bound::Length {
+            max: crate::floor::MAX_VERTICES as u64,
+        })
+        .in_aspect("geometry")
+}
+
+/// The arc edges of a boundary, appended in schema 1.`minor`.
+fn arcs_field(minor: u32) -> FieldDecl {
+    FieldDecl::new(
+        "arcs",
+        ValueType::List(Box::new(ValueType::Record(vec![
+            FieldDecl::new("vertex", ValueType::I64).with_default(Value::I64(0)),
+            FieldDecl::new("bulge", ValueType::F64)
+                .with_default(Value::F64(0.0))
+                .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+        ]))),
+    )
+    .with_bound(Bound::Length {
+        max: crate::floor::MAX_VERTICES as u64,
+    })
+    .optional()
+    .in_aspect("geometry")
+    .since_minor(minor)
+}
+
+fn optional_length(name: &str, range: (f64, f64)) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Quantity(Dimension::LENGTH))
+        .optional()
+        .with_bound(real(range))
+        .in_aspect("geometry")
+}
+
+fn angle_field(name: &str) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Quantity(Dimension::ANGLE))
+        .with_default(Value::Quantity(Quantity::new(0.0, Dimension::ANGLE)))
+        .with_bound(real((-1000.0, 1000.0)))
+        .in_aspect("geometry")
+}
+
+fn ceiling_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("thickness", Some(real(FLOOR_THICKNESS_RANGE))).with_default(length(0.02)),
+        length_field("height_offset", Some(real(BASE_OFFSET_RANGE)))
+            .with_default(length(DEFAULT_CEILING_HEIGHT)),
+        vertices_field(),
+        type_field("ceiling_type", CEILING_TYPE, 0),
+        pinned_field(0),
+        arcs_field(0),
+        length_field("grid_x", Some(real(COORDINATE_RANGE))),
+        length_field("grid_y", Some(real(COORDINATE_RANGE))),
+        angle_field("grid_rotation"),
+        optional_length("slope_x", COORDINATE_RANGE),
+        optional_length("slope_y", COORDINATE_RANGE),
+        angle_field("slope_direction"),
+        optional_length("slope_length", (0.001, 100_000.0)),
+        FieldDecl::new("slope", ValueType::Quantity(Dimension::ANGLE))
+            .optional()
+            .with_bound(real((
+                -crate::ceiling::MAX_SLOPE,
+                crate::ceiling::MAX_SLOPE,
+            )))
+            .in_aspect("geometry"),
+        optional_length("end_height", BASE_OFFSET_RANGE),
+    ]
+}
+
+fn wall_opening_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("distance", Some(real(DISTANCE_RANGE))),
+        length_field("width", Some(real(INSERT_WIDTH_RANGE))).with_default(length(0.9)),
+        length_field("height", Some(real(INSERT_HEIGHT_RANGE))).with_default(length(2.1)),
+        length_field("sill", Some(real(SILL_RANGE))),
+        length_field("rise", Some(real(RISE_RANGE))),
+        pinned_field(0),
+    ]
+}
+
+fn shaft_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("base_offset", Some(real(BASE_OFFSET_RANGE))),
+        length_field("top_offset", Some(real(BASE_OFFSET_RANGE))),
+        vertices_field(),
+        arcs_field(0),
+        pinned_field(0),
+        FieldDecl::new("base_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+        FieldDecl::new("top_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+    ]
+}
+
+fn vertical_opening_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        vertices_field(),
+        arcs_field(0),
+        pinned_field(0),
+    ]
 }
 
 fn stair_fields() -> Vec<FieldDecl> {
@@ -853,6 +1094,10 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         ROOM => room::PINNED,
         STAIR => stair::PINNED,
         ROOF => roof::PINNED,
+        CEILING => ceiling::PINNED,
+        WALL_OPENING => wall_opening::PINNED,
+        SHAFT => shaft::PINNED,
+        VERTICAL_OPENING => vertical_opening::PINNED,
         _ => return None,
     })
 }

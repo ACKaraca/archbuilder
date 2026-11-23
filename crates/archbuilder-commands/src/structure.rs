@@ -278,6 +278,14 @@ fn refuses(txn: &arc_doc::Txn, error: &arc_base::Error) -> bool {
             .is_some_and(|id| spatial::get(txn.base(), id).is_none() && changed_by(txn, id))
 }
 
+/// Whether the warning `error` refuses every command, also the lenient ones (modify, clipboard,
+/// trim, offset): a ceiling this command made or changed passes what bounds it. A ceiling that
+/// what lies above it carried into the slab or roof only warns.
+pub(crate) fn refuses_always(txn: &arc_doc::Txn, error: &arc_base::Error) -> bool {
+    validate::is_ceiling_range(error)
+        && validate::object_of(error).is_some_and(|id| changed_by(txn, id))
+}
+
 pub(crate) fn ensure_valid(ctx: &mut Context<'_>) -> Result<()> {
     let txn = ctx.txn()?;
     if let Some(error) = validate::pin_refusal(txn.base(), txn.snapshot(), txn.touched()) {
@@ -906,6 +914,57 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
                         Error::new(codes::FIELD_UNKNOWN).with_arg("field", field.to_owned())
                     );
                 }
+            }
+            (types::CEILING, "ceiling_slope") => {
+                let text = p
+                    .value
+                    .as_str()
+                    .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
+                crate::ceiling::set_slope_text(ctx, id, text)?;
+                ensure_valid(ctx)?;
+            }
+            (types::SHAFT, "shaft_base" | "shaft_top") => {
+                // The grid sends the number of its choice: 0 is the storey's own level, then the
+                // levels of the building in order; a level's name also does.
+                let object =
+                    spatial::get(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let building = object
+                    .header
+                    .owner
+                    .and_then(|s| spatial::get(snapshot, s))
+                    .and_then(|s| s.header.owner)
+                    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+                let levels = spatial::levels(snapshot, building);
+                let chosen = match &p.value {
+                    serde_json::Value::Number(n) => match n.as_u64() {
+                        Some(0) => None,
+                        Some(k) => Some(
+                            usize::try_from(k - 1)
+                                .ok()
+                                .and_then(|k| levels.get(k))
+                                .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                                .id,
+                        ),
+                        None => return Err(Error::new(codes::VALUE_INVALID)),
+                    },
+                    serde_json::Value::String(name) if name == "shaft_default" => None,
+                    serde_json::Value::String(name) => Some(
+                        levels
+                            .iter()
+                            .find(|l| types::text(&l.values, level::NAME) == Some(name.as_str()))
+                            .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                            .id,
+                    ),
+                    _ => return Err(Error::new(codes::VALUE_INVALID)),
+                };
+                let field = if p.field == "shaft_base" {
+                    "base_level"
+                } else {
+                    "top_level"
+                };
+                ctx.txn()?
+                    .modify(id, FieldPath::new(field), chosen.map(Value::Reference))?;
+                ensure_valid(ctx)?;
             }
             (LEVEL | STOREY, "elevation") => {
                 let param: QuantityParam = serde_json::from_value(p.value.clone())

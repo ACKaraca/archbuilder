@@ -21,7 +21,9 @@ use std::collections::BTreeMap;
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{Accept, Point, PromptInput};
 use arc_command::{CommandLine, LineStep, Submitted, Target};
+use archbuilder_commands::ceiling::CEILING_CREATE;
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::opening::{SHAFT_CREATE, VERTICAL_OPENING_CREATE};
 use archbuilder_commands::roof::ROOF_CREATE;
 use archbuilder_model::floor;
 use serde_json::{Map, Value};
@@ -52,6 +54,11 @@ pub struct State {
     pub sketch: bool,
     /// Whether the tool makes roofs instead of floors.
     pub roof: bool,
+    /// The command a floor-like tool makes its elements with: floors, roofs, ceilings, shafts or
+    /// vertical openings; the hole tool runs `archbuilder.floor.add_hole`.
+    pub command: &'static str,
+    /// The floor, roof or ceiling a vertical opening is cut in.
+    pub host: Option<ObjectId>,
 }
 
 fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -167,6 +174,38 @@ impl FloorTool {
             hole_in,
             sketch: false,
             roof: false,
+            command: FLOOR_CREATE,
+            host: None,
+        });
+        self.next(env, run)
+    }
+
+    /// Starts the tool for the elements of `command` (ceilings, shafts or vertical openings) on
+    /// the storey of the selection (else the lowest); a vertical opening is cut in `host`.
+    ///
+    /// # Errors
+    /// `ab.cmd.no_building` without a storey; the errors of the command line.
+    pub fn begin_for(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        host: Option<ObjectId>,
+    ) -> Result<()> {
+        self.line.cancel();
+        self.state = None;
+        let (storey, elevation) = storey_for(&env.document.snapshot(), env.selection)
+            .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_BUILDING))?;
+        self.line.set_last_point(None)?;
+        self.state = Some(State {
+            storey,
+            elevation,
+            hole_in: None,
+            // A shaft and a vertical opening are sketches; the prompts know it.
+            sketch: command != CEILING_CREATE,
+            roof: false,
+            command,
+            host,
         });
         self.next(env, run)
     }
@@ -187,6 +226,8 @@ impl FloorTool {
             hole_in: None,
             sketch: false,
             roof: true,
+            command: ROOF_CREATE,
+            host: None,
         });
         self.next(env, run)
     }
@@ -214,6 +255,30 @@ impl FloorTool {
                     preset.insert("type".into(), Value::from(t));
                 }
                 ROOF_CREATE
+            }
+            None if state.command == CEILING_CREATE => {
+                if state.sketch {
+                    preset.insert("mode".into(), Value::from("sketch"));
+                }
+                let snapshot = env.document.snapshot();
+                if let Some(t) = crate::tool_type::current_param(
+                    &snapshot,
+                    archbuilder_model::element_type::TypeKind::Ceiling,
+                ) {
+                    preset.insert("type".into(), Value::from(t));
+                }
+                CEILING_CREATE
+            }
+            None if state.command == SHAFT_CREATE => {
+                preset.insert("mode".into(), Value::from("sketch"));
+                SHAFT_CREATE
+            }
+            None if state.command == VERTICAL_OPENING_CREATE => {
+                preset.insert("mode".into(), Value::from("sketch"));
+                if let Some(host) = state.host {
+                    preset.insert("host".into(), Value::from(host.to_string()));
+                }
+                VERTICAL_OPENING_CREATE
             }
             None => {
                 if state.sketch {
@@ -248,7 +313,14 @@ impl FloorTool {
                 Ok(())
             }
             Ok(Submitted::Ran(outcome))
-                if outcome.command == FLOOR_CREATE || outcome.command == ROOF_CREATE =>
+                if [
+                    FLOOR_CREATE,
+                    ROOF_CREATE,
+                    CEILING_CREATE,
+                    SHAFT_CREATE,
+                    VERTICAL_OPENING_CREATE,
+                ]
+                .contains(&outcome.command.as_str()) =>
             {
                 self.next(env, run)
             }
@@ -349,7 +421,17 @@ impl FloorTool {
         let Some(storey) = self.state.as_ref().map(|s| s.storey) else {
             return Ok(());
         };
-        let walls = floor::storey_walls(&env.document.snapshot(), storey);
+        let snapshot = env.document.snapshot();
+        // A ceiling is laid out like a room: the walls that bound rooms.
+        let walls = if self
+            .state
+            .as_ref()
+            .is_some_and(|s| s.command == CEILING_CREATE)
+        {
+            floor::room_walls(&snapshot, storey)
+        } else {
+            floor::storey_walls(&snapshot, storey)
+        };
         if floor::wall_at(&walls, at).is_some() {
             return self.answer(env, run, point);
         }

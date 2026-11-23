@@ -21,7 +21,9 @@ use archbuilder_model::element_type::{
 use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
-use archbuilder_model::types::{DOOR, FLOOR, ROOF, WINDOW, text};
+use archbuilder_model::types::{
+    CEILING, DOOR, FLOOR, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
+};
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
 
@@ -158,11 +160,19 @@ impl Mapper<'_> {
         }
         for floor in spatial::children(self.snapshot, FLOOR, storey) {
             self.cancel.check()?;
-            self.floor(&floor, storey);
+            self.floor(&floor, storey, level);
         }
         for roof in spatial::children(self.snapshot, ROOF, storey) {
             self.cancel.check()?;
             self.roof(&roof, storey, level);
+        }
+        for ceiling in spatial::children(self.snapshot, CEILING, storey) {
+            self.cancel.check()?;
+            self.ceiling(&ceiling, storey, level);
+        }
+        for shaft in spatial::children(self.snapshot, SHAFT, storey) {
+            self.cancel.check()?;
+            self.shaft(&shaft, storey, level);
         }
         for entry in archbuilder_model::room::of_storey(self.snapshot, storey) {
             self.cancel.check()?;
@@ -194,12 +204,17 @@ impl Mapper<'_> {
         if let Some(reason) = reason {
             return self.lose(reason, "IFCSPACE", &object);
         }
-        let height = (entry.top - entry.base).max(0.0);
+        // The room's solid: under the lowest ceiling, roof or slab above it, else its upper limit.
+        let shape = archbuilder_model::room::shape(self.snapshot, entry);
+        let height = shape
+            .as_ref()
+            .map_or_else(|| (entry.top - entry.base).max(0.0), |s| s.height);
+        // The shafts that pass through the room are out of its area, its body and its volume.
         let (Some(area), Some(gross), Some(perimeter), Some(volume)) = (
-            entry.area(),
+            archbuilder_model::room::net_area(self.snapshot, entry),
             entry.footprint.gross_area(),
             entry.perimeter(),
-            entry.volume(),
+            shape.as_ref().map(|s| s.volume).or_else(|| entry.volume()),
         ) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCSPACE", &object);
         };
@@ -220,17 +235,37 @@ impl Mapper<'_> {
             Vector3::z(),
             Vector3::x(),
         );
-        element.body = Some(Body::Extrusion {
-            outer: profile(&entry.footprint.polygon, true),
-            holes: entry
-                .footprint
-                .holes
-                .iter()
-                .map(|h| profile(h, false))
-                .collect(),
-            direction: Vector3::z(),
-            depth: height,
-        });
+        let flat = shape.as_ref().and_then(|s| s.flat_top());
+        // A sloped top, or a shaft through the room, needs the room's own solid; a failure is
+        // reported, never replaced by a flat extrusion at some other height.
+        let own = shape
+            .as_ref()
+            .filter(|s| flat.is_none() || entry.area().is_some_and(|a| s.area < a - 1.0e-6));
+        element.body = match own.map(|s| s.solid()) {
+            Some(Ok(solid)) => brep(
+                [&solid],
+                &Frame {
+                    origin: [0.0, 0.0],
+                    u: [1.0, 0.0],
+                },
+                entry.base,
+            ),
+            Some(Err(_)) => {
+                self.lose(reasons::BODY_NOT_EXPORTED, "IFCSPACE", &object);
+                None
+            }
+            None => Some(Body::Extrusion {
+                outer: profile(&entry.footprint.polygon, true),
+                holes: entry
+                    .footprint
+                    .holes
+                    .iter()
+                    .map(|h| profile(h, false))
+                    .collect(),
+                direction: Vector3::z(),
+                depth: flat.map_or(height, |z| (z - entry.base).max(0.0)),
+            }),
+        };
         element.quantity_sets.push(QuantitySet::new(
             "Qto_SpaceBaseQuantities",
             vec![
@@ -383,7 +418,11 @@ impl Mapper<'_> {
     /// The doors and windows of a wall, by distance along it and then identifier.
     fn inserts(&mut self, host: &Object, wall: &Wall, frame: &Frame, storey: ObjectId, level: f64) {
         let mut found: Vec<(std::sync::Arc<Object>, Insert)> = Vec::new();
-        for (key, label) in [(DOOR, "IFCDOOR"), (WINDOW, "IFCWINDOW")] {
+        for (key, label) in [
+            (DOOR, "IFCDOOR"),
+            (WINDOW, "IFCWINDOW"),
+            (WALL_OPENING, "IFCOPENINGELEMENT"),
+        ] {
             for object in spatial::children(self.snapshot, key, host.id) {
                 match Insert::of(self.snapshot, &object) {
                     Some(item) => found.push((object, item)),
@@ -412,6 +451,9 @@ impl Mapper<'_> {
         storey: ObjectId,
         level: f64,
     ) {
+        if item.kind == Kind::Opening {
+            return self.wall_opening(object, item, (host, wall, wall_frame), storey);
+        }
         let door = item.kind == Kind::Door;
         let label = if door { "IFCDOOR" } else { "IFCWINDOW" };
         let along = if door && item.facing == Facing::Interior {
@@ -483,6 +525,267 @@ impl Mapper<'_> {
         self.exported += 1;
     }
 
+    /// A bare wall opening: an `IfcOpeningElement` that voids the wall. Its profile lies in the
+    /// plane of the wall (x along the baseline, y up) and is extruded across the wall's
+    /// thickness; an arched top is written as chords.
+    fn wall_opening(
+        &mut self,
+        object: &Object,
+        item: &Insert,
+        (host, wall, wall_frame): (&Object, &Wall, &Frame),
+        storey: ObjectId,
+    ) {
+        let (low, high) = wall.extent();
+        let half = item.width / 2.0;
+        let spring = if item.rise > 0.0 && item.rise < item.height {
+            item.top() - item.rise
+        } else {
+            item.top()
+        };
+        // The profile in the wall's plane, relative to the sill's lower left corner.
+        let mut points = vec![
+            [0.0, 0.0],
+            [item.width, 0.0],
+            [item.width, spring - item.sill],
+        ];
+        if spring < item.top() {
+            let bulge = 2.0 * item.rise / item.width;
+            points.extend(
+                archbuilder_model::floor::flatten_edge(
+                    [item.width, spring - item.sill],
+                    [0.0, spring - item.sill],
+                    bulge,
+                    archbuilder_model::floor::FLAT_CHORD,
+                )
+                .into_iter()
+                .skip(1)
+                .take_while(|p| p[0] > 1.0e-9),
+            );
+            self.lose(reasons::ARC_FACETED, "IFCOPENINGELEMENT", object);
+        } else {
+            points.push([0.0, item.height]);
+        }
+        points.push([0.0, spring - item.sill]);
+        points.dedup_by(|a, b| (a[0] - b[0]).abs() < 1.0e-9 && (a[1] - b[1]).abs() < 1.0e-9);
+        let origin = wall_frame.at(item.distance - half, high);
+        let u = wall_frame.u;
+        // Local z runs across the wall from its left face to its right face, local y up.
+        let mut opening = Element::new(
+            derived_id(object.id.as_u128(), role::INSERT_OPENING, 0),
+            ElementKind::Opening,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        opening.placement = Placement::new(
+            Point3::new(origin[0], origin[1], wall.base_offset + item.sill),
+            Vector3::new(u[1], -u[0], 0.0),
+            Vector3::new(u[0], u[1], 0.0),
+        );
+        opening.body = Some(Body::Extrusion {
+            outer: profile(&points, true),
+            holes: Vec::new(),
+            direction: Vector3::z(),
+            depth: high - low,
+        });
+        opening.predefined_type = Some("OPENING".to_owned());
+        opening.host = Some(host.id.as_u128());
+        self.elements.push(opening);
+        self.exported += 1;
+    }
+
+    /// A ceiling as an `IfcCovering` with the predefined type `CEILING`: a prism over its
+    /// boundary (a B-rep when it slopes), the layers of its type on the `IfcCoveringType`, and
+    /// the area, width and volume of its body. The shafts and vertical openings that pass
+    /// through it are `IfcOpeningElement`s that void it.
+    fn ceiling(&mut self, object: &std::sync::Arc<Object>, storey: ObjectId, level: f64) {
+        let Some(derived) = archbuilder_model::ceiling::derived(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Covering,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("CEILING".to_owned());
+        element.element_type =
+            et::type_of(self.snapshot, TypeKind::Ceiling, &object.values).map(|t| t.id.as_u128());
+        let thickness = derived.ceiling.thickness();
+        let origin = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        if derived.boundary.has_arcs() {
+            self.lose(reasons::ARC_FACETED, "IFCCOVERING", object);
+        }
+        let body = if derived.ceiling.sloped() {
+            derived
+                .solid()
+                .ok()
+                .and_then(|s| brep([&s], &origin, level))
+        } else {
+            element.placement = Placement::new(
+                Point3::new(0.0, 0.0, derived.plane.z - level),
+                Vector3::z(),
+                Vector3::x(),
+            );
+            let flat = derived
+                .boundary
+                .faceted(archbuilder_model::floor::FLAT_CHORD)
+                .loops;
+            flat.split_first().map(|(outer, holes)| Body::Extrusion {
+                outer: profile(outer, true),
+                holes: holes.iter().map(|h| profile(h, false)).collect(),
+                direction: Vector3::z(),
+                depth: thickness,
+            })
+        };
+        match body {
+            Some(body) => {
+                element.body = Some(body);
+                // Both areas are of the faceted boundary the body is made of.
+                let net = derived
+                    .boundary
+                    .faceted(archbuilder_model::floor::FLAT_CHORD)
+                    .area();
+                let gross = archbuilder_model::floor::signed_area(
+                    derived
+                        .raw
+                        .faceted(archbuilder_model::floor::FLAT_CHORD)
+                        .loops
+                        .first()
+                        .map_or(&[][..], Vec::as_slice),
+                )
+                .abs();
+                element.quantity_sets.push(QuantitySet::new(
+                    "Qto_CoveringBaseQuantities",
+                    vec![
+                        Quantity::new("Width", QuantityValue::Length(thickness)),
+                        Quantity::new("GrossArea", QuantityValue::Area(gross)),
+                        Quantity::new("NetArea", QuantityValue::Area(net)),
+                    ],
+                ));
+                element.property_sets.push(PropertySet::new(
+                    "Pset_CoveringCommon",
+                    vec![Property::new("IsExternal", PropertyValue::Boolean(false))],
+                ));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object),
+        }
+        self.elements.push(element);
+        self.exported += 1;
+        self.cuts_of(object, storey, level, derived.z_range());
+    }
+
+    /// The vertical openings hosted by `host`, as `IfcOpeningElement`s that void it.
+    fn cuts_of(&mut self, host: &Object, storey: ObjectId, level: f64, z: (f64, f64)) {
+        for cut in spatial::children(self.snapshot, VERTICAL_OPENING, host.id) {
+            let Some(outline) = archbuilder_model::opening::outline_of(
+                self.snapshot,
+                &cut,
+                archbuilder_model::floor::VERTICAL_SLOTS,
+            ) else {
+                self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", &cut);
+                continue;
+            };
+            self.opening_element(&cut, host, storey, level, z, &outline, 0);
+        }
+    }
+
+    /// One `IfcOpeningElement` named after `object`, voiding `host`, over the plan `outline`
+    /// through the elevations `z` (a little beyond them, so the void is clear of the faces).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the pieces of one opening element"
+    )]
+    fn opening_element(
+        &mut self,
+        object: &Object,
+        host: &Object,
+        storey: ObjectId,
+        level: f64,
+        z: (f64, f64),
+        outline: &[[f64; 2]],
+        index: u32,
+    ) {
+        const BEYOND: f64 = 0.05;
+        let mut opening = Element::new(
+            derived_id(object.id.as_u128(), role::INSERT_OPENING, index),
+            ElementKind::Opening,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        opening.placement = Placement::new(
+            Point3::new(0.0, 0.0, z.0 - BEYOND - level),
+            Vector3::z(),
+            Vector3::x(),
+        );
+        opening.body = Some(Body::Extrusion {
+            outer: profile(outline, true),
+            holes: Vec::new(),
+            direction: Vector3::z(),
+            depth: z.1 - z.0 + 2.0 * BEYOND,
+        });
+        opening.predefined_type = Some("OPENING".to_owned());
+        opening.host = Some(host.id.as_u128());
+        self.elements.push(opening);
+        self.exported += 1;
+    }
+
+    /// A shaft: one `IfcOpeningElement` for each floor, roof or ceiling it passes through, each
+    /// voiding its host.
+    fn shaft(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(span) = archbuilder_model::opening::shaft_span(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object);
+        };
+        if span.boundary.has_arcs() {
+            self.lose(reasons::ARC_FACETED, "IFCOPENINGELEMENT", object);
+        }
+        let mut hosts: Vec<(std::sync::Arc<Object>, (f64, f64))> = Vec::new();
+        for floor in spatial::objects(self.snapshot, FLOOR) {
+            if let Some(d) = Derived::of(self.snapshot, &floor) {
+                hosts.push((floor, (d.top - d.floor.thickness, d.top)));
+            }
+        }
+        for roof in spatial::objects(self.snapshot, ROOF) {
+            if let Ok(d) = archbuilder_model::roof::Derived::of(self.snapshot, &roof) {
+                hosts.push((roof, (d.surface.base - d.surface.drop, d.surface.top())));
+            }
+        }
+        for ceiling in spatial::objects(self.snapshot, CEILING) {
+            if let Some(d) = archbuilder_model::ceiling::derived(self.snapshot, &ceiling) {
+                hosts.push((ceiling, d.z_range()));
+            }
+        }
+        hosts.sort_by_key(|(o, _)| o.id);
+        let mut index = 0;
+        for (host, z) in hosts {
+            if span.z.1 <= z.0 + 1.0e-6 || span.z.0 >= z.1 - 1.0e-6 {
+                continue;
+            }
+            let outline = archbuilder_model::opening::host_outline(self.snapshot, &host);
+            if !outline
+                .as_ref()
+                .is_some_and(|o| archbuilder_model::stair::outlines_overlap(o, &span.outline))
+            {
+                continue;
+            }
+            // A shaft that covers the whole host cuts nothing in the model (the host would
+            // vanish), so it is no void of it in the file either.
+            let footprint =
+                archbuilder_model::floor::Boundary::polygons(vec![span.outline.clone()]);
+            if outline
+                .as_ref()
+                .is_some_and(|o| o.iter().all(|p| footprint.contains(*p)))
+            {
+                self.lose(reasons::CUT_NOT_APPLIED, "IFCOPENINGELEMENT", object);
+                continue;
+            }
+            index += 1;
+            self.opening_element(object, &host, storey, level, z, &span.outline, index);
+        }
+    }
+
     /// A roof as an `IfcRoof` with its slab as a faceted B-rep in the storey's coordinates, its
     /// type's layers on the type, and its projected and sloped areas. The predefined type names
     /// the form: a hip roof when every edge slopes, a gable roof for four edges of which two are
@@ -515,11 +818,11 @@ impl Mapper<'_> {
             origin: [0.0, 0.0],
             u: [1.0, 0.0],
         };
-        match surface
-            .solid()
-            .ok()
-            .and_then(|s| brep([&s], &origin, level))
-        {
+        let cut = derived.solid_cut().ok();
+        if cut.as_ref().is_some_and(|(_, applied)| !applied) {
+            self.lose(reasons::CUT_NOT_APPLIED, "IFCROOF", object);
+        }
+        match cut.and_then(|(s, _)| brep([&s], &origin, level)) {
             Some(body) => {
                 element.body = Some(body);
                 let sloped_area: f64 = surface
@@ -547,9 +850,15 @@ impl Mapper<'_> {
         }
         self.elements.push(element);
         self.exported += 1;
+        self.cuts_of(
+            object,
+            storey,
+            level,
+            (surface.base - surface.drop, surface.top()),
+        );
     }
 
-    fn floor(&mut self, object: &Object, storey: ObjectId) {
+    fn floor(&mut self, object: &Object, storey: ObjectId, level: f64) {
         let Some(derived) = Derived::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCSLAB", object);
         };
@@ -634,6 +943,12 @@ impl Mapper<'_> {
         }
         self.elements.push(element);
         self.exported += 1;
+        self.cuts_of(
+            object,
+            storey,
+            level,
+            (derived.top - thickness, derived.top),
+        );
     }
 }
 
@@ -653,7 +968,7 @@ fn operation(item: &Insert) -> &'static str {
         (Kind::Door, _, Hand::Left) => "SINGLE_SWING_RIGHT",
         (Kind::Door, _, Hand::Right) => "SINGLE_SWING_LEFT",
         (Kind::Window, Operation::Sliding, _) => "DOUBLE_PANEL_VERTICAL",
-        (Kind::Window, _, _) => "SINGLE_PANEL",
+        (Kind::Window | Kind::Opening, _, _) => "SINGLE_PANEL",
     }
 }
 
@@ -673,6 +988,7 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
                 TypeKind::Window => (ElementKind::Window, "WINDOW"),
                 // A roof type does not decide the roof's form; its occurrences name it.
                 TypeKind::Roof => (ElementKind::Roof, ""),
+                TypeKind::Ceiling => (ElementKind::Covering, "CEILING"),
             };
             let mut t = ElementType::new(object.id.as_u128(), ifc_kind, et::name(&object));
             t.predefined_type = (!predefined.is_empty()).then(|| predefined.to_owned());

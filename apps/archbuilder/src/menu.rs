@@ -20,7 +20,9 @@ use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
 use archbuilder_commands::wall::OBJECT_DELETE;
-use archbuilder_model::types::{DOOR, FLOOR, ROOF, ROOM, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{
+    CEILING, DOOR, FLOOR, ROOF, ROOM, SHAFT, STAIR, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
+};
 
 use crate::shortcuts::ui;
 
@@ -106,6 +108,18 @@ const ATTACH_TOP: Label = Label {
 };
 const DETACH_TOP: Label = Label {
     message_id: "ab-menu-detach-top",
+};
+const KEEP_CEILINGS: Label = Label {
+    message_id: "ab-menu-keep-ceilings",
+};
+const KEEP_OPENINGS: Label = Label {
+    message_id: "ab-menu-keep-openings",
+};
+const KEEP_SHAFTS: Label = Label {
+    message_id: "ab-menu-keep-shafts",
+};
+const KEEP_CUTS: Label = Label {
+    message_id: "ab-menu-keep-cuts",
 };
 const KEEP_WALLS: Label = Label {
     message_id: "ab-menu-keep-walls",
@@ -193,6 +207,10 @@ fn keep_label(kind: &str) -> &'static str {
         ROOM => KEEP_ROOMS.message_id,
         STAIR => KEEP_STAIRS.message_id,
         ROOF => KEEP_ROOFS.message_id,
+        CEILING => KEEP_CEILINGS.message_id,
+        WALL_OPENING => KEEP_OPENINGS.message_id,
+        SHAFT => KEEP_SHAFTS.message_id,
+        VERTICAL_OPENING => KEEP_CUTS.message_id,
         _ => KEEP_WALLS.message_id,
     }
 }
@@ -284,7 +302,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
     if state
         .kinds
         .iter()
-        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF))
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF | CEILING))
     {
         out.push(ContextEntry::command(
             SELECT_TYPE.message_id,
@@ -300,7 +318,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
         }));
     }
     // A floor's boundary can be edited as a sketch.
-    if state.kinds.contains(&FLOOR) && state.selected == 1 {
+    if (state.kinds.contains(&FLOOR) || state.kinds.contains(&CEILING)) && state.selected == 1 {
         out.extend([
             ContextEntry::separator(),
             ContextEntry::command(
@@ -313,7 +331,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
     if state
         .kinds
         .iter()
-        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF))
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF | CEILING))
     {
         out.extend([
             ContextEntry::separator(),

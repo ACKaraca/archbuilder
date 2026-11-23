@@ -108,37 +108,65 @@ where
     headless::run_with_setup(args, product, None, Some(&setup), stdin, stdout, stderr)
 }
 
-/// The net volume of every wall of the file named in `args` (the first argument after `inspect`
-/// that is not a flag), by identifier; empty when the file cannot be opened.
-fn net_volumes(args: &[OsString], product: &Product) -> std::collections::HashMap<String, f64> {
+/// The snapshot of the file named in `args` (the first argument after `inspect` that is not a
+/// flag); `None` when it cannot be opened.
+fn open_snapshot(args: &[OsString], product: &Product) -> Option<arc_doc::Snapshot> {
     use arc_doc::package::{Mode, Package};
     let limits = arc_base::Limits::DEFAULT;
-    let Some(file) = args
+    let file = args
         .iter()
         .skip(1)
-        .find(|a| !a.to_string_lossy().starts_with("--"))
-    else {
+        .find(|a| !a.to_string_lossy().starts_with("--"))?;
+    let document = Package::open(std::path::Path::new(file), Mode::ReadOnly, &limits)
+        .and_then(|p| {
+            p.open_document(
+                Arc::clone(&product.types),
+                Arc::clone(&product.evaluators),
+                &arc_doc::LoadOptions {
+                    limits,
+                    ..arc_doc::LoadOptions::default()
+                },
+                arc_doc::DocumentConfig::default(),
+            )
+        })
+        .ok()?;
+    Some(document.snapshot())
+}
+
+/// The net volume of every wall of the file named in `args`, by identifier; empty when the file
+/// cannot be opened.
+fn net_volumes(args: &[OsString], product: &Product) -> std::collections::HashMap<String, f64> {
+    let Some(snapshot) = open_snapshot(args, product) else {
         return std::collections::HashMap::new();
     };
-    let opened = Package::open(std::path::Path::new(file), Mode::ReadOnly, &limits).and_then(|p| {
-        p.open_document(
-            Arc::clone(&product.types),
-            Arc::clone(&product.evaluators),
-            &arc_doc::LoadOptions {
-                limits,
-                ..arc_doc::LoadOptions::default()
-            },
-            arc_doc::DocumentConfig::default(),
-        )
-    });
-    let Ok(document) = opened else {
-        return std::collections::HashMap::new();
-    };
-    let snapshot = document.snapshot();
     archbuilder_model::spatial::objects(&snapshot, archbuilder_model::types::WALL)
         .iter()
         .filter_map(|w| {
             archbuilder_model::cleanup::wall_net_volume(&snapshot, w).map(|v| (w.id.to_string(), v))
+        })
+        .collect()
+}
+
+/// The area and volume of every room of the file named in `args`, by identifier, as the
+/// application shows them (shafts out, under the surface that bounds the room).
+fn room_nets(
+    args: &[OsString],
+    product: &Product,
+) -> std::collections::HashMap<String, (Option<f64>, Option<f64>)> {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return std::collections::HashMap::new();
+    };
+    archbuilder_model::spatial::objects(&snapshot, archbuilder_model::types::STOREY)
+        .iter()
+        .flat_map(|s| archbuilder_model::room::of_storey(&snapshot, s.id))
+        .map(|e| {
+            (
+                e.id.to_string(),
+                (
+                    archbuilder_model::room::net_area(&snapshot, &e),
+                    archbuilder_model::room::net_volume(&snapshot, &e),
+                ),
+            )
         })
         .collect()
 }
@@ -160,6 +188,7 @@ where
     let checked = args.iter().any(|a| a.to_str() == Some("--check"));
     // The net volume of each wall, from the document itself: the cleaned layers.
     let net = net_volumes(&args, product);
+    let nets = room_nets(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
@@ -169,7 +198,7 @@ where
         let doors = walls::inserts(dump.get("objects")?.as_array()?, Kind::Door);
         let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
         let floors = floors::summary(dump.get("objects")?.as_array()?);
-        let rooms = rooms::summary(dump.get("objects")?.as_array()?);
+        let rooms = rooms::summary(dump.get("objects")?.as_array()?, &nets);
         let stairs = stairs::summary(dump.get("objects")?.as_array()?);
         let mut found = check::findings(dump.get("objects")?.as_array()?);
         found.extend(rooms::findings(dump.get("objects")?.as_array()?));

@@ -19,12 +19,13 @@ use arc_base::math::{Point2, Point3, Vector3};
 use arc_base::{Error, Limits, Result, Tolerance};
 use arc_doc::{Object, Snapshot, Value};
 use arc_geom::{
-    Curve2, Loop2, PlaneFrame, Polyhedron, PrismTool, Region, RegionPart, Segment2, prism,
+    Curve2, Loop2, PlaneFrame, Polyhedron, Polyline2, PolylineSegment, PolylineVertex, PrismTool,
+    Region, RegionPart, Segment2, prism,
 };
 
 use crate::error::codes;
 use crate::spatial;
-use crate::types::{self, DOOR, WALL, WINDOW, insert};
+use crate::types::{self, DOOR, WALL, WALL_OPENING, WINDOW, insert};
 use crate::wall::Wall;
 
 /// The least distance between an opening and the end of the clear span, in meters.
@@ -56,6 +57,8 @@ pub enum Kind {
     Door,
     /// A window.
     Window,
+    /// A bare opening, without a leaf or a frame: a rectangle, or an arch on top.
+    Opening,
 }
 
 impl Kind {
@@ -65,6 +68,7 @@ impl Kind {
         match key {
             DOOR => Some(Self::Door),
             WINDOW => Some(Self::Window),
+            WALL_OPENING => Some(Self::Opening),
             _ => None,
         }
     }
@@ -75,6 +79,7 @@ impl Kind {
         match self {
             Self::Door => DOOR,
             Self::Window => WINDOW,
+            Self::Opening => WALL_OPENING,
         }
     }
 }
@@ -104,6 +109,7 @@ impl Operation {
         match kind {
             Kind::Door => matches!(self, Self::SingleSwing | Self::DoubleSwing | Self::Sliding),
             Kind::Window => matches!(self, Self::Fixed | Self::Casement | Self::Sliding),
+            Kind::Opening => true,
         }
     }
 }
@@ -175,6 +181,8 @@ pub struct Insert {
     pub hand: Hand,
     /// The facing.
     pub facing: Facing,
+    /// The rise of the arched top of a bare opening, which counts in `height`; 0 for a rectangle.
+    pub rise: f64,
 }
 
 impl Insert {
@@ -182,6 +190,23 @@ impl Insert {
     #[must_use]
     pub fn from_values(kind: Kind, values: &[Option<Value>]) -> Option<Self> {
         let m = |at| types::meters(values, at);
+        if kind == Kind::Opening {
+            use types::wall_opening as o;
+            return Some(Self {
+                kind,
+                distance: m(o::DISTANCE)?,
+                width: m(o::WIDTH)?,
+                height: m(o::HEIGHT)?,
+                sill: m(o::SILL)?,
+                frame_width: 0.0,
+                frame_depth: 0.0,
+                operation: Operation::default(),
+                hand: Hand::default(),
+                facing: Facing::default(),
+                // The arch cannot rise above the opening.
+                rise: m(o::RISE).unwrap_or(0.0).clamp(0.0, m(o::HEIGHT)?),
+            });
+        }
         Some(Self {
             kind,
             distance: m(insert::DISTANCE)?,
@@ -193,6 +218,7 @@ impl Insert {
             operation: Operation::of_field(values, insert::OPERATION),
             hand: Hand::of_field(values, insert::HAND),
             facing: Facing::of_field(values, insert::FACING),
+            rise: 0.0,
         })
     }
 
@@ -235,7 +261,7 @@ impl Insert {
 /// The inserts hosted by the wall `wall`, with their records, by distance and then identifier.
 #[must_use]
 pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>, Insert)> {
-    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW]
+    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW, WALL_OPENING]
         .into_iter()
         .flat_map(|key| spatial::children(snapshot, key, wall))
         .filter_map(|o| Insert::of(snapshot, &o).map(|i| (o, i)))
@@ -482,6 +508,50 @@ fn region(points: [Point2; 4], tolerance: &Tolerance) -> Result<Region> {
     )])
 }
 
+/// The outline of an opening across its wall, in the wall's frame (x along the baseline, y up):
+/// a rectangle, or, for an opening with a rise, a rectangle with a circular arch on top.
+fn profile(item: &Insert, from: f64, to: f64, tolerance: &Tolerance) -> Result<Region> {
+    let rise = if item.rise > tolerance.linear && item.rise < item.height {
+        item.rise
+    } else {
+        0.0
+    };
+    if rise == 0.0 {
+        return region(
+            [
+                Point2::new(from, item.sill),
+                Point2::new(to, item.sill),
+                Point2::new(to, item.top()),
+                Point2::new(from, item.top()),
+            ],
+            tolerance,
+        );
+    }
+    let spring = item.top() - rise;
+    // The sagitta over half the chord is the bulge.
+    let bulge = 2.0 * rise / (to - from);
+    let line = Polyline2::new(
+        vec![
+            PolylineVertex::new(Point2::new(from, item.sill), 0.0),
+            PolylineVertex::new(Point2::new(to, item.sill), 0.0),
+            PolylineVertex::new(Point2::new(to, spring), bulge),
+            PolylineVertex::new(Point2::new(from, spring), 0.0),
+        ],
+        true,
+    )?;
+    let curves = line
+        .segments()
+        .map(|segment| match segment {
+            PolylineSegment::Line(s) => Curve2::Segment(s),
+            PolylineSegment::Arc(a) => Curve2::Arc(a),
+        })
+        .collect();
+    Region::new(vec![RegionPart::new(
+        Loop2::new(curves, tolerance)?,
+        Vec::new(),
+    )])
+}
+
 /// The wall solid `solid` (of `wall` standing on a level at `level`) with the openings of
 /// `inserts` cut through its thickness, one opening each.
 ///
@@ -504,15 +574,7 @@ pub fn cut(wall: &Wall, level: f64, solid: Polyhedron, inserts: &[Insert]) -> Re
     let mut current = solid;
     for (k, item) in inserts.iter().enumerate() {
         let (from, to) = item.extent();
-        let profile = region(
-            [
-                Point2::new(from, item.sill),
-                Point2::new(to, item.sill),
-                Point2::new(to, item.top()),
-                Point2::new(from, item.top()),
-            ],
-            &tolerance,
-        )?;
+        let profile = profile(item, from, to, &tolerance)?;
         let tool = PrismTool {
             profile: &profile,
             frame,
@@ -605,6 +667,9 @@ pub enum Role {
 /// # Errors
 /// The errors of the solid kernel for numbers it cannot make solids of.
 pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyhedron)>> {
+    if item.kind == Kind::Opening {
+        return Ok(Vec::new());
+    }
     let axes = Axes::new(wall, level)?;
     let tolerance = Tolerance::DEFAULT;
     let boxed = |x: (f64, f64), y: (f64, f64), z: (f64, f64)| -> Result<Polyhedron> {
@@ -643,8 +708,8 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
     }
     let clear = ((x0 + fw, x1 - fw), (z0 + fw, z1 - fw));
     let (role, thick) = match item.kind {
-        Kind::Door => (Role::Panel, LEAF),
         Kind::Window => (Role::Glass, PANE),
+        Kind::Door | Kind::Opening => (Role::Panel, LEAF),
     };
     let across = |offset: f64| (middle + offset - thick / 2.0, middle + offset + thick / 2.0);
     let (c0, c1) = clear.0;
@@ -724,6 +789,7 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
     let fw = item.frame_width;
     let middle = (axes.low + axes.high) / 2.0;
     match item.kind {
+        Kind::Opening => {}
         Kind::Window => {
             let half = item.frame_depth.min(wall.thickness) / 2.0;
             lines.push(vec![
@@ -882,7 +948,7 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
         }
     }
     let mut best: Option<(f64, arc_base::ObjectId, arc_base::ObjectId)> = None;
-    for key in [DOOR, WINDOW] {
+    for key in [DOOR, WINDOW, WALL_OPENING] {
         for object in spatial::objects(snapshot, key) {
             let (Some(item), Some((host, _, lo, ld, axes))) = (
                 Insert::of(snapshot, &object),

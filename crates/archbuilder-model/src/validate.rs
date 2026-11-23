@@ -28,7 +28,8 @@ use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
 use crate::types::{
-    self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY, WALL, WINDOW,
+    self, BUILDING, CEILING, DOOR, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SHAFT, SITE, STAIR, STOREY,
+    VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 
 /// The key a name is compared by ([`crate::names::fold`]).
@@ -37,14 +38,15 @@ fn folded(object: &Object) -> String {
 }
 
 /// The type a container of `key` must have; `None` for the root.
-fn container_of(key: &str) -> Option<&'static str> {
+fn container_of(key: &str) -> Option<&'static [&'static str]> {
     match key {
-        SITE => Some(PROJECT),
-        BUILDING => Some(SITE),
-        STOREY | LEVEL => Some(BUILDING),
-        k if types::is_storey_element(k) => Some(STOREY),
-        DOOR | WINDOW => Some(WALL),
-        k if types::TYPE_KEYS.contains(&k) => Some(PROJECT),
+        SITE => Some(&[PROJECT]),
+        BUILDING => Some(&[SITE]),
+        STOREY | LEVEL => Some(&[BUILDING]),
+        k if types::is_storey_element(k) => Some(&[STOREY]),
+        DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
+        VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
+        k if types::TYPE_KEYS.contains(&k) => Some(&[PROJECT]),
         _ => None,
     }
 }
@@ -57,13 +59,12 @@ fn name_taken(object: &Object) -> Error {
 }
 
 fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut Vec<Error>) {
-    if let Some(container) = container_of(key)
-        && object
+    if let Some(containers) = container_of(key)
+        && !object
             .header
             .owner
             .and_then(|owner| type_of(candidate, owner))
-            .as_deref()
-            != Some(container)
+            .is_some_and(|owner| containers.contains(&owner.as_str()))
     {
         out.push(Error::new(codes::PARENT_INVALID).with_arg("name", folded(object)));
     }
@@ -80,7 +81,7 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
     }
-    if key == DOOR || key == WINDOW {
+    if key == DOOR || key == WINDOW || key == WALL_OPENING {
         out.extend(crate::insert::problems(candidate, object));
     }
     if key == STAIR {
@@ -348,6 +349,8 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_walls_of_levels(candidate, touched, &mut out);
     check_inserts_of_walls(candidate, touched, &mut out);
     check_floors(candidate, touched, &mut out);
+    check_ceilings(candidate, touched, &mut out);
+    check_openings(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
     out
@@ -440,6 +443,150 @@ fn check_floors(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>, out:
             },
         };
         out.push(Error::new(error).with_arg("name", display_name(&floor)));
+    }
+}
+
+/// The ceilings a change can break: those that changed, and those on the storey of a wall that
+/// changed (their associated edges follow the wall). Each boundary is checked as derived.
+fn check_ceilings(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    let mut storeys: Vec<ObjectId> = Vec::new();
+    let mut found: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(WALL) => storeys.extend(get(candidate, *id).and_then(|w| w.header.owner)),
+            Some(CEILING) => found.extend(get(candidate, *id)),
+            _ => {}
+        }
+    }
+    for storey in storeys {
+        found.extend(crate::spatial::children(candidate, CEILING, storey));
+    }
+    found.sort_by_key(|f| f.id);
+    found.dedup_by_key(|f| f.id);
+    let checked: Vec<ObjectId> = found.iter().map(|f| f.id).collect();
+    for ceiling in found {
+        let error = match crate::ceiling::derived(candidate, &ceiling) {
+            None => codes::CEILING_MALFORMED,
+            Some(d) => match d.raw.check() {
+                Ok(()) if !d.ceiling.slope_ok() => codes::CEILING_SLOPE,
+                Ok(()) => match outside_range(candidate, &ceiling, &d) {
+                    Some(error) => {
+                        out.push(error);
+                        continue;
+                    }
+                    None => continue,
+                },
+                Err(_) => codes::CEILING_BOUNDARY,
+            },
+        };
+        out.push(Error::new(error).with_arg("name", display_name(&ceiling)));
+    }
+    // What lies above a ceiling (slabs, roofs, the walls they follow, levels, storeys) or cuts it
+    // can change under it: the others are checked for their range alone, as warnings.
+    let moves_bounds = touched.iter().any(|(id, c)| {
+        *c != Change::Deleted
+            && matches!(
+                type_of(candidate, *id).as_deref(),
+                Some(WALL | FLOOR | ROOF | LEVEL | STOREY | SHAFT | VERTICAL_OPENING)
+            )
+    });
+    if moves_bounds {
+        for ceiling in objects(candidate, CEILING) {
+            if checked.contains(&ceiling.id) {
+                continue;
+            }
+            if let Some(d) = crate::ceiling::derived(candidate, &ceiling)
+                && let Some(error) = outside_range(candidate, &ceiling, &d)
+            {
+                out.push(error);
+            }
+        }
+    }
+}
+
+/// The error when the underside of `d` leaves the range from its storey's level up to what bounds
+/// it above: the slab or roof over its own footprint, else the next level (a slope arrow far from
+/// the ceiling can carry it below its floor or through what is above).
+fn outside_range(
+    candidate: &Snapshot,
+    ceiling: &Object,
+    d: &crate::ceiling::Derived,
+) -> Option<Error> {
+    let name = display_name(ceiling);
+    let (lo, hi) = d.z_range();
+    let top = hi;
+    let storey = ceiling.header.owner.and_then(|s| get(candidate, s));
+    if lo < d.level - 1.0e-6 {
+        return Some(
+            Error::new(codes::CEILING_RANGE)
+                .with_arg("name", name)
+                .with_detail(OBJECT, ceiling.id.to_string()),
+        );
+    }
+    if let Some(s) = &storey
+        && let Some(bound) =
+            crate::room::bound_passed_through(candidate, s, &d.pieces(), d.ceiling.thickness())
+    {
+        let id = match bound {
+            crate::room::Bound::Ceiling(id)
+            | crate::room::Bound::Roof(id)
+            | crate::room::Bound::Slab(id) => id,
+        };
+        let over = get(candidate, id)
+            .map(|o| display_name(&o))
+            .unwrap_or_default();
+        return Some(
+            Error::new(codes::CEILING_RANGE_ELEMENT)
+                .with_arg("name", name)
+                .with_arg("over", over)
+                .with_detail(OBJECT, ceiling.id.to_string()),
+        );
+    }
+    let level_above = storey
+        .as_ref()
+        .and_then(|s| crate::room::levels_above(candidate, s).into_iter().next())
+        .and_then(|l| crate::types::meters(&l.values, crate::types::level::ELEVATION));
+    level_above.is_some_and(|a| top > a + 1.0e-6).then(|| {
+        Error::new(codes::CEILING_RANGE)
+            .with_arg("name", name)
+            .with_detail(OBJECT, ceiling.id.to_string())
+    })
+}
+
+/// The shafts and vertical openings that changed must have a footprint the model can read; one
+/// that cannot is refused. A vertical opening that reaches outside its host is a warning
+/// ([`warnings`]).
+fn check_openings(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    use crate::floor::{SHAFT_SLOTS, VERTICAL_SLOTS};
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        let (Some(key), Some(object)) = (type_of(candidate, *id), get(candidate, *id)) else {
+            continue;
+        };
+        let slots = match key.as_str() {
+            SHAFT => SHAFT_SLOTS,
+            VERTICAL_OPENING => VERTICAL_SLOTS,
+            _ => continue,
+        };
+        let ok = crate::floor::Floor::read(&object.values, slots)
+            .and_then(|f| f.boundary_in(candidate))
+            .is_some_and(|b| b.loops.len() == 1 && b.check().is_ok());
+        if !ok {
+            out.push(Error::new(codes::OPENING_FOOTPRINT).with_arg("name", display_name(&object)));
+        }
     }
 }
 
@@ -639,6 +786,71 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             }
         }
     }
+    out.extend(ceiling_warnings(candidate, touched));
+    out
+}
+
+/// The warnings about ceilings and vertical openings: an edge that follows a wall that no longer
+/// bounds the ceiling there, and an opening that reaches outside the element that hosts it.
+fn ceiling_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut out = Vec::new();
+    let wall_of =
+        |id: ObjectId| get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values));
+    for ceiling in objects(candidate, CEILING) {
+        let storey_touched = ceiling.header.owner.is_some_and(|s| {
+            touched.iter().any(|(id, c)| {
+                *c != Change::Deleted
+                    && get(candidate, *id).is_some_and(|o| o.header.owner == Some(s))
+            })
+        });
+        if !(touched.contains_key(&ceiling.id) || storey_touched) {
+            continue;
+        }
+        let Some(data) = crate::ceiling::Ceiling::from_values(&ceiling.values) else {
+            continue;
+        };
+        let Some(raw) = data.shape.boundary_in(candidate) else {
+            continue;
+        };
+        for wall in data.shape.unsupported_edges(&raw, &wall_of) {
+            out.push(
+                Error::new(codes::CEILING_EDGE_UNSUPPORTED)
+                    .with_arg("name", display_name(&ceiling))
+                    .with_arg(
+                        "wall",
+                        get(candidate, wall)
+                            .map(|w| display_name(&w))
+                            .unwrap_or_default(),
+                    )
+                    .with_detail(OBJECT, ceiling.id.to_string())
+                    .with_detail(OTHER, wall.to_string()),
+            );
+        }
+    }
+    for opening in objects(candidate, VERTICAL_OPENING) {
+        if !touched.contains_key(&opening.id) {
+            continue;
+        }
+        let Some(host) = opening.header.owner.and_then(|h| get(candidate, h)) else {
+            continue;
+        };
+        let (Some(cut), Some(area)) = (
+            crate::opening::outline_of(candidate, &opening, crate::floor::VERTICAL_SLOTS),
+            crate::opening::host_outline(candidate, &host),
+        ) else {
+            continue;
+        };
+        let area = crate::floor::Boundary::polygons(vec![area]);
+        if cut.iter().any(|p| !area.contains(*p)) {
+            out.push(
+                Error::new(codes::OPENING_ABOVE_HOST)
+                    .with_arg("name", display_name(&opening))
+                    .with_arg("host", display_name(&host))
+                    .with_detail(OBJECT, opening.id.to_string())
+                    .with_detail(OTHER, host.id.to_string()),
+            );
+        }
+    }
     out
 }
 
@@ -710,6 +922,17 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::roof::THICKNESS,
             types::roof::PINNED,
         ],
+        CEILING => &[
+            types::ceiling::NAME,
+            types::ceiling::THICKNESS,
+            types::ceiling::PINNED,
+        ],
+        WALL_OPENING => &[types::wall_opening::NAME, types::wall_opening::PINNED],
+        SHAFT => &[types::shaft::NAME, types::shaft::PINNED],
+        VERTICAL_OPENING => &[
+            types::vertical_opening::NAME,
+            types::vertical_opening::PINNED,
+        ],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
 }
@@ -761,15 +984,18 @@ pub enum WarningKind {
     Insert,
     /// An instance whose copies of its type's values differ from the type.
     Type,
+    /// A ceiling edge that follows a wall that no longer bounds it, or an opening outside its host.
+    Ceiling,
 }
 
 impl WarningKind {
     /// Every kind, in the order the panel lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Stair,
         Self::Room,
         Self::Wall,
         Self::Floor,
+        Self::Ceiling,
         Self::Insert,
         Self::Type,
     ];
@@ -783,6 +1009,8 @@ impl WarningKind {
             Self::Room
         } else if code.starts_with("ab.model.floor") {
             Self::Floor
+        } else if code.starts_with("ab.model.ceiling") || code.starts_with("ab.model.opening") {
+            Self::Ceiling
         } else if code == codes::INSERT_MEETS_WALL.code {
             Self::Insert
         } else if code.starts_with("ab.model.type") {
@@ -860,7 +1088,7 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
         }
         push(Severity::Warning, error, found);
     }
-    for key in [DOOR, WINDOW] {
+    for key in [DOOR, WINDOW, WALL_OPENING] {
         for object in objects(snapshot, key) {
             for error in crate::insert::problems(snapshot, &object) {
                 if is_warning(&error) {
@@ -871,7 +1099,11 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
             }
         }
     }
-    for key in [WALL, FLOOR, DOOR, WINDOW, ROOF] {
+    for error in ceiling_range_findings(snapshot) {
+        let found = ids(&error);
+        push(Severity::Warning, error, found);
+    }
+    for key in [WALL, FLOOR, DOOR, WINDOW, ROOF, CEILING] {
         for object in objects(snapshot, key) {
             if let Some(error) = type_problem(snapshot, key, &object) {
                 push(Severity::Warning, error, vec![object.id]);
@@ -879,6 +1111,19 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
         }
     }
     out
+}
+
+/// The ceilings whose underside or top leaves its range (below the level, or through the slab or
+/// roof over it): warnings, listed until the ceiling or what is above it is changed.
+#[must_use]
+pub fn ceiling_range_findings(snapshot: &Snapshot) -> Vec<Error> {
+    objects(snapshot, CEILING)
+        .iter()
+        .filter_map(|c| {
+            let d = crate::ceiling::derived(snapshot, c)?;
+            outside_range(snapshot, c, &d)
+        })
+        .collect()
 }
 
 /// The element a finding is about (the door that opens into a wall).
@@ -899,10 +1144,16 @@ pub fn other_object(error: &Error) -> Option<ObjectId> {
     }
 }
 
+/// Whether `error` is a ceiling leaving its range (below its level, or through what is above it).
+#[must_use]
+pub fn is_ceiling_range(error: &Error) -> bool {
+    error.code() == codes::CEILING_RANGE.code || error.code() == codes::CEILING_RANGE_ELEMENT.code
+}
+
 /// Whether `error` is a warning of the structure: it is reported, never refused.
 #[must_use]
 pub fn is_warning(error: &Error) -> bool {
-    error.code() == codes::INSERT_MEETS_WALL.code
+    error.code() == codes::INSERT_MEETS_WALL.code || is_ceiling_range(error)
 }
 
 /// The commit validator of the structure: every violation of [`check`] is an error, except the

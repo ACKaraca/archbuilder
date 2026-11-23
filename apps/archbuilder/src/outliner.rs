@@ -91,6 +91,10 @@ fn without_type(snapshot: &Snapshot, mut intent: Intent) -> Intent {
 }
 
 impl<'a> Structure<'a> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one list for each kind a storey holds"
+    )]
     fn new(snapshot: &Snapshot, selection: &'a [ObjectId], language: &'a str) -> Self {
         let mut children: BTreeMap<Option<ObjectId>, Vec<(ObjectId, String)>> = BTreeMap::new();
         if let Some(project) = spatial::project(snapshot) {
@@ -158,6 +162,33 @@ impl<'a> Structure<'a> {
                         .collect();
                         roofs.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
                         walls.extend(roofs);
+                        // Then its ceilings and shafts, by name.
+                        for key in [
+                            archbuilder_model::types::CEILING,
+                            archbuilder_model::types::SHAFT,
+                        ] {
+                            let mut found: Vec<_> = spatial::children(snapshot, key, s.storey.id)
+                                .iter()
+                                .map(|f| (f.id, labelled(snapshot, f)))
+                                .collect();
+                            found.sort_by(|a, b| (a.1.len(), &a.1).cmp(&(b.1.len(), &b.1)));
+                            walls.extend(found);
+                        }
+                        // The vertical openings of the floors, roofs and ceilings, under their
+                        // hosts, by name.
+                        for host in walls.iter().map(|(id, _)| *id).collect::<Vec<_>>() {
+                            let cuts: Vec<_> = spatial::children(
+                                snapshot,
+                                archbuilder_model::types::VERTICAL_OPENING,
+                                host,
+                            )
+                            .iter()
+                            .map(|c| (c.id, labelled(snapshot, c)))
+                            .collect();
+                            if !cuts.is_empty() {
+                                children.insert(Some(host), cuts);
+                            }
+                        }
                         // The rooms come last, by number.
                         let mut rooms = spatial::children(
                             snapshot,

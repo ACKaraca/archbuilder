@@ -60,6 +60,7 @@ fn tool_command(kind: TypeKind) -> &'static str {
         TypeKind::Door => DOOR_PLACE,
         TypeKind::Window => WINDOW_PLACE,
         TypeKind::Roof => archbuilder_commands::roof::ROOF_CREATE,
+        TypeKind::Ceiling => archbuilder_commands::ceiling::CEILING_CREATE,
     }
 }
 
@@ -79,15 +80,19 @@ impl WallInteraction {
         let active = if self.tool.active() {
             Some(TypeKind::Wall)
         } else if self.floors.running() {
-            Some(if self.floors.state().is_some_and(|s| s.roof) {
-                TypeKind::Roof
-            } else {
-                TypeKind::Floor
+            Some(match self.floors.state() {
+                Some(s) if s.roof => TypeKind::Roof,
+                Some(s) if s.command == archbuilder_commands::ceiling::CEILING_CREATE => {
+                    TypeKind::Ceiling
+                }
+                _ => TypeKind::Floor,
             })
         } else {
-            self.inserts.state().map(|s| match s.kind {
-                archbuilder_model::insert::Kind::Door => TypeKind::Door,
-                archbuilder_model::insert::Kind::Window => TypeKind::Window,
+            // A bare opening has no type: the selector stays empty.
+            self.inserts.state().and_then(|s| match s.kind {
+                archbuilder_model::insert::Kind::Door => Some(TypeKind::Door),
+                archbuilder_model::insert::Kind::Window => Some(TypeKind::Window),
+                archbuilder_model::insert::Kind::Opening => None,
             })
         };
         tool_type::set_active(active);
@@ -169,7 +174,7 @@ impl WallInteraction {
                 TypeKind::Door | TypeKind::Window => {
                     self.with_inserts(cx, |tool, env, run| tool.retype(env, run))
                 }
-                TypeKind::Floor | TypeKind::Roof => {
+                TypeKind::Floor | TypeKind::Roof | TypeKind::Ceiling => {
                     self.with_floors(cx, |tool, env, run| tool.retype(env, run))
                 }
             };

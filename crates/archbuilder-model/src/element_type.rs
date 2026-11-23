@@ -24,9 +24,9 @@ use arc_doc::{
 use crate::error::codes;
 use crate::insert::{Kind, Operation};
 use crate::types::{
-    self, DOOR, DOOR_TYPE, FLOOR, FLOOR_TYPE, FRAME_DEPTH_RANGE, FRAME_WIDTH_RANGE,
-    INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, ROOF, ROOF_TYPE, SILL_RANGE,
-    THICKNESS_RANGE, WALL, WALL_TYPE, WINDOW, WINDOW_TYPE, insert_type, layered_type,
+    self, CEILING, CEILING_TYPE, DOOR, DOOR_TYPE, FLOOR, FLOOR_TYPE, FRAME_DEPTH_RANGE,
+    FRAME_WIDTH_RANGE, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, ROOF, ROOF_TYPE,
+    SILL_RANGE, THICKNESS_RANGE, WALL, WALL_TYPE, WINDOW, WINDOW_TYPE, insert_type, layered_type,
 };
 
 /// The most layers a type has.
@@ -106,16 +106,19 @@ pub enum TypeKind {
     Window,
     /// Roof types.
     Roof,
+    /// Ceiling types.
+    Ceiling,
 }
 
 impl TypeKind {
     /// Every kind, in the order of [`types::TYPE_KEYS`].
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Wall,
         Self::Floor,
         Self::Door,
         Self::Window,
         Self::Roof,
+        Self::Ceiling,
     ];
 
     /// The key of the type records.
@@ -127,6 +130,7 @@ impl TypeKind {
             Self::Door => DOOR_TYPE,
             Self::Window => WINDOW_TYPE,
             Self::Roof => ROOF_TYPE,
+            Self::Ceiling => CEILING_TYPE,
         }
     }
 
@@ -139,6 +143,7 @@ impl TypeKind {
             Self::Door => DOOR,
             Self::Window => WINDOW,
             Self::Roof => ROOF,
+            Self::Ceiling => CEILING,
         }
     }
 
@@ -162,6 +167,7 @@ impl TypeKind {
             Self::Floor => types::floor::FLOOR_TYPE,
             Self::Door | Self::Window => types::insert::INSERT_TYPE,
             Self::Roof => types::roof::ROOF_TYPE,
+            Self::Ceiling => types::ceiling::CEILING_TYPE,
         }
     }
 
@@ -173,13 +179,14 @@ impl TypeKind {
             Self::Floor => "floor_type",
             Self::Door | Self::Window => "insert_type",
             Self::Roof => "roof_type",
+            Self::Ceiling => "ceiling_type",
         }
     }
 
     /// Whether the types of this kind have layers.
     #[must_use]
     pub const fn layered(self) -> bool {
-        matches!(self, Self::Wall | Self::Floor | Self::Roof)
+        matches!(self, Self::Wall | Self::Floor | Self::Roof | Self::Ceiling)
     }
 
     /// The insert kind of a door or window type.
@@ -188,7 +195,7 @@ impl TypeKind {
         match self {
             Self::Door => Some(Kind::Door),
             Self::Window => Some(Kind::Window),
-            Self::Wall | Self::Floor | Self::Roof => None,
+            Self::Wall | Self::Floor | Self::Roof | Self::Ceiling => None,
         }
     }
 }
@@ -486,6 +493,63 @@ pub fn floor_type_values(name: &str, layers: &Layers) -> Vec<Option<Value>> {
     ]
 }
 
+/// The grid pattern of a ceiling type: tile size along the two axes and the angle of the first
+/// axis from the x axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grid {
+    /// The tile size along the first axis and along the second, in meters.
+    pub spacing: [f64; 2],
+    /// The angle of the first axis from the x axis, in radians.
+    pub angle: f64,
+}
+
+/// A ceiling type: layers, the height a new ceiling gets and the grid pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CeilingType {
+    /// The layers, from the top down.
+    pub layers: Layers,
+    /// The height of the underside above the level, in meters.
+    pub height_offset: f64,
+    /// The grid pattern; `None` for a plain ceiling.
+    pub grid: Option<Grid>,
+}
+
+impl CeilingType {
+    /// The type of a record's values.
+    #[must_use]
+    pub fn from_values(values: &[Option<Value>]) -> Option<Self> {
+        let m = |at| types::meters(values, at);
+        let angle = match values.get(types::ceiling_type::GRID_ANGLE) {
+            Some(Some(Value::Quantity(q))) => q.value(),
+            _ => 0.0,
+        };
+        let spacing = [
+            m(types::ceiling_type::GRID_X).unwrap_or(0.0),
+            m(types::ceiling_type::GRID_Y).unwrap_or(0.0),
+        ];
+        Some(Self {
+            layers: Layers::from_values(values)?,
+            height_offset: m(types::ceiling_type::HEIGHT_OFFSET)
+                .unwrap_or(types::DEFAULT_CEILING_HEIGHT),
+            grid: (spacing[0] > 1.0e-3 && spacing[1] > 1.0e-3).then_some(Grid { spacing, angle }),
+        })
+    }
+}
+
+/// The record values of a ceiling type called `name`.
+#[must_use]
+pub fn ceiling_type_values(name: &str, t: &CeilingType) -> Vec<Option<Value>> {
+    let mut values = floor_type_values(name, &t.layers);
+    let (spacing, angle) = t.grid.map_or(([0.0; 2], 0.0), |g| (g.spacing, g.angle));
+    values.extend([
+        Some(types::length(t.height_offset)),
+        Some(types::length(spacing[0])),
+        Some(types::length(spacing[1])),
+        Some(types::angle(angle)),
+    ]);
+    values
+}
+
 /// The name of a type record.
 #[must_use]
 pub fn name(object: &Object) -> &str {
@@ -588,6 +652,15 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
                 )]
             })
             .unwrap_or_default(),
+        TypeKind::Ceiling => Layers::from_values(values)
+            .map(|l| {
+                vec![(
+                    types::ceiling::THICKNESS,
+                    "thickness",
+                    types::length(l.total()),
+                )]
+            })
+            .unwrap_or_default(),
         TypeKind::Door | TypeKind::Window => InsertType::from_values(values)
             .map(|t| {
                 use types::insert as i;
@@ -608,7 +681,7 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
 pub fn is_copied(kind: TypeKind, field: &str) -> bool {
     match kind {
         TypeKind::Wall => matches!(field, "thickness" | "core_exterior" | "core_interior"),
-        TypeKind::Floor | TypeKind::Roof => field == "thickness",
+        TypeKind::Floor | TypeKind::Roof | TypeKind::Ceiling => field == "thickness",
         TypeKind::Door | TypeKind::Window => matches!(
             field,
             "width" | "height" | "frame_width" | "frame_depth" | "operation"
@@ -755,6 +828,26 @@ fn wrap_field(name: &str) -> FieldDecl {
 #[must_use]
 pub fn floor_type_fields() -> Vec<FieldDecl> {
     layered_fields()
+}
+
+/// The fields of `archbuilder.ceiling_type`: the layered fields, the height of a new ceiling and
+/// the grid pattern.
+#[must_use]
+pub fn ceiling_type_fields() -> Vec<FieldDecl> {
+    let mut fields = layered_fields();
+    fields.extend([
+        types::length_field("height_offset", Some(types::real(types::BASE_OFFSET_RANGE)))
+            .with_default(types::length(types::DEFAULT_CEILING_HEIGHT)),
+        types::length_field("grid_x", Some(types::real(types::GRID_RANGE))),
+        types::length_field("grid_y", Some(types::real(types::GRID_RANGE))),
+        FieldDecl::new(
+            "grid_angle",
+            ValueType::Quantity(arc_base::Dimension::ANGLE),
+        )
+        .with_default(types::angle(0.0))
+        .in_aspect("geometry"),
+    ]);
+    fields
 }
 
 /// The fields of `archbuilder.door_type` and `archbuilder.window_type`.

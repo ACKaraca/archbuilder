@@ -300,4 +300,16 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-slope-invalid",
     };
+    /// No ceiling is named or selected.
+    pub const NO_CEILING_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_ceiling_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-ceiling-selected",
+    };
+    /// No floor, roof or ceiling is named or selected to host a vertical opening.
+    pub const NO_HOST_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_host_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-host-selected",
+    };
 }

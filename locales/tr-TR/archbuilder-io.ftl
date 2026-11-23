@@ -16,3 +16,5 @@ ab-io-command-export-shortcuts-description = Yazılan komut kısayol tablosunu p
 ab-io-command-import-shortcuts-label = Kısayollar…
 ab-io-command-import-shortcuts-description = Yazılan komut kısayol tablosunu bir dosyadan okur ve kullanır.
 ab-io-loss-stair-not-written = Bir merdiven IFC dosyasında yok: merdivenler, kollar ve korkuluklar henüz yazılamıyor. Üstteki döşemede açtığı boşluk dosyada var.
+ab-io-loss-arc-faceted = Bir yay kenarı veya kemerli üst, iki milimetre içinde düz kirişler olarak yazıldı: buradaki IFC gövdeleri çokyüzlü.
+ab-io-loss-cut-not-applied = Bir şaft veya düşey boşluk, geçtiği elemanın gövdesinden kesilemedi: gövde bütün olarak yazıldı, boşluk dosyada elemanın bir boşluğu olarak yer alıyor.

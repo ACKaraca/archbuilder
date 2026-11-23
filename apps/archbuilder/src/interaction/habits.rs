@@ -231,6 +231,9 @@ fn repeatable(command: &str) -> bool {
         ROOM_PLACE,
         archbuilder_commands::stair::STAIR_CREATE,
         archbuilder_commands::roof::ROOF_CREATE,
+        archbuilder_commands::ceiling::CEILING_CREATE,
+        archbuilder_commands::insert::OPENING_PLACE,
+        archbuilder_commands::opening::SHAFT_CREATE,
         MODIFY_MOVE,
         MODIFY_COPY,
         MODIFY_ROTATE,
@@ -288,11 +291,13 @@ impl WallInteraction {
         } else if self.stairs.running() {
             Some(archbuilder_commands::stair::STAIR_CREATE)
         } else if self.floors.running() {
-            Some(if self.floors.state().is_some_and(|s| s.roof) {
-                archbuilder_commands::roof::ROOF_CREATE
-            } else {
-                FLOOR_CREATE
-            })
+            Some(self.floors.state().map_or(FLOOR_CREATE, |s| {
+                if s.roof {
+                    archbuilder_commands::roof::ROOF_CREATE
+                } else {
+                    s.command
+                }
+            }))
         } else if let Some(state) = self.inserts.state() {
             Some(insert_command(state.kind))
         } else if self.tool.active() {
@@ -659,8 +664,8 @@ impl WallInteraction {
                 let chain = selection::wall_chain(&snapshot, id, &self.habits.vis);
                 cx.ask(select_intent(&chain, "replace"));
             }
-            Some(FLOOR) => {
-                // A double click on a floor opens its boundary sketch.
+            Some(FLOOR | archbuilder_model::types::CEILING) => {
+                // A double click on a floor or a ceiling opens its boundary sketch.
                 let r = self.start_sketch(cx, Some(id));
                 self.note_result(cx, r);
             }

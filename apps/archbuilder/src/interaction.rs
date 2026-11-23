@@ -314,8 +314,9 @@ pub struct WallInteraction {
     stairs: StairTool,
     /// The ghost of the stair the stair tool would make.
     stair_ghost: Vec<ProductOverlay>,
-    /// The stair warnings the history last showed, and the snapshot they were found in, so each
-    /// change (a stair made, an edit of the grid, a paste, an undo) says only what is new.
+    /// The stair and ceiling range warnings the history last showed, and the snapshot they were
+    /// found in, so each change (a stair made, an edit of the grid, a paste, a typed command, a
+    /// level moved, an undo) says only what is new.
     stair_warnings: (Option<arc_doc::Snapshot>, Vec<String>),
     /// The size of the viewport's image in pixels, once a pointer event has shown it.
     view_size: Option<[f64; 2]>,
@@ -1240,6 +1241,14 @@ impl Interaction for WallInteraction {
             LineAction::Submit(text) if is_roof_word(&text) && !self.tool.active() => {
                 self.intent(cx, &Intent::new(ROOF_CREATE))
             }
+            LineAction::Submit(text)
+                if boundary_command(&text).is_some() && !self.tool.active() =>
+            {
+                self.intent(
+                    cx,
+                    &Intent::new(boundary_command(&text).unwrap_or(ROOF_CREATE)),
+                )
+            }
             LineAction::Submit(text) if sketch::is_sketch_word(&text) && !self.tool.active() => {
                 self.intent(
                     cx,
@@ -1875,6 +1884,10 @@ impl WallInteraction {
     /// A command a menu, a key or a toolbar button started. The wall command without parameters
     /// starts the tool; any other command of the product runs with the selection and its
     /// parameters. Shell commands never arrive here.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one block for each tool a command starts"
+    )]
     fn intent(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
         if let Some(result) = self.ui_intent(cx, intent) {
             return result;
@@ -1912,6 +1925,48 @@ impl WallInteraction {
             self.inserts.stop();
             self.hover = None;
             return self.with_floors(cx, |tool, env, run| tool.begin_roof(env, run));
+        }
+        if intent.params.is_empty()
+            && [
+                archbuilder_commands::ceiling::CEILING_CREATE,
+                archbuilder_commands::opening::SHAFT_CREATE,
+            ]
+            .contains(&command)
+        {
+            self.tool.stop();
+            self.inserts.stop();
+            self.hover = None;
+            let kind: &'static str = if command == archbuilder_commands::opening::SHAFT_CREATE {
+                archbuilder_commands::opening::SHAFT_CREATE
+            } else {
+                archbuilder_commands::ceiling::CEILING_CREATE
+            };
+            return self.with_floors(cx, |tool, env, run| tool.begin_for(env, run, kind, None));
+        }
+        if command == archbuilder_commands::opening::VERTICAL_OPENING_CREATE
+            && intent.params.is_empty()
+        {
+            self.tool.stop();
+            self.inserts.stop();
+            self.hover = None;
+            let snapshot = cx.document()?.snapshot();
+            let host = cx.selection().iter().copied().find(|id| {
+                spatial::type_of(&snapshot, *id)
+                    .is_some_and(|k| archbuilder_model::types::VERTICAL_HOSTS.contains(&k.as_str()))
+            });
+            let Some(host) = host else {
+                return Err(Error::new(
+                    archbuilder_commands::error::codes::NO_HOST_SELECTED,
+                ));
+            };
+            return self.with_floors(cx, |tool, env, run| {
+                tool.begin_for(
+                    env,
+                    run,
+                    archbuilder_commands::opening::VERTICAL_OPENING_CREATE,
+                    Some(host),
+                )
+            });
         }
         if command == ROOM_PLACE && intent.params.is_empty() {
             self.stop_all();
@@ -2053,8 +2108,9 @@ impl WallInteraction {
         self.say_room_warnings(cx);
     }
 
-    /// Says the stair warnings (stride, overlap, uncut opening) that a change of the document
-    /// brought, once each: checked when the snapshot changes, whatever changed it.
+    /// Says the stair warnings (stride, overlap, uncut opening) and the ceilings that pass what is
+    /// above them that a change of the document brought, once each: checked when the snapshot
+    /// changes, whatever changed it (a tool, a typed command, the property grid, a drag).
     fn say_stair_warnings(&mut self, cx: &InteractionContext<'_>) {
         let Ok(document) = cx.document() else {
             return;
@@ -2069,18 +2125,10 @@ impl WallInteraction {
             return;
         }
         let first = self.stair_warnings.0.is_none();
-        let errors: Vec<Error> = spatial::objects(&snapshot, archbuilder_model::types::STAIR)
-            .iter()
-            .take(200)
-            .flat_map(|o| archbuilder_model::validate::stair_warnings(&snapshot, o))
-            .collect();
         let Some(localizer) = self.localizer(cx.language()) else {
             return;
         };
-        let found: Vec<String> = errors
-            .iter()
-            .map(|e| localizer.format_error(e).text)
-            .collect();
+        let found = changed_warnings(&snapshot, localizer);
         let fresh: Vec<String> = found
             .iter()
             .filter(|t| !self.stair_warnings.1.contains(t))
@@ -2315,6 +2363,9 @@ impl WallInteraction {
                 archbuilder_model::insert::Kind::Door => archbuilder_commands::insert::DOOR_WIDTH,
                 archbuilder_model::insert::Kind::Window => {
                     archbuilder_commands::insert::WINDOW_WIDTH
+                }
+                archbuilder_model::insert::Kind::Opening => {
+                    archbuilder_commands::insert::OPENING_WIDTH
                 }
             });
         let found = event.model.and_then(|m| {
@@ -2610,6 +2661,30 @@ fn is_roof_word(text: &str) -> bool {
     [ROOF_CREATE, "roof", "çatı", "cati"]
         .iter()
         .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
+}
+
+/// The command of the ceiling, shaft or vertical opening tool that `text` names: its identifier
+/// or a word in either language.
+fn boundary_command(text: &str) -> Option<&'static str> {
+    use archbuilder_commands::ceiling::CEILING_CREATE;
+    use archbuilder_commands::opening::{SHAFT_CREATE, VERTICAL_OPENING_CREATE};
+    let t = text.trim().to_lowercase();
+    [
+        (CEILING_CREATE, &[CEILING_CREATE, "ceiling", "tavan"][..]),
+        (SHAFT_CREATE, &[SHAFT_CREATE, "shaft", "şaft", "saft"][..]),
+        (
+            VERTICAL_OPENING_CREATE,
+            &[
+                VERTICAL_OPENING_CREATE,
+                "vertical opening",
+                "düşey boşluk",
+                "dusey bosluk",
+            ][..],
+        ),
+    ]
+    .into_iter()
+    .find(|(_, words)| words.iter().any(|w| t == *w))
+    .map(|(command, _)| command)
 }
 
 /// Whether `text` asks for the floor tool.
@@ -3022,6 +3097,23 @@ fn stair_ghost(
     out
 }
 
+/// The warnings the history says when a change brings them, as it says them: the stair warnings
+/// and the ceilings that leave their range.
+fn changed_warnings(
+    snapshot: &arc_doc::Snapshot,
+    localizer: &arc_app::locale::Localizer,
+) -> Vec<String> {
+    spatial::objects(snapshot, archbuilder_model::types::STAIR)
+        .iter()
+        .take(200)
+        .flat_map(|o| archbuilder_model::validate::stair_warnings(snapshot, o))
+        .chain(archbuilder_model::validate::ceiling_range_findings(
+            snapshot,
+        ))
+        .map(|e| localizer.format_error(&e).text)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MAX_NOTICES, export_base, export_line, push_bounded};
@@ -3041,6 +3133,81 @@ mod tests {
         assert_eq!(notices.first().map(String::as_str), Some("10"));
     }
     use std::path::Path;
+
+    #[test]
+    fn a_level_change_that_puts_a_ceiling_through_the_slab_is_said_in_the_history() {
+        use arc_command::{Invocation, Invoker, Permission, Session, Surface};
+        use archbuilder_model::spatial;
+        use archbuilder_model::types::{FLOOR, STOREY};
+        use serde_json::json;
+
+        let document = arc_doc::Document::open(
+            arc_doc::Snapshot::empty(std::sync::Arc::new(archbuilder_commands::types().unwrap())),
+            std::sync::Arc::new(arc_doc::graph::Evaluators::new()),
+            arc_doc::DocumentConfig {
+                workers: 0,
+                ..arc_doc::DocumentConfig::default()
+            },
+        )
+        .unwrap();
+        archbuilder_commands::install(&document);
+        let registry = archbuilder_commands::registry().unwrap();
+        let session = Session::new(Surface::CommandLine, [Permission::Read, Permission::Edit]);
+        let run = |command: &str, params: serde_json::Value| {
+            let invocation = Invocation {
+                seed: 7,
+                ..Invocation::new(command, params)
+            };
+            Invoker::new(&registry)
+                .invoke(&document, &session, invocation)
+                .unwrap()
+                .value
+        };
+        run("archbuilder.project.new", json!({}));
+        let s = document.snapshot();
+        let mut storeys: Vec<_> = spatial::objects(&s, STOREY)
+            .iter()
+            .map(|o| (spatial::storey_elevation(&s, o), o.id))
+            .collect();
+        storeys.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let (ground, upper) = (storeys[0].1.to_string(), storeys[1].1.to_string());
+        let c = [[0.0, 0.0], [0.0, 6.0], [10.0, 6.0], [10.0, 0.0]];
+        for storey in [&ground, &upper] {
+            for k in 0..4 {
+                run(
+                    "archbuilder.wall.create",
+                    json!({"start": c[k], "end": c[(k + 1) % 4], "height": 3.0,
+                           "storey": storey}),
+                );
+            }
+        }
+        run(
+            "archbuilder.floor.create",
+            json!({"picks": [[5.0, 3.0]], "storey": upper}),
+        );
+        assert_eq!(spatial::objects(&document.snapshot(), FLOOR).len(), 1);
+        run(
+            "archbuilder.ceiling.create",
+            json!({"storey": ground, "offset": 2.7,
+                   "points": [[2.0, 1.0], [4.0, 1.0], [4.0, 5.0], [2.0, 5.0]]}),
+        );
+        let localizer = crate::localizer(&["en-US".to_owned()]).unwrap();
+        let before = super::changed_warnings(&document.snapshot(), &localizer);
+        assert!(before.is_empty(), "{before:?}");
+        // The level above drops: its slab's underside passes the ceiling's top, and is accepted.
+        run(
+            "archbuilder.property.set",
+            json!({"objects": [upper], "field": "elevation", "value": 2.85}),
+        );
+        let after = super::changed_warnings(&document.snapshot(), &localizer);
+        assert_eq!(
+            after,
+            [
+                "The underside of the ceiling \"\u{2068}Ceiling 1\u{2069}\" would pass through \
+              \"\u{2068}Slab 1\u{2069}\" above it. Lower the ceiling or the slope."
+            ]
+        );
+    }
 
     #[test]
     fn a_relative_export_path_is_taken_in_the_folder_of_the_saved_document() {

@@ -177,8 +177,28 @@ pub(crate) struct Set {
     pub(crate) stairs: Vec<ObjectId>,
     /// The roofs (their sketched footprint points move).
     pub(crate) roofs: Vec<ObjectId>,
-    /// The doors and windows whose wall is not in the set.
+    /// The doors, windows and wall openings whose wall is not in the set.
     pub(crate) inserts: Vec<ObjectId>,
+    /// The ceilings (their boundary, slope arrow and grid origin move).
+    pub(crate) ceilings: Vec<ObjectId>,
+    /// The shafts (their footprint moves).
+    pub(crate) shafts: Vec<ObjectId>,
+    /// The vertical openings, and those of the floors, roofs and ceilings in the set.
+    pub(crate) cuts: Vec<ObjectId>,
+}
+
+impl Set {
+    fn len(&self) -> usize {
+        self.walls.len()
+            + self.floors.len()
+            + self.rooms.len()
+            + self.stairs.len()
+            + self.roofs.len()
+            + self.inserts.len()
+            + self.ceilings.len()
+            + self.shafts.len()
+            + self.cuts.len()
+    }
 }
 
 pub(crate) fn invalid() -> Error {
@@ -216,7 +236,10 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::ROOM) => set.rooms.push(id),
             Some(types::STAIR) => set.stairs.push(id),
             Some(types::ROOF) => set.roofs.push(id),
-            Some(DOOR | WINDOW) => inserts.push(id),
+            Some(types::CEILING) => set.ceilings.push(id),
+            Some(types::SHAFT) => set.shafts.push(id),
+            Some(types::VERTICAL_OPENING) => set.cuts.push(id),
+            Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
             _ => return Err(Error::new(codes::NOT_MOVABLE)),
@@ -228,13 +251,15 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             set.inserts.push(id);
         }
     }
-    if set.walls.is_empty()
-        && set.floors.is_empty()
-        && set.rooms.is_empty()
-        && set.stairs.is_empty()
-        && set.roofs.is_empty()
-        && set.inserts.is_empty()
-    {
+    // The vertical openings of a floor, roof or ceiling go where it goes.
+    for host in set.floors.iter().chain(&set.roofs).chain(&set.ceilings) {
+        for cut in spatial::children(snapshot, types::VERTICAL_OPENING, *host) {
+            if !set.cuts.contains(&cut.id) {
+                set.cuts.push(cut.id);
+            }
+        }
+    }
+    if set.len() == 0 {
         return Err(Error::new(if skipped {
             codes::NOT_MOVABLE
         } else {
@@ -738,7 +763,9 @@ pub(crate) fn ensure_valid_lenient(ctx: &mut Context<'_>) -> Result<Vec<[String;
     }
     let mut meets = Vec::new();
     for error in archbuilder_model::validate::check(txn.snapshot(), txn.touched()) {
-        if !archbuilder_model::validate::is_warning(&error) {
+        if !archbuilder_model::validate::is_warning(&error)
+            || crate::structure::refuses_always(txn, &error)
+        {
             return Err(error);
         }
         // A warning this command did not cause is the register's, not this command's.
@@ -792,16 +819,15 @@ fn move_stairs(
 }
 
 /// Applies `xf` to the objects of `set` in place.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one block for each kind of element moved"
+)]
 pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -> Result<Modified> {
     // The transaction's view: a command may move walls after it changed others.
     let snapshot = ctx.txn()?.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
-    let mut count = set.walls.len()
-        + set.floors.len()
-        + set.rooms.len()
-        + set.stairs.len()
-        + set.roofs.len()
-        + set.inserts.len();
+    let mut count = set.len();
     // Everything is read before the first write.
     let joined = reconnect(&snapshot, set, xf)?;
     let mut wall_changes = Vec::new();
@@ -858,7 +884,11 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         }
         for (insert, distance, hand) in hosted {
             set_length(ctx, insert, "distance", distance)?;
-            if xf.reflects() && walls.contains(&id) {
+            // A bare opening has no hand.
+            if xf.reflects()
+                && walls.contains(&id)
+                && spatial::type_of(&snapshot, insert).as_deref() != Some(types::WALL_OPENING)
+            {
                 ctx.txn()?
                     .modify(insert, FieldPath::new("hand"), Some(Value::Enum(hand)))?;
             }
@@ -880,6 +910,21 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
     dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
+    dissociated += crate::ceiling::move_ceilings(ctx, &snapshot, &set.ceilings, xf, &walls)?;
+    crate::opening::move_cuts(
+        ctx,
+        &snapshot,
+        &set.shafts,
+        archbuilder_model::floor::SHAFT_SLOTS,
+        xf,
+    )?;
+    crate::opening::move_cuts(
+        ctx,
+        &snapshot,
+        &set.cuts,
+        archbuilder_model::floor::VERTICAL_SLOTS,
+        xf,
+    )?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -975,12 +1020,7 @@ pub(crate) fn copy_set(
     let tongue = language(ctx);
     let mut created: Vec<ObjectId> = Vec::new();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
-    let mut count = set.walls.len()
-        + set.floors.len()
-        + set.rooms.len()
-        + set.stairs.len()
-        + set.roofs.len()
-        + set.inserts.len();
+    let mut count = set.len();
     for id in &set.walls {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -1018,6 +1058,8 @@ pub(crate) fn copy_set(
         created.push(copy_insert(ctx, &object, host, distance, None, &tongue)?);
     }
     let mut dissociated = 0;
+    // The copies of floors, roofs and ceilings, by original: their vertical openings follow.
+    let mut hosts: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
     for id in &set.floors {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -1045,7 +1087,9 @@ pub(crate) fn copy_set(
         if let Some(slot) = values.get_mut(types::floor::ARCS) {
             *slot = Floor::arc_values(&vertices);
         }
-        created.push(create(ctx, FLOOR, storey, values)?);
+        let new = create(ctx, FLOOR, storey, values)?;
+        hosts.insert(*id, new);
+        created.push(new);
     }
     for id in &set.rooms {
         created.push(copy_room(ctx, &snapshot, *id, xf, target)?);
@@ -1076,8 +1120,36 @@ pub(crate) fn copy_set(
         &|w| map.get(&w).copied(),
         target,
     )?;
+    hosts.extend(set.roofs.iter().copied().zip(roofs.iter().copied()));
     created.extend(roofs);
     dissociated += lost;
+    let (ceilings, lost) = crate::ceiling::copy_ceilings(
+        ctx,
+        &snapshot,
+        &set.ceilings,
+        xf,
+        &|w| map.get(&w).copied(),
+        target,
+    )?;
+    hosts.extend(ceilings.iter().copied());
+    created.extend(ceilings.into_iter().map(|(_, new)| new));
+    dissociated += lost;
+    created.extend(crate::opening::copy_cuts(
+        ctx,
+        &snapshot,
+        &set.shafts,
+        xf,
+        &|_| None,
+        target,
+    )?);
+    created.extend(crate::opening::copy_cuts(
+        ctx,
+        &snapshot,
+        &set.cuts,
+        xf,
+        &|host| hosts.get(&host).copied(),
+        target,
+    )?);
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
     Ok(Modified {

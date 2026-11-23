@@ -179,12 +179,10 @@ fn notice_rect(text: &str) -> PixelRect {
 }
 
 /// The text of a room's tag.
-fn tag(entry: &Entry, language: &str, say: &dyn Fn(&str) -> String) -> String {
+fn tag(entry: &Entry, area: Option<f64>, language: &str, say: &dyn Fn(&str) -> String) -> String {
     let separator = archbuilder_model::units::decimal_separator(language);
     let second = match entry.state() {
-        State::Enclosed => entry
-            .area()
-            .map(|a| format!("{a:.2} m²").replace('.', &separator.to_string())),
+        State::Enclosed => area.map(|a| format!("{a:.2} m²").replace('.', &separator.to_string())),
         State::Unenclosed => Some(say(TAG_UNENCLOSED.message_id)),
         State::Redundant => Some(say(TAG_REDUNDANT.message_id)),
     };
@@ -418,7 +416,14 @@ impl RoomView {
             .collect();
         let texts: Vec<String> = seen
             .iter()
-            .map(|e| tag(e, language, &|id| say(id, 0)))
+            .map(|e| {
+                tag(
+                    e,
+                    archbuilder_model::room::net_area(snapshot, e),
+                    language,
+                    &|id| say(id, 0),
+                )
+            })
             .collect();
         let shown: Vec<Option<[f64; 2]>> = match view {
             None => vec![Some([0.0, 0.0]); seen.len()],
@@ -436,7 +441,7 @@ impl RoomView {
                             .iter()
                             .map(|h| h.iter().map(|p| v.to_pixel(*p)).collect())
                             .collect(),
-                        area: e.area().unwrap_or(0.0),
+                        area: archbuilder_model::room::net_area(snapshot, e).unwrap_or(0.0),
                         alt: archbuilder_model::room::pole_of(&e.footprint.loops())
                             .map(|p| v.to_pixel(p)),
                     })
@@ -521,18 +526,79 @@ impl RoomView {
         let mut out = cache.drawn.clone();
         let selected = self.selection.lock().map(|s| s.clone()).unwrap_or_default();
         for entry in cache.rooms.iter().filter(|e| selected.contains(&e.id)) {
-            out.extend(volume(entry));
+            out.extend(volume(snapshot, entry));
         }
         out
     }
 }
 
-/// The wireframe of a selected room: base loop, top loop and the corner edges.
-fn volume(entry: &Entry) -> Vec<ProductOverlay> {
+/// The wireframe of a selected room: base loop, top loop and the corner edges. The top follows
+/// the room's solid: under a sloped ceiling or a roof it is the outline of each piece of the top.
+fn volume(snapshot: &Snapshot, entry: &Entry) -> Vec<ProductOverlay> {
     let polygon = &entry.footprint.polygon;
     if polygon.is_empty() {
         return Vec::new();
     }
+    if let Some(shape) = archbuilder_model::room::shape(snapshot, entry)
+        && shape.flat_top().is_none()
+    {
+        let mut out: Vec<ProductOverlay> = Vec::new();
+        // The top follows the surfaces above: its outline is drawn at the height each corner
+        // has (the triangulation of the pieces is not shown).
+        let top_at = |p: &[f64; 2]| {
+            shape
+                .pieces
+                .iter()
+                .filter(|pc| {
+                    pc.points
+                        .iter()
+                        .any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 1.0e-6)
+                })
+                .map(|pc| pc.plane.z(*p))
+                .fold(entry.base, f64::max)
+        };
+        out.push(ProductOverlay::Path {
+            points: polygon
+                .iter()
+                .chain(polygon.first())
+                .map(|p| Point3::new(p[0], p[1], top_at(p)))
+                .collect(),
+            dashed: false,
+        });
+        for l in std::iter::once(polygon).chain(&entry.footprint.holes) {
+            out.push(ProductOverlay::Path {
+                points: l
+                    .iter()
+                    .chain(l.first())
+                    .map(|p| Point3::new(p[0], p[1], entry.base))
+                    .collect(),
+                dashed: false,
+            });
+        }
+        for p in polygon.iter().take(64) {
+            let top = shape
+                .pieces
+                .iter()
+                .filter(|pc| {
+                    pc.points
+                        .iter()
+                        .any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 1.0e-6)
+                })
+                .map(|pc| pc.plane.z(*p))
+                .fold(entry.base, f64::max);
+            out.push(ProductOverlay::Path {
+                points: vec![
+                    Point3::new(p[0], p[1], entry.base),
+                    Point3::new(p[0], p[1], top),
+                ],
+                dashed: true,
+            });
+        }
+        return out;
+    }
+    let top = archbuilder_model::room::shape(snapshot, entry)
+        .and_then(|s| s.flat_top())
+        .unwrap_or(entry.top);
     let ring = |l: &Vec<[f64; 2]>, z: f64| ProductOverlay::Path {
         points: l
             .iter()
@@ -543,12 +609,12 @@ fn volume(entry: &Entry) -> Vec<ProductOverlay> {
     };
     let mut out = Vec::new();
     for l in std::iter::once(polygon).chain(&entry.footprint.holes) {
-        out.extend([ring(l, entry.base), ring(l, entry.top)]);
+        out.extend([ring(l, entry.base), ring(l, top)]);
     }
     out.extend(polygon.iter().take(64).map(|p| ProductOverlay::Path {
         points: vec![
             Point3::new(p[0], p[1], entry.base),
-            Point3::new(p[0], p[1], entry.top),
+            Point3::new(p[0], p[1], top),
         ],
         dashed: true,
     }));

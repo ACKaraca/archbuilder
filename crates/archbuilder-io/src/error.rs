@@ -72,4 +72,20 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-stair-not-written",
     };
+    /// An arc edge of a boundary or an arched opening, written as chords within the model's
+    /// flattening tolerance: IFC bodies here are faceted.
+    pub const ARC_FACETED: Reason = Reason {
+        code: "ab.io.ifc.arc_faceted",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-arc-faceted",
+    };
+    /// A shaft or vertical opening whose cut could not be applied to the body of the element it
+    /// passes through: the element's body is written without it, the opening is still in the file.
+    pub const CUT_NOT_APPLIED: Reason = Reason {
+        code: "ab.io.ifc.cut_not_applied",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-cut-not-applied",
+    };
 }

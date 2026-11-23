@@ -173,6 +173,7 @@ fn insert_of(kind: Kind, object: &Value) -> Option<Insert> {
         hand: named(&values["hand"], &Hand::ALL, Hand::code, Hand::name).unwrap_or_default(),
         facing: named(&values["facing"], &Facing::ALL, Facing::code, Facing::name)
             .unwrap_or_default(),
+        rise: 0.0,
     })
 }
 

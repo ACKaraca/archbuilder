@@ -261,16 +261,22 @@ pub(crate) fn next_floor_name(snapshot: &Snapshot, storey: ObjectId, language: &
         .unwrap_or_default()
 }
 
-type WallChain = Vec<(ObjectId, archbuilder_model::wall::Wall)>;
+pub(crate) type WallChain = Vec<(ObjectId, archbuilder_model::wall::Wall)>;
 
 /// The walls a floor over `p` follows: explicit walls, picks (a loop around a single point, with
 /// the loops of the courtyards inside it as holes), or none for a sketch.
-fn picked_walls(
+pub(crate) fn picked_walls(
     ctx: &Context<'_>,
     storey: ObjectId,
     p: &CreateFloor,
+    rooms: bool,
 ) -> Result<Option<(WallChain, Vec<WallChain>)>> {
-    let all = floor::storey_walls(ctx.snapshot(), storey);
+    // A ceiling is laid out like a room: the walls that bound rooms.
+    let all = if rooms {
+        floor::room_walls(ctx.snapshot(), storey)
+    } else {
+        floor::storey_walls(ctx.snapshot(), storey)
+    };
     let by_id = |id: ObjectId| {
         all.iter()
             .find(|(w, _)| *w == id)
@@ -321,23 +327,19 @@ fn picked_walls(
     Ok(Some((chain(ids)?, holes)))
 }
 
-fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
-    let storey = storey_for(ctx, p.storey)?;
-    let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
-        None => Ok(default),
-    };
-    let floor_type = crate::element_type::layered_for(
-        ctx,
-        TypeKind::Floor,
-        p.floor_type.as_deref(),
-        p.thickness.as_ref(),
-    )?;
-    let offset = meters(ctx, &p.offset, 0.0)?;
-    let edge_offset = meters(ctx, &p.edge_offset, 0.0)?;
-    let face = p.face.map_or(Face::Interior, Into::into);
-    let walls = picked_walls(ctx, storey, &p)?;
-    let vertices: Vec<Vertex> = match (&walls, &p.points) {
+/// The vertices of the boundary `p` asks for: the loop of picked walls (with courtyards as holes)
+/// at `face`, or the sketched points and holes.
+///
+/// # Errors
+/// `ab.cmd.floor_no_loop`, `ab.cmd.floor_walls_parallel`, `ab.cmd.floor_too_big` and
+/// `cmd.params_invalid` when neither or both of walls and points are given.
+pub(crate) fn boundary_vertices(
+    walls: &Option<(WallChain, Vec<WallChain>)>,
+    p: &CreateFloor,
+    face: Face,
+    edge_offset: f64,
+) -> Result<Vec<Vertex>> {
+    let vertices: Vec<Vertex> = match (walls, &p.points) {
         (Some((walls, holes)), None) => {
             let refuse = |r| match r {
                 WallsRefusal::NoLoop => Error::new(codes::FLOOR_NO_LOOP),
@@ -377,6 +379,26 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
         }
         _ => return Err(Error::new(arc_command::error::codes::PARAMS_INVALID)),
     };
+    Ok(vertices)
+}
+
+fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
+    let storey = storey_for(ctx, p.storey)?;
+    let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
+        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
+        None => Ok(default),
+    };
+    let floor_type = crate::element_type::layered_for(
+        ctx,
+        TypeKind::Floor,
+        p.floor_type.as_deref(),
+        p.thickness.as_ref(),
+    )?;
+    let offset = meters(ctx, &p.offset, 0.0)?;
+    let edge_offset = meters(ctx, &p.edge_offset, 0.0)?;
+    let face = p.face.map_or(Face::Interior, Into::into);
+    let walls = picked_walls(ctx, storey, &p, false)?;
+    let vertices = boundary_vertices(&walls, &p, face, edge_offset)?;
     let language = language(ctx);
     let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => name.to_owned(),
@@ -437,12 +459,18 @@ fn edit_boundary(ctx: &mut Context<'_>, p: EditBoundary) -> Result<BoundaryEdite
             ctx.selection()
                 .iter()
                 .copied()
-                .find(|id| spatial::type_of(snapshot, *id).as_deref() == Some(FLOOR))
+                .find(|id| {
+                    spatial::type_of(snapshot, *id).is_some_and(|k| floor::slots_of(&k).is_some())
+                })
                 .ok_or_else(|| Error::new(codes::NO_FLOOR_SELECTED))?
         }
     };
-    let object = expect(ctx.snapshot(), id, FLOOR)?;
-    let old = Floor::from_values(&object.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    // A floor, a ceiling, a shaft or a vertical opening: each has a sketched boundary.
+    let key =
+        spatial::type_of(ctx.snapshot(), id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let slots = floor::slots_of(&key).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let object = expect(ctx.snapshot(), id, &key)?;
+    let old = Floor::read(&object.values, slots).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let loops = p.vertices.last().map_or(0, |v| v.loop_index as usize + 1);
     if p.vertices.is_empty() || p.vertices.len() > MAX_VERTICES || loops > MAX_LOOPS {
         return Err(too_big());
@@ -484,9 +512,15 @@ fn edit_boundary(ctx: &mut Context<'_>, p: EditBoundary) -> Result<BoundaryEdite
     crate::floor::set_vertices(ctx, id, &vertices)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
-    let area = spatial::get(txn.snapshot(), id)
-        .and_then(|o| Derived::of(txn.snapshot(), &o))
-        .map_or(0.0, |d| d.area());
+    let area = spatial::get(txn.snapshot(), id).map_or(0.0, |o| {
+        if key == FLOOR {
+            Derived::of(txn.snapshot(), &o).map_or(0.0, |d| d.area())
+        } else {
+            Floor::read(&o.values, slots)
+                .and_then(|f| f.boundary_in(txn.snapshot()))
+                .map_or(0.0, |b| b.area())
+        }
+    });
     ctx.set_selection_after(vec![id]);
     Ok(BoundaryEdited {
         floor: IdParam(id),
@@ -538,23 +572,31 @@ pub fn freeze_edges(ctx: &mut Context<'_>, deleted: &BTreeSet<ObjectId>) -> Resu
     let snapshot = ctx.snapshot().clone();
     let mut frozen = 0;
     let mut changes: Vec<(ObjectId, Vec<Vertex>)> = Vec::new();
-    for object in spatial::objects(&snapshot, FLOOR) {
-        let Some(floor) = Floor::from_values(&object.values) else {
-            continue;
-        };
-        if !floor.walls().iter().any(|w| deleted.contains(w)) {
-            continue;
-        }
-        let Some(boundary) = floor.boundary_in(&snapshot) else {
-            continue;
-        };
-        if let Some(vertices) = floor.frozen(&boundary, deleted) {
-            frozen += floor
-                .vertices
-                .iter()
-                .filter(|v| v.edge.is_some_and(|a| deleted.contains(&a.wall)))
-                .count();
-            changes.push((object.id, vertices));
+    // Floors, ceilings, shafts and vertical openings all have edges that can follow walls.
+    for (key, slots) in [
+        (FLOOR, floor::FLOOR_SLOTS),
+        (types::CEILING, floor::FLOOR_SLOTS),
+        (types::SHAFT, floor::SHAFT_SLOTS),
+        (types::VERTICAL_OPENING, floor::VERTICAL_SLOTS),
+    ] {
+        for object in spatial::objects(&snapshot, key) {
+            let Some(floor) = Floor::read(&object.values, slots) else {
+                continue;
+            };
+            if !floor.walls().iter().any(|w| deleted.contains(w)) {
+                continue;
+            }
+            let Some(boundary) = floor.boundary_in(&snapshot) else {
+                continue;
+            };
+            if let Some(vertices) = floor.frozen(&boundary, deleted) {
+                frozen += floor
+                    .vertices
+                    .iter()
+                    .filter(|v| v.edge.is_some_and(|a| deleted.contains(&a.wall)))
+                    .count();
+                changes.push((object.id, vertices));
+            }
         }
     }
     for (id, vertices) in changes {
@@ -582,6 +624,57 @@ const PROMPT_HOLE_START: Msg = Msg {
 };
 const PROMPT_HOLE_NEXT: Msg = Msg {
     message_id: "ab-prompt-floor-hole-next",
+};
+const PROMPT_CEILING_PICK: Msg = Msg {
+    message_id: "ab-prompt-ceiling-pick",
+};
+const PROMPT_CEILING_START: Msg = Msg {
+    message_id: "ab-prompt-ceiling-start",
+};
+const PROMPT_CEILING_NEXT: Msg = Msg {
+    message_id: "ab-prompt-ceiling-next",
+};
+const PROMPT_SHAFT_START: Msg = Msg {
+    message_id: "ab-prompt-shaft-start",
+};
+const PROMPT_SHAFT_NEXT: Msg = Msg {
+    message_id: "ab-prompt-shaft-next",
+};
+const PROMPT_CUT_START: Msg = Msg {
+    message_id: "ab-prompt-cut-start",
+};
+const PROMPT_CUT_NEXT: Msg = Msg {
+    message_id: "ab-prompt-cut-next",
+};
+const PROMPT_ARC_MID: Msg = Msg {
+    message_id: "ab-prompt-arc-mid",
+};
+const PROMPT_ARC_END: Msg = Msg {
+    message_id: "ab-prompt-arc-end",
+};
+const KEY_ARC: Msg = Msg {
+    message_id: "ab-keyword-arc",
+};
+const PROMPT_SHAFT_BASE: Msg = Msg {
+    message_id: "ab-prompt-shaft-base",
+};
+const PROMPT_SHAFT_TOP: Msg = Msg {
+    message_id: "ab-prompt-shaft-top",
+};
+const PROMPT_SHAFT_OFFSET: Msg = Msg {
+    message_id: "ab-prompt-shaft-offset",
+};
+const KEY_SHAFT_BASE: Msg = Msg {
+    message_id: "ab-keyword-shaft-base",
+};
+const KEY_SHAFT_TOP: Msg = Msg {
+    message_id: "ab-keyword-shaft-top",
+};
+const KEY_SHAFT_OFFSET: Msg = Msg {
+    message_id: "ab-keyword-shaft-offset",
+};
+const PROMPT_HEIGHT: Msg = Msg {
+    message_id: "ab-prompt-ceiling-height",
 };
 const PROMPT_THICKNESS: Msg = Msg {
     message_id: "ab-prompt-floor-thickness",
@@ -617,11 +710,53 @@ const KEY_CLOSE: Msg = Msg {
     message_id: "ab-keyword-floor-close",
 };
 
-/// The prompts of `archbuilder.floor.create` (or, with `hole`, of `archbuilder.floor.add_hole`).
+/// What the boundary prompts ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    /// A floor, or with `hole` a hole in one.
+    Floor,
+    /// A ceiling: picks inside a room or a sketch, a height instead of a top offset.
+    Ceiling,
+    /// A shaft: a sketched footprint only.
+    Shaft,
+    /// A vertical opening: a sketched footprint only, in the host of the preset `host`.
+    Cut,
+}
+
+/// The prompts of `archbuilder.floor.create` (or, with `hole`, of `archbuilder.floor.add_hole`),
+/// and, with another subject, of the ceiling, shaft and vertical opening commands, which ask the
+/// same way.
 #[derive(Debug)]
 pub struct FloorPrompts {
     /// Whether the prompts ask for a hole.
     pub hole: bool,
+    /// What the boundary is for.
+    pub subject: Subject,
+}
+
+impl FloorPrompts {
+    /// Prompts for a floor, or for a hole in one.
+    #[must_use]
+    pub const fn floor(hole: bool) -> Self {
+        Self {
+            hole,
+            subject: Subject::Floor,
+        }
+    }
+
+    /// Prompts for `subject`.
+    #[must_use]
+    pub const fn of(subject: Subject) -> Self {
+        Self {
+            hole: false,
+            subject,
+        }
+    }
+
+    /// Whether only a sketch with points is asked for: a hole, a shaft or a vertical opening.
+    fn sketch_only(&self) -> bool {
+        self.hole || matches!(self.subject, Subject::Shaft | Subject::Cut)
+    }
 }
 
 /// What the prompts have read so far.
@@ -634,6 +769,12 @@ struct Scan {
     offset: f64,
     points: Vec<[f64; 2]>,
     picks: Vec<[f64; 2]>,
+    /// The arc edges of a sketch: the number of the vertex the edge starts at and its bulge.
+    arcs: Vec<[f64; 2]>,
+    /// A shaft's base and top level (names) and the top's offset.
+    base: Option<String>,
+    top: Option<String>,
+    top_offset: f64,
 }
 
 fn shortcut(turkish: bool, english: char, tr: char) -> char {
@@ -643,6 +784,19 @@ fn shortcut(turkish: bool, english: char, tr: char) -> char {
 impl FloorPrompts {
     #[allow(
         clippy::too_many_lines,
+        reason = "one pass over the answers of the prompt machine"
+    )]
+    fn type_kind(&self) -> TypeKind {
+        if self.subject == Subject::Ceiling {
+            TypeKind::Ceiling
+        } else {
+            TypeKind::Floor
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cognitive_complexity,
         reason = "one pass over the answers of the prompt machine"
     )]
     fn scan(&self, state: &PromptState<'_>) -> (Scan, Step) {
@@ -656,7 +810,8 @@ impl FloorPrompts {
         let text = |m| length_text(m, unit, decimal_separator(&language));
         let number = |key: &str| preset.get(key).and_then(Json::as_f64);
         let mut scan = Scan {
-            sketch: self.hole || preset.get("mode").and_then(Json::as_str) == Some("sketch"),
+            sketch: self.sketch_only()
+                || preset.get("mode").and_then(Json::as_str) == Some("sketch"),
             face: "interior",
             // The thickness of the floor's type (the preset one, else the default one).
             thickness: number("thickness").unwrap_or_else(|| {
@@ -664,17 +819,25 @@ impl FloorPrompts {
                     .get("type")
                     .and_then(Json::as_str)
                     .and_then(|t| {
-                        crate::element_type::resolve(state.snapshot, TypeKind::Floor, t).ok()
+                        crate::element_type::resolve(state.snapshot, self.type_kind(), t).ok()
                     })
-                    .or_else(|| crate::element_type::default_of(state.snapshot, TypeKind::Floor))
+                    .or_else(|| crate::element_type::default_of(state.snapshot, self.type_kind()))
                     .and_then(|id| spatial::get(state.snapshot, id))
                     .and_then(|t| archbuilder_model::element_type::Layers::from_values(&t.values))
                     .map_or(DEFAULT_FLOOR_THICKNESS, |l| l.total())
             }),
             thickness_given: number("thickness").is_some(),
-            offset: number("offset").unwrap_or(0.0),
+            offset: number("offset").unwrap_or(match self.subject {
+                // A ceiling's height is the type's default.
+                Subject::Ceiling => types::DEFAULT_CEILING_HEIGHT,
+                _ => 0.0,
+            }),
             points: Vec::new(),
             picks: Vec::new(),
+            arcs: Vec::new(),
+            base: None,
+            top: None,
+            top_offset: 0.0,
         };
         let storey_name = preset
             .get("storey")
@@ -689,6 +852,13 @@ impl FloorPrompts {
             .and_then(Json::as_str)
             .and_then(|s| ObjectId::from_str(s).ok())
             .and_then(|id| spatial::get(state.snapshot, id))
+            .or_else(|| {
+                preset
+                    .get("host")
+                    .and_then(Json::as_str)
+                    .and_then(|s| ObjectId::from_str(s).ok())
+                    .and_then(|id| spatial::get(state.snapshot, id))
+            })
             .and_then(|f| types::text(&f.values, 0).map(str::to_owned))
             .unwrap_or_default();
         let mut at = 0;
@@ -699,15 +869,22 @@ impl FloorPrompts {
                 } else {
                     scan.picks.len()
                 };
-                let message = match (self.hole, scan.sketch, count) {
-                    (true, _, 0) => &PROMPT_HOLE_START,
-                    (true, _, _) => &PROMPT_HOLE_NEXT,
-                    (_, false, _) => &PROMPT_PICK,
-                    (_, true, 0) => &PROMPT_START,
-                    (_, true, _) => &PROMPT_NEXT,
+                let message = match (self.hole, self.subject, scan.sketch, count) {
+                    (true, _, _, 0) => &PROMPT_HOLE_START,
+                    (true, _, _, _) => &PROMPT_HOLE_NEXT,
+                    (_, Subject::Shaft, _, 0) => &PROMPT_SHAFT_START,
+                    (_, Subject::Shaft, _, _) => &PROMPT_SHAFT_NEXT,
+                    (_, Subject::Cut, _, 0) => &PROMPT_CUT_START,
+                    (_, Subject::Cut, _, _) => &PROMPT_CUT_NEXT,
+                    (_, Subject::Ceiling, false, _) => &PROMPT_CEILING_PICK,
+                    (_, Subject::Ceiling, true, 0) => &PROMPT_CEILING_START,
+                    (_, Subject::Ceiling, true, _) => &PROMPT_CEILING_NEXT,
+                    (_, _, false, _) => &PROMPT_PICK,
+                    (_, _, true, 0) => &PROMPT_START,
+                    (_, _, true, _) => &PROMPT_NEXT,
                 };
                 let mut options = Vec::new();
-                if !self.hole {
+                if !self.sketch_only() {
                     options.push(
                         KeywordOption::new("thickness", KEY_THICKNESS.message_id)
                             .with_shortcut(shortcut(turkish, 't', 'k')),
@@ -717,12 +894,30 @@ impl FloorPrompts {
                             .with_shortcut(shortcut(turkish, 'o', 'o')),
                     );
                 }
+                if scan.sketch && self.subject != Subject::Floor && count > 0 {
+                    options.push(
+                        KeywordOption::new("arc", KEY_ARC.message_id)
+                            .with_shortcut(shortcut(turkish, 'a', 'y')),
+                    );
+                }
+                if self.subject == Subject::Shaft {
+                    for (word, key, short) in [
+                        ("base", &KEY_SHAFT_BASE, ('b', 'b')),
+                        ("top", &KEY_SHAFT_TOP, ('t', 't')),
+                        ("offset", &KEY_SHAFT_OFFSET, ('o', 'o')),
+                    ] {
+                        options.push(
+                            KeywordOption::new(word, key.message_id)
+                                .with_shortcut(shortcut(turkish, short.0, short.1)),
+                        );
+                    }
+                }
                 if scan.sketch {
                     options.push(
                         KeywordOption::new("close", KEY_CLOSE.message_id)
                             .with_shortcut(shortcut(turkish, 'c', 'p')),
                     );
-                    if !self.hole {
+                    if !self.sketch_only() {
                         options.push(
                             KeywordOption::new("walls", KEY_WALLS.message_id)
                                 .with_shortcut(shortcut(turkish, 'w', 'd')),
@@ -791,15 +986,89 @@ impl FloorPrompts {
                         // The last point of the sketch, or the last wall picked.
                         if scan.sketch {
                             scan.points.pop();
+                            let n = scan.points.len() as f64;
+                            scan.arcs.retain(|a| a[0] < n - 1.0);
                         } else {
                             scan.picks.pop();
                         }
                     }
                     "close" if scan.points.len() >= 3 => break,
                     "done" if !scan.picks.is_empty() => break,
+                    "arc" if scan.sketch && !scan.points.is_empty() => {
+                        // A three-point arc from the last point: a point on it, then its end.
+                        let mut got = Vec::new();
+                        for (n, message) in [(0, &PROMPT_ARC_MID), (1, &PROMPT_ARC_END)] {
+                            let prompt = Prompt::new(
+                                format!("value-{at}-{n}"),
+                                message.message_id,
+                                Accept::Point {
+                                    dims: PointDims::Two,
+                                },
+                            );
+                            let Some(value) = state.answers.get(at) else {
+                                return (scan, Step::Ask(prompt));
+                            };
+                            at += 1;
+                            if let PromptInput::Point(p) = &value.input {
+                                got.push([p.x, p.y]);
+                            }
+                        }
+                        if let (Some(&start), [mid, end]) = (scan.points.last(), got.as_slice())
+                            && let Some(bulge) =
+                                archbuilder_model::sketch::bulge_through(start, *mid, *end)
+                        {
+                            scan.arcs.push([(scan.points.len() - 1) as f64, bulge]);
+                            scan.points.push(*end);
+                        }
+                    }
+                    "base" | "top" => {
+                        let prompt = Prompt::new(
+                            format!("value-{at}"),
+                            if k == "base" {
+                                PROMPT_SHAFT_BASE.message_id
+                            } else {
+                                PROMPT_SHAFT_TOP.message_id
+                            },
+                            Accept::Text {
+                                min_chars: 1,
+                                max_chars: Some(64),
+                            },
+                        );
+                        let Some(value) = state.answers.get(at) else {
+                            return (scan, Step::Ask(prompt));
+                        };
+                        at += 1;
+                        if let PromptInput::Text(t) = &value.input {
+                            if k == "base" {
+                                scan.base = Some(t.clone());
+                            } else {
+                                scan.top = Some(t.clone());
+                            }
+                        }
+                    }
+                    "offset" if self.subject == Subject::Shaft => {
+                        let prompt = Prompt::new(
+                            format!("value-{at}"),
+                            PROMPT_SHAFT_OFFSET.message_id,
+                            Accept::Distance {
+                                min: Some(BASE_OFFSET_RANGE.0),
+                                max: Some(BASE_OFFSET_RANGE.1),
+                            },
+                        )
+                        .with_default(PromptInput::Distance(scan.top_offset));
+                        let Some(value) = state.answers.get(at) else {
+                            return (scan, Step::Ask(prompt));
+                        };
+                        at += 1;
+                        if let PromptInput::Distance(d) = value.input {
+                            scan.top_offset = d;
+                        }
+                    }
                     "thickness" | "offset" => {
                         let (message, range, now) = if k == "thickness" {
                             (&PROMPT_THICKNESS, FLOOR_THICKNESS_RANGE, scan.thickness)
+                        } else if self.subject == Subject::Ceiling {
+                            (&PROMPT_HEIGHT, BASE_OFFSET_RANGE, scan.offset)
                         } else {
                             (&PROMPT_OFFSET, BASE_OFFSET_RANGE, scan.offset)
                         };
@@ -833,7 +1102,21 @@ impl FloorPrompts {
             }
         }
         let mut params = Map::new();
-        if self.hole {
+        if !scan.arcs.is_empty() {
+            params.insert("arcs".into(), points_json(&scan.arcs));
+        }
+        if self.subject == Subject::Shaft {
+            if let Some(b) = &scan.base {
+                params.insert("base_level".into(), Json::from(b.as_str()));
+            }
+            if let Some(t) = &scan.top {
+                params.insert("top_level".into(), Json::from(t.as_str()));
+            }
+            if scan.top_offset != 0.0 {
+                params.insert("top_offset".into(), Json::from(scan.top_offset));
+            }
+        }
+        if self.sketch_only() {
             params.insert("points".into(), points_json(&scan.points));
         } else {
             if scan.thickness_given {
@@ -901,7 +1184,7 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             DESCRIPTION.message_id,
             |ctx: &mut Context<'_>, p: CreateFloor| create_floor(ctx, p),
         )
-        .with_prompt(Arc::new(FloorPrompts { hole: false })),
+        .with_prompt(Arc::new(FloorPrompts::floor(false))),
     )?;
     const EDIT_LABEL: Msg = Msg {
         message_id: "ab-cmd-floor-edit-boundary-label",
@@ -922,6 +1205,6 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             HOLE_DESCRIPTION.message_id,
             |ctx: &mut Context<'_>, p: AddHole| add_hole(ctx, p),
         )
-        .with_prompt(Arc::new(FloorPrompts { hole: true })),
+        .with_prompt(Arc::new(FloorPrompts::floor(true))),
     )
 }

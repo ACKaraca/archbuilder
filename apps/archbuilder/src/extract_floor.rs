@@ -14,7 +14,7 @@ use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::floor::Derived;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{FLOOR, LEVEL, STOREY, WALL};
+use archbuilder_model::types::{FLOOR, LEVEL, SHAFT, STOREY, VERTICAL_OPENING, WALL};
 
 /// The color of a floor (linear RGB): a light blue-gray.
 pub const COLOR: Color = Color {
@@ -65,6 +65,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let mut storeys: BTreeSet<ObjectId> = BTreeSet::new();
     let mut levels: BTreeSet<ObjectId> = BTreeSet::new();
     let mut deleted_wall = false;
+    let mut cut = false;
     for (key, group) in by_type {
         let live = group
             .created
@@ -78,12 +79,16 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             }
             STOREY => storeys.extend(live),
             LEVEL => levels.extend(live),
+            // A shaft or a vertical opening cuts the slabs it passes through.
+            SHAFT | VERTICAL_OPENING => {
+                cut |= live.count() > 0 || !group.deleted.is_empty();
+            }
             _ => {}
         }
     }
     // A wall of any storey may stop at or cut a slab (the walls below end under it), so a changed
     // wall extracts every slab again.
-    let any_wall = !storeys.is_empty() || deleted_wall;
+    let any_wall = !storeys.is_empty() || deleted_wall || cut;
     spatial::objects(snapshot, FLOOR)
         .into_iter()
         .filter(|f| {

@@ -401,7 +401,10 @@ fn kind_of(snapshot: &Snapshot, id: ObjectId) -> Option<String> {
 }
 
 fn is_insert(snapshot: &Snapshot, id: ObjectId) -> bool {
-    matches!(kind_of(snapshot, id).as_deref(), Some(DOOR | WINDOW))
+    matches!(
+        kind_of(snapshot, id).as_deref(),
+        Some(DOOR | WINDOW | types::WALL_OPENING)
+    )
 }
 
 /// A wall with the elevation of its base.
@@ -543,7 +546,7 @@ pub fn handles(snapshot: &Snapshot, selection: &[ObjectId], frame: &Frame) -> Ve
                     }
                 }
             }
-            Some(DOOR | WINDOW) => {
+            Some(DOOR | WINDOW | types::WALL_OPENING) => {
                 let parts = spatial::get(snapshot, *id).and_then(|o| {
                     let item = Insert::of(snapshot, &o)?;
                     let host = o.header.owner?;
@@ -620,7 +623,7 @@ pub fn dims(snapshot: &Snapshot, selection: &[ObjectId]) -> Vec<Dim> {
     };
     match kind_of(snapshot, *id).as_deref() {
         Some(WALL) => wall_dims(snapshot, *id),
-        Some(DOOR | WINDOW) => insert_dims(snapshot, *id),
+        Some(DOOR | WINDOW | types::WALL_OPENING) => insert_dims(snapshot, *id),
         _ => Vec::new(),
     }
 }

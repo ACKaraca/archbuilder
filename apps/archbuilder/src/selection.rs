@@ -178,7 +178,28 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
                     d.surface.outline.iter().copied().for_each(&mut add);
                 }
             }
-            Some(DOOR | WINDOW) => {
+            Some(archbuilder_model::types::CEILING) => {
+                if let Some(b) = archbuilder_model::ceiling::Ceiling::from_values(&object.values)
+                    .and_then(|c| c.shape.boundary_in(snapshot))
+                {
+                    b.loops.into_iter().flatten().for_each(&mut add);
+                }
+            }
+            Some(archbuilder_model::types::SHAFT) => {
+                if let Some(s) = archbuilder_model::opening::shaft_span(snapshot, &object) {
+                    s.outline.into_iter().for_each(&mut add);
+                }
+            }
+            Some(archbuilder_model::types::VERTICAL_OPENING) => {
+                if let Some(o) = archbuilder_model::opening::outline_of(
+                    snapshot,
+                    &object,
+                    archbuilder_model::floor::VERTICAL_SLOTS,
+                ) {
+                    o.into_iter().for_each(&mut add);
+                }
+            }
+            Some(DOOR | WINDOW | archbuilder_model::types::WALL_OPENING) => {
                 if let Some(host) = object
                     .header
                     .owner

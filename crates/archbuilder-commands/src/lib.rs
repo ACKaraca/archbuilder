@@ -10,13 +10,14 @@
 //! (the selected walls and inserts, else the selected storey); [`insert`]: `archbuilder.door.place`,
 //! `archbuilder.window.place`, `archbuilder.insert.flip_hand` and `archbuilder.insert.flip_facing`; [`floor`]:
 //! `archbuilder.floor.create` and `archbuilder.floor.add_hole`; [`modify`]: `archbuilder.modify.move`,
-//! `copy`, `rotate` and `mirror`; [`edit`]: align, offset, trim, split, merge, arrays, pin and unpin; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`; [`stair`]: `archbuilder.stair.create`; [`roof`]: `archbuilder.roof.create`, `set_edge`, `move_vertex`, `move_edge`, `archbuilder.wall.attach_top` and `detach_top`; [`element_type`]: `archbuilder.type.set`, `duplicate`,
+//! `copy`, `rotate` and `mirror`; [`edit`]: align, offset, trim, split, merge, arrays, pin and unpin; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`; [`stair`]: `archbuilder.stair.create`; [`roof`]: `archbuilder.roof.create`, `set_edge`, `move_vertex`, `move_edge`, `archbuilder.wall.attach_top` and `detach_top`; [`ceiling`]: `archbuilder.ceiling.create` and `set_slope`; [`opening`]: `archbuilder.shaft.create` and `archbuilder.vertical_opening.create` (`archbuilder.opening.place` is in [`insert`]); [`element_type`]: `archbuilder.type.set`, `duplicate`,
 //! `delete`, `assign`, `match` and `upgrade`.
 //! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
 //! No function in this crate panics.
 
+pub mod ceiling;
 pub mod clip;
 pub mod edit;
 pub mod element_type;
@@ -24,6 +25,7 @@ pub mod error;
 pub mod floor;
 pub mod insert;
 pub mod modify;
+pub mod opening;
 pub mod roof;
 pub mod room;
 pub mod stair;
@@ -65,6 +67,8 @@ pub fn registry() -> Result<Registry> {
     room::register(&mut registry)?;
     stair::register(&mut registry)?;
     roof::register(&mut registry)?;
+    ceiling::register(&mut registry)?;
+    opening::register(&mut registry)?;
     element_type::register(&mut registry)?;
     Ok(registry)
 }

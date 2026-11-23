@@ -54,6 +54,7 @@ macro_rules! coded {
     (@count $head:ident $($tail:ident)*) => { 1 + coded!(@count $($tail)*) };
 }
 
+pub mod ceiling;
 pub mod cleanup;
 pub mod element_type;
 pub mod error;
@@ -62,6 +63,7 @@ pub mod insert;
 pub mod join;
 pub mod layered;
 pub mod names;
+pub mod opening;
 pub mod pick;
 pub mod roof;
 pub mod room;
@@ -182,6 +184,46 @@ pub mod defaults {
             format!("Çatı {n}")
         } else {
             format!("Roof {n}")
+        }
+    }
+
+    /// The name of the ceiling numbered `n` on a storey in `language`: `Ceiling 3`, `Tavan 3`.
+    #[must_use]
+    pub fn ceiling(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Tavan {n}")
+        } else {
+            format!("Ceiling {n}")
+        }
+    }
+
+    /// The name of the wall opening numbered `n` in `language`: `Opening 3`, `Boşluk 3`.
+    #[must_use]
+    pub fn wall_opening(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Boşluk {n}")
+        } else {
+            format!("Opening {n}")
+        }
+    }
+
+    /// The name of the shaft numbered `n` in `language`: `Shaft 3`, `Şaft 3`.
+    #[must_use]
+    pub fn shaft(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Şaft {n}")
+        } else {
+            format!("Shaft {n}")
+        }
+    }
+
+    /// The name of the vertical opening numbered `n` in `language`: `Cut 3`, `Kesik 3`.
+    #[must_use]
+    pub fn vertical_opening(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Kesik {n}")
+        } else {
+            format!("Cut {n}")
         }
     }
 

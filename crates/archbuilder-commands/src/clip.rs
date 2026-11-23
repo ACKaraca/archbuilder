@@ -17,7 +17,10 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Kind};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, ROOF, ROOM, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{
+    self, CEILING, DOOR, FLOOR, ROOF, ROOM, SHAFT, STAIR, VERTICAL_OPENING, WALL, WALL_OPENING,
+    WINDOW,
+};
 use archbuilder_model::wall::Wall;
 use serde_json::{Value as Json, json};
 
@@ -70,6 +73,7 @@ fn decode(json: &Json) -> Option<Value> {
 ///
 /// # Errors
 /// `ab.cmd.nothing_selected` when none of `ids` can be copied.
+#[allow(clippy::too_many_lines, reason = "one arm for each kind captured")]
 pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
     let mut items: Vec<Json> = Vec::new();
     let mut walls: Vec<ObjectId> = Vec::new();
@@ -125,7 +129,7 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     STAIR,
                 );
             }
-            FLOOR | ROOM | ROOF => push(
+            FLOOR | ROOM | ROOF | CEILING | SHAFT => push(
                 &mut items,
                 *id,
                 None,
@@ -147,10 +151,27 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
             );
         }
     }
+    // The vertical openings of the floors, roofs and ceilings copied go with them.
     for id in ids.iter().take(MAX_ITEMS) {
         let key = spatial::type_of(snapshot, *id).unwrap_or_default();
-        if let (true, Some(object)) = (key == DOOR || key == WINDOW, spatial::get(snapshot, *id))
-            && let Some(host) = object.header.owner.filter(|h| walls.contains(h))
+        if types::VERTICAL_HOSTS.contains(&key.as_str()) {
+            for cut in spatial::children(snapshot, VERTICAL_OPENING, *id) {
+                push(
+                    &mut items,
+                    cut.id,
+                    Some(*id),
+                    Json::Array(cut.values.iter().map(encode).collect()),
+                    VERTICAL_OPENING,
+                );
+            }
+        }
+    }
+    for id in ids.iter().take(MAX_ITEMS) {
+        let key = spatial::type_of(snapshot, *id).unwrap_or_default();
+        if let (true, Some(object)) = (
+            key == DOOR || key == WINDOW || key == WALL_OPENING,
+            spatial::get(snapshot, *id),
+        ) && let Some(host) = object.header.owner.filter(|h| walls.contains(h))
         {
             push(
                 &mut items,
@@ -176,7 +197,8 @@ type Decoded = (String, ObjectId, Option<ObjectId>, Vec<Option<Value>>);
 
 #[allow(
     clippy::too_many_lines,
-    reason = "one pass for each kind: walls, inserts, floors, rooms"
+    clippy::cognitive_complexity,
+    reason = "one pass for each kind: walls, inserts, floors, ceilings, rooms, roofs, stairs, cuts"
 )]
 /// Creates the content in `storey`, translated by `displacement`, and selects it after the command.
 pub(crate) fn paste_content(
@@ -239,7 +261,7 @@ pub(crate) fn paste_content(
         created.push(new);
     }
     for (key, _, host, mut values) in decoded.iter().cloned() {
-        if key != DOOR && key != WINDOW {
+        if key != DOOR && key != WINDOW && key != WALL_OPENING {
             continue;
         }
         let (Some(kind), Some(host)) =
@@ -255,14 +277,20 @@ pub(crate) fn paste_content(
         crate::element_type::rebind(ctx, &key, &mut values)?;
         created.push(create(ctx, &key, Some(host), values)?);
     }
-    for (key, _, _, mut values) in decoded.iter().cloned() {
-        if key != FLOOR {
+    let mut hosts: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
+    for (key, old, _, mut values) in decoded.iter().cloned() {
+        if key != FLOOR && key != CEILING {
             continue;
         }
         let floor = Floor::from_values(&values).ok_or_else(invalid)?;
         let (vertices, _) = floor_vertices(&floor, None, &xf, &|w| map.get(&w).copied());
         let seen = ctx.txn()?.snapshot().clone();
-        let name = crate::floor::next_floor_name(&seen, storey, &tongue);
+        let name = if key == FLOOR {
+            crate::floor::next_floor_name(&seen, storey, &tongue)
+        } else {
+            crate::ceiling::next_ceiling_name(&seen, storey, &tongue)
+        };
+        // A floor and a ceiling keep their name, boundary and arcs in the same places.
         if let Some(slot) = values.get_mut(types::floor::NAME) {
             *slot = Some(Value::String(name));
         }
@@ -272,8 +300,39 @@ pub(crate) fn paste_content(
         if let Some(slot) = values.get_mut(types::floor::ARCS) {
             *slot = Floor::arc_values(&vertices);
         }
-        crate::element_type::rebind(ctx, FLOOR, &mut values)?;
-        created.push(create(ctx, FLOOR, Some(storey), values)?);
+        if key == CEILING {
+            crate::ceiling::moved_values(&mut values, &xf);
+        }
+        crate::element_type::rebind(ctx, &key, &mut values)?;
+        let new = create(ctx, &key, Some(storey), values)?;
+        hosts.insert(old, new);
+        created.push(new);
+    }
+    for (key, _, _, mut values) in decoded.iter().cloned() {
+        if key != SHAFT {
+            continue;
+        }
+        let shape =
+            Floor::read(&values, archbuilder_model::floor::SHAFT_SLOTS).ok_or_else(invalid)?;
+        let (vertices, _) = floor_vertices(&shape, None, &xf, &|_| None);
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::opening::next_name(&seen, SHAFT, None, &tongue);
+        for (at, value) in [
+            (types::shaft::NAME, Some(Value::String(name))),
+            (
+                types::shaft::VERTICES,
+                Some(Floor::vertex_values(&vertices)),
+            ),
+            (types::shaft::ARCS, Floor::arc_values(&vertices)),
+            // The levels belong to the storeys of the document the shaft came from.
+            (types::shaft::BASE_LEVEL, None),
+            (types::shaft::TOP_LEVEL, None),
+        ] {
+            if let Some(slot) = values.get_mut(at) {
+                *slot = value;
+            }
+        }
+        created.push(create(ctx, SHAFT, Some(storey), values)?);
     }
     for (key, _, _, mut values) in decoded.iter().cloned() {
         if key != ROOM {
@@ -302,7 +361,7 @@ pub(crate) fn paste_content(
         }
         created.push(create(ctx, ROOM, Some(storey), values)?);
     }
-    for (key, _, _, mut values) in decoded.iter().cloned() {
+    for (key, old, _, mut values) in decoded.iter().cloned() {
         if key != ROOF {
             continue;
         }
@@ -324,7 +383,35 @@ pub(crate) fn paste_content(
             *slot = Some(archbuilder_model::roof::Roof::edge_values(&edges, &kept));
         }
         crate::element_type::rebind(ctx, ROOF, &mut values)?;
-        created.push(create(ctx, ROOF, Some(storey), values)?);
+        let new = create(ctx, ROOF, Some(storey), values)?;
+        hosts.insert(old, new);
+        created.push(new);
+    }
+    for (key, _, host, mut values) in decoded.iter().cloned() {
+        if key != VERTICAL_OPENING {
+            continue;
+        }
+        let Some(host) = host.and_then(|h| hosts.get(&h).copied()) else {
+            continue;
+        };
+        let shape =
+            Floor::read(&values, archbuilder_model::floor::VERTICAL_SLOTS).ok_or_else(invalid)?;
+        let (vertices, _) = floor_vertices(&shape, None, &xf, &|_| None);
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::opening::next_name(&seen, VERTICAL_OPENING, Some(host), &tongue);
+        for (at, value) in [
+            (types::vertical_opening::NAME, Some(Value::String(name))),
+            (
+                types::vertical_opening::VERTICES,
+                Some(Floor::vertex_values(&vertices)),
+            ),
+            (types::vertical_opening::ARCS, Floor::arc_values(&vertices)),
+        ] {
+            if let Some(slot) = values.get_mut(at) {
+                *slot = value;
+            }
+        }
+        created.push(create(ctx, VERTICAL_OPENING, Some(host), values)?);
     }
     for (key, _, _, values) in decoded.iter().cloned() {
         if key != STAIR {
@@ -383,7 +470,7 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
             let mut l: Vec<[f64; 2]> = r.edges.iter().map(|e| e.vertex.point).collect();
             l.extend(l.first().copied());
             out.push(l);
-        } else if key == FLOOR
+        } else if (key == FLOOR || key == CEILING)
             && let Some(f) = Floor::from_values(&values)
         {
             let mut loops: BTreeMap<u32, Vec<[f64; 2]>> = BTreeMap::new();

@@ -26,6 +26,126 @@ struct Message {
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
     (
+        "height_offset",
+        Message {
+            message_id: "ab-prop-height-offset",
+        },
+    ),
+    (
+        "grid_x",
+        Message {
+            message_id: "ab-prop-grid-x",
+        },
+    ),
+    (
+        "grid_y",
+        Message {
+            message_id: "ab-prop-grid-y",
+        },
+    ),
+    (
+        "grid_rotation",
+        Message {
+            message_id: "ab-prop-grid-rotation",
+        },
+    ),
+    (
+        "ceiling_area",
+        Message {
+            message_id: "ab-prop-ceiling-area",
+        },
+    ),
+    (
+        "ceiling_volume",
+        Message {
+            message_id: "ab-prop-ceiling-volume",
+        },
+    ),
+    (
+        "ceiling_slope",
+        Message {
+            message_id: "ab-prop-ceiling-slope",
+        },
+    ),
+    (
+        "ceiling_storey",
+        Message {
+            message_id: "ab-prop-ceiling-storey",
+        },
+    ),
+    (
+        "rise",
+        Message {
+            message_id: "ab-prop-rise",
+        },
+    ),
+    (
+        "opening_wall",
+        Message {
+            message_id: "ab-prop-opening-wall",
+        },
+    ),
+    (
+        "shaft_base",
+        Message {
+            message_id: "ab-prop-shaft-base",
+        },
+    ),
+    (
+        "shaft_top",
+        Message {
+            message_id: "ab-prop-shaft-top",
+        },
+    ),
+    (
+        "shaft_span",
+        Message {
+            message_id: "ab-prop-shaft-span",
+        },
+    ),
+    (
+        "shaft_area",
+        Message {
+            message_id: "ab-prop-shaft-area",
+        },
+    ),
+    (
+        "shaft_default",
+        Message {
+            message_id: "ab-prop-shaft-default",
+        },
+    ),
+    (
+        "cut_host",
+        Message {
+            message_id: "ab-prop-cut-host",
+        },
+    ),
+    (
+        "cut_area",
+        Message {
+            message_id: "ab-prop-cut-area",
+        },
+    ),
+    (
+        "room_height",
+        Message {
+            message_id: "ab-prop-room-height",
+        },
+    ),
+    (
+        "room_unbounded",
+        Message {
+            message_id: "ab-prop-room-unbounded",
+        },
+    ),
+    (
+        "room_bounded_by",
+        Message {
+            message_id: "ab-prop-room-bounded-by",
+        },
+    ),
+    (
         "roof_storey",
         Message {
             message_id: "ab-prop-roof-storey",
@@ -797,6 +917,30 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-roof",
         },
     ),
+    (
+        types::CEILING,
+        Message {
+            message_id: "ab-kind-ceiling",
+        },
+    ),
+    (
+        types::WALL_OPENING,
+        Message {
+            message_id: "ab-kind-wall-opening",
+        },
+    ),
+    (
+        types::SHAFT,
+        Message {
+            message_id: "ab-kind-shaft",
+        },
+    ),
+    (
+        types::VERTICAL_OPENING,
+        Message {
+            message_id: "ab-kind-vertical-opening",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -871,7 +1015,11 @@ fn length_field() -> FieldDecl {
 
 /// The fields of `object` as the grid shows them. A storey's fields are its name and its level's
 /// name and elevation; a level's `storey` flag is shown and not editable.
-#[allow(clippy::too_many_lines, reason = "one arm per kind of object")]
+#[allow(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "one arm per kind of object"
+)]
 fn shown(
     snapshot: &Snapshot,
     key: &str,
@@ -1087,6 +1235,10 @@ fn shown(
                 fields.extend(decls.get(k).cloned());
                 values.push(vals.get(k).cloned().flatten());
             }
+            // The room's solid: under the lowest ceiling, roof or slab above it.
+            let shape = entry
+                .as_ref()
+                .and_then(|e| archbuilder_model::room::shape(snapshot, e));
             let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, unit: &str| {
                 entry
                     .as_ref()
@@ -1096,7 +1248,10 @@ fn shown(
             for (name, value) in [
                 (
                     "room_area",
-                    derived(archbuilder_model::room::Entry::area, "m²"),
+                    entry
+                        .as_ref()
+                        .and_then(|e| archbuilder_model::room::net_area(snapshot, e))
+                        .map(|a| Value::String(format!("{a:.3} m²"))),
                 ),
                 (
                     "room_perimeter",
@@ -1104,7 +1259,41 @@ fn shown(
                 ),
                 (
                     "room_volume",
-                    derived(archbuilder_model::room::Entry::volume, "m³"),
+                    shape
+                        .as_ref()
+                        .map(|s| Value::String(format!("{:.3} m³", s.volume)))
+                        .or_else(|| derived(archbuilder_model::room::Entry::volume, "m³")),
+                ),
+                (
+                    "room_height",
+                    shape
+                        .as_ref()
+                        .map(|s| Value::String(format!("{:.3} m", s.height))),
+                ),
+                (
+                    "room_unbounded",
+                    shape
+                        .as_ref()
+                        .map(|s| Value::String(format!("{:.3} m", s.unbounded))),
+                ),
+                (
+                    "room_bounded_by",
+                    shape.as_ref().map(|s| {
+                        let names: Vec<String> = s
+                            .bounds
+                            .iter()
+                            .filter_map(|b| {
+                                let id = match b {
+                                    archbuilder_model::room::Bound::Ceiling(id)
+                                    | archbuilder_model::room::Bound::Roof(id)
+                                    | archbuilder_model::room::Bound::Slab(id) => *id,
+                                };
+                                spatial::get(snapshot, id)
+                                    .and_then(|o| types::text(&o.values, 0).map(str::to_owned))
+                            })
+                            .collect();
+                        Value::String(names.join(", "))
+                    }),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -1230,6 +1419,165 @@ fn shown(
             &mut values,
             &mut read_only,
         ),
+        // A ceiling shows its type, height and grid origin, what its slope arrow makes of it,
+        // and the area and volume derived from its boundary (the boundary is edited by sketching).
+        types::CEILING => {
+            use archbuilder_model::types::ceiling as c;
+            let storey = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+            let derived = spatial::get(snapshot, object.id)
+                .and_then(|o| archbuilder_model::ceiling::derived(snapshot, &o));
+            let order = [
+                c::NAME,
+                c::THICKNESS,
+                c::HEIGHT_OFFSET,
+                c::GRID_X,
+                c::GRID_Y,
+                c::GRID_ROTATION,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            with_type(
+                (snapshot, label),
+                TypeKind::Ceiling,
+                object,
+                &mut fields,
+                &mut values,
+                &mut read_only,
+            );
+            let slope =
+                archbuilder_model::ceiling::Ceiling::from_values(&object.values).and_then(|c| {
+                    c.arrow.map(|a| {
+                        let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
+                            archbuilder_model::units::slope_unit(&p.values)
+                        });
+                        archbuilder_model::units::slope_text(
+                            a.gradient(c.height()).atan(),
+                            unit,
+                            '.',
+                        )
+                    })
+                });
+            for (name, value) in [
+                ("ceiling_storey", storey),
+                ("ceiling_slope", slope),
+                (
+                    "ceiling_area",
+                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                ),
+                (
+                    "ceiling_volume",
+                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                // The slope is typed: an angle, a percentage or a rise over a run.
+                if name != "ceiling_slope" {
+                    read_only.push(name.to_owned());
+                }
+            }
+        }
+        // A bare wall opening shows the wall that hosts it, its size, sill and arch.
+        types::WALL_OPENING => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            fields.push(text_field("opening_wall"));
+            values.push(host.map(Value::String));
+            read_only.push("opening_wall".to_owned());
+        }
+        // A shaft shows its base and top as choices among the levels, and its footprint's area.
+        types::SHAFT => {
+            use archbuilder_model::types::shaft as sh;
+            let building = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|s| s.header.owner);
+            let levels = building
+                .map(|b| spatial::levels(snapshot, b))
+                .unwrap_or_default();
+            let choice = |name: &str, at: usize| {
+                let mut variants = vec![arc_doc::EnumVariant::new("shaft_default", 0)];
+                let mut current = 0;
+                let set = match object.values.get(at) {
+                    Some(Some(Value::Reference(id))) => Some(*id),
+                    _ => None,
+                };
+                for (code, l) in (1_u32..).zip(&levels) {
+                    if let Some(n) = types::text(&l.values, level::NAME) {
+                        variants.push(arc_doc::EnumVariant::new(n, code));
+                        if set == Some(l.id) {
+                            current = code;
+                        }
+                    }
+                }
+                (
+                    FieldDecl::new(name, ValueType::Enum(variants)).in_aspect("geometry"),
+                    Some(Value::Enum(current)),
+                )
+            };
+            let span = archbuilder_model::opening::shaft_span(snapshot, object);
+            let order = [sh::NAME, sh::BASE_OFFSET, sh::TOP_OFFSET];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            for (name, at) in [("shaft_base", sh::BASE_LEVEL), ("shaft_top", sh::TOP_LEVEL)] {
+                let (f, v) = choice(name, at);
+                fields.push(f);
+                values.push(v);
+            }
+            for (name, value) in [
+                (
+                    "shaft_span",
+                    span.as_ref()
+                        .map(|s| format!("{:.3} m – {:.3} m", s.z.0, s.z.1)),
+                ),
+                (
+                    "shaft_area",
+                    span.as_ref()
+                        .map(|s| format!("{:.3} m²", s.boundary.area())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A vertical opening shows the element that hosts it and the area it cuts.
+        types::VERTICAL_OPENING => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let area = archbuilder_model::floor::Floor::read(
+                &object.values,
+                archbuilder_model::floor::VERTICAL_SLOTS,
+            )
+            .and_then(|f| f.boundary_in(snapshot))
+            .map(|b| format!("{:.3} m²", b.area()));
+            fields.truncate(types::vertical_opening::VERTICES);
+            values.truncate(types::vertical_opening::VERTICES);
+            for (name, value) in [("cut_host", host), ("cut_area", area)] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
         // A door or a window shows the wall that hosts it; a door's sill is the wall's base.
         DOOR | WINDOW => {
             let host = object

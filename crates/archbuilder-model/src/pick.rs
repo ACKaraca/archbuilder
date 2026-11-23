@@ -97,6 +97,30 @@ pub fn stack(
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));
+    // A ceiling's edge is picked before what lies under it: the plan draws it dashed over the room.
+    let mut edges: Vec<(f64, ObjectId)> = Vec::new();
+    for o in spatial::objects(snapshot, crate::types::CEILING)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(d) = crate::ceiling::derived(snapshot, o) else {
+            continue;
+        };
+        let near = d
+            .boundary
+            .flattened(crate::floor::FLAT_CHORD)
+            .iter()
+            .any(|l| {
+                l.iter()
+                    .zip(l.iter().cycle().skip(1))
+                    .any(|(a, b)| segment_distance(*a, *b, at) <= aperture)
+            });
+        if near {
+            edges.push((-d.plane.z, o.id));
+        }
+    }
+    edges.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(edges.into_iter().map(|(_, id)| id));
     // Stairs come after walls: a stair stands between walls, in front of the room around it.
     let mut stairs: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::STAIR)
         .iter()
@@ -112,6 +136,25 @@ pub fn stack(
         .collect();
     stairs.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(stairs.into_iter().map(|(_, id)| id));
+    // Shafts and vertical openings: the cuts come before the room around them.
+    let mut cuts: Vec<(f64, ObjectId)> = Vec::new();
+    for s in crate::opening::shafts(snapshot) {
+        if crate::floor::Boundary::polygons(vec![s.outline.clone()]).contains(at) {
+            cuts.push((-s.z.1, s.id));
+        }
+    }
+    for o in spatial::objects(snapshot, crate::types::VERTICAL_OPENING)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        if let Some(outline) = crate::opening::outline_of(snapshot, o, crate::floor::VERTICAL_SLOTS)
+            && crate::floor::Boundary::polygons(vec![outline]).contains(at)
+        {
+            cuts.push((0.0, o.id));
+        }
+    }
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(cuts.into_iter().map(|(_, id)| id));
     let mut hit_rooms: Vec<(f64, ObjectId)> = rooms
         .iter()
         .filter(|e| {
@@ -136,6 +179,17 @@ pub fn stack(
     floors.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(floors.into_iter().map(|(_, id)| id));
     out.extend(over.into_iter().map(|(_, id)| id));
+    // A ceiling hangs above the plan's cut: it never comes before what the plan cuts or fills.
+    let mut ceilings: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::CEILING)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let d = crate::ceiling::derived(snapshot, o)?;
+            d.boundary.contains(at).then_some((-d.plane.z, o.id))
+        })
+        .collect();
+    ceilings.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(ceilings.into_iter().map(|(_, id)| id));
     let mut levels: Vec<(f64, ObjectId)> = spatial::objects(snapshot, LEVEL)
         .iter()
         .filter(|_| near_level_outline(at, aperture))
@@ -192,6 +246,28 @@ fn distance_to_body(wall: &Wall, p: [f64; 2]) -> f64 {
     gap.hypot(beyond)
 }
 
+/// The elevation of the top of the floor, roof or ceiling a vertical opening is cut in, or of
+/// the host `opening` names.
+#[must_use]
+pub fn host_top_of(snapshot: &Snapshot, opening: &std::sync::Arc<arc_doc::Object>) -> f64 {
+    opening
+        .header
+        .owner
+        .and_then(|h| spatial::get(snapshot, h))
+        .map_or(0.0, |h| host_top(snapshot, &h))
+}
+
+/// The elevation of the top of a floor, roof or ceiling.
+fn host_top(snapshot: &Snapshot, host: &std::sync::Arc<arc_doc::Object>) -> f64 {
+    match spatial::type_of(snapshot, host.id).as_deref() {
+        Some(FLOOR) => Derived::of(snapshot, host).map_or(0.0, |d| d.top),
+        Some(crate::types::ROOF) => {
+            crate::roof::Derived::of(snapshot, host).map_or(0.0, |d| d.surface.top())
+        }
+        _ => crate::ceiling::derived(snapshot, host).map_or(0.0, |d| d.z_range().1),
+    }
+}
+
 /// The closed outlines that mark `id` for the hover: the loops of its plan shape as 3D points.
 #[must_use]
 pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f64; 3]>> {
@@ -222,6 +298,30 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         Some(FLOOR) => Derived::of(snapshot, &object)
             .map(|d| d.boundary.loops.iter().map(|l| close(l, d.top)).collect())
             .unwrap_or_default(),
+        Some(crate::types::CEILING) => crate::ceiling::derived(snapshot, &object)
+            .map(|d| {
+                d.boundary
+                    .loops
+                    .iter()
+                    .map(|l| close(l, d.plane.z))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(crate::types::SHAFT) => crate::opening::shaft_span(snapshot, &object)
+            .map(|s| vec![close(&s.outline, s.z.0), close(&s.outline, s.z.1)])
+            .unwrap_or_default(),
+        Some(crate::types::VERTICAL_OPENING) => {
+            crate::opening::outline_of(snapshot, &object, crate::floor::VERTICAL_SLOTS)
+                .map(|o| {
+                    let z = object
+                        .header
+                        .owner
+                        .and_then(|h| spatial::get(snapshot, h))
+                        .map_or(0.0, |h| host_top(snapshot, &h));
+                    vec![close(&o, z)]
+                })
+                .unwrap_or_default()
+        }
         Some(crate::types::ROOF) => crate::roof::Derived::of(snapshot, &object)
             .map(|d| vec![close(&d.surface.outline, d.surface.base)])
             .unwrap_or_default(),
@@ -256,7 +356,7 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
                 }
             })
             .unwrap_or_default(),
-        Some(crate::types::DOOR | crate::types::WINDOW) => {
+        Some(crate::types::DOOR | crate::types::WINDOW | crate::types::WALL_OPENING) => {
             let item = crate::insert::Insert::of(snapshot, &object);
             let host = object.header.owner.and_then(|w| spatial::get(snapshot, w));
             match (item, host.as_ref().and_then(|h| Wall::of(snapshot, h))) {

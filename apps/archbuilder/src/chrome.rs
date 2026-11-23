@@ -190,6 +190,42 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             archbuilder_commands::roof::ROOF_CREATE,
         ),
+        button(
+            Message {
+                message_id: "ab-tool-ceiling",
+            },
+            Message {
+                message_id: "ab-tool-ceiling-hint",
+            },
+            archbuilder_commands::ceiling::CEILING_CREATE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-opening",
+            },
+            Message {
+                message_id: "ab-tool-opening-hint",
+            },
+            archbuilder_commands::insert::OPENING_PLACE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-shaft",
+            },
+            Message {
+                message_id: "ab-tool-shaft-hint",
+            },
+            archbuilder_commands::opening::SHAFT_CREATE,
+        ),
+        button(
+            Message {
+                message_id: "ab-tool-cut",
+            },
+            Message {
+                message_id: "ab-tool-cut-hint",
+            },
+            archbuilder_commands::opening::VERTICAL_OPENING_CREATE,
+        ),
         crate::tool_type::toolbar_item(),
         ToolItem::Separator,
         button(

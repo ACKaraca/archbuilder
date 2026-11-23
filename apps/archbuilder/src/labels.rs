@@ -152,7 +152,7 @@ pub fn symbols(
     shown: &dyn Fn(arc_base::ObjectId) -> bool,
 ) -> Vec<ProductOverlay> {
     let mut out = Vec::new();
-    for key in [types::DOOR, types::WINDOW] {
+    for key in [types::DOOR, types::WINDOW, types::WALL_OPENING] {
         for object in spatial::objects(snapshot, key).iter().take(MAX_SYMBOLS) {
             if !shown(object.id) {
                 continue;

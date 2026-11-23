@@ -268,26 +268,11 @@ pub fn solid(
             return Err(failed());
         }
     }
-    let start = *next.keys().min().ok_or_else(failed)?;
-    let mut outline = vec![start];
-    let mut at = start;
-    loop {
-        at = *next.get(&at).ok_or_else(failed)?;
-        if at == start {
-            break;
-        }
-        if outline.len() > next.len() {
-            return Err(failed());
-        }
-        outline.push(at);
-    }
-    if outline.len() != next.len() {
-        return Err(failed());
-    }
+    let mut cycles = outline_loops(&next)?;
     let point = |i: usize| welded.points.get(i).copied().ok_or_else(failed);
-    // Start the outline at a corner, so the straight runs do not wrap.
-    let m = outline.len();
+    // Start each loop at a corner, so the straight runs do not wrap.
     let turn = |outline: &[usize], k: usize| -> Result<bool> {
+        let m = outline.len();
         let (a, b, c) = (
             point(*outline.get((k + m - 1) % m).ok_or_else(failed)?)?,
             point(*outline.get(k).ok_or_else(failed)?)?,
@@ -297,14 +282,16 @@ pub fn solid(
         let lengths = u[0].hypot(u[1]) * v[0].hypot(v[1]);
         Ok(cross(u, v).abs() > tolerance.angular * lengths || u[0] * v[0] + u[1] * v[1] < 0.0)
     };
-    let mut first = None;
-    for k in 0..m {
-        if turn(&outline, k)? {
-            first = Some(k);
-            break;
+    for outline in &mut cycles {
+        let mut first = None;
+        for k in 0..outline.len() {
+            if turn(outline, k)? {
+                first = Some(k);
+                break;
+            }
         }
+        outline.rotate_left(first.ok_or_else(failed)?);
     }
-    outline.rotate_left(first.ok_or_else(failed)?);
     // The top of corner `i` in loop `li`: that loop's top plane, else its field, plus `lift`.
     let loop_top = |li: usize, i: usize| -> Result<f64> {
         let (_, plane, upper) = welded.loops.get(li).ok_or_else(failed)?;
@@ -379,17 +366,34 @@ pub fn solid(
         }
         let mut outer = vec![b1, a1, a2, b2];
         outer.dedup();
+        // A step that is a triangle shares its corner at both ends of the list.
+        if outer.len() > 1 && outer.first() == outer.last() {
+            outer.pop();
+        }
         if outer.len() >= 3 {
             faces.push(PolyFace::new(outer).with_tag(FaceTag::Top));
         }
     }
     if let Bottom::Level(_) = bottom {
-        let outer = outline
-            .iter()
-            .rev()
-            .map(|&i| low(&mut vertices, i))
-            .collect::<Result<Vec<_>>>()?;
-        faces.push(PolyFace::new(outer).with_tag(FaceTag::Bottom));
+        // The loop of the greatest area is the outer one, the others are holes.
+        let area = |c: &Vec<usize>| -> f64 {
+            let pts: Vec<[f64; 2]> = c.iter().filter_map(|&i| point(i).ok()).collect();
+            double_area(&pts)
+        };
+        let mut rings = Vec::with_capacity(cycles.len());
+        for c in &cycles {
+            let ring = c
+                .iter()
+                .rev()
+                .map(|&i| low(&mut vertices, i))
+                .collect::<Result<Vec<_>>>()?;
+            rings.push((area(c), ring));
+        }
+        rings.sort_by(|x, y| y.0.total_cmp(&x.0));
+        let mut rings = rings.into_iter().map(|(_, r)| r);
+        let mut face = PolyFace::new(rings.next().ok_or_else(failed)?).with_tag(FaceTag::Bottom);
+        face.holes = rings.collect();
+        faces.push(face);
     }
     // One vertical face per straight run of the outline; where two pieces' tops meet at
     // different heights on it, the run takes both, in the order the edges go.
@@ -397,47 +401,81 @@ pub fn solid(
         let li = *owner.get(&(a, b)).ok_or_else(failed)?;
         loop_top(li, at)
     };
-    let mut k = 0;
-    while k < m {
-        let mut run = vec![*outline.get(k).ok_or_else(failed)?];
-        let mut j = k + 1;
-        loop {
-            run.push(*outline.get(j % m).ok_or_else(failed)?);
-            if j >= m || turn(&outline, j % m)? {
-                break;
+    for outline in &cycles {
+        let m = outline.len();
+        let mut k = 0;
+        while k < m {
+            let mut run = vec![*outline.get(k).ok_or_else(failed)?];
+            let mut j = k + 1;
+            loop {
+                run.push(*outline.get(j % m).ok_or_else(failed)?);
+                if j >= m || turn(outline, j % m)? {
+                    break;
+                }
+                j += 1;
             }
-            j += 1;
-        }
-        let mut outer = Vec::with_capacity(2 * run.len() + 2);
-        for &i in &run {
-            outer.push(low(&mut vertices, i)?);
-        }
-        let r = run.len();
-        for idx in (0..r).rev() {
-            let here = *run.get(idx).ok_or_else(failed)?;
-            // Walking back: first the top of the edge after this corner, then the one before.
-            if idx + 1 < r {
-                let after = *run.get(idx + 1).ok_or_else(failed)?;
-                let v = top(&mut vertices, here, edge_top(here, after, here)?)?;
-                if outer.last() != Some(&v) {
-                    outer.push(v);
+            let mut outer = Vec::with_capacity(2 * run.len() + 2);
+            for &i in &run {
+                outer.push(low(&mut vertices, i)?);
+            }
+            let r = run.len();
+            for idx in (0..r).rev() {
+                let here = *run.get(idx).ok_or_else(failed)?;
+                // Walking back: first the top of the edge after this corner, then the one before.
+                if idx + 1 < r {
+                    let after = *run.get(idx + 1).ok_or_else(failed)?;
+                    let v = top(&mut vertices, here, edge_top(here, after, here)?)?;
+                    if outer.last() != Some(&v) {
+                        outer.push(v);
+                    }
+                }
+                if idx > 0 {
+                    let before = *run.get(idx - 1).ok_or_else(failed)?;
+                    let v = top(&mut vertices, here, edge_top(before, here, here)?)?;
+                    if outer.last() != Some(&v) {
+                        outer.push(v);
+                    }
                 }
             }
-            if idx > 0 {
-                let before = *run.get(idx - 1).ok_or_else(failed)?;
-                let v = top(&mut vertices, here, edge_top(before, here, here)?)?;
-                if outer.last() != Some(&v) {
-                    outer.push(v);
-                }
-            }
+            let (Some(&a), Some(&b)) = (run.first(), run.last()) else {
+                return Err(failed());
+            };
+            faces.push(PolyFace::new(outer).with_tag(side_tag(point(a)?, point(b)?)));
+            k = j;
         }
-        let (Some(&a), Some(&b)) = (run.first(), run.last()) else {
-            return Err(failed());
-        };
-        faces.push(PolyFace::new(outer).with_tag(side_tag(point(a)?, point(b)?)));
-        k = j;
     }
     Polyhedron::new(vertices, faces, &tolerance, &Limits::DEFAULT)
+}
+
+/// The closed loops of the outline edges `next`: one around the pieces and one around each hole
+/// (a shaft), each starting at its lowest vertex number.
+fn outline_loops(next: &HashMap<usize, usize>) -> Result<Vec<Vec<usize>>> {
+    let mut starts: Vec<usize> = next.keys().copied().collect();
+    starts.sort_unstable();
+    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut cycles: Vec<Vec<usize>> = Vec::new();
+    for start in starts {
+        if !seen.insert(start) {
+            continue;
+        }
+        let mut cycle = vec![start];
+        let mut at = start;
+        loop {
+            at = *next.get(&at).ok_or_else(failed)?;
+            if at == start {
+                break;
+            }
+            if !seen.insert(at) {
+                return Err(failed());
+            }
+            cycle.push(at);
+        }
+        cycles.push(cycle);
+    }
+    if cycles.is_empty() {
+        return Err(failed());
+    }
+    Ok(cycles)
 }
 
 /// Adds the points where two neighboring loops' tops cross along a shared edge; true when it

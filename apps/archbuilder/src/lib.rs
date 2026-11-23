@@ -38,9 +38,11 @@ use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, ST
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 
+pub mod ceiling_view;
 pub mod chrome;
 pub mod clipboard;
 pub mod direct;
+pub mod extract_ceiling;
 pub mod extract_floor;
 pub mod extract_insert;
 pub mod extract_level;
@@ -54,6 +56,7 @@ pub mod interaction;
 pub mod labels;
 pub mod menu;
 pub mod modify_tool;
+pub mod opening_view;
 pub mod outliner;
 pub mod picker;
 pub mod properties;
@@ -197,6 +200,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_floor::dependents(snapshot, changes));
         out.extend(extract_stair::dependents(snapshot, changes));
         out.extend(extract_roof::dependents(snapshot, changes));
+        out.extend(extract_ceiling::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
         out
@@ -328,8 +332,30 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.ceiling".into(),
+        types: vec![archbuilder_model::types::CEILING.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_ceiling::extract_ceiling(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.shaft".into(),
+        types: vec![archbuilder_model::types::SHAFT.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_ceiling::extract_shaft(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.insert".into(),
-        types: vec![DOOR.to_owned(), WINDOW.to_owned()],
+        types: vec![
+            DOOR.to_owned(),
+            WINDOW.to_owned(),
+            archbuilder_model::types::WALL_OPENING.to_owned(),
+        ],
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_insert::extract_insert(snapshot, object, cancel)
@@ -394,6 +420,10 @@ fn menu() -> Result<Menu> {
             ROOM_PLACE_ALL,
             STAIR_CREATE,
             ROOF_CREATE,
+            archbuilder_commands::ceiling::CEILING_CREATE,
+            archbuilder_commands::insert::OPENING_PLACE,
+            archbuilder_commands::opening::SHAFT_CREATE,
+            archbuilder_commands::opening::VERTICAL_OPENING_CREATE,
             WALL_ATTACH_TOP,
             WALL_DETACH_TOP,
             INSERT_FLIP_HAND,
@@ -489,6 +519,8 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                 out.extend(room_view::shared().overlays(&snapshot, language));
                 out.extend(stair_view::overlays(&snapshot, language));
                 out.extend(roof_view::overlays(&snapshot, language));
+                out.extend(ceiling_view::overlays(&snapshot, language));
+                out.extend(opening_view::overlays(&snapshot));
                 out.extend(pin_marks(&snapshot));
             }
             out

@@ -12,7 +12,7 @@ use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::roof::Derived;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{FLOOR, LEVEL, ROOF, STOREY, WALL};
+use archbuilder_model::types::{FLOOR, LEVEL, ROOF, SHAFT, STOREY, VERTICAL_OPENING, WALL};
 
 /// The color of a roof (linear RGB): a tile red.
 pub const COLOR: Color = Color {
@@ -31,7 +31,7 @@ pub fn extract_roof(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
     let Ok(derived) = Derived::of(snapshot, object) else {
         return Ok(Extraction::default());
     };
-    let solid = derived.surface.solid()?;
+    let (solid, _) = derived.solid_cut()?;
     let first = derived.surface.outline.first();
     let origin = Point3::new(
         first.map_or(0.0, |p| p[0]),
@@ -65,7 +65,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             && group.recreated.is_empty()
             && group.deleted.is_empty());
         match key.as_str() {
-            WALL | STOREY | LEVEL => roofs |= any,
+            WALL | STOREY | LEVEL | SHAFT | VERTICAL_OPENING => roofs |= any,
             ROOF | FLOOR => walls |= any,
             _ => {}
         }

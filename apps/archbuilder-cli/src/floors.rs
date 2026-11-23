@@ -5,7 +5,7 @@
 //! rules ([`archbuilder_model::floor`]), so the CLI shows what the application shows.
 
 use archbuilder_model::floor::{Association, Face, Floor, Vertex};
-use archbuilder_model::types::{FLOOR, STOREY, WALL};
+use archbuilder_model::types::{FLOOR, LEVEL, SHAFT, STOREY, WALL};
 use archbuilder_model::wall::{JoinStyle, LocationLine, Wall};
 use serde_json::{Value, json};
 
@@ -44,6 +44,16 @@ fn named(value: &Value, code: u32, name: &str) -> bool {
 }
 
 pub(crate) fn floor_of(values: &Value, objects: &[Value]) -> Option<Floor> {
+    let shape = shape_of(values, objects)?;
+    Some(Floor {
+        thickness: number(values, "thickness")?,
+        top_offset: number(values, "top_offset")?,
+        ..shape
+    })
+}
+
+/// The boundary data of a dump object (a floor, or a shaft, which has no thickness).
+fn shape_of(values: &Value, objects: &[Value]) -> Option<Floor> {
     let mut vertices = Vec::new();
     // A vertex is stored as its fields in order: loop, x, y, wall, face, offset.
     for item in values.get("vertices")?.as_array()? {
@@ -81,10 +91,60 @@ pub(crate) fn floor_of(values: &Value, objects: &[Value]) -> Option<Floor> {
         }
     }
     Some(Floor {
-        thickness: number(values, "thickness")?,
-        top_offset: number(values, "top_offset")?,
+        thickness: 0.0,
+        top_offset: 0.0,
         vertices,
     })
+}
+
+/// The elevation of the level the dump object `level` (an id) names.
+fn elevation(objects: &[Value], level: &Value) -> Option<f64> {
+    objects
+        .iter()
+        .find(|o| o["type_key"] == LEVEL && o["id"] == *level)
+        .and_then(|o| number(&o["values"], "elevation"))
+}
+
+/// The footprints of the shafts that pass through the slab of the floor `object`: those whose
+/// span, from the base to the top, overlaps the slab's body.
+fn shaft_cuts(objects: &[Value], z: (f64, f64)) -> Vec<Vec<[f64; 2]>> {
+    let own = |s: &Value| elevation(objects, &s["values"]["level"]);
+    objects
+        .iter()
+        .filter(|o| o["type_key"] == SHAFT)
+        .filter_map(|shaft| {
+            let v = &shaft["values"];
+            let home = objects
+                .iter()
+                .find(|s| s["type_key"] == STOREY && s["id"] == shaft["owner"]);
+            let base = elevation(objects, &v["base_level"]).or_else(|| home.and_then(own))?
+                + number(v, "base_offset").unwrap_or(0.0);
+            // The level above the shaft's storey: the next storey's level up.
+            let above = home.and_then(own).and_then(|here| {
+                objects
+                    .iter()
+                    .filter(|s| s["type_key"] == STOREY)
+                    .filter_map(own)
+                    .filter(|e| *e > here + 1.0e-9)
+                    .min_by(f64::total_cmp)
+            });
+            let top = elevation(objects, &v["top_level"]).or(above)?
+                + number(v, "top_offset").unwrap_or(0.0);
+            if !(top > z.0 + 1.0e-6 && base < z.1 - 1.0e-6) {
+                return None;
+            }
+            let footprint = shape_of(v, objects)?.boundary(&|id| {
+                objects
+                    .iter()
+                    .find(|o| o["type_key"] == WALL && o["id"] == id.to_string())
+                    .and_then(wall_of)
+            })?;
+            footprint
+                .flattened(archbuilder_model::floor::FLAT_CHORD)
+                .into_iter()
+                .next()
+        })
+        .collect()
 }
 
 /// The `floors` list of the dump's `objects`, in the dump's order.
@@ -109,7 +169,18 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
                 })
             });
             // The shaft openings of the stairs arriving at the floor's level are taken out.
-            let openings = crate::stairs::openings_of_floor(objects, &object["owner"]);
+            let mut openings = crate::stairs::openings_of_floor(objects, &object["owner"]);
+            // Shafts pass through the slab like stairs do.
+            if let (Some(f), Some(level)) = (
+                floor.as_ref(),
+                objects
+                    .iter()
+                    .find(|s| s["type_key"] == STOREY && s["id"] == object["owner"])
+                    .and_then(|s| elevation(objects, &s["values"]["level"])),
+            ) {
+                let top = level + f.top_offset;
+                openings.extend(shaft_cuts(objects, (top - f.thickness, top)));
+            }
             let area = boundary
                 .as_ref()
                 .map(|b| b.with_openings(&openings).0.area());

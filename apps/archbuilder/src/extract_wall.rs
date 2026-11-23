@@ -20,7 +20,7 @@ use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::cleanup::PieceClass;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STOREY, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STOREY, WALL, WALL_OPENING, WINDOW};
 use archbuilder_model::wall::Wall;
 
 /// The color of a wall (linear RGB).
@@ -136,6 +136,7 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
 /// storey is the one remembered when it was extracted; a deleted wall never extracted extracts
 /// the walls of every storey again.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one pass over the changed kinds")]
 pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let Changes::Listed(by_type) = changes else {
         return Vec::new();
@@ -150,7 +151,10 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     };
     let touched: BTreeSet<ObjectId> = [LEVEL, STOREY].into_iter().flat_map(live).collect();
     let changed_walls = live(WALL);
-    let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW].into_iter().flat_map(live).collect();
+    let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW, WALL_OPENING]
+        .into_iter()
+        .flat_map(live)
+        .collect();
     let deleted_of = |keys: &[&str]| -> Vec<ObjectId> {
         by_type
             .iter()
@@ -159,14 +163,14 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             .collect()
     };
     let deleted = deleted_of(&[WALL]);
-    let deleted_inserts = deleted_of(&[DOOR, WINDOW]);
+    let deleted_inserts = deleted_of(&[DOOR, WINDOW, WALL_OPENING]);
     // A slab that came, changed or went: the layers of the walls that meet it stop at it, or no
     // longer do. Slabs and walls of different storeys meet, so every wall extracts again.
     if !live(FLOOR).is_empty() || !deleted_of(&[FLOOR]).is_empty() {
         return spatial::objects(snapshot, WALL)
             .into_iter()
             .flat_map(|w| {
-                let inserts: Vec<ObjectId> = [DOOR, WINDOW]
+                let inserts: Vec<ObjectId> = [DOOR, WINDOW, WALL_OPENING]
                     .into_iter()
                     .flat_map(|key| spatial::children(snapshot, key, w.id))
                     .map(|i| i.id)
@@ -235,7 +239,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let inserts: Vec<ObjectId> = walls
         .iter()
         .flat_map(|w| {
-            [DOOR, WINDOW]
+            [DOOR, WINDOW, WALL_OPENING]
                 .into_iter()
                 .flat_map(|key| spatial::children(snapshot, key, *w))
         })

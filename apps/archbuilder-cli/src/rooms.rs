@@ -91,14 +91,23 @@ fn rows(objects: &[Value]) -> Vec<Row> {
 
 /// The `rooms` list of the dump's `objects`.
 #[must_use]
-pub fn summary(objects: &[Value]) -> Vec<Value> {
+pub fn summary(
+    objects: &[Value],
+    nets: &std::collections::HashMap<String, (Option<f64>, Option<f64>)>,
+) -> Vec<Value> {
     rows(objects)
         .into_iter()
         .map(|r| {
+            // The area and volume the application shows replace the footprint's, where known.
+            let (area, volume) =
+                r.id.as_str()
+                    .and_then(|id| nets.get(id))
+                    .copied()
+                    .unwrap_or((r.area, r.volume));
             json!({
                 "id": r.id, "storey": r.storey, "number": r.number, "name": r.name,
-                "state": r.state.name(), "area": r.area, "perimeter": r.perimeter,
-                "volume": r.volume,
+                "state": r.state.name(), "area": area, "perimeter": r.perimeter,
+                "volume": volume,
             })
         })
         .collect()

@@ -27,7 +27,8 @@ use archbuilder_model::element_type::{InsertType, TypeKind};
 use archbuilder_model::insert::{self, Facing, HEAD_CLEARANCE, Hand, Insert, Kind};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, DOOR, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, SILL_RANGE, WALL, WINDOW,
+    self, DOOR, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, RISE_RANGE, SILL_RANGE, WALL,
+    WALL_OPENING, WINDOW,
 };
 use archbuilder_model::units::{decimal_separator, length_text};
 use archbuilder_model::wall::Wall;
@@ -43,6 +44,12 @@ use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect, language,
 pub const DOOR_PLACE: &str = "archbuilder.door.place";
 /// The identifier of the place-window command.
 pub const WINDOW_PLACE: &str = "archbuilder.window.place";
+/// The identifier of the place-wall-opening command.
+pub const OPENING_PLACE: &str = "archbuilder.opening.place";
+/// The default width of a wall opening, in meters.
+pub const OPENING_WIDTH: f64 = 1.0;
+/// The default height of a wall opening, in meters.
+pub const OPENING_HEIGHT: f64 = 2.1;
 /// The identifier of the command that flips the hand of inserts.
 pub const INSERT_FLIP_HAND: &str = "archbuilder.insert.flip_hand";
 /// The identifier of the command that flips the facing of inserts.
@@ -94,7 +101,10 @@ pub struct PlaceInsert {
     /// Whether the facing is flipped from the default (exterior): the leaf swings to the interior.
     #[serde(default)]
     pub flip_facing: Option<bool>,
-    /// The name; else the first free `Door <n>` or `Window <n>`.
+    /// A wall opening only: the rise of its arched top, in meters; 0 (a rectangle) when absent.
+    #[serde(default)]
+    pub rise: Option<QuantityParam>,
+    /// The name; else the first free `Door <n>`, `Window <n>` or `Opening <n>`.
     #[serde(default)]
     pub name: Option<String>,
 }
@@ -115,6 +125,8 @@ pub struct InsertPlaced {
     pub height: f64,
     /// The sill height in meters.
     pub sill: f64,
+    /// The rise of the arch of a wall opening, in meters; 0 for the others.
+    pub rise: f64,
     /// The type.
     #[serde(rename = "type")]
     pub insert_type: IdParam,
@@ -139,7 +151,12 @@ fn selected_inserts(ctx: &Context<'_>) -> Vec<ObjectId> {
     ctx.selection()
         .iter()
         .copied()
-        .filter(|id| is_insert(snapshot, *id))
+        .filter(|id| {
+            matches!(
+                spatial::type_of(snapshot, *id).as_deref(),
+                Some(DOOR | WINDOW)
+            )
+        })
         .collect()
 }
 
@@ -147,7 +164,7 @@ fn selected_inserts(ctx: &Context<'_>) -> Vec<ObjectId> {
 pub(crate) fn is_insert(snapshot: &Snapshot, id: ObjectId) -> bool {
     matches!(
         spatial::type_of(snapshot, id).as_deref(),
-        Some(DOOR | WINDOW)
+        Some(DOOR | WINDOW | WALL_OPENING)
     )
 }
 
@@ -160,7 +177,7 @@ fn wall_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<arc_doc::Object
     for id in ctx.selection() {
         let found = match spatial::type_of(snapshot, *id).as_deref() {
             Some(WALL) => spatial::get(snapshot, *id),
-            Some(DOOR | WINDOW) => spatial::get(snapshot, *id)
+            Some(DOOR | WINDOW | WALL_OPENING) => spatial::get(snapshot, *id)
                 .and_then(|i| i.header.owner)
                 .and_then(|owner| spatial::get(snapshot, owner)),
             _ => None,
@@ -182,7 +199,13 @@ pub(crate) fn next_name(snapshot: &Snapshot, kind: Kind, wall: ObjectId, languag
     let window = kind == Kind::Window;
     let total = spatial::objects(snapshot, kind.key()).len();
     (total + 1..)
-        .map(|n| defaults::insert(language, window, n))
+        .map(|n| {
+            if kind == Kind::Opening {
+                defaults::wall_opening(language, n)
+            } else {
+                defaults::insert(language, window, n)
+            }
+        })
         .find(|name| !taken(name))
         .unwrap_or_default()
 }
@@ -192,6 +215,9 @@ pub(crate) fn next_name(snapshot: &Snapshot, kind: Kind, wall: ObjectId, languag
     reason = "the options of one placement, in order"
 )]
 fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlaced> {
+    if kind == Kind::Opening {
+        return place_opening(ctx, p);
+    }
     let wall_object = wall_for(ctx, p.wall)?;
     let wall =
         Wall::of(ctx.snapshot(), &wall_object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -299,9 +325,81 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
         width,
         height,
         sill,
+        rise: 0.0,
         insert_type: IdParam(insert_type),
         flip_hand: hand == Hand::Right,
         flip_facing: facing == Facing::Interior,
+    })
+}
+
+/// Places a bare opening: a rectangle or an arch in the wall, sized by width, height, sill and
+/// rise. It has no type; it moves with its wall like a door.
+fn place_opening(ctx: &mut Context<'_>, p: PlaceInsert) -> Result<InsertPlaced> {
+    let wall_object = wall_for(ctx, p.wall)?;
+    let wall =
+        Wall::of(ctx.snapshot(), &wall_object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>| match param {
+        Some(param) => ctx
+            .quantity(param, Dimension::LENGTH)
+            .map(|q| Some(q.value())),
+        None => Ok(None),
+    };
+    let sill = meters(ctx, &p.sill)?.unwrap_or(0.0);
+    let width = meters(ctx, &p.width)?.unwrap_or(OPENING_WIDTH);
+    let height = match meters(ctx, &p.height)? {
+        Some(height) => height,
+        None => OPENING_HEIGHT
+            .min(wall.height - sill - HEAD_CLEARANCE)
+            .max(INSERT_HEIGHT_RANGE.0),
+    };
+    let rise = meters(ctx, &p.rise)?.unwrap_or(0.0);
+    if rise > height || !(RISE_RANGE.0..=RISE_RANGE.1).contains(&rise) {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    let distance = match meters(ctx, &p.distance)? {
+        Some(d) => d,
+        None => insert::clear_span_of(ctx.snapshot(), &wall_object)
+            .map_or(wall.length() / 2.0, |(low, high)| (low + high) / 2.0),
+    };
+    if insert::hosted(ctx.snapshot(), wall_object.id).len() >= insert::MAX_PER_WALL {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_owned(),
+        None => next_name(
+            ctx.snapshot(),
+            Kind::Opening,
+            wall_object.id,
+            &language(ctx),
+        ),
+    };
+    let id = create(
+        ctx,
+        WALL_OPENING,
+        Some(wall_object.id),
+        vec![
+            Some(named(&name)),
+            Some(types::length(distance)),
+            Some(types::length(width)),
+            Some(types::length(height)),
+            Some(types::length(sill)),
+            Some(types::length(rise)),
+        ],
+    )?;
+    ensure_valid(ctx)?;
+    ctx.set_selection_after(vec![id]);
+    Ok(InsertPlaced {
+        insert: IdParam(id),
+        wall: IdParam(wall_object.id),
+        distance,
+        width,
+        height,
+        sill,
+        rise,
+        // A bare opening has no type; the wall stands for it.
+        insert_type: IdParam(wall_object.id),
+        flip_hand: false,
+        flip_facing: false,
     })
 }
 
@@ -318,7 +416,10 @@ fn flip(ctx: &mut Context<'_>, given: Option<Vec<IdParam>>, hand: bool) -> Resul
         return Err(Error::new(codes::NO_INSERT_SELECTED));
     }
     for id in &ids {
-        if !is_insert(ctx.snapshot(), *id) {
+        if !matches!(
+            spatial::type_of(ctx.snapshot(), *id).as_deref(),
+            Some(DOOR | WINDOW)
+        ) {
             return Err(Error::new(codes::KIND_MISMATCH));
         }
     }
@@ -356,6 +457,15 @@ const PROMPT_DOOR: Msg = Msg {
 };
 const PROMPT_WINDOW: Msg = Msg {
     message_id: "ab-prompt-window-place",
+};
+const PROMPT_OPENING: Msg = Msg {
+    message_id: "ab-prompt-opening-place",
+};
+const PROMPT_RISE: Msg = Msg {
+    message_id: "ab-prompt-opening-rise",
+};
+const KEY_RISE: Msg = Msg {
+    message_id: "ab-keyword-opening-rise",
 };
 const PROMPT_WIDTH: Msg = Msg {
     message_id: "ab-prompt-insert-width",
@@ -395,6 +505,7 @@ struct Shown {
     width: f64,
     height: f64,
     sill: f64,
+    rise: f64,
     flip_hand: bool,
     flip_facing: bool,
     turkish: bool,
@@ -427,7 +538,7 @@ impl Shown {
             .unwrap_or_default();
         // The type's size and sill, unless an answer or the host gave others.
         let type_kind = match kind {
-            Kind::Door => TypeKind::Door,
+            Kind::Door | Kind::Opening => TypeKind::Door,
             Kind::Window => TypeKind::Window,
         };
         let chosen = over
@@ -441,9 +552,13 @@ impl Shown {
         let (width, height, sill) = chosen.map_or(
             match kind {
                 Kind::Door => (DOOR_WIDTH, DOOR_HEIGHT, 0.0),
+                Kind::Opening => (OPENING_WIDTH, OPENING_HEIGHT, 0.0),
                 Kind::Window => (WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_SILL),
             },
-            |t| (t.width, t.height, t.sill),
+            |t| match kind {
+                Kind::Opening => (OPENING_WIDTH, OPENING_HEIGHT, 0.0),
+                _ => (t.width, t.height, t.sill),
+            },
         );
         Self {
             wall: wall
@@ -453,6 +568,7 @@ impl Shown {
             width: number("width").unwrap_or(width),
             height: number("height").unwrap_or(height),
             sill: number("sill").unwrap_or(sill),
+            rise: number("rise").unwrap_or(0.0),
             flip_hand: flag("flip_hand"),
             flip_facing: flag("flip_facing"),
             turkish: language.starts_with("tr"),
@@ -484,6 +600,7 @@ impl Shown {
             .with_arg("width_m", self.width.to_string())
             .with_arg("height_m", self.height.to_string())
             .with_arg("sill_m", self.sill.to_string())
+            .with_arg("rise_m", self.rise.to_string())
     }
 
     fn shortcut(&self, english: char, turkish: char) -> char {
@@ -522,6 +639,14 @@ impl InsertPrompts {
                 PromptInput::Pick(id) => wall = Some(*id),
                 PromptInput::Distance(d) => {
                     let mut params = over;
+                    // What the chain carried reaches the command with the answer.
+                    for key in ["width", "height", "sill", "rise"] {
+                        if let Some(v) = state.preset.get(key)
+                            && !params.contains_key(key)
+                        {
+                            params.insert(key.to_owned(), v.clone());
+                        }
+                    }
                     params.insert("distance".to_owned(), Json::from(*d));
                     if let Some(wall) = wall {
                         params.insert("wall".to_owned(), Json::from(wall.to_string()));
@@ -545,6 +670,7 @@ impl InsertPrompts {
                     let (message, range, current) = match k.as_str() {
                         "width" => (&PROMPT_WIDTH, INSERT_WIDTH_RANGE, shown.width),
                         "height" => (&PROMPT_HEIGHT, INSERT_HEIGHT_RANGE, shown.height),
+                        "rise" => (&PROMPT_RISE, RISE_RANGE, 0.0),
                         _ => (&PROMPT_SILL, SILL_RANGE, shown.sill),
                     };
                     let ask =
@@ -567,6 +693,7 @@ impl InsertPrompts {
         let message = match self.kind {
             Kind::Door => &PROMPT_DOOR,
             Kind::Window => &PROMPT_WINDOW,
+            Kind::Opening => &PROMPT_OPENING,
         };
         let mut options = vec![
             KeywordOption::new("width", KEY_WIDTH.message_id)
@@ -574,20 +701,27 @@ impl InsertPrompts {
             KeywordOption::new("height", KEY_HEIGHT.message_id)
                 .with_shortcut(shown.shortcut('h', 'y')),
         ];
-        if self.kind == Kind::Window {
+        if self.kind != Kind::Door {
             options.push(
                 KeywordOption::new("sill", KEY_SILL.message_id)
                     .with_shortcut(shown.shortcut('s', 'd')),
             );
         }
-        options.push(
-            KeywordOption::new("flip_hand", KEY_HAND.message_id)
-                .with_shortcut(shown.shortcut('f', 'k')),
-        );
-        options.push(
-            KeywordOption::new("flip_facing", KEY_FACING.message_id)
-                .with_shortcut(shown.shortcut('a', 'a')),
-        );
+        if self.kind == Kind::Opening {
+            options.push(
+                KeywordOption::new("rise", KEY_RISE.message_id)
+                    .with_shortcut(shown.shortcut('r', 'y')),
+            );
+        } else {
+            options.push(
+                KeywordOption::new("flip_hand", KEY_HAND.message_id)
+                    .with_shortcut(shown.shortcut('f', 'k')),
+            );
+            options.push(
+                KeywordOption::new("flip_facing", KEY_FACING.message_id)
+                    .with_shortcut(shown.shortcut('a', 'a')),
+            );
+        }
         Prompt::new(
             key,
             message.message_id,
@@ -645,6 +779,16 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             message_id: "ab-cmd-door-place-description",
         },
         Kind::Door,
+    ))?;
+    registry.register(spec(
+        OPENING_PLACE,
+        Msg {
+            message_id: "ab-cmd-opening-place-label",
+        },
+        Msg {
+            message_id: "ab-cmd-opening-place-description",
+        },
+        Kind::Opening,
     ))?;
     registry.register(spec(
         WINDOW_PLACE,

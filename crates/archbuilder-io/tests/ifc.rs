@@ -627,9 +627,12 @@ fn enclosed_rooms_are_spaces_and_the_others_are_reported() {
             volume(&mesh, &Limits::DEFAULT).unwrap();
     }
     for entry in &enclosed {
+        // A room's body is its solid: the room is 9.8 x 5.8 m, 2.8 m under the slab above it
+        // (3.0 m to its underside less the 0.2 m slab) except under the 2 x 2 m hole of that slab,
+        // where it reaches its upper limit, 3.0 m.
         near(
             volumes[&global_id(entry.id.as_u128())],
-            entry.volume().unwrap(),
+            (9.8 * 5.8 - 4.0) * 2.8 + 4.0 * 3.0,
         );
         let space = file
             .instances_of("IFCSPACE")
@@ -663,7 +666,10 @@ fn enclosed_rooms_are_spaces_and_the_others_are_reported() {
             areas[&(id.clone(), "NetPerimeter".into())],
             entry.perimeter().unwrap(),
         );
-        near(areas[&(id, "NetVolume".into())], entry.volume().unwrap());
+        near(
+            areas[&(id, "NetVolume".into())],
+            (9.8 * 5.8 - 4.0) * 2.8 + 4.0 * 3.0,
+        );
     }
 }
 

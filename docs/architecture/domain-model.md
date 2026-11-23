@@ -511,13 +511,103 @@ with the gross volume and height of that solid.
 
 IFC mapping: an enclosed room is an `IfcSpace` aggregated by its `IfcBuildingStorey` with
 `IfcRelAggregates` (not contained), `PredefinedType` `INTERNAL`, with a body of an extruded area
-solid of its boundary, with the courtyards as voids, from the base up by the height. `Name` is the room number and `LongName` the
+solid of its boundary, with the courtyards as voids, from the base up by the height, or, when its top is not level
+or lower than its upper limit, the room's solid: an extrusion up to the level top, else a faceted B-rep. `Name` is the room number and `LongName` the
 room name (a room without a number takes its name as `Name` and has no `LongName`).
 `Qto_SpaceBaseQuantities` holds `NetFloorArea` (at the wall faces), `GrossFloorArea` (to the wall
-center lines), `NetPerimeter` (the outer loop plus every courtyard loop), `Height` and `NetVolume` from the same derivation
-`inspect` uses, and `Pset_SpaceCommon` holds `Reference` (the number). An unenclosed room has no
+center lines), `NetPerimeter` (the outer loop plus every courtyard loop), `Height` (the mean height of the solid) and
+`NetVolume` (the volume of the solid), and `Pset_SpaceCommon` holds `Reference` (the number). An unenclosed room has no
 region and a redundant room shares its region with another room; neither is written, and the loss
 report names each one (`ab.io.ifc.room_unenclosed`, `ab.io.ifc.room_redundant`).
+
+IFC mapping of ceilings and openings: a ceiling is an `IfcCovering` with `PredefinedType` `CEILING`, contained in
+its storey, with an extruded area solid of its boundary (holes included) from its underside up by the thickness, or an
+`IfcFacetedBrep` when it slopes, `Qto_CoveringBaseQuantities` (`Width`, `GrossArea`, `NetArea`) and
+`Pset_CoveringCommon` (`IsExternal`); its type is an `IfcCoveringType` with the type's `IfcMaterialLayerSet`. A wall
+opening is an `IfcOpeningElement` with `IfcRelVoidsElement` on its wall, its profile in the wall's plane
+(an arch as chords) extruded across the wall. A shaft is one `IfcOpeningElement` for each floor, roof and ceiling it
+cuts, each voiding that host; a vertical opening is one on its host. The bodies of the hosts are written with the cuts
+taken out as well (a roof cut that cannot be made is reported as `ab.io.ifc.cut_not_applied`). Arc edges and
+arches are written as chords (`ab.io.ifc.arc_faceted`).
+
+Backward-compatible `.archb` additions: the record kinds `archbuilder.ceiling`, `archbuilder.ceiling_type`,
+`archbuilder.wall_opening`, `archbuilder.shaft` and `archbuilder.vertical_opening`, each at schema 1.0. A file from before
+them has none and loads as it was; a document gets the two default ceiling types when it makes its first ceiling.
+
+#### The ceiling, the openings and the room solid of the first slice
+
+`archbuilder.ceiling` (schema 1.0) is a ceiling owned by its storey. Its first seven fields have the
+positions and meaning of a floor's (`name`, `thickness`, the underside's height, `vertices`,
+`ceiling_type`, `pinned`, `arcs`), so a ceiling's boundary is read, associated with wall faces and
+edited with the floor's sketch (`archbuilder.floor.edit_boundary` takes a ceiling too). The
+boundary, the underside, the grid lines and the body are derived and kept per ceiling while the
+objects they read are the same objects ([`archbuilder_model::ceiling::derived`]): the ceiling, its
+walls, type, storey and level, its vertical openings and the shafts. A room renamed, a floor edited
+or a ceiling of another storey recomputes nothing.
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | `Ceiling <n>` (`Tavan <n>`) per storey by default | Not blank, unique within the storey |
+| `thickness` | The body above the underside: the total of its type's layers | A copy of the type, written only with it |
+| `height_offset` | The underside's height above the storey's level, at the slope arrow's start line when there is one | -1000 m to 1000 m; the type's, 2.6 m by default |
+| `vertices`, `arcs` | The boundary as in a floor: loops of vertices with an optional wall face association, arc edges as bulges | As a floor's; a click inside a room takes the room's region, the loop of walls that bound rooms at their interior faces |
+| `ceiling_type` | The ceiling type | Absent only in a file edited by hand |
+| `grid_x`, `grid_y`, `grid_rotation` | The origin and the rotation of the type's grid pattern, absolute: they stay when the boundary changes | 0 by default |
+| `slope_x`, `slope_y`, `slope_direction`, `slope_length` | A slope arrow: a point of the start line, the direction the underside rises in and the arrow's length | Absent point: a flat ceiling |
+| `slope`, `end_height` | The arrow's rise: an angle (at most 85°), or the underside's height above the level at the arrow's end | `slope` wins when both are set |
+| `pinned` | Whether the ceiling is pinned | Absent: unpinned |
+
+`archbuilder.ceiling_type` has the layers and core of a floor type and, after them, `height_offset`
+(the height a new ceiling gets, 2.6 m), `grid_x` and `grid_y` (the tile size, 0 for a plain
+ceiling) and `grid_angle`. A new project has two: a generic 20 mm board and a suspended grid of 600
+by 600 mm tiles (named in the interface language). In plan the ceiling is above the cut: its outline
+is dashed, its grid lines are clipped to its boundary (a ceiling that would need more than 2000 lines
+of one direction draws none), and a slope arrow shows its start line, direction and slope; nothing is
+filled and the plan picks a ceiling only where nothing else is.
+
+A ceiling stays between its storey's level and what is over its own footprint: the slab or roof
+above, else the level above. A command that makes or changes a ceiling so that it leaves that range
+(create, paste, copy, move and the other modify tools, a drag, a property) is refused with a message
+that names the ceiling and the element. A change of what is above (a slab, a roof, the walls they
+follow, a level, a storey) that leaves a ceiling out of its range is carried out: the command line
+says so once and the warnings panel lists it until it is fixed. Such a finding never refuses an
+unrelated edit.
+
+`archbuilder.wall_opening` (schema 1.0) is a bare opening hosted by a wall (the header owner), placed like a
+door by its distance along the baseline. `distance`, `width`, `height` (the arch's rise
+included), `sill` have the meaning of a door's; `rise` is the sagitta of a circular arch on top (0:
+a rectangle), `pinned`. It is an insert of the wall (`archbuilder_model::insert::Kind::Opening`):
+the wall's body, its plan lines and its quantities are cut by it, it moves, mirrors and copies with the wall
+and is refused where a door would be.
+
+`archbuilder.shaft` (schema 1.0) is a footprint (`vertices`, `arcs`) with a base and a top: `base_level`
+(absent: the level of its storey) and `base_offset`, `top_level` (absent: the level above its
+storey) and `top_offset`, and `pinned`. It cuts every floor, roof and ceiling whose body its span
+overlaps by more than a tolerance (touching a face cuts nothing), now and when the element is added
+later. `archbuilder.vertical_opening` is a footprint cut in one floor, roof or ceiling, which hosts it
+(the header owner); it goes where its host goes when the host is moved or copied. A floor's area and
+volume, a ceiling's, and a roof's body have the openings taken out; a cut that crosses a ridge, hip or
+valley of a roof is not cut in its body (the opening is still written as a void, and the loss report
+says so). The plan marks a shaft with its outline and a cross on every storey whose level is within
+its span.
+
+In the application the tools are in the toolbar and the Structure menu and have the typed shortcuts
+`CL` (ceiling: a click inside a room makes it, `sketch` sketches it), `OP` (wall opening, placed like a door; the
+keyword `rise` makes it an arch), `SH` (shaft, a sketch) and `VO` (vertical opening in the selected floor, roof
+or ceiling, a sketch); `SO` sets a ceiling's slope arrow (`archbuilder.ceiling.set_slope` with `from`, `to` and
+`slope` or `end_height`). The property grid types a ceiling's slope (a new arrow runs along x across its boundary), grid
+origin and rotation, a shaft's base and top levels and offsets, and shows a room's height and volume. A double click on a
+ceiling opens its boundary sketch.
+
+A room's solid (`archbuilder_model::room::shape`) is its footprint under a top that follows, piece by
+piece, the lowest of the ceilings of its storey, the roofs and the floors of the storeys above that
+lie above the room's base (openings taken out), else its upper limit; a surface above the limit does not bound the room.
+Surfaces are ordered by their lowest elevation over the room: the lowest governs where it covers, the
+next governs the rest. The volume is exact for planar pieces; the height is the mean height, the
+unbounded height is the limit's. The area is the footprint's and unchanged. The IFC space has this
+body (an extrusion when the top is level). The result is kept per room while the room, the walls
+of its storey with their types, the ceilings of the storey, the roofs, the floors above, the levels,
+the storeys, the stairs and the openings are the same objects.
 
 ## Selection and modify commands
 
@@ -863,7 +953,7 @@ shows the boundaries between its type's layers at the plan cut (1 m above its ba
 dashed lines and the core boundaries solid, interrupted at the openings the cut passes.
 
 IFC mapping: every type is written (`IfcWallType`, `IfcSlabType` `FLOOR`, `IfcDoorType` `DOOR`,
-`IfcWindowType` `WINDOW`, `IfcRoofType`) and assigned to its occurrences with `IfcRelDefinesByType`. A wall type is
+`IfcWindowType` `WINDOW`, `IfcRoofType`, `IfcCoveringType` `CEILING`) and assigned to its occurrences with `IfcRelDefinesByType`. A wall type is
 `PARTITIONING` when it is interior and not load-bearing, else `STANDARD`. Wall and floor types carry
 an `IfcMaterialLayerSet` of their layers (the material, the thickness, the category `LoadBearing`,
 `Insulation` or `Finish` by function, ventilation unknown); each wall gets an

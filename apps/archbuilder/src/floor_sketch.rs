@@ -117,9 +117,24 @@ impl FloorSketch {
     #[must_use]
     pub fn begin(snapshot: &Snapshot, id: ObjectId) -> Option<Self> {
         let object = archbuilder_model::spatial::get(snapshot, id)?;
-        let base = Floor::from_values(&object.values)?;
+        // A floor, a ceiling, a shaft or a vertical opening: each has a sketched boundary.
+        let key = archbuilder_model::spatial::type_of(snapshot, id)?;
+        let base = Floor::read(&object.values, floor::slots_of(&key)?)?;
         let boundary = base.boundary_in(snapshot)?;
-        let derived = floor::Derived::of(snapshot, &object)?;
+        let top = match key.as_str() {
+            archbuilder_model::types::FLOOR => floor::Derived::of(snapshot, &object)?.top,
+            archbuilder_model::types::CEILING => {
+                archbuilder_model::ceiling::derived(snapshot, &object)?
+                    .z_range()
+                    .1
+            }
+            archbuilder_model::types::SHAFT => {
+                archbuilder_model::opening::shaft_span(snapshot, &object)?
+                    .z
+                    .1
+            }
+            _ => archbuilder_model::pick::host_top_of(snapshot, &object),
+        };
         Some(Self {
             floor: id,
             sketch: Sketch::of(&base, &boundary),
@@ -128,7 +143,7 @@ impl FloorSketch {
             selected: None,
             arc_edge: None,
             drag: None,
-            z: derived.top,
+            z: top,
             freed: 0,
             changed: false,
             hint: None,

@@ -38,6 +38,7 @@ pub const fn command(kind: Kind) -> &'static str {
     match kind {
         Kind::Door => DOOR_PLACE,
         Kind::Window => WINDOW_PLACE,
+        Kind::Opening => archbuilder_commands::insert::OPENING_PLACE,
     }
 }
 
@@ -58,6 +59,8 @@ pub struct State {
     pub height: Option<f64>,
     /// The sill height of the next window, once one carried it.
     pub sill: Option<f64>,
+    /// The arch rise of the next wall opening, once one carried it.
+    pub rise: Option<f64>,
     /// Whether the hand of the next insert is flipped.
     pub flip_hand: bool,
     /// Whether the facing of the next insert is flipped.
@@ -165,6 +168,7 @@ impl InsertTool {
             width: None,
             height: None,
             sill: None,
+            rise: None,
             flip_hand: false,
             flip_facing: false,
             placed: 0,
@@ -181,14 +185,17 @@ impl InsertTool {
             return Ok(Submitted::Idle);
         };
         let kind = match state.kind {
-            Kind::Door => TypeKind::Door,
+            Kind::Door | Kind::Opening => TypeKind::Door,
             Kind::Window => TypeKind::Window,
         };
-        let picked = crate::tool_type::current_param(&snapshot, kind);
-        if picked != state.picked || state.insert_type.is_none() {
+        // A bare opening has no type: the selector's pick is not its own.
+        let picked = (state.kind != Kind::Opening)
+            .then(|| crate::tool_type::current_param(&snapshot, kind))
+            .flatten();
+        if picked != state.picked || (state.insert_type.is_none() && state.kind != Kind::Opening) {
             state.insert_type.clone_from(&picked);
             state.picked = picked;
-            (state.width, state.height, state.sill) = (None, None, None);
+            (state.width, state.height, state.sill, state.rise) = (None, None, None, None);
         }
         let state = &*state;
         let mut preset = Map::new();
@@ -202,6 +209,7 @@ impl InsertTool {
             ("width", state.width),
             ("height", state.height),
             ("sill", state.sill),
+            ("rise", state.rise),
         ] {
             if let Some(value) = value {
                 preset.insert(key.into(), Value::from(value));
@@ -247,7 +255,9 @@ impl InsertTool {
                 Ok(())
             }
             Ok(Submitted::Ran(outcome))
-                if outcome.command == DOOR_PLACE || outcome.command == WINDOW_PLACE =>
+                if outcome.command == DOOR_PLACE
+                    || outcome.command == WINDOW_PLACE
+                    || outcome.command == archbuilder_commands::insert::OPENING_PLACE =>
             {
                 self.placed(&outcome.value);
                 self.next(env, run)
@@ -275,6 +285,7 @@ impl InsertTool {
         state.width = number("width");
         state.height = number("height");
         state.sill = number("sill");
+        state.rise = number("rise");
         state.insert_type = value.get("type").and_then(Value::as_str).map(str::to_owned);
         // A click carries the options the person set; the flags it placed with followed the pointer.
         (state.flip_hand, state.flip_facing) = self
@@ -309,6 +320,7 @@ impl InsertTool {
             state.width = number("width_m").or(state.width);
             state.height = number("height_m").or(state.height);
             state.sill = number("sill_m").or(state.sill);
+            state.rise = number("rise_m").or(state.rise);
             if arg("hand").is_some() {
                 state.flip_hand = arg("hand") == Some("right");
                 state.flip_facing = arg("facing") == Some("interior");
@@ -363,6 +375,7 @@ impl InsertTool {
             state.width = number("width_m").or(state.width);
             state.height = number("height_m").or(state.height);
             state.sill = number("sill_m").or(state.sill);
+            state.rise = number("rise_m").or(state.rise);
             state.flip_hand = hinge * side < 0.0;
             state.flip_facing = flip_facing;
         }
@@ -590,6 +603,13 @@ pub fn kind_named(text: &str) -> Option<Kind> {
         Some(Kind::Door)
     } else if is(&[WINDOW_PLACE, "window", "pencere"]) {
         Some(Kind::Window)
+    } else if is(&[
+        archbuilder_commands::insert::OPENING_PLACE,
+        "opening",
+        "boşluk",
+        "bosluk",
+    ]) {
+        Some(Kind::Opening)
     } else {
         None
     }

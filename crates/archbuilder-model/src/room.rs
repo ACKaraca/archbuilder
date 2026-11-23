@@ -15,7 +15,9 @@
 //! The functions of the first half work on plain walls and points, so the application, the model
 //! checks and the command-line `inspect` (which reads a dump) share them.
 
-use arc_base::ObjectId;
+use std::sync::Arc;
+
+use arc_base::{ObjectId, Tolerance};
 use arc_doc::{Object, Snapshot, Value};
 
 use crate::floor::{self, Boundary, Face, WallRegion};
@@ -518,6 +520,52 @@ impl Entry {
     }
 }
 
+/// The slab or roof above `storey` that a ceiling whose underside is `pieces`, `thickness` thick, passes through,
+/// found point by point over the ceiling's own footprint; `None` when it stays under all of them.
+#[must_use]
+pub fn bound_passed_through(
+    snapshot: &Snapshot,
+    storey: &Object,
+    pieces: &[crate::terrain::Piece],
+    thickness: f64,
+) -> Option<Bound> {
+    let level = spatial::storey_elevation(snapshot, storey);
+    for (bound, surface) in surfaces(snapshot, storey, level, false) {
+        for above in &surface {
+            for piece in pieces {
+                let over = crate::terrain::clip_convex(&piece.points, &above.points);
+                // Both heights are linear over the overlap, so its corners decide.
+                if big(&over)
+                    && over
+                        .iter()
+                        .any(|q| piece.plane.z(*q) + thickness > above.plane.z(*q) + 1.0e-6)
+                {
+                    return Some(bound);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The area of the room `entry` as every view shows it: the footprint less the shafts that pass
+/// through it; `None` unless enclosed.
+#[must_use]
+pub fn net_area(snapshot: &Snapshot, entry: &Entry) -> Option<f64> {
+    shape(snapshot, entry)
+        .map(|s| s.area)
+        .or_else(|| entry.area())
+}
+
+/// The volume of the room `entry` as every view shows it: under the surface that bounds it, the
+/// shafts out; `None` unless enclosed.
+#[must_use]
+pub fn net_volume(snapshot: &Snapshot, entry: &Entry) -> Option<f64> {
+    shape(snapshot, entry)
+        .map(|s| s.volume)
+        .or_else(|| entry.volume())
+}
+
 /// The rooms of `storey` with their derived data, in identifier order.
 #[must_use]
 pub fn of_storey(snapshot: &Snapshot, storey: ObjectId) -> Vec<Entry> {
@@ -575,6 +623,371 @@ pub fn duplicate_numbers(entries: &[Entry]) -> Vec<ObjectId> {
         })
         .map(|e| e.id)
         .collect()
+}
+
+/// What bounds a room above.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    /// The ceiling of the storey.
+    Ceiling(ObjectId),
+    /// A roof.
+    Roof(ObjectId),
+    /// The slab of a storey above.
+    Slab(ObjectId),
+}
+
+/// The solid of a room: its footprint under a top that follows, piece by piece, the lowest
+/// ceiling, roof or slab above it, else the room's upper limit.
+#[derive(Debug, Clone)]
+pub struct Shape {
+    /// The elevation of the base.
+    pub base: f64,
+    /// The top as convex pieces over the footprint, each with its plane.
+    pub pieces: Vec<crate::terrain::Piece>,
+    /// The footprint area, in square meters.
+    pub area: f64,
+    /// The volume under the top, in cubic meters.
+    pub volume: f64,
+    /// The height of the upper limit above the base: the height the room has when nothing bounds
+    /// it.
+    pub unbounded: f64,
+    /// The mean height, `volume / area`: the height of the bounded room.
+    pub height: f64,
+    /// What bounds the room, the lowest first.
+    pub bounds: Vec<Bound>,
+}
+
+impl Shape {
+    /// The closed solid of the room.
+    ///
+    /// # Errors
+    /// The solid kernel's errors for pieces that do not form one simple region (a room with a
+    /// courtyard).
+    pub fn solid(&self) -> arc_base::Result<arc_geom::Polyhedron> {
+        crate::terrain::solid(
+            &self.pieces,
+            0.0,
+            crate::terrain::Bottom::Level(self.base),
+            &|_, _| arc_geom::FaceTag::Untagged,
+        )
+    }
+
+    /// Whether the top is one level plane, and its elevation.
+    #[must_use]
+    pub fn flat_top(&self) -> Option<f64> {
+        let first = self.pieces.first()?;
+        let z = first.plane.z;
+        self.pieces
+            .iter()
+            .all(|p| {
+                p.plane.grad == [0.0, 0.0] && (p.plane.z - z).abs() < Tolerance::DEFAULT.linear
+            })
+            .then_some(z)
+    }
+}
+
+/// The most surfaces one room is bounded by, and the most piece clips one room costs.
+const MAX_SURFACES: usize = 256;
+const MAX_CLIPS: usize = 2_000_000;
+
+/// The part of the convex `poly` where `f` is not negative; `f` is linear.
+fn clip_by(poly: &[[f64; 2]], f: &dyn Fn([f64; 2]) -> f64) -> Vec<[f64; 2]> {
+    let mut out = Vec::with_capacity(poly.len() + 2);
+    for (p, q) in poly.iter().zip(poly.iter().cycle().skip(1)) {
+        let q = *q;
+        let (fp, fq) = (f(*p), f(q));
+        if fp >= 0.0 {
+            out.push(*p);
+        }
+        if (fp >= 0.0) != (fq >= 0.0) {
+            let t = fp / (fp - fq);
+            out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+        }
+    }
+    out
+}
+
+/// `poly` without the corners that repeat the one before them (an edge of no length makes every
+/// point lie on both sides of it).
+fn deduped(poly: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    let same = |a: &[f64; 2], b: &[f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1.0e-9;
+    let mut out: Vec<[f64; 2]> = Vec::with_capacity(poly.len());
+    for p in poly {
+        if out.last().is_none_or(|l| !same(l, &p)) {
+            out.push(p);
+        }
+    }
+    while out.len() > 1 && out.first().zip(out.last()).is_some_and(|(a, b)| same(a, b)) {
+        out.pop();
+    }
+    out
+}
+
+fn big(poly: &[[f64; 2]]) -> bool {
+    poly.len() >= 3 && crate::terrain::double_area(poly) > 1.0e-9
+}
+
+/// The surfaces above `level` that can bound a room of `storey` from above, each as convex pieces
+/// of its underside (openings taken out) with its kind.
+fn surfaces(
+    snapshot: &Snapshot,
+    storey: &Object,
+    base: f64,
+    ceilings: bool,
+) -> Vec<(Bound, Vec<crate::terrain::Piece>)> {
+    use crate::terrain::{Plane, subtract_convex};
+    let level = spatial::storey_elevation(snapshot, storey);
+    let mut out = Vec::new();
+    for c in crate::ceiling::of_storey(snapshot, storey.id)
+        .into_iter()
+        .filter(|_| ceilings)
+    {
+        out.push((Bound::Ceiling(c.id), c.pieces()));
+    }
+    for o in spatial::objects(snapshot, types::ROOF)
+        .iter()
+        .take(MAX_SURFACES)
+    {
+        let Ok(d) = crate::roof::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let mut pieces = d.surface.pieces();
+        for cut in &d.cuts {
+            for tri in Boundary::polygons(vec![cut.clone()]).pieces(Plane::level(0.0)) {
+                pieces = pieces
+                    .into_iter()
+                    .flat_map(|p| {
+                        let plane = p.plane;
+                        subtract_convex(vec![p.points], &tri.points, Tolerance::DEFAULT.linear)
+                            .into_iter()
+                            .map(move |points| crate::terrain::Piece {
+                                points,
+                                plane,
+                                upper: None,
+                            })
+                    })
+                    .collect();
+            }
+        }
+        out.push((Bound::Roof(o.id), pieces));
+    }
+    for f in spatial::objects(snapshot, types::FLOOR)
+        .iter()
+        .take(MAX_SURFACES)
+    {
+        let above = f
+            .header
+            .owner
+            .and_then(|s| spatial::get(snapshot, s))
+            .is_some_and(|s| spatial::storey_elevation(snapshot, &s) > level + 1.0e-6);
+        if !above {
+            continue;
+        }
+        if let Some(d) = floor::Derived::of(snapshot, f) {
+            let plane = Plane::level(d.top - d.floor.thickness);
+            out.push((Bound::Slab(f.id), d.boundary.pieces(plane)));
+        }
+    }
+    // Only what lies above the base can bound the room.
+    for (_, pieces) in &mut out {
+        *pieces = std::mem::take(pieces)
+            .into_iter()
+            .filter_map(|p| {
+                let plane = p.plane;
+                let points = deduped(clip_by(&p.points, &|q| plane.z(q) - base - 0.01));
+                big(&points).then_some(crate::terrain::Piece {
+                    points,
+                    plane,
+                    upper: None,
+                })
+            })
+            .collect();
+    }
+    out.retain(|(_, p)| !p.is_empty());
+    out
+}
+
+/// The lowest elevation of the underside of `pieces`.
+fn lowest(pieces: &[crate::terrain::Piece]) -> f64 {
+    pieces
+        .iter()
+        .flat_map(|p| p.points.iter().map(|q| p.plane.z(*q)))
+        .fold(f64::MAX, f64::min)
+}
+
+fn area_of(points: &[[f64; 2]]) -> f64 {
+    crate::terrain::double_area(points).abs() / 2.0
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "shaft voids, the ordered surfaces, then the volume"
+)]
+fn compute_shape(snapshot: &Snapshot, entry: &Entry, storey: &Object) -> Option<Shape> {
+    use crate::terrain::{Piece, Plane, clip_convex, subtract_convex};
+    let boundary = entry.footprint.boundary();
+    if entry.state() != State::Enclosed || boundary.check().is_err() {
+        return None;
+    }
+    let (base, limit) = (entry.base, entry.top);
+    let mut remaining: Vec<Vec<[f64; 2]>> = boundary
+        .pieces(Plane::level(0.0))
+        .into_iter()
+        .map(|p| p.points)
+        .collect();
+    // A shaft that passes through the room's height is a void of the room.
+    let limit_z = entry.top;
+    for shaft in crate::opening::shafts(snapshot) {
+        if !(shaft.z.1 > base + 1.0e-6 && shaft.z.0 < limit_z - 1.0e-6) {
+            continue;
+        }
+        for tri in Boundary::polygons(vec![shaft.outline.clone()]).pieces(Plane::level(0.0)) {
+            remaining = remaining
+                .into_iter()
+                .flat_map(|r| subtract_convex(vec![r], &tri.points, Tolerance::DEFAULT.linear))
+                .collect();
+        }
+    }
+    let mut found = surfaces(snapshot, storey, base, true);
+    found.sort_by(|a, b| lowest(&a.1).total_cmp(&lowest(&b.1)));
+    let mut top: Vec<Piece> = Vec::new();
+    let mut bounds = Vec::new();
+    let mut clips = 0_usize;
+    let level_top = Plane::level(limit);
+    for (bound, pieces) in found {
+        if remaining.is_empty() {
+            break;
+        }
+        let mut used = false;
+        for piece in &pieces {
+            clips += remaining.len();
+            if clips > MAX_CLIPS {
+                return None;
+            }
+            let plane = piece.plane;
+            let mut next = Vec::with_capacity(remaining.len());
+            for r in std::mem::take(&mut remaining) {
+                let part = clip_convex(&r, &piece.points);
+                if !big(&part) {
+                    next.push(r);
+                    continue;
+                }
+                // Where this surface is above the room's limit, the limit is the top.
+                let under = deduped(clip_by(&part, &|q| limit - plane.z(q)));
+                let over = deduped(clip_by(&part, &|q| plane.z(q) - limit));
+                if big(&under) {
+                    used = true;
+                    top.push(Piece {
+                        points: under,
+                        plane,
+                        upper: None,
+                    });
+                }
+                if big(&over) {
+                    top.push(Piece {
+                        points: over,
+                        plane: level_top,
+                        upper: None,
+                    });
+                }
+                next.extend(subtract_convex(
+                    vec![r],
+                    &piece.points,
+                    Tolerance::DEFAULT.linear,
+                ));
+            }
+            remaining = next;
+        }
+        if used {
+            bounds.push(bound);
+        }
+    }
+    top.extend(remaining.into_iter().map(|points| Piece {
+        points,
+        plane: level_top,
+        upper: None,
+    }));
+    let area: f64 = top.iter().map(|p| area_of(&p.points)).sum();
+    // A fan of triangles keeps the volume exact: the mean of a plane over a triangle is its
+    // height at the centroid.
+    let volume: f64 = top
+        .iter()
+        .map(|p| {
+            let Some((first, rest)) = p.points.split_first() else {
+                return 0.0;
+            };
+            rest.windows(2)
+                .filter_map(|w| Some([*first, *w.first()?, *w.get(1)?]))
+                .map(|tri| {
+                    let z = tri.iter().map(|q| p.plane.z(*q)).sum::<f64>() / 3.0;
+                    area_of(&tri) * (z - base).max(0.0)
+                })
+                .sum::<f64>()
+        })
+        .sum();
+    Some(Shape {
+        base,
+        pieces: top,
+        area,
+        volume,
+        unbounded: (limit - base).max(0.0),
+        height: if area > 0.0 { volume / area } else { 0.0 },
+        bounds,
+    })
+}
+
+type Shapes = crate::cleanup::Store<Option<Arc<Shape>>>;
+static SHAPES: Shapes = std::sync::Mutex::new(Vec::new());
+
+/// The solid of a room: derived once, and again only when the room, the walls of its storey with
+/// their types, the ceilings of the storey, the roofs, the floors, the levels or the openings
+/// changed. A room renamed elsewhere, or a ceiling of another storey edited, finds it again.
+#[must_use]
+pub fn shape(snapshot: &Snapshot, entry: &Entry) -> Option<Arc<Shape>> {
+    let room = spatial::get(snapshot, entry.id)?;
+    let storey = room.header.owner.and_then(|s| spatial::get(snapshot, s))?;
+    let mut deps = crate::cleanup::storey_deps(snapshot, storey.id, false);
+    deps.push(Arc::clone(&room));
+    deps.push(Arc::clone(&storey));
+    deps.extend(spatial::children(snapshot, types::CEILING, storey.id));
+    let level = spatial::storey_elevation(snapshot, &storey);
+    for key in [types::ROOF, types::FLOOR] {
+        deps.extend(spatial::objects(snapshot, key).into_iter().filter(|o| {
+            key == types::ROOF
+                || o.header
+                    .owner
+                    .and_then(|s| spatial::get(snapshot, s))
+                    .is_some_and(|s| spatial::storey_elevation(snapshot, &s) > level + 1.0e-6)
+        }));
+    }
+    // The surfaces above follow walls of their own storeys, and their types decide thicknesses:
+    // the walls of this storey and above, and every ceiling, floor and roof type.
+    for wall in spatial::objects(snapshot, types::WALL) {
+        let above = wall
+            .header
+            .owner
+            .and_then(|s| spatial::get(snapshot, s))
+            .is_some_and(|s| spatial::storey_elevation(snapshot, &s) >= level - 1.0e-6);
+        if above && wall.header.owner != Some(storey.id) {
+            deps.push(wall);
+        }
+    }
+    for key in [types::ROOF_TYPE, types::FLOOR_TYPE, types::CEILING_TYPE] {
+        deps.extend(spatial::objects(snapshot, key));
+    }
+    for key in [
+        types::LEVEL,
+        types::STOREY,
+        types::SHAFT,
+        types::VERTICAL_OPENING,
+        types::STAIR,
+    ] {
+        deps.extend(spatial::objects(snapshot, key));
+    }
+    let stored = crate::cleanup::cached(&SHAPES, entry.id, 0, deps, || {
+        compute_shape(snapshot, entry, &storey).map(Arc::new)
+    });
+    stored.as_ref().clone()
 }
 
 #[cfg(test)]

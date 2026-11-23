@@ -43,7 +43,7 @@ const ERROR: Message = Message {
 const WARNING: Message = Message {
     message_id: "ab-warnings-severity-warning",
 };
-const KINDS: [(WarningKind, Message); 6] = [
+const KINDS: [(WarningKind, Message); 7] = [
     (
         WarningKind::Stair,
         Message {
@@ -66,6 +66,12 @@ const KINDS: [(WarningKind, Message); 6] = [
         WarningKind::Floor,
         Message {
             message_id: "ab-warnings-kind-floor",
+        },
+    ),
+    (
+        WarningKind::Ceiling,
+        Message {
+            message_id: "ab-warnings-kind-ceiling",
         },
     ),
     (
@@ -131,7 +137,28 @@ pub fn bounds(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 
                     points.extend(d.surface.outline.iter().copied());
                 }
             }
-            Some(types::DOOR | types::WINDOW) => {
+            Some(types::CEILING) => {
+                if let Some(b) = archbuilder_model::ceiling::Ceiling::from_values(&object.values)
+                    .and_then(|c| c.shape.boundary_in(snapshot))
+                {
+                    points.extend(b.loops.into_iter().flatten());
+                }
+            }
+            Some(types::SHAFT) => {
+                if let Some(s) = archbuilder_model::opening::shaft_span(snapshot, &object) {
+                    points.extend(s.outline);
+                }
+            }
+            Some(types::VERTICAL_OPENING) => {
+                if let Some(o) = archbuilder_model::opening::outline_of(
+                    snapshot,
+                    &object,
+                    archbuilder_model::floor::VERTICAL_SLOTS,
+                ) {
+                    points.extend(o);
+                }
+            }
+            Some(types::DOOR | types::WINDOW | types::WALL_OPENING) => {
                 let host = object
                     .header
                     .owner

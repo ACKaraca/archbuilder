@@ -270,13 +270,76 @@ fn loop_ranges(vertices: &[Vertex]) -> Option<Vec<std::ops::Range<usize>>> {
     (!ranges.is_empty()).then_some(ranges)
 }
 
+/// Where a record keeps what a boundary reads: floors, ceilings, shafts and vertical openings
+/// share the vertex and arc records and differ in the positions of the fields.
+#[derive(Debug, Clone, Copy)]
+pub struct Slots {
+    /// The thickness, when the record has one.
+    pub thickness: Option<usize>,
+    /// The top offset, when the record has one.
+    pub top: Option<usize>,
+    /// The vertex list.
+    pub vertices: usize,
+    /// The arc list.
+    pub arcs: usize,
+}
+
+/// The slots of a floor; a ceiling has the same.
+pub const FLOOR_SLOTS: Slots = Slots {
+    thickness: Some(floor::THICKNESS),
+    top: Some(floor::TOP_OFFSET),
+    vertices: floor::VERTICES,
+    arcs: floor::ARCS,
+};
+
+/// The slots of a shaft.
+pub const SHAFT_SLOTS: Slots = Slots {
+    thickness: None,
+    top: None,
+    vertices: types::shaft::VERTICES,
+    arcs: types::shaft::ARCS,
+};
+
+/// The slots of a vertical opening.
+pub const VERTICAL_SLOTS: Slots = Slots {
+    thickness: None,
+    top: None,
+    vertices: types::vertical_opening::VERTICES,
+    arcs: types::vertical_opening::ARCS,
+};
+
+/// The slots of the element type `key`, for the elements whose boundary is a sketch: floors,
+/// ceilings, shafts and vertical openings.
+#[must_use]
+pub fn slots_of(key: &str) -> Option<Slots> {
+    match key {
+        types::FLOOR | types::CEILING => Some(FLOOR_SLOTS),
+        types::SHAFT => Some(SHAFT_SLOTS),
+        types::VERTICAL_OPENING => Some(VERTICAL_SLOTS),
+        _ => None,
+    }
+}
+
 impl Floor {
     /// The floor of a record's field values; `None` when a field is missing or malformed.
     #[must_use]
     pub fn from_values(values: &[Option<Value>]) -> Option<Self> {
-        let thickness = types::meters(values, floor::THICKNESS)?;
-        let top_offset = types::meters(values, floor::TOP_OFFSET)?;
-        let Some(Some(Value::List(items))) = values.get(floor::VERTICES) else {
+        Self::read(values, FLOOR_SLOTS)
+    }
+
+    /// The boundary data of a record whose fields are at `slots`; the thickness and the top
+    /// offset are 0 for a record without them.
+    #[must_use]
+    pub fn read(values: &[Option<Value>], slots: Slots) -> Option<Self> {
+        let thickness = match slots.thickness {
+            Some(at) => types::meters(values, at)?,
+            None => 0.0,
+        };
+        let top_offset = match slots.top {
+            Some(at) => types::meters(values, at)?,
+            None => 0.0,
+        };
+        let Some(Some(Value::List(items))) = values.get(slots.vertices) else {
             return None;
         };
         let mut vertices = Vec::with_capacity(items.len().min(MAX_VERTICES));
@@ -308,7 +371,7 @@ impl Floor {
             });
         }
         // The arcs are a list of their own, so that files from before them load as they were.
-        if let Some(Some(Value::List(arcs))) = values.get(floor::ARCS) {
+        if let Some(Some(Value::List(arcs))) = values.get(slots.arcs) {
             for arc in arcs {
                 if let Value::Record(fields) = arc
                     && let (Some(Some(Value::I64(at))), Some(Some(Value::F64(bulge)))) =
@@ -907,6 +970,39 @@ impl Boundary {
         )
     }
 
+    /// The boundary as convex pieces (a triangulation, arcs faceted), each with `plane`.
+    #[must_use]
+    pub fn pieces(&self, plane: crate::terrain::Plane) -> Vec<crate::terrain::Piece> {
+        let Ok(region) = self.region() else {
+            return Vec::new();
+        };
+        let Ok(mesh) = arc_geom::triangulate(&region, 0.01, std::f64::consts::PI, 4 * MAX_VERTICES)
+        else {
+            return Vec::new();
+        };
+        mesh.triangles()
+            .iter()
+            .filter_map(|t| {
+                let mut points: Vec<[f64; 2]> = t
+                    .iter()
+                    .map(|i| {
+                        mesh.vertices()
+                            .get(usize::try_from(*i).ok()?)
+                            .map(|p| [p.x, p.y])
+                    })
+                    .collect::<Option<_>>()?;
+                if crate::terrain::double_area(&points) < 0.0 {
+                    points.reverse();
+                }
+                Some(crate::terrain::Piece {
+                    points,
+                    plane,
+                    upper: None,
+                })
+            })
+            .collect()
+    }
+
     /// The boundary as a region of the solid kernel, with exact arcs.
     ///
     /// # Errors
@@ -1094,7 +1190,14 @@ impl Derived {
             .owner
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
-        let openings = crate::stair::openings_of_floor(snapshot, object);
+        let mut openings = crate::stair::openings_of_floor(snapshot, object);
+        let top = level + floor.top_offset;
+        // Shafts and vertical openings that pass through the slab's body cut it like a stair.
+        openings.extend(crate::opening::cuts(
+            snapshot,
+            object,
+            (top - floor.thickness, top),
+        ));
         let (boundary, uncut) = floor.boundary_in(snapshot)?.with_openings(&openings);
         Some(Self {
             top: level + floor.top_offset,

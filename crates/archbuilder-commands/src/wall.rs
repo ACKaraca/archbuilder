@@ -329,7 +329,10 @@ fn delete_set(
             stair_count += 1;
         } else if kind.as_deref() == Some(archbuilder_model::types::ROOF) {
             roof_count += 1;
-        } else {
+        } else if !kind.as_deref().is_some_and(|k| {
+            archbuilder_model::types::is_storey_element(k)
+                || k == archbuilder_model::types::VERTICAL_OPENING
+        }) {
             expect(ctx.snapshot(), *id, FLOOR)?;
         }
     }
@@ -354,7 +357,17 @@ fn delete_set(
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
     for id in walls.iter().chain(&alone).chain(&floors) {
-        txn.delete(*id)?;
+        // A vertical opening goes with its host when both are named.
+        let hosted_in_set = spatial::get(txn.snapshot(), *id)
+            .filter(|o| {
+                spatial::type_of(txn.snapshot(), o.id).as_deref()
+                    == Some(archbuilder_model::types::VERTICAL_OPENING)
+            })
+            .and_then(|o| o.header.owner)
+            .is_some_and(|h| floors.contains(&h));
+        if !hosted_in_set {
+            txn.delete(*id)?;
+        }
     }
     txn.apply_delete_rules(&limits)?;
     ensure_valid(ctx)?;
@@ -579,8 +592,10 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
         .copied()
         .filter(|id| {
             // The storey's own elements other than walls, which nothing else depends on.
-            spatial::type_of(ctx.snapshot(), *id)
-                .is_some_and(|k| k != WALL && archbuilder_model::types::is_storey_element(&k))
+            spatial::type_of(ctx.snapshot(), *id).is_some_and(|k| {
+                (k != WALL && archbuilder_model::types::is_storey_element(&k))
+                    || k == archbuilder_model::types::VERTICAL_OPENING
+            })
         })
         .collect();
     if walls.is_empty() && inserts.is_empty() && floors.is_empty() {

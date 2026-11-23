@@ -46,16 +46,16 @@ pub struct StoreyLayers {
 /// The objects a derived result reads. A result is kept while every one of them is the very
 /// object (the same `Arc`) it was made from, so a commit that touches none of them (a room
 /// renamed, a wall of another storey moved) finds it again, whatever snapshot asks.
-type Deps = Vec<Arc<Object>>;
+pub(crate) type Deps = Vec<Arc<Object>>;
 
-struct Entry<T> {
+pub(crate) struct Entry<T> {
     id: ObjectId,
     extra: u64,
     deps: Deps,
     value: Arc<T>,
 }
 
-type Store<T> = Mutex<Vec<Entry<T>>>;
+pub(crate) type Store<T> = Mutex<Vec<Entry<T>>>;
 const CACHE_ENTRIES: usize = 256;
 
 fn same(a: &[Arc<Object>], b: &[Arc<Object>]) -> bool {
@@ -64,7 +64,7 @@ fn same(a: &[Arc<Object>], b: &[Arc<Object>]) -> bool {
 
 /// The result kept in `store` for (`id`, `extra`) when it was made from `deps`, else `make()`,
 /// which is then kept. The entry holds its objects, so an address is never reused under it.
-fn cached<T>(
+pub(crate) fn cached<T>(
     store: &Store<T>,
     id: ObjectId,
     extra: u64,
@@ -96,7 +96,7 @@ fn cached<T>(
 
 /// The walls of `storey` with their types, and with their doors and windows when `inserts`: what
 /// the layers of the storey are made from.
-fn storey_deps(snapshot: &Snapshot, storey: ObjectId, inserts: bool) -> Deps {
+pub(crate) fn storey_deps(snapshot: &Snapshot, storey: ObjectId, inserts: bool) -> Deps {
     use crate::element_type::{TypeKind, type_of};
     let mut deps = Vec::new();
     for w in spatial::walls(snapshot, storey) {
@@ -362,9 +362,15 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
         crate::types::STOREY,
         FLOOR,
         crate::types::ROOF,
+        crate::types::SHAFT,
     ] {
         deps.extend(spatial::objects(snapshot, key));
     }
+    deps.extend(spatial::children(
+        snapshot,
+        crate::types::VERTICAL_OPENING,
+        object.id,
+    ));
     let stored = cached(&SLABS, object.id, 0, deps, || {
         compute_clean_floor(snapshot, object).map(Arc::new)
     });

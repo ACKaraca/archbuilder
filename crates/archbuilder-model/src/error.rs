@@ -303,4 +303,52 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-wall-attach-target",
     };
+    /// A ceiling has no readable boundary.
+    pub const CEILING_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ceiling-malformed",
+    };
+    /// A ceiling's boundary is refused: a loop crosses itself, an edge is too short, or an area is out of range.
+    pub const CEILING_BOUNDARY: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_boundary",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ceiling-boundary",
+    };
+    /// An edge of a ceiling follows a wall that does not bound it any more (a warning).
+    pub const CEILING_EDGE_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_edge_unsupported",
+        category: Category::Conflict,
+        message_id: "ab-model-ceiling-edge-unsupported",
+    };
+    /// The footprint of a shaft or vertical opening is refused.
+    pub const OPENING_FOOTPRINT: ErrorCode = ErrorCode {
+        code: "ab.model.opening_footprint",
+        category: Category::InvalidInput,
+        message_id: "ab-model-opening-footprint",
+    };
+    /// A vertical opening lies outside the element that hosts it (a warning).
+    pub const OPENING_ABOVE_HOST: ErrorCode = ErrorCode {
+        code: "ab.model.opening_above_host",
+        category: Category::Conflict,
+        message_id: "ab-model-opening-outside-host",
+    };
+    /// A ceiling's slope is steeper than the limit.
+    pub const CEILING_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ceiling-slope",
+    };
+    /// A ceiling's underside leaves the range from its storey's level to the level above.
+    pub const CEILING_RANGE: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_range",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ceiling-range",
+    };
+    /// A ceiling's underside passes through the slab or roof above it.
+    pub const CEILING_RANGE_ELEMENT: ErrorCode = ErrorCode {
+        code: "ab.model.ceiling_range_element",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ceiling-range-element",
+    };
 }

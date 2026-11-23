@@ -12,7 +12,6 @@ use arc_ui::{PointerEvent, PointerKind, ProductOverlay};
 use archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY;
 use archbuilder_model::floor;
 use archbuilder_model::spatial;
-use archbuilder_model::types::FLOOR;
 use archbuilder_model::wall::Wall;
 
 use super::WallInteraction;
@@ -133,10 +132,10 @@ impl WallInteraction {
         self.stop_all();
         let snapshot = cx.document()?.snapshot();
         let floor = id.or_else(|| {
-            cx.selection()
-                .iter()
-                .copied()
-                .find(|i| spatial::type_of(&snapshot, *i).as_deref() == Some(FLOOR))
+            cx.selection().iter().copied().find(|i| {
+                spatial::type_of(&snapshot, *i)
+                    .is_some_and(|k| archbuilder_model::floor::slots_of(&k).is_some())
+            })
         });
         let Some(sketch) = floor.and_then(|f| FloorSketch::begin(&snapshot, f)) else {
             self.say(cx, NO_FLOOR.message_id, &[]);
