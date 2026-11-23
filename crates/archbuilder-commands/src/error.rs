@@ -263,4 +263,34 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-nothing-to-offset",
     };
+    /// The command names no roof and none is selected.
+    pub const NO_ROOF_SELECTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_roof_selected",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-roof-selected",
+    };
+    /// A roof has no edge or vertex with the given number.
+    pub const ROOF_EDGE_INDEX: ErrorCode = ErrorCode {
+        code: "ab.cmd.roof_edge_index",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-roof-edge-index",
+    };
+    /// No roof or floor is above a wall to attach its top to.
+    pub const NO_ATTACH_TARGET: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_attach_target",
+        category: Category::NotFound,
+        message_id: "ab-cmd-no-attach-target",
+    };
+    /// A wall top can attach only to a roof or a floor.
+    pub const ATTACH_TARGET_KIND: ErrorCode = ErrorCode {
+        code: "ab.cmd.attach_target_kind",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-attach-target-kind",
+    };
+    /// A slope cannot be read or is outside the range of a roof edge.
+    pub const SLOPE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.cmd.slope_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-slope-invalid",
+    };
 }

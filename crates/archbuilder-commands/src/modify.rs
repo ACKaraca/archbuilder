@@ -175,6 +175,8 @@ pub(crate) struct Set {
     pub(crate) rooms: Vec<ObjectId>,
     /// The stairs (their start and direction move).
     pub(crate) stairs: Vec<ObjectId>,
+    /// The roofs (their sketched footprint points move).
+    pub(crate) roofs: Vec<ObjectId>,
     /// The doors and windows whose wall is not in the set.
     pub(crate) inserts: Vec<ObjectId>,
 }
@@ -213,6 +215,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(FLOOR) => set.floors.push(id),
             Some(types::ROOM) => set.rooms.push(id),
             Some(types::STAIR) => set.stairs.push(id),
+            Some(types::ROOF) => set.roofs.push(id),
             Some(DOOR | WINDOW) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -229,6 +232,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
         && set.floors.is_empty()
         && set.rooms.is_empty()
         && set.stairs.is_empty()
+        && set.roofs.is_empty()
         && set.inserts.is_empty()
     {
         return Err(Error::new(if skipped {
@@ -790,8 +794,12 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
     // The transaction's view: a command may move walls after it changed others.
     let snapshot = ctx.txn()?.snapshot().clone();
     let walls: BTreeSet<ObjectId> = set.walls.iter().copied().collect();
-    let mut count =
-        set.walls.len() + set.floors.len() + set.rooms.len() + set.stairs.len() + set.inserts.len();
+    let mut count = set.walls.len()
+        + set.floors.len()
+        + set.rooms.len()
+        + set.stairs.len()
+        + set.roofs.len()
+        + set.inserts.len();
     // Everything is read before the first write.
     let joined = reconnect(&snapshot, set, xf)?;
     let mut wall_changes = Vec::new();
@@ -873,6 +881,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         set_length(ctx, *id, "y", at[1])?;
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
+    dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -950,6 +959,10 @@ fn copied_wall_values(
 }
 
 /// Creates copies of the objects of `set` under `xf`, and selects them after the command.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one block per kind of element copied"
+)]
 pub(crate) fn copy_set(
     ctx: &mut Context<'_>,
     set: &Set,
@@ -964,8 +977,12 @@ pub(crate) fn copy_set(
     let tongue = language(ctx);
     let mut created: Vec<ObjectId> = Vec::new();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
-    let mut count =
-        set.walls.len() + set.floors.len() + set.rooms.len() + set.stairs.len() + set.inserts.len();
+    let mut count = set.walls.len()
+        + set.floors.len()
+        + set.rooms.len()
+        + set.stairs.len()
+        + set.roofs.len()
+        + set.inserts.len();
     for id in &set.walls {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -1050,6 +1067,16 @@ pub(crate) fn copy_set(
         let name = crate::stair::next_stair_name(&seen, s, &tongue);
         created.push(create(ctx, types::STAIR, storey, moved.values(&name))?);
     }
+    let (roofs, lost) = crate::roof::copy_roofs(
+        ctx,
+        &snapshot,
+        &set.roofs,
+        xf,
+        &|w| map.get(&w).copied(),
+        target,
+    )?;
+    created.extend(roofs);
+    dissociated += lost;
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
     Ok(Modified {

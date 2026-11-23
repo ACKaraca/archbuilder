@@ -379,3 +379,41 @@ ab-warnings-count-filtered = { $count ->
     [one] { $shown } of 1 warning
    *[other] { $shown } of { $count } warnings
 }
+ab-tool-roof = Roof
+ab-tool-roof-hint = Create a roof by picking walls or sketching its footprint on the selected storey (RF)
+ab-kind-roof = Roof
+ab-menu-new-roof = New roof
+ab-menu-keep-roofs = Keep only roofs
+ab-menu-attach-top = Attach top to roof or floor
+ab-menu-detach-top = Detach top
+ab-prop-roof-storey = Storey
+ab-prop-roof-slope = Slope of sloped edges
+ab-prop-roof-area = Plan area
+ab-prop-roof-top = Top elevation
+ab-prop-roof-follows = Edges follow walls
+ab-prop-roof-attached = Attached walls
+ab-prop-overhang = Overhang
+ab-prop-roof-edge-sloped = Edge { $n }: defines slope
+ab-prop-roof-edge-slope = Edge { $n }: slope
+ab-prop-roof-edge-overhang = Edge { $n }: own overhang
+ab-prop-wall-attached = Top attached to
+ab-prop-slope-unit = Slope unit
+ab-slope-degrees = Degrees
+ab-slope-percent = Percent (rise per run)
+ab-notice-walls-detached = { $count ->
+    [one] 1 wall was attached to what was deleted and keeps its own top again. Undo brings the attachment back.
+   *[other] { $count } walls were attached to what was deleted and keep their own top again. Undo brings the attachments back.
+}
+ab-slope-rise-run = Rise : run
+ab-prompt-attach-walls = Attach top: select the walls, then press Enter
+ab-prompt-attach-target = Attach top of the selected walls ({ $count }): click the roof or floor, or press Enter for the one above each wall
+ab-notice-attach-nothing-there = No roof or floor there. Click a roof's outline or lines, or a floor.
+ab-notice-attached = { $count ->
+    [one] 1 wall follows the underside now.
+   *[other] { $count } walls follow the underside now.
+}
+ab-notice-attach-not-following = { $count ->
+    [one] 1 wall is attached but cannot follow the underside (it is not under it, or the underside comes down to its base); it keeps its own top. See the warnings.
+   *[other] { $count } walls are attached but cannot follow the underside (they are not under it, or the underside comes down to their base); they keep their own top. See the warnings.
+}
+ab-prop-roof-slopes-mixed = (mixed: the edges differ)

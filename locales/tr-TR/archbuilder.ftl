@@ -363,3 +363,32 @@ ab-warnings-count-filtered = { $count ->
     [one] 1 uyarıdan { $shown }
    *[other] { $count } uyarıdan { $shown }
 }
+ab-tool-roof = Çatı
+ab-tool-roof-hint = Seçili katta duvar seçerek ya da taban hattını çizerek çatı oluştur (RF)
+ab-kind-roof = Çatı
+ab-menu-new-roof = Yeni çatı
+ab-menu-keep-roofs = Yalnızca çatıları tut
+ab-menu-attach-top = Üstü çatıya veya döşemeye bağla
+ab-menu-detach-top = Üst bağını çöz
+ab-prop-roof-storey = Kat
+ab-prop-roof-slope = Eğimli kenarların eğimi
+ab-prop-roof-area = Plan alanı
+ab-prop-roof-top = Üst kot
+ab-prop-roof-follows = Kenarların izlediği duvarlar
+ab-prop-roof-attached = Bağlı duvarlar
+ab-prop-overhang = Saçak taşması
+ab-prop-roof-edge-sloped = Kenar { $n }: eğim tanımlar
+ab-prop-roof-edge-slope = Kenar { $n }: eğim
+ab-prop-roof-edge-overhang = Kenar { $n }: kendi saçağı
+ab-prop-wall-attached = Üstün bağlı olduğu
+ab-prop-slope-unit = Eğim birimi
+ab-slope-degrees = Derece
+ab-slope-percent = Yüzde (yükselti / yatay)
+ab-notice-walls-detached = Silinen öğeye bağlı { $count } duvar yeniden kendi üst kotunu kullanıyor. Geri al, bağı geri getirir.
+ab-slope-rise-run = Yükselti : yatay
+ab-prompt-attach-walls = Üstü bağla: duvarları seçin, sonra Enter'a basın
+ab-prompt-attach-target = { $count } duvarın üstünü bağla: çatıya veya döşemeye tıklayın ya da her duvarın üzerindeki için Enter'a basın
+ab-notice-attach-nothing-there = Orada çatı veya döşeme yok. Bir çatının dış hattına veya çizgilerine ya da bir döşemeye tıklayın.
+ab-notice-attached = { $count } duvar artık alt yüzeyi izliyor.
+ab-notice-attach-not-following = { $count } duvar bağlı ama alt yüzeyi izleyemiyor (altında değil veya alt yüzey tabanına iniyor); kendi üst kotunu koruyor. Uyarılara bakın.
+ab-prop-roof-slopes-mixed = (karışık: kenarlar farklı)

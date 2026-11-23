@@ -24,6 +24,9 @@
 //! - **Rotation handle** of a selection with walls, floors or stairs: the selection turns about the
 //!   center of its bounds in steps of 15 degrees (free with Shift).
 //! - **Flip handles** of a selected door or window flip its hand and its facing on a click.
+//! - **Roof handles** of a selected roof: a square at each footprint point moves the point (the
+//!   two edges at it stop following walls), a diamond at the middle of each edge moves the edge
+//!   across itself (an edge that follows a wall keeps following it at a new offset).
 //! - **Temporary dimensions.** A selected wall shows the distance between its center line and the
 //!   center lines of the nearest parallel walls on either side; a selected door or window shows
 //!   the gaps between its edges and the ends of the wall's clear span. A click on a value opens
@@ -44,7 +47,7 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Insert};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{self, DOOR, FLOOR, ROOF, STAIR, WALL, WINDOW};
 use archbuilder_model::units::{LengthUnit, length_text};
 use archbuilder_model::wall::Wall;
 use serde_json::json;
@@ -187,6 +190,20 @@ pub enum HandleKind {
     FlipHand(ObjectId),
     /// The facing of a door or window.
     FlipFacing(ObjectId),
+    /// A point of a roof's footprint.
+    RoofVertex {
+        /// The roof.
+        roof: ObjectId,
+        /// The point (the start of the edge of that number).
+        vertex: usize,
+    },
+    /// An edge of a roof's footprint.
+    RoofEdge {
+        /// The roof.
+        roof: ObjectId,
+        /// The edge.
+        edge: usize,
+    },
 }
 
 /// A handle: its kind and its place.
@@ -321,6 +338,14 @@ enum What {
         objects: Vec<ObjectId>,
         center: V2,
     },
+    RoofVertex {
+        roof: ObjectId,
+        vertex: usize,
+    },
+    RoofEdge {
+        roof: ObjectId,
+        edge: usize,
+    },
     Click(Hit),
 }
 
@@ -452,6 +477,11 @@ fn points_of(snapshot: &Snapshot, id: ObjectId) -> Vec<V2> {
             .map(|p| p.outline())
             .unwrap_or_default();
     }
+    if kind_of(snapshot, id).as_deref() == Some(ROOF) {
+        return archbuilder_model::roof::Derived::of(snapshot, &object)
+            .map(|d| d.surface.footprint)
+            .unwrap_or_default();
+    }
     archbuilder_model::room::Room::from_values(&object.values)
         .map(|r| vec![r.point])
         .unwrap_or_default()
@@ -469,7 +499,7 @@ fn rotation_of(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Vec<Objec
     if !objects.iter().any(|id| {
         matches!(
             kind_of(snapshot, *id).as_deref(),
-            Some(WALL | FLOOR | STAIR)
+            Some(WALL | FLOOR | STAIR | ROOF)
         )
     }) {
         return None;
@@ -537,6 +567,29 @@ pub fn handles(snapshot: &Snapshot, selection: &[ObjectId], frame: &Frame) -> Ve
                         kind: HandleKind::FlipFacing(*id),
                         at: [facing[0], facing[1], z],
                     });
+                }
+            }
+            Some(ROOF) => {
+                let derived = spatial::get(snapshot, *id)
+                    .and_then(|o| archbuilder_model::roof::Derived::of(snapshot, &o).ok());
+                if let Some(d) = derived {
+                    let f = &d.surface.footprint;
+                    let z = d.surface.base;
+                    for (k, p) in f.iter().enumerate() {
+                        out.push(Handle {
+                            kind: HandleKind::RoofVertex {
+                                roof: *id,
+                                vertex: k,
+                            },
+                            at: [p[0], p[1], z],
+                        });
+                        if let Some(q) = f.get((k + 1) % f.len()) {
+                            out.push(Handle {
+                                kind: HandleKind::RoofEdge { roof: *id, edge: k },
+                                at: [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0, z],
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
@@ -714,8 +767,10 @@ pub fn body_at(i: &Input<'_>) -> Option<ObjectId> {
     archbuilder_model::pick::stack(i.snapshot, &[], at, aperture, Some(ray))
         .into_iter()
         .find(|id| {
-            matches!(kind_of(i.snapshot, *id).as_deref(), Some(FLOOR | STAIR))
-                && i.selection.contains(id)
+            matches!(
+                kind_of(i.snapshot, *id).as_deref(),
+                Some(FLOOR | STAIR | ROOF)
+            ) && i.selection.contains(id)
         })
 }
 
@@ -785,9 +840,32 @@ fn ghost(
         {
             let moved: Vec<V2> = placed.outline().iter().map(|p| xf.point(*p)).collect();
             out.push(closed(&moved));
+        } else if kind_of(snapshot, *id).as_deref() == Some(ROOF)
+            && let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object)
+        {
+            let moved: Vec<V2> = d.surface.outline.iter().map(|p| xf.point(*p)).collect();
+            out.push(closed(&moved));
         }
     }
     out
+}
+
+/// The derived footprint of a roof.
+fn roof_footprint(snapshot: &Snapshot, roof: ObjectId) -> Option<Vec<V2>> {
+    let object = spatial::get(snapshot, roof)?;
+    archbuilder_model::roof::Roof::from_values(&object.values)?.footprint_in(snapshot)
+}
+
+/// A footprint as it would be, dashed.
+fn roof_ghost(points: &[V2], z: f64) -> ProductOverlay {
+    ProductOverlay::Path {
+        points: points
+            .iter()
+            .chain(points.first())
+            .map(|p| p3(*p, z))
+            .collect(),
+        dashed: true,
+    }
 }
 
 /// A door or window sliding along its wall: the range its center may take.
@@ -1015,6 +1093,10 @@ impl Direct {
         let what = match hit {
             Hit::Handle(HandleKind::End { wall, end }) => What::End { wall, end },
             Hit::Handle(HandleKind::Top { wall }) => What::Top { wall },
+            Hit::Handle(HandleKind::RoofVertex { roof, vertex }) => {
+                What::RoofVertex { roof, vertex }
+            }
+            Hit::Handle(HandleKind::RoofEdge { roof, edge }) => What::RoofEdge { roof, edge },
             Hit::Handle(HandleKind::Rotate) => {
                 let Some((objects, center, _)) = rotation_of(i.snapshot, i.selection) else {
                     return false;
@@ -1234,6 +1316,63 @@ impl Direct {
                 });
                 out.label = Some((p3(at, drag.z), format!("{degrees:.0}\u{b0}")));
             }
+            What::RoofVertex { roof, vertex } => {
+                let Some(f) = roof_footprint(snapshot, *roof) else {
+                    return;
+                };
+                let lines = baselines(snapshot, &[*roof], &[]);
+                let mut ends = vec![[0.0, 0.0]];
+                ends.extend(lines.iter().flatten().copied());
+                ends.extend(f.iter().copied());
+                let hit =
+                    snap::snap(&snap::Input::new(at, ppu, &ends, &lines, None)).filter(|_| !i.free);
+                let to = hit.as_ref().map_or(at, |h| h.point);
+                out.to = to;
+                out.snap = hit
+                    .as_ref()
+                    .and_then(|h| snap_kind(h.kind).map(|k| (k, h.point)));
+                out.valid = f.get(*vertex).is_some_and(|p| dist2(*p, to) > 1.0e-9);
+                let mut moved = f.clone();
+                if let Some(p) = moved.get_mut(*vertex) {
+                    *p = to;
+                }
+                out.ghost = vec![roof_ghost(&moved, drag.z)];
+            }
+            What::RoofEdge { roof, edge } => {
+                let Some(f) = roof_footprint(snapshot, *roof) else {
+                    return;
+                };
+                let n = f.len();
+                let (Some(a), Some(b)) = (f.get(*edge).copied(), f.get((edge + 1) % n).copied())
+                else {
+                    return;
+                };
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let length = d[0].hypot(d[1]);
+                if length <= 0.0 {
+                    return;
+                }
+                let ccw = archbuilder_model::floor::signed_area(&f) > 0.0;
+                let outward = if ccw {
+                    [d[1] / length, -d[0] / length]
+                } else {
+                    [-d[1] / length, d[0] / length]
+                };
+                let raw = (at[0] - drag.start_at[0]) * outward[0]
+                    + (at[1] - drag.start_at[1]) * outward[1];
+                let step = if i.free { 0.001 } else { 0.01 };
+                let distance = (raw / step).round() * step;
+                out.height = distance;
+                out.valid = distance.abs() > 1.0e-9;
+                let mut moved = f.clone();
+                for k in [*edge, (edge + 1) % n] {
+                    if let Some(p) = moved.get_mut(k) {
+                        *p = [p[0] + outward[0] * distance, p[1] + outward[1] * distance];
+                    }
+                }
+                out.ghost = vec![roof_ghost(&moved, drag.z)];
+                out.label = Some((p3(at, drag.z), length_text(distance, i.unit, i.separator)));
+            }
             What::Click(_) => {}
         }
         drag.out = out;
@@ -1313,6 +1452,14 @@ impl Direct {
                 params: json!({
                     "objects": ids_of(&objects), "base": center, "angle": out.angle
                 }),
+            },
+            What::RoofVertex { roof, vertex } => Command {
+                name: archbuilder_commands::roof::ROOF_MOVE_VERTEX,
+                params: json!({"roof": roof.to_string(), "vertex": vertex, "to": out.to}),
+            },
+            What::RoofEdge { roof, edge } => Command {
+                name: archbuilder_commands::roof::ROOF_MOVE_EDGE,
+                params: json!({"roof": roof.to_string(), "edge": edge, "distance": out.height}),
             },
             What::Click(_) => return None,
         };
@@ -1525,6 +1672,8 @@ fn shape(frame: &Frame, h: &Handle) -> Vec<Point3> {
             .collect(),
         HandleKind::FlipHand(_) => vec![[-r, -r], [r + 1.0, 0.0], [-r, r]],
         HandleKind::FlipFacing(_) => vec![[-r, -r], [r, -r], [0.0, r + 1.0]],
+        HandleKind::RoofVertex { .. } => vec![[-r, -r], [r, -r], [r, r], [-r, r]],
+        HandleKind::RoofEdge { .. } => vec![[0.0, -r], [r, 0.0], [0.0, r], [-r, 0.0]],
     };
     offsets
         .into_iter()

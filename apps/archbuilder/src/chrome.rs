@@ -181,6 +181,15 @@ pub fn toolbar() -> Vec<ToolItem> {
             },
             STAIR_CREATE,
         ),
+        button(
+            Message {
+                message_id: "ab-tool-roof",
+            },
+            Message {
+                message_id: "ab-tool-roof-hint",
+            },
+            archbuilder_commands::roof::ROOF_CREATE,
+        ),
         crate::tool_type::toolbar_item(),
         ToolItem::Separator,
         button(

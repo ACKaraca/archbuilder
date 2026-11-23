@@ -17,7 +17,7 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Kind};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, ROOM, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{self, DOOR, FLOOR, ROOF, ROOM, STAIR, WALL, WINDOW};
 use archbuilder_model::wall::Wall;
 use serde_json::{Value as Json, json};
 
@@ -125,7 +125,7 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     STAIR,
                 );
             }
-            FLOOR | ROOM => push(
+            FLOOR | ROOM | ROOF => push(
                 &mut items,
                 *id,
                 None,
@@ -299,6 +299,30 @@ pub(crate) fn paste_content(
         }
         created.push(create(ctx, ROOM, Some(storey), values)?);
     }
+    for (key, _, _, mut values) in decoded.iter().cloned() {
+        if key != ROOF {
+            continue;
+        }
+        let roof = archbuilder_model::roof::Roof::from_values(&values).ok_or_else(invalid)?;
+        let kept = archbuilder_model::roof::Roof::kept_slopes(&values);
+        let (vertices, _) = floor_vertices(&roof.as_floor(), None, &xf, &|w| map.get(&w).copied());
+        let edges: Vec<archbuilder_model::roof::Edge> = roof
+            .edges
+            .iter()
+            .zip(vertices)
+            .map(|(e, vertex)| archbuilder_model::roof::Edge { vertex, ..*e })
+            .collect();
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::roof::next_roof_name(&seen, storey, &tongue);
+        if let Some(slot) = values.get_mut(types::roof::NAME) {
+            *slot = Some(Value::String(name));
+        }
+        if let Some(slot) = values.get_mut(types::roof::EDGES) {
+            *slot = Some(archbuilder_model::roof::Roof::edge_values(&edges, &kept));
+        }
+        crate::element_type::rebind(ctx, ROOF, &mut values)?;
+        created.push(create(ctx, ROOF, Some(storey), values)?);
+    }
     for (key, _, _, values) in decoded.iter().cloned() {
         if key != STAIR {
             continue;
@@ -350,6 +374,12 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
                 let f = layout.footprint();
                 out.push(f.iter().chain(f.first()).copied().collect());
             }
+        } else if key == ROOF
+            && let Some(r) = archbuilder_model::roof::Roof::from_values(&values)
+        {
+            let mut l: Vec<[f64; 2]> = r.edges.iter().map(|e| e.vertex.point).collect();
+            l.extend(l.first().copied());
+            out.push(l);
         } else if key == FLOOR
             && let Some(f) = Floor::from_values(&values)
         {

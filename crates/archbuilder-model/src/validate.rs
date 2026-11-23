@@ -28,7 +28,7 @@ use crate::error::codes;
 use crate::names;
 use crate::spatial::{get, objects, type_of};
 use crate::types::{
-    self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOM, SITE, STAIR, STOREY, WALL, WINDOW,
+    self, BUILDING, DOOR, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY, WALL, WINDOW,
 };
 
 /// The key a name is compared by ([`crate::names::fold`]).
@@ -348,8 +348,67 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_walls_of_levels(candidate, touched, &mut out);
     check_inserts_of_walls(candidate, touched, &mut out);
     check_floors(candidate, touched, &mut out);
+    check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
     out
+}
+
+/// The roofs a change can break: those that changed, and those with an edge that follows a wall
+/// that changed. Each surface is derived; a roof without one is refused.
+fn check_roofs(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>, out: &mut Vec<Error>) {
+    let walls: Vec<ObjectId> = touched
+        .iter()
+        .filter(|(id, c)| {
+            **c != Change::Deleted && type_of(candidate, **id).as_deref() == Some(WALL)
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for roof in objects(candidate, ROOF) {
+        let changed = matches!(touched.get(&roof.id), Some(c) if *c != Change::Deleted);
+        let follows = !walls.is_empty()
+            && crate::roof::Roof::from_values(&roof.values)
+                .is_some_and(|r| r.walls().iter().any(|w| walls.contains(w)));
+        if !changed && !follows {
+            continue;
+        }
+        if let Err(refusal) = crate::roof::Derived::of(candidate, &roof) {
+            out.push(crate::roof::refusal_error(refusal, &display_name(&roof)));
+        }
+    }
+}
+
+/// Why a wall attached to a roof or a floor cannot follow its underside, as a warning; `None`
+/// for a wall that is not attached or follows it.
+#[must_use]
+pub fn attach_problem(candidate: &Snapshot, wall: &Object) -> Option<Error> {
+    let target = crate::wall::attachment(&wall.values).and_then(|id| get(candidate, id))?;
+    let data = crate::wall::Wall::from_values(&wall.values)?;
+    let level = wall
+        .header
+        .owner
+        .and_then(|id| get(candidate, id))
+        .map_or(0.0, |s| crate::spatial::storey_elevation(candidate, &s));
+    let fails = match type_of(candidate, target.id).as_deref() {
+        Some(ROOF) => match crate::roof::Derived::of(candidate, &target) {
+            Ok(d) => {
+                let footprint = crate::join::footprint_of(candidate, wall)
+                    .unwrap_or_else(|| data.plain_footprint());
+                crate::wall::under_roof(&data, footprint, level, &d.surface).is_err()
+            }
+            Err(_) => true,
+        },
+        Some(FLOOR) => crate::floor::Derived::of(candidate, &target).is_none_or(|d| {
+            d.top - d.floor.thickness - (level + data.base_offset) < types::HEIGHT_RANGE.0
+        }),
+        _ => true,
+    };
+    fails.then(|| {
+        Error::new(codes::WALL_ATTACH_FAILED)
+            .with_arg("name", display_name(wall))
+            .with_arg("target", display_name(&target))
+            .with_detail(OBJECT, wall.id.to_string())
+            .with_detail(OTHER, target.id.to_string())
+    })
 }
 
 /// The floors a change can break: those that changed, and those on the storey of a wall that
@@ -509,6 +568,22 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             out.extend(stair_warnings(candidate, &object));
         }
     }
+    // Walls attached to a roof or floor that changed, wherever they stand.
+    let targets: Vec<ObjectId> = touched
+        .iter()
+        .filter(|(id, c)| {
+            **c != Change::Deleted
+                && matches!(type_of(candidate, **id).as_deref(), Some(ROOF | FLOOR))
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for wall in objects(candidate, WALL) {
+        let attached = crate::wall::attachment(&wall.values);
+        let mine = matches!(touched.get(&wall.id), Some(c) if *c != Change::Deleted);
+        if attached.is_some_and(|t| mine || targets.contains(&t)) {
+            out.extend(attach_problem(candidate, &wall));
+        }
+    }
     for storey in storeys {
         out.extend(room_findings(candidate, storey));
         if touched.iter().any(|(id, c)| {
@@ -629,6 +704,11 @@ fn pin_free(key: &str) -> &'static [usize] {
             room::CEILING_FINISH,
             room::BASE_FINISH,
             room::PINNED,
+        ],
+        ROOF => &[
+            types::roof::NAME,
+            types::roof::THICKNESS,
+            types::roof::PINNED,
         ],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
@@ -791,7 +871,7 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
             }
         }
     }
-    for key in [WALL, FLOOR, DOOR, WINDOW] {
+    for key in [WALL, FLOOR, DOOR, WINDOW, ROOF] {
         for object in objects(snapshot, key) {
             if let Some(error) = type_problem(snapshot, key, &object) {
                 push(Severity::Warning, error, vec![object.id]);

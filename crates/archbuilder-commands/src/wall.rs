@@ -292,9 +292,15 @@ pub struct Deleted {
     /// The stairs deleted by themselves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stairs: Option<usize>,
-    /// The floor edges that followed a deleted wall and now stay where they were.
+    /// The roofs deleted by themselves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roofs: Option<usize>,
+    /// The floor and roof edges that followed a deleted wall and now stay where they were.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frozen_edges: Option<usize>,
+    /// The walls whose top was attached to a deleted roof or floor; they keep their own top.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detached_walls: Option<usize>,
 }
 
 /// Deletes walls and inserts in one transaction, so one undo step brings them all back. The
@@ -314,18 +320,24 @@ fn delete_set(
     // The third set holds floors, rooms and stairs, which nothing else depends on.
     let mut room_count = 0;
     let mut stair_count = 0;
+    let mut roof_count = 0;
     for id in &floors {
         let kind = spatial::type_of(ctx.snapshot(), *id);
         if kind.as_deref() == Some(archbuilder_model::types::ROOM) {
             room_count += 1;
         } else if kind.as_deref() == Some(archbuilder_model::types::STAIR) {
             stair_count += 1;
+        } else if kind.as_deref() == Some(archbuilder_model::types::ROOF) {
+            roof_count += 1;
         } else {
             expect(ctx.snapshot(), *id, FLOOR)?;
         }
     }
     // Floor edges that follow a deleted wall keep their last position.
-    let frozen_edges = crate::floor::freeze_edges(ctx, &walls)?;
+    let frozen_edges =
+        crate::floor::freeze_edges(ctx, &walls)? + crate::roof::freeze_edges(ctx, &walls)?;
+    // Walls attached to a deleted roof or floor go back to their own top.
+    let detached = crate::roof::detach_from(ctx, &floors)?;
     // The inserts of a deleted wall go with it; the others named are deleted by themselves.
     let mut cascaded = 0;
     for wall in &walls {
@@ -349,10 +361,12 @@ fn delete_set(
     Ok(Deleted {
         walls: walls.len(),
         inserts: count,
-        floors: Some(floors.len() - room_count - stair_count).filter(|n| *n > 0),
+        floors: Some(floors.len() - room_count - stair_count - roof_count).filter(|n| *n > 0),
         rooms: Some(room_count).filter(|n| *n > 0),
         stairs: Some(stair_count).filter(|n| *n > 0),
+        roofs: Some(roof_count).filter(|n| *n > 0),
         frozen_edges: Some(frozen_edges).filter(|n| *n > 0),
+        detached_walls: Some(detached).filter(|n| *n > 0),
     })
 }
 

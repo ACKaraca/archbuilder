@@ -544,9 +544,45 @@ pub fn wall_solid(snapshot: &Snapshot, object: &Object) -> Option<Result<Polyhed
         .map(|(_, i)| i)
         .collect();
     Some(
-        wall.solid_in(footprint, level)
+        gross_solid(snapshot, object, &wall, footprint, level)
             .and_then(|solid| cut(&wall, level, solid, &inserts)),
     )
+}
+
+/// The roof surface a wall record's top is attached to, when it is attached to a roof whose
+/// surface can be derived.
+#[must_use]
+pub fn attached_roof(
+    snapshot: &Snapshot,
+    object: &Object,
+) -> Option<(Arc<Object>, crate::roof::Surface)> {
+    let target =
+        crate::wall::attachment(&object.values).and_then(|id| spatial::get(snapshot, id))?;
+    if spatial::type_of(snapshot, target.id).as_deref() != Some(crate::types::ROOF) {
+        return None;
+    }
+    let surface = crate::roof::Derived::of(snapshot, &target).ok()?.surface;
+    Some((target, surface))
+}
+
+/// The solid of a wall record without its openings: under the roof it is attached to when it can
+/// follow it, else the prism of its own top.
+///
+/// # Errors
+/// The solid kernel's errors.
+pub fn gross_solid(
+    snapshot: &Snapshot,
+    object: &Object,
+    wall: &Wall,
+    footprint: [[f64; 2]; 4],
+    level: f64,
+) -> Result<Polyhedron> {
+    if let Some((_, surface)) = attached_roof(snapshot, object)
+        && let Ok(solid) = crate::wall::under_roof(wall, footprint, level, &surface)
+    {
+        return Ok(solid);
+    }
+    wall.solid_in(footprint, level)
 }
 
 /// The part of an insert a solid belongs to, which decides its color.

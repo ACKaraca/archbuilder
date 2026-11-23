@@ -50,6 +50,9 @@ pub const ROOM: &str = "archbuilder.room";
 /// A stair on a storey: runs and landings from the storey's level up to the level above.
 pub const STAIR: &str = "archbuilder.stair";
 
+/// A roof by footprint on a storey: edges with slopes and overhangs, a base offset and a type.
+pub const ROOF: &str = "archbuilder.roof";
+
 /// A wall type: layers, a core and the function flags; owned by the project.
 pub const WALL_TYPE: &str = "archbuilder.wall_type";
 /// A floor type: layers and a core; owned by the project.
@@ -59,15 +62,18 @@ pub const DOOR_TYPE: &str = "archbuilder.door_type";
 /// A window type, with the layout of a door type.
 pub const WINDOW_TYPE: &str = "archbuilder.window_type";
 
+/// A roof type: layers and a core, from the top down; owned by the project.
+pub const ROOF_TYPE: &str = "archbuilder.roof_type";
+
 /// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
-pub const TYPE_KEYS: [&str; 4] = [WALL_TYPE, FLOOR_TYPE, DOOR_TYPE, WINDOW_TYPE];
+pub const TYPE_KEYS: [&str; 5] = [WALL_TYPE, FLOOR_TYPE, DOOR_TYPE, WINDOW_TYPE, ROOF_TYPE];
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 6] = [WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR];
+pub const ELEMENTS: [&str; 7] = [WALL, DOOR, WINDOW, FLOOR, ROOM, STAIR, ROOF];
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 4] = [WALL, FLOOR, ROOM, STAIR];
+pub const STOREY_ELEMENTS: [&str; 5] = [WALL, FLOOR, ROOM, STAIR, ROOF];
 
 /// Whether `key` is one of [`ELEMENTS`].
 #[must_use]
@@ -82,7 +88,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 15] = [
+pub const KEYS: [&str; 17] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -94,10 +100,12 @@ pub const KEYS: [&str; 15] = [
     FLOOR,
     ROOM,
     STAIR,
+    ROOF,
     WALL_TYPE,
     FLOOR_TYPE,
     DOOR_TYPE,
     WINDOW_TYPE,
+    ROOF_TYPE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -142,6 +150,8 @@ pub mod project {
     pub const LENGTH_UNIT: usize = 4;
     /// Whether the document is a template.
     pub const TEMPLATE: usize = 5;
+    /// How slopes are shown and typed ([`crate::units::SlopeUnit`] code); appended in schema 1.1.
+    pub const SLOPE_UNIT: usize = 6;
 }
 
 /// Field positions of `archbuilder.site`.
@@ -217,6 +227,11 @@ pub mod wall {
     pub const CORE_INTERIOR: usize = 14;
     /// Whether the wall is pinned: the modify commands refuse to change it.
     pub const PINNED: usize = 15;
+    /// The distance of the top above its top level, in meters; appended in schema 1.4.
+    pub const TOP_OFFSET: usize = 16;
+    /// The roof or floor the top is attached to; appended in schema 1.4. While it is set the
+    /// top follows that element's underside and the top level and height wait unchanged.
+    pub const TOP_ATTACH: usize = 17;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -354,6 +369,44 @@ pub mod room {
     pub const BASE_OFFSET: usize = 11;
     /// Whether the room is pinned.
     pub const PINNED: usize = 12;
+}
+
+/// Field positions of `archbuilder.roof`.
+pub mod roof {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The thickness of the slab, a copy of the type's total, in meters.
+    pub const THICKNESS: usize = 1;
+    /// The height of the underside at the eaves above the storey's level, in meters.
+    pub const BASE_OFFSET: usize = 2;
+    /// The edges of the footprint ([`crate::roof::Edge`] records).
+    pub const EDGES: usize = 3;
+    /// The overhang of the edges without their own, in meters.
+    pub const OVERHANG: usize = 4;
+    /// The roof type.
+    pub const ROOF_TYPE: usize = 5;
+    /// Whether the roof is pinned.
+    pub const PINNED: usize = 6;
+
+    /// Field positions of one edge record.
+    pub mod edge {
+        /// The x coordinate of the edge's start, in meters.
+        pub const X: usize = 0;
+        /// The y coordinate, in meters.
+        pub const Y: usize = 1;
+        /// The wall the edge follows; absent for a free edge.
+        pub const WALL: usize = 2;
+        /// The face of that wall ([`crate::floor::Face`] code).
+        pub const FACE: usize = 3;
+        /// The offset from that face, in meters.
+        pub const OFFSET: usize = 4;
+        /// Whether the edge defines a slope.
+        pub const SLOPED: usize = 5;
+        /// The slope, an angle; kept while the edge defines none.
+        pub const SLOPE: usize = 6;
+        /// The edge's own overhang, in meters; absent takes the roof's.
+        pub const OVERHANG: usize = 7;
+    }
 }
 
 /// The field positions of a stair record.
@@ -501,6 +554,18 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         FieldDecl::new("template", ValueType::Bool)
             .with_default(Value::Bool(false))
             .in_aspect("identity"),
+        FieldDecl::new(
+            "slope_unit",
+            ValueType::Enum(
+                crate::units::SlopeUnit::ALL
+                    .iter()
+                    .map(|u| EnumVariant::new(u.name(), u.code()))
+                    .collect(),
+            ),
+        )
+        .optional()
+        .in_aspect("units")
+        .since_minor(1),
     ];
     let site = vec![name_field("identity")];
     let building = vec![
@@ -565,6 +630,13 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         length_field("core_exterior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
         length_field("core_interior", Some(real(THICKNESS_RANGE_OR_ZERO))).since_minor(2),
         pinned_field(3),
+        length_field("top_offset", Some(real(BASE_OFFSET_RANGE)))
+            .optional()
+            .since_minor(4),
+        FieldDecl::new("top_attach", ValueType::Reference(attach_target()))
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(4),
     ];
     let floor = vec![
         name_field("identity"),
@@ -580,6 +652,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         pinned_field(2),
     ];
     for (key, fields) in [
+        (ROOF, roof_fields()),
+        (ROOF_TYPE, crate::element_type::floor_type_fields()),
         (STAIR, stair_fields()),
         (ROOM, room_fields()),
         (FLOOR, floor),
@@ -598,7 +672,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     ] {
         let mut decl = declaration(key, fields)?;
         match key {
-            WALL_TYPE | FLOOR_TYPE => decl.validators.push(crate::element_type::layer_findings),
+            WALL_TYPE | FLOOR_TYPE | ROOF_TYPE => {
+                decl.validators.push(crate::element_type::layer_findings);
+            }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
             _ => {}
         }
@@ -657,6 +733,63 @@ fn stair_fields() -> Vec<FieldDecl> {
     ]
 }
 
+/// The roof or floor a wall's top attaches to: cleared when it is deleted (the delete commands
+/// report the walls they detach).
+fn attach_target() -> ReferenceSpec {
+    let mut spec = reference_to(ROOF);
+    spec.targets = [ROOF, FLOOR]
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    spec.rule.on_delete = OnDelete::Clear;
+    spec.rule.cardinality = Cardinality::Optional;
+    spec
+}
+
+fn roof_fields() -> Vec<FieldDecl> {
+    use crate::roof::{
+        DEFAULT_OVERHANG, DEFAULT_SLOPE, DEFAULT_THICKNESS, MAX_EDGES, OVERHANG_RANGE, SLOPE_RANGE,
+    };
+    let mut wall = reference_to(WALL);
+    wall.rule.on_delete = OnDelete::Clear;
+    wall.rule.cardinality = Cardinality::Optional;
+    let edge = ValueType::Record(vec![
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("wall", ValueType::Reference(wall)).optional(),
+        FieldDecl::new(
+            "face",
+            ValueType::Enum(
+                crate::floor::Face::ALL
+                    .iter()
+                    .map(|f| EnumVariant::new(f.name(), f.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(crate::floor::Face::Exterior.code())),
+        length_field("offset", Some(real(BASE_OFFSET_RANGE))),
+        FieldDecl::new("sloped", ValueType::Bool).with_default(Value::Bool(true)),
+        FieldDecl::new("slope", ValueType::Quantity(Dimension::ANGLE))
+            .with_default(crate::stair::angle(DEFAULT_SLOPE))
+            .with_bound(real(SLOPE_RANGE)),
+        length_field("overhang", Some(real(OVERHANG_RANGE))).optional(),
+    ]);
+    vec![
+        name_field("identity"),
+        length_field("thickness", Some(real(THICKNESS_RANGE)))
+            .with_default(length(DEFAULT_THICKNESS)),
+        length_field("base_offset", Some(real(BASE_OFFSET_RANGE))),
+        FieldDecl::new("edges", ValueType::List(Box::new(edge)))
+            .with_bound(Bound::Length {
+                max: MAX_EDGES as u64,
+            })
+            .in_aspect("geometry"),
+        length_field("overhang", Some(real(OVERHANG_RANGE))).with_default(length(DEFAULT_OVERHANG)),
+        type_field("roof_type", ROOF_TYPE, 0),
+        pinned_field(0),
+    ]
+}
+
 fn room_fields() -> Vec<FieldDecl> {
     vec![
         name_field("identity"),
@@ -696,6 +829,7 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         FLOOR => floor::PINNED,
         ROOM => room::PINNED,
         STAIR => stair::PINNED,
+        ROOF => roof::PINNED,
         _ => return None,
     })
 }
@@ -823,6 +957,12 @@ pub fn meters(values: &[Option<Value>], at: usize) -> Option<f64> {
     }
 }
 
+/// An angle value of `radians` radians.
+#[must_use]
+pub fn angle(radians: f64) -> Value {
+    crate::stair::angle(radians)
+}
+
 /// A length value of `meters` meters.
 #[must_use]
 pub fn length(meters: f64) -> Value {
@@ -859,7 +999,19 @@ mod tests {
             ("insert_type", insert::INSERT_TYPE),
             ("pinned", insert::PINNED),
         ];
-        let expect: [(&str, &[(&str, usize)]); 13] = [
+        let expect: [(&str, &[(&str, usize)]); 14] = [
+            (
+                ROOF,
+                &[
+                    ("name", roof::NAME),
+                    ("thickness", roof::THICKNESS),
+                    ("base_offset", roof::BASE_OFFSET),
+                    ("edges", roof::EDGES),
+                    ("overhang", roof::OVERHANG),
+                    ("roof_type", roof::ROOF_TYPE),
+                    ("pinned", roof::PINNED),
+                ],
+            ),
             (
                 STAIR,
                 &[
@@ -919,6 +1071,7 @@ mod tests {
                     ("address", project::ADDRESS),
                     ("length_unit", project::LENGTH_UNIT),
                     ("template", project::TEMPLATE),
+                    ("slope_unit", project::SLOPE_UNIT),
                 ],
             ),
             (SITE, &[("name", site::NAME)]),
@@ -959,6 +1112,8 @@ mod tests {
                     ("core_exterior", wall::CORE_EXTERIOR),
                     ("core_interior", wall::CORE_INTERIOR),
                     ("pinned", wall::PINNED),
+                    ("top_offset", wall::TOP_OFFSET),
+                    ("top_attach", wall::TOP_ATTACH),
                 ],
             ),
             (

@@ -38,7 +38,8 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
             .unwrap_or(0.0);
         let top_elevation = of(LEVEL)
             .find(|l| l["id"] == values["top_level"])
-            .and_then(|l| number(&l["values"], "elevation"));
+            .and_then(|l| number(&l["values"], "elevation"))
+            .map(|e| e + number(values, "top_offset").unwrap_or(0.0));
         Some((
             Wall {
                 start: [number(values, "start_x")?, number(values, "start_y")?],

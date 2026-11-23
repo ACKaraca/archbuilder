@@ -59,6 +59,7 @@ fn tool_command(kind: TypeKind) -> &'static str {
         TypeKind::Floor => FLOOR_CREATE,
         TypeKind::Door => DOOR_PLACE,
         TypeKind::Window => WINDOW_PLACE,
+        TypeKind::Roof => archbuilder_commands::roof::ROOF_CREATE,
     }
 }
 
@@ -78,7 +79,11 @@ impl WallInteraction {
         let active = if self.tool.active() {
             Some(TypeKind::Wall)
         } else if self.floors.running() {
-            Some(TypeKind::Floor)
+            Some(if self.floors.state().is_some_and(|s| s.roof) {
+                TypeKind::Roof
+            } else {
+                TypeKind::Floor
+            })
         } else {
             self.inserts.state().map(|s| match s.kind {
                 archbuilder_model::insert::Kind::Door => TypeKind::Door,
@@ -164,7 +169,9 @@ impl WallInteraction {
                 TypeKind::Door | TypeKind::Window => {
                     self.with_inserts(cx, |tool, env, run| tool.retype(env, run))
                 }
-                TypeKind::Floor => self.with_floors(cx, |tool, env, run| tool.retype(env, run)),
+                TypeKind::Floor | TypeKind::Roof => {
+                    self.with_floors(cx, |tool, env, run| tool.retype(env, run))
+                }
             };
         }
         let mut invocation = Invocation::new(

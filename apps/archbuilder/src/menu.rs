@@ -20,7 +20,7 @@ use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE, MODIFY_ROTATE,
 };
 use archbuilder_commands::wall::OBJECT_DELETE;
-use archbuilder_model::types::{DOOR, FLOOR, ROOM, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, ROOF, ROOM, STAIR, WALL, WINDOW};
 
 use crate::shortcuts::ui;
 
@@ -94,6 +94,18 @@ const KEEP_STAIRS: Label = Label {
 };
 const NEW_STAIR: Label = Label {
     message_id: "ab-menu-new-stair",
+};
+const NEW_ROOF: Label = Label {
+    message_id: "ab-menu-new-roof",
+};
+const KEEP_ROOFS: Label = Label {
+    message_id: "ab-menu-keep-roofs",
+};
+const ATTACH_TOP: Label = Label {
+    message_id: "ab-menu-attach-top",
+};
+const DETACH_TOP: Label = Label {
+    message_id: "ab-menu-detach-top",
 };
 const KEEP_WALLS: Label = Label {
     message_id: "ab-menu-keep-walls",
@@ -177,6 +189,7 @@ fn keep_label(kind: &str) -> &'static str {
         FLOOR => KEEP_FLOORS.message_id,
         ROOM => KEEP_ROOMS.message_id,
         STAIR => KEEP_STAIRS.message_id,
+        ROOF => KEEP_ROOFS.message_id,
         _ => KEEP_WALLS.message_id,
     }
 }
@@ -216,6 +229,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
                 NEW_STAIR.message_id,
                 archbuilder_commands::stair::STAIR_CREATE,
             ),
+            ContextEntry::command(NEW_ROOF.message_id, archbuilder_commands::roof::ROOF_CREATE),
             ContextEntry::command(ALIGN.message_id, edit::MODIFY_ALIGN),
             ContextEntry::command(TRIM.message_id, edit::MODIFY_TRIM),
             ContextEntry::command(SPLIT.message_id, edit::WALL_SPLIT),
@@ -241,6 +255,17 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
     if state.pinned.0 {
         out.push(ContextEntry::command(UNPIN.message_id, edit::ELEMENT_UNPIN));
     }
+    // Walls attach their top to the roof or floor above, and detach it.
+    if state.kinds.contains(&WALL) {
+        out.push(ContextEntry::command(
+            ATTACH_TOP.message_id,
+            archbuilder_commands::roof::WALL_ATTACH_TOP,
+        ));
+        out.push(ContextEntry::command(
+            DETACH_TOP.message_id,
+            archbuilder_commands::roof::WALL_DETACH_TOP,
+        ));
+    }
     out.extend([
         ContextEntry::separator(),
         ContextEntry::command(COPY_CLIPBOARD.message_id, ui::COPY),
@@ -256,7 +281,7 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
     if state
         .kinds
         .iter()
-        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW))
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF))
     {
         out.push(ContextEntry::command(
             SELECT_TYPE.message_id,
@@ -271,11 +296,11 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
             )
         }));
     }
-    // Walls, floors, doors and windows have types.
+    // Walls, floors, doors, windows and roofs have types.
     if state
         .kinds
         .iter()
-        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW))
+        .any(|k| matches!(*k, WALL | FLOOR | DOOR | WINDOW | ROOF))
     {
         out.extend([
             ContextEntry::separator(),
@@ -336,6 +361,7 @@ mod tests {
             [
                 "ab-menu-repeat",
                 "ab-menu-new-stair",
+                "ab-menu-new-roof",
                 "ab-menu-align",
                 "ab-menu-trim",
                 "ab-menu-split",
@@ -346,7 +372,7 @@ mod tests {
         );
         // Repeat and Unhide all are disabled while there is nothing to repeat or show again.
         let e = entries(&s);
-        assert!(!e[0].enabled && !e[7].enabled && e[1..7].iter().all(|e| e.enabled));
+        assert!(!e[0].enabled && !e[8].enabled && e[1..8].iter().all(|e| e.enabled));
         let s = State {
             has_last: true,
             temporary: true,
@@ -381,6 +407,8 @@ mod tests {
             "ab-menu-create-similar",
             "ab-menu-match-type",
             "ab-menu-edit-type",
+            "ab-menu-attach-top",
+            "ab-menu-detach-top",
             "ab-menu-properties",
         ] {
             assert!(names.contains(&want.to_owned()), "{want}");

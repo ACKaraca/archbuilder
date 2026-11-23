@@ -61,9 +61,11 @@ pub mod insert;
 pub mod join;
 pub mod names;
 pub mod pick;
+pub mod roof;
 pub mod room;
 pub mod spatial;
 pub mod stair;
+pub mod terrain;
 pub mod transform;
 pub mod types;
 pub mod units;
@@ -167,6 +169,16 @@ pub mod defaults {
             format!("Merdiven {n}")
         } else {
             format!("Stair {n}")
+        }
+    }
+
+    /// The name of the roof numbered `n` on a storey in `language`: `Roof 3`, `Çatı 3`.
+    #[must_use]
+    pub fn roof(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çatı {n}")
+        } else {
+            format!("Roof {n}")
         }
     }
 

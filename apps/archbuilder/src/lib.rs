@@ -31,11 +31,12 @@ use archbuilder_commands::modify::{
     CLIPBOARD_PASTE, CLIPBOARD_PASTE_TO_STOREY, MODIFY_COPY, MODIFY_MIRROR, MODIFY_MOVE,
     MODIFY_ROTATE,
 };
+use archbuilder_commands::roof::{ROOF_CREATE, WALL_ATTACH_TOP, WALL_DETACH_TOP};
 use archbuilder_commands::room::{ROOM_PLACE, ROOM_PLACE_ALL};
 use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_commands::structure::{OBJECT_SELECT, PROJECT_NEW, STOREY_ADD, STOREY_DELETE};
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE};
-use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 
 pub mod chrome;
 pub mod clipboard;
@@ -43,6 +44,7 @@ pub mod direct;
 pub mod extract_floor;
 pub mod extract_insert;
 pub mod extract_level;
+pub mod extract_roof;
 pub mod extract_stair;
 pub mod extract_wall;
 pub mod floor_tool;
@@ -54,6 +56,7 @@ pub mod modify_tool;
 pub mod outliner;
 pub mod picker;
 pub mod properties;
+pub mod roof_view;
 pub mod room_tool;
 pub mod room_view;
 pub mod selection;
@@ -192,6 +195,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         let mut out = extract_wall::dependents(snapshot, changes);
         out.extend(extract_floor::dependents(snapshot, changes));
         out.extend(extract_stair::dependents(snapshot, changes));
+        out.extend(extract_roof::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
         out
@@ -314,6 +318,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.roof".into(),
+        types: vec![ROOF.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof::extract_roof(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.insert".into(),
         types: vec![DOOR.to_owned(), WINDOW.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -378,6 +391,9 @@ fn menu() -> Result<Menu> {
             ROOM_PLACE,
             ROOM_PLACE_ALL,
             STAIR_CREATE,
+            ROOF_CREATE,
+            WALL_ATTACH_TOP,
+            WALL_DETACH_TOP,
             INSERT_FLIP_HAND,
             INSERT_FLIP_FACING,
         ]
@@ -470,6 +486,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                 let snapshot = t.document().snapshot();
                 out.extend(room_view::shared().overlays(&snapshot, language));
                 out.extend(stair_view::overlays(&snapshot, language));
+                out.extend(roof_view::overlays(&snapshot, language));
                 out.extend(pin_marks(&snapshot));
             }
             out

@@ -64,6 +64,27 @@ const GENERIC_FLOOR: Msg = Msg {
 const SLAB_FLOOR: Msg = Msg {
     message_id: "ab-type-floor-slab",
 };
+const GENERIC_ROOF: Msg = Msg {
+    message_id: "ab-type-roof-generic",
+};
+const RAFTER_ROOF: Msg = Msg {
+    message_id: "ab-type-roof-rafters",
+};
+const GENERATED_ROOF: Msg = Msg {
+    message_id: "ab-type-roof-generated",
+};
+const M_TILES: Msg = Msg {
+    message_id: "ab-material-roof-tiles",
+};
+const M_BATTENS: Msg = Msg {
+    message_id: "ab-material-battens",
+};
+const M_UNDERLAY: Msg = Msg {
+    message_id: "ab-material-roof-underlay",
+};
+const M_RAFTERS: Msg = Msg {
+    message_id: "ab-material-rafters-insulation",
+};
 const SINGLE_DOOR: Msg = Msg {
     message_id: "ab-type-door-single",
 };
@@ -235,7 +256,7 @@ fn create_type(
 }
 
 /// Creates the default types of a new project, named in the interface language: three wall
-/// types, two floor types, two door types and two window types.
+/// types, two floor types, two roof types, three door types and three window types.
 ///
 /// # Errors
 /// The errors of the transaction.
@@ -360,6 +381,47 @@ pub(crate) fn create_defaults(ctx: &mut Context<'_>) -> Result<()> {
     ] {
         create_type(ctx, kind, t.values(&n.text(name, &[])))?;
     }
+    create_roof_defaults(ctx, &n)
+}
+
+/// The two roof types of a new project: one generic layer of 300 mm, and timber rafters with
+/// insulation under tiles. Also made for a document from before roof types the first time it
+/// needs a roof type ([`ensure_roof_types`]).
+fn create_roof_defaults(ctx: &mut Context<'_>, n: &Names) -> Result<()> {
+    let layer = |f: Function, m: &Msg, t: f64| Layer::new(f, &n.text(m, &[]), t);
+    let roofs = [
+        (&GENERIC_ROOF, Layers::single(&n.text(&M_GENERIC, &[]), 0.3)),
+        (
+            &RAFTER_ROOF,
+            Layers {
+                layers: vec![
+                    layer(Function::Finish, &M_TILES, 0.03),
+                    layer(Function::Substrate, &M_BATTENS, 0.04),
+                    layer(Function::Membrane, &M_UNDERLAY, 0.0),
+                    layer(Function::Structure, &M_RAFTERS, 0.2),
+                    layer(Function::Finish, &M_GYPSUM, 0.0125),
+                ],
+                core: (3, 4),
+            },
+        ),
+    ];
+    for (name, layers) in &roofs {
+        let values = et::floor_type_values(&n.text(name, &[]), layers);
+        create_type(ctx, TypeKind::Roof, values)?;
+    }
+    Ok(())
+}
+
+/// Makes the default roof types in a document that has none yet (a document from before roof
+/// types), so a new roof gets the same choice a new project offers.
+///
+/// # Errors
+/// The errors of the transaction.
+pub(crate) fn ensure_roof_types(ctx: &mut Context<'_>) -> Result<()> {
+    if et::of_kind(ctx.txn()?.snapshot(), TypeKind::Roof).is_empty() {
+        let n = Names::new(&language(ctx));
+        create_roof_defaults(ctx, &n)?;
+    }
     Ok(())
 }
 
@@ -380,6 +442,10 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
         TypeKind::Floor => vec![(
             types::floor::THICKNESS,
             types::length(types::DEFAULT_FLOOR_THICKNESS),
+        )],
+        TypeKind::Roof => vec![(
+            types::roof::THICKNESS,
+            types::length(archbuilder_model::roof::DEFAULT_THICKNESS),
         )],
         TypeKind::Door | TypeKind::Window => {
             let window = kind == TypeKind::Window;
@@ -447,10 +513,10 @@ pub(crate) fn layered_for(
         return Ok(chosen);
     }
     let mut wanted = vec![(
-        if kind == TypeKind::Wall {
-            types::wall::THICKNESS
-        } else {
-            types::floor::THICKNESS
+        match kind {
+            TypeKind::Wall => types::wall::THICKNESS,
+            TypeKind::Roof => types::roof::THICKNESS,
+            _ => types::floor::THICKNESS,
         },
         types::length(thickness),
     )];
@@ -521,6 +587,7 @@ fn wanted(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, Value)> {
             types::wall::CORE_INTERIOR,
         ],
         TypeKind::Floor => &[types::floor::THICKNESS],
+        TypeKind::Roof => &[types::roof::THICKNESS],
         TypeKind::Door | TypeKind::Window => &[
             types::insert::WIDTH,
             types::insert::HEIGHT,
@@ -611,6 +678,14 @@ pub fn ensure(
         TypeKind::Floor => {
             let total = length(types::floor::THICKNESS);
             let name = n.text(&GENERATED_FLOOR, &[("mm", mm(total))]);
+            et::floor_type_values(
+                &free_name(&snapshot, kind, &name, &n),
+                &Layers::single(&generic, total),
+            )
+        }
+        TypeKind::Roof => {
+            let total = length(types::roof::THICKNESS);
+            let name = n.text(&GENERATED_ROOF, &[("mm", mm(total))]);
             et::floor_type_values(
                 &free_name(&snapshot, kind, &name, &n),
                 &Layers::single(&generic, total),
@@ -1046,7 +1121,7 @@ pub struct AssignType {
     #[serde(rename = "type")]
     #[schemars(length(min = 1, max = 256))]
     pub element_type: String,
-    /// With a type name: the kind of instance (`wall`, `floor`, `door`, `window`); else the kind
+    /// With a type name: the kind of instance (`wall`, `floor`, `door`, `window`, `roof`); else the kind
     /// of the selection.
     #[serde(default)]
     #[schemars(length(max = 16))]
@@ -1062,6 +1137,7 @@ fn kind_named(name: &str) -> Option<TypeKind> {
         TypeKind::Floor => name == "floor",
         TypeKind::Door => name == "door",
         TypeKind::Window => name == "window",
+        TypeKind::Roof => name == "roof",
     })
 }
 

@@ -13,6 +13,7 @@
 //! separated by a comma in the foundation's point entry, so a point is typed `3.5,2` in every
 //! language.
 
+mod attach;
 mod habits;
 mod types;
 
@@ -37,6 +38,7 @@ use arc_ui::{
     ProductOverlay, PromptControls, WorkPlane,
 };
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::roof::ROOF_CREATE;
 use archbuilder_commands::room::ROOM_PLACE;
 use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_commands::structure::LANGUAGE_SETTING;
@@ -92,6 +94,11 @@ const IFC_EXPORTED: Message = Message {
 /// What an export says when its loss report is not empty.
 const IFC_LOSS: Message = Message {
     message_id: "ab-notice-ifc-loss",
+};
+
+/// What a delete says when walls lost the roof or floor their top was attached to.
+const WALLS_DETACHED: Message = Message {
+    message_id: "ab-notice-walls-detached",
 };
 
 /// What a delete says when floor edges lost their wall.
@@ -374,6 +381,8 @@ pub struct WallInteraction {
     habits: habits::Habits,
     /// Match type while it runs: the source once picked.
     matching: Option<Option<ObjectId>>,
+    /// Attach top in progress: waiting for walls, or for the roof or floor.
+    attaching: Option<attach::Attach>,
     /// The name of the source's type, for the match prompt.
     match_type_name: String,
     /// Whether the tab's document was checked for types once (see [`upgrade_invocation`]).
@@ -434,6 +443,7 @@ impl WallInteraction {
             label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
             habits: habits::Habits::default(),
             matching: None,
+            attaching: None,
             match_type_name: String::new(),
             upgrade_tried: false,
             wake: 0,
@@ -678,6 +688,7 @@ impl WallInteraction {
         self.floor_hover.clear();
         self.hover = None;
         self.matching = None;
+        self.attaching = None;
     }
 
     /// The elevation of the plane the running tool works on.
@@ -926,6 +937,15 @@ impl WallInteraction {
             let mut chars = wanted.chars();
             chars.next().filter(|_| chars.next().is_none())
         };
+        // The prompt's own shortcut letter wins over the English letters of other keywords.
+        if let Some(c) = single
+            && let Some(o) = prompt.keyword_options().find(|o| {
+                o.shortcut
+                    .is_some_and(|s| fold(&s.to_string()).starts_with(c))
+            })
+        {
+            return Some(o.id.clone());
+        }
         prompt.keyword_options().find_map(|o| {
             let label = fold(&localizer.format(&o.label, &[]).text);
             let english = ENGLISH_SHORTCUTS
@@ -981,6 +1001,8 @@ impl Interaction for WallInteraction {
     }
 
     fn frame(&mut self, cx: &InteractionContext<'_>) {
+        // The plan symbols follow the camera of this frame, not the last pointer event.
+        self.update_view(cx, None);
         let right = cx.camera().right();
         self.right_xy = [right.x, right.y];
         if let Ok(document) = cx.document() {
@@ -1068,10 +1090,19 @@ impl Interaction for WallInteraction {
         // A typed line or a button's command ends match type; an empty Enter ends it below.
         if matches!(&action, LineAction::Submit(t) if !t.trim().is_empty()) {
             self.matching = None;
+            self.attaching = None;
         }
         let result = match action {
             LineAction::ClearInput => Ok(()),
             // Escape at the match prompt ends it; the shell says `*Cancel*` for the prompt.
+            LineAction::Cancel if self.attaching.is_some() => {
+                self.attaching = None;
+                Ok(())
+            }
+            LineAction::Submit(t) if self.attaching.is_some() && t.trim().is_empty() => {
+                self.attach_enter(cx);
+                Ok(())
+            }
             LineAction::Cancel if self.matching.is_some() => {
                 self.matching = None;
                 Ok(())
@@ -1192,6 +1223,9 @@ impl Interaction for WallInteraction {
             LineAction::Submit(text) if is_floor_word(&text) && !self.tool.active() => {
                 self.intent(cx, &Intent::new(FLOOR_CREATE))
             }
+            LineAction::Submit(text) if is_roof_word(&text) && !self.tool.active() => {
+                self.intent(cx, &Intent::new(ROOF_CREATE))
+            }
             LineAction::Submit(text) if text.trim() == FLOOR_ADD_HOLE => {
                 self.intent(cx, &Intent::new(FLOOR_ADD_HOLE))
             }
@@ -1262,7 +1296,8 @@ impl Interaction for WallInteraction {
                     .gathering()
                     .then(archbuilder_commands::modify::select_prompt)
             })
-            .or_else(|| self.match_prompt());
+            .or_else(|| self.match_prompt())
+            .or_else(|| self.attach_prompt());
         let options = prompt
             .as_ref()
             .map_or_else(PromptControls::default, |p| PromptControls {
@@ -1379,6 +1414,9 @@ impl WallInteraction {
             return self.insert_pointer(cx, event);
         }
         if let Some(taken) = self.match_pointer(cx, event) {
+            return taken;
+        }
+        if let Some(taken) = self.attach_pointer(cx, event) {
             return taken;
         }
         let Some(chain) = self.tool.chain().cloned() else {
@@ -1814,8 +1852,9 @@ impl WallInteraction {
         if let Some(result) = self.ui_intent(cx, intent) {
             return result;
         }
-        // Any command of the product ends match type.
+        // Any command of the product ends match type and attach top.
         self.matching = None;
+        self.attaching = None;
         self.note_intent(intent);
         let command = intent.command.as_str();
         if command == EXPORT_IFC {
@@ -1836,6 +1875,16 @@ impl WallInteraction {
             self.inserts.stop();
             self.hover = None;
             return self.with_floors(cx, |tool, env, run| tool.begin(env, run, None));
+        }
+        if command == archbuilder_commands::roof::WALL_ATTACH_TOP && intent.params.is_empty() {
+            self.start_attach(cx);
+            return Ok(());
+        }
+        if command == ROOF_CREATE && intent.params.is_empty() {
+            self.tool.stop();
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_floors(cx, |tool, env, run| tool.begin_roof(env, run));
         }
         if command == ROOM_PLACE && intent.params.is_empty() {
             self.stop_all();
@@ -1921,6 +1970,21 @@ impl WallInteraction {
                 .text;
             self.push_notice(text);
         }
+        // Walls attached to a deleted roof or floor keep their own top again: say so.
+        let detached = value
+            .get("detached_walls")
+            .and_then(serde_json::Value::as_i64);
+        if let Some(count) = detached.filter(|c| *c > 0)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let text = localizer
+                .format(
+                    WALLS_DETACHED.message_id,
+                    &[("count", arc_base::error::Value::Int(count))],
+                )
+                .text;
+            self.push_notice(text);
+        }
         // A wall goes with its doors and windows: say so.
         let inserts = value.get("inserts").and_then(serde_json::Value::as_i64);
         if matches!(command, OBJECT_DELETE | WALL_DELETE)
@@ -1948,6 +2012,7 @@ impl WallInteraction {
             || self.direct.active()
             || self.habits.rename.is_some()
             || self.matching.is_some()
+            || self.attaching.is_some()
     }
 
     /// After a command of the product: what the pointer outlined may be gone (a delete), so the
@@ -2504,6 +2569,14 @@ fn is_room_word(text: &str) -> bool {
 fn is_stair_word(text: &str) -> bool {
     let t = text.trim();
     [STAIR_CREATE, "stair", "merdiven"]
+        .iter()
+        .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
+}
+
+/// Whether `text` asks for the roof tool.
+fn is_roof_word(text: &str) -> bool {
+    let t = text.trim();
+    [ROOF_CREATE, "roof", "çatı", "cati"]
         .iter()
         .any(|w| t.eq_ignore_ascii_case(w) || t.to_lowercase() == *w)
 }

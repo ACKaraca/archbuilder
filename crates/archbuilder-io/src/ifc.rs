@@ -1,5 +1,5 @@
 //! The document as an IFC4 file: the project, site, building and storeys, and on each storey its
-//! walls, the doors and windows in them, its floors and its enclosed rooms (spaces), mapped to the neutral description of
+//! walls, the doors and windows in them, its floors, its roofs and its enclosed rooms (spaces), mapped to the neutral description of
 //! [`arc_io_ifc::write`] and written by it. Lengths are meters. The result is deterministic for a
 //! document and options: every `GlobalId` comes from an `ObjectId`, and the time stamp is the
 //! caller's. The mapping is described in `docs/architecture/domain-model.md`.
@@ -21,7 +21,7 @@ use archbuilder_model::element_type::{
 use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
-use archbuilder_model::types::{DOOR, FLOOR, WINDOW, text};
+use archbuilder_model::types::{DOOR, FLOOR, ROOF, WINDOW, text};
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{join, spatial};
 
@@ -60,7 +60,7 @@ impl Default for ExportOptions {
 pub struct Export {
     /// The bytes of the IFC4 file.
     pub bytes: Vec<u8>,
-    /// The walls, floors, rooms, doors and windows written; the openings that void walls are not counted.
+    /// The walls, floors, roofs, rooms, doors and windows written; the openings that void walls are not counted.
     pub elements: usize,
     /// What was not exported or only approximately; the writer's own entries are included.
     pub report: LossReport,
@@ -159,6 +159,10 @@ impl Mapper<'_> {
         for floor in spatial::children(self.snapshot, FLOOR, storey) {
             self.cancel.check()?;
             self.floor(&floor, storey);
+        }
+        for roof in spatial::children(self.snapshot, ROOF, storey) {
+            self.cancel.check()?;
+            self.roof(&roof, storey, level);
         }
         for entry in archbuilder_model::room::of_storey(self.snapshot, storey) {
             self.cancel.check()?;
@@ -292,14 +296,33 @@ impl Mapper<'_> {
             Quantity::new("Width", QuantityValue::Length(wall.thickness)),
             Quantity::new("Height", QuantityValue::Length(wall.height)),
         ];
+        // A wall whose top follows a roof has its clipped solid as a B-rep.
+        let clipped = insert::attached_roof(self.snapshot, object).and_then(|(_, surface)| {
+            archbuilder_model::wall::under_roof(&wall, footprint, level, &surface).ok()
+        });
+        let gross = match &clipped {
+            Some(solid) => {
+                let top = solid.bounding_box().max().z - (level + wall.base_offset);
+                for q in &mut quantities {
+                    if q.name == "Height" {
+                        q.value = QuantityValue::Length(top);
+                    }
+                }
+                Ok(solid.volume())
+            }
+            None => gross,
+        };
         if let Ok(volume) = gross {
             let local = footprint.map(|p| frame.local(p));
-            element.body = Some(Body::Extrusion {
-                outer: profile(&local, true),
-                holes: Vec::new(),
-                direction: Vector3::z(),
-                depth: wall.height,
-            });
+            element.body = match &clipped {
+                Some(solid) => brep([solid], &frame, level + wall.base_offset),
+                None => Some(Body::Extrusion {
+                    outer: profile(&local, true),
+                    holes: Vec::new(),
+                    direction: Vector3::z(),
+                    depth: wall.height,
+                }),
+            };
             quantities.push(Quantity::new("GrossVolume", QuantityValue::Volume(volume)));
             match insert::wall_solid(self.snapshot, object) {
                 Some(Ok(net)) => {
@@ -410,7 +433,9 @@ impl Mapper<'_> {
         element.overall_width = Some(item.width);
         element.overall_height = Some(item.height);
         element.host = Some(opening_id);
-        match insert::pieces(wall, level, item).map(|p| brep(&p, &frame, level + z)) {
+        match insert::pieces(wall, level, item)
+            .map(|p| brep(p.iter().map(|(_, s)| s), &frame, level + z))
+        {
             Ok(Some(body)) => element.body = Some(body),
             _ => self.lose(reasons::BODY_NOT_EXPORTED, label, object),
         }
@@ -418,6 +443,72 @@ impl Mapper<'_> {
             self.lose(reasons::WINDOW_OPERATION, label, object);
         }
         self.elements.push(opening);
+        self.elements.push(element);
+        self.exported += 1;
+    }
+
+    /// A roof as an `IfcRoof` with its slab as a faceted B-rep in the storey's coordinates, its
+    /// type's layers on the type, and its projected and sloped areas. The predefined type names
+    /// the form: a hip roof when every edge slopes, a gable roof for four edges of which two are
+    /// gables, a shed roof for one sloped edge, else a free form.
+    fn roof(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Ok(derived) = archbuilder_model::roof::Derived::of(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCROOF", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Roof,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        let edges = &derived.roof.edges;
+        let sloped = edges.iter().filter(|e| e.slope.is_some()).count();
+        element.predefined_type = Some(
+            match (edges.len(), sloped) {
+                (n, s) if n == s => "HIP_ROOF",
+                (4, 2) => "GABLE_ROOF",
+                (_, 1) => "SHED_ROOF",
+                _ => "FREEFORM",
+            }
+            .to_owned(),
+        );
+        element.element_type =
+            et::type_of(self.snapshot, TypeKind::Roof, &object.values).map(|t| t.id.as_u128());
+        let surface = &derived.surface;
+        let origin = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        match surface
+            .solid()
+            .ok()
+            .and_then(|s| brep([&s], &origin, level))
+        {
+            Some(body) => {
+                element.body = Some(body);
+                let sloped_area: f64 = surface
+                    .pieces()
+                    .iter()
+                    .map(|p| {
+                        let g = p.plane.grad;
+                        archbuilder_model::terrain::double_area(&p.points).abs() / 2.0
+                            * (1.0 + g[0] * g[0] + g[1] * g[1]).sqrt()
+                    })
+                    .sum();
+                element.quantity_sets.push(QuantitySet::new(
+                    "Qto_RoofBaseQuantities",
+                    vec![
+                        Quantity::new("GrossArea", QuantityValue::Area(sloped_area)),
+                        Quantity::new("ProjectedArea", QuantityValue::Area(surface.plan_area())),
+                    ],
+                ));
+                element.property_sets.push(PropertySet::new(
+                    "Pset_RoofCommon",
+                    vec![Property::new("IsExternal", PropertyValue::Boolean(true))],
+                ));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCROOF", object),
+        }
         self.elements.push(element);
         self.exported += 1;
     }
@@ -508,9 +599,11 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
                 TypeKind::Floor => (ElementKind::Slab, "FLOOR"),
                 TypeKind::Door => (ElementKind::Door, "DOOR"),
                 TypeKind::Window => (ElementKind::Window, "WINDOW"),
+                // A roof type does not decide the roof's form; its occurrences name it.
+                TypeKind::Roof => (ElementKind::Roof, ""),
             };
             let mut t = ElementType::new(object.id.as_u128(), ifc_kind, et::name(&object));
-            t.predefined_type = Some(predefined.to_owned());
+            t.predefined_type = (!predefined.is_empty()).then(|| predefined.to_owned());
             if let Some(wall) =
                 WallType::from_values(&object.values).filter(|_| kind == TypeKind::Wall)
                 && wall.exposure == Exposure::Interior
@@ -556,10 +649,14 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
 
 /// The solids of an insert as one faceted B-rep in the insert's frame; `z0` is the elevation of
 /// the frame's origin. `None` when a face has holes, which a B-rep of loops cannot hold.
-fn brep(pieces: &[(insert::Role, arc_geom::Polyhedron)], frame: &Frame, z0: f64) -> Option<Body> {
+fn brep<'a>(
+    solids: impl IntoIterator<Item = &'a arc_geom::Polyhedron>,
+    frame: &Frame,
+    z0: f64,
+) -> Option<Body> {
     let mut vertices = Vec::new();
     let mut faces = Vec::new();
-    for (_, solid) in pieces {
+    for solid in solids {
         let first = vertices.len();
         vertices.extend(solid.vertices().iter().map(|v| {
             let [x, y] = frame.local([v.x, v.y]);

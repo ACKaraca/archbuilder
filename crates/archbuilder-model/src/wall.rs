@@ -162,6 +162,108 @@ pub const EXTERIOR_FACE: FaceTag = FaceTag::Side {
     curve: EXTERIOR_CURVE,
     facet: 0,
 };
+/// The distance of a wall record's top above its top level; 0 when absent.
+#[must_use]
+pub fn top_offset(values: &[Option<Value>]) -> f64 {
+    types::meters(values, wall::TOP_OFFSET).unwrap_or(0.0)
+}
+
+/// The roof or floor a wall record's top is attached to.
+#[must_use]
+pub fn attachment(values: &[Option<Value>]) -> Option<arc_base::ObjectId> {
+    match values.get(wall::TOP_ATTACH)? {
+        Some(Value::Reference(id)) => Some(*id),
+        _ => None,
+    }
+}
+
+/// The solid of `wall` standing on a level at `level` over `footprint` (the joined corners, as
+/// [`Wall::solid_in`] takes them) with its top on the underside of the roof `surface`: the
+/// footprint is cut by the roof's cells and each piece rises to its cell's plane, so a gable
+/// end gets its triangle and a wall under a hip its sloping top, across the thickness too; a
+/// part outside the roof's outline keeps the wall's own top, with a vertical step where they
+/// meet. The exterior and interior faces keep their tags.
+///
+/// # Errors
+/// `ab.model.wall_attach_failed` (with the argument `name` left empty) when no part of the
+/// footprint is under the roof or the underside comes down to the wall's base, and
+/// the solid kernel's errors.
+pub fn under_roof(
+    wall: &Wall,
+    footprint: [[f64; 2]; 4],
+    level: f64,
+    surface: &crate::roof::Surface,
+) -> Result<Polyhedron> {
+    use crate::terrain::{self, Bottom, Piece, Plane, clip_convex, double_area, split_quad};
+    let tolerance = Tolerance::DEFAULT;
+    let failed = || {
+        arc_base::Error::new(crate::error::codes::WALL_ATTACH_FAILED)
+            .with_arg("name", "")
+            .with_arg("target", "")
+    };
+    let base = level + wall.base_offset;
+    let cells = surface.pieces();
+    let mut pieces = Vec::new();
+    let mut covered = 0.0;
+    for triangle in split_quad(footprint) {
+        for cell in &cells {
+            let part = clip_convex(&triangle, &cell.points);
+            let area = double_area(&part) / 2.0;
+            if part.len() >= 3 && area > tolerance.linear * tolerance.linear {
+                covered += area;
+                pieces.push(Piece {
+                    points: part,
+                    plane: cell.plane,
+                    upper: None,
+                });
+            }
+        }
+    }
+    if covered <= tolerance.linear * tolerance.linear {
+        return Err(failed());
+    }
+    let low = base + types::HEIGHT_RANGE.0;
+    if pieces
+        .iter()
+        .any(|p| p.points.iter().any(|q| p.plane.z(*q) < low))
+    {
+        return Err(failed());
+    }
+    // The part outside the roof's outline keeps the wall's own top.
+    let mut outside: Vec<Vec<[f64; 2]>> =
+        split_quad(footprint).iter().map(|t| t.to_vec()).collect();
+    for cut in surface.outline_triangles() {
+        outside = terrain::subtract_convex(outside, cut, tolerance.linear);
+    }
+    let own = Plane::level(base + wall.height);
+    pieces.extend(outside.into_iter().map(|points| Piece {
+        points,
+        plane: own,
+        upper: None,
+    }));
+    // The side faces take the tag of the footprint edge they lie on.
+    let side = |a: [f64; 2], b: [f64; 2]| {
+        let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+        let distance = |k: usize| {
+            let (Some(p), Some(q)) = (footprint.get(k), footprint.get((k + 1) % 4)) else {
+                return f64::INFINITY;
+            };
+            let d = [q[0] - p[0], q[1] - p[1]];
+            let length = d[0].hypot(d[1]).max(f64::MIN_POSITIVE);
+            ((middle[0] - p[0]) * d[1] - (middle[1] - p[1]) * d[0]).abs() / length
+        };
+        let curve = (0..4_u32)
+            .min_by(|x, y| distance(*x as usize).total_cmp(&distance(*y as usize)))
+            .unwrap_or(0);
+        FaceTag::Side {
+            loop_index: 0,
+            curve,
+            facet: 0,
+        }
+    };
+    terrain::solid(&pieces, 0.0, Bottom::Level(base), &side)
+}
+
 /// The tag of the interior face of a wall solid.
 pub const INTERIOR_FACE: FaceTag = FaceTag::Side {
     loop_index: 0,
@@ -224,15 +326,23 @@ impl Wall {
     #[must_use]
     pub fn of(snapshot: &arc_doc::Snapshot, object: &arc_doc::Object) -> Option<Self> {
         let wall = Self::from_values(&object.values)?;
+        let offset = top_offset(&object.values);
         let top = Self::top_level(&object.values)
             .and_then(|id| crate::spatial::get(snapshot, id))
-            .and_then(|level| types::meters(&level.values, types::level::ELEVATION));
+            .and_then(|level| types::meters(&level.values, types::level::ELEVATION))
+            .map(|e| e + offset);
         let storey = object
             .header
             .owner
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
-        Some(wall.constrained(storey, top))
+        // A top attached to a floor stops at the floor's underside.
+        let floor_top = attachment(&object.values)
+            .and_then(|id| crate::spatial::get(snapshot, id))
+            .filter(|o| crate::spatial::type_of(snapshot, o.id).as_deref() == Some(types::FLOOR))
+            .and_then(|o| crate::floor::Derived::of(snapshot, &o))
+            .map(|d| d.top - d.floor.thickness);
+        Some(wall.constrained(storey, floor_top.or(top)))
     }
 
     /// The wall with its top constrained to a level at `top_elevation` (when there is one): the

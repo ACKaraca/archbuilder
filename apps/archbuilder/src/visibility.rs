@@ -15,7 +15,7 @@ use archbuilder_model::spatial;
 use archbuilder_model::types::WALL;
 
 /// The kinds that can be hidden or isolated as a whole.
-pub const KINDS: [&str; 6] = archbuilder_model::types::ELEMENTS;
+pub const KINDS: [&str; 7] = archbuilder_model::types::ELEMENTS;
 
 /// The most objects one list holds.
 const MAX_LISTED: usize = 100_000;

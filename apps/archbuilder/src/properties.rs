@@ -14,8 +14,8 @@ use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::element_type::{self as et, TypeKind};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOM, SITE, STAIR, STOREY, WALL,
-    WINDOW, level, storey,
+    self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY,
+    WALL, WINDOW, level, storey,
 };
 
 /// A message of the application.
@@ -25,6 +25,84 @@ struct Message {
 
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "roof_storey",
+        Message {
+            message_id: "ab-prop-roof-storey",
+        },
+    ),
+    (
+        "roof_slope",
+        Message {
+            message_id: "ab-prop-roof-slope",
+        },
+    ),
+    (
+        "roof_area",
+        Message {
+            message_id: "ab-prop-roof-area",
+        },
+    ),
+    (
+        "roof_top",
+        Message {
+            message_id: "ab-prop-roof-top",
+        },
+    ),
+    (
+        "roof_follows",
+        Message {
+            message_id: "ab-prop-roof-follows",
+        },
+    ),
+    (
+        "roof_attached",
+        Message {
+            message_id: "ab-prop-roof-attached",
+        },
+    ),
+    (
+        "overhang",
+        Message {
+            message_id: "ab-prop-overhang",
+        },
+    ),
+    (
+        "wall_attached",
+        Message {
+            message_id: "ab-prop-wall-attached",
+        },
+    ),
+    (
+        "slope_unit",
+        Message {
+            message_id: "ab-prop-slope-unit",
+        },
+    ),
+    (
+        "degrees",
+        Message {
+            message_id: "ab-slope-degrees",
+        },
+    ),
+    (
+        "percent",
+        Message {
+            message_id: "ab-slope-percent",
+        },
+    ),
+    (
+        "roof_slopes_mixed",
+        Message {
+            message_id: "ab-prop-roof-slopes-mixed",
+        },
+    ),
+    (
+        "rise_run",
+        Message {
+            message_id: "ab-slope-rise-run",
+        },
+    ),
     (
         "type",
         Message {
@@ -713,6 +791,12 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-stair",
         },
     ),
+    (
+        ROOF,
+        Message {
+            message_id: "ab-kind-roof",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -727,6 +811,40 @@ const EMPTY: Message = Message {
 const NOT_EDITABLE: Message = Message {
     message_id: "ab-prop-not-editable",
 };
+
+/// The readable name of a field or variant; the rows of a roof's edges are numbered from 1.
+fn label_text(localize: &dyn Localize, name: &str) -> String {
+    const SLOPED: Message = Message {
+        message_id: "ab-prop-roof-edge-sloped",
+    };
+    const SLOPE: Message = Message {
+        message_id: "ab-prop-roof-edge-slope",
+    };
+    const OVERHANG: Message = Message {
+        message_id: "ab-prop-roof-edge-overhang",
+    };
+    for (prefix, message) in [
+        ("roof_edge_sloped_", &SLOPED),
+        ("roof_edge_slope_", &SLOPE),
+        ("roof_edge_overhang_", &OVERHANG),
+    ] {
+        if let Some(k) = name
+            .strip_prefix(prefix)
+            .and_then(|k| k.parse::<i64>().ok())
+        {
+            return localize
+                .message(
+                    message.message_id,
+                    &[("n", arc_base::error::Value::Int(k + 1))],
+                )
+                .unwrap_or_else(|| name.to_owned());
+        }
+    }
+    LABELS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
+}
 
 fn say(localize: &dyn Localize, message: &Message) -> String {
     localize
@@ -843,6 +961,20 @@ fn shown(
                 FieldDecl::new("top_constraint", ValueType::Enum(variants)).in_aspect("geometry"),
             );
             values.push(Some(Value::Enum(current)));
+            // The offset of a constrained top, and what the top is attached to (attach and
+            // detach are commands of the context menu).
+            if let Some(decl) = decl.schema.fields.get(types::wall::TOP_OFFSET) {
+                fields.push(decl.clone());
+                values.push(Some(types::length(archbuilder_model::wall::top_offset(
+                    &object.values,
+                ))));
+            }
+            let attached = archbuilder_model::wall::attachment(&object.values)
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            fields.push(text_field("wall_attached"));
+            values.push(attached.map(Value::String));
+            read_only.push("wall_attached".to_owned());
             for (field, value) in joins {
                 fields.push(field);
                 values.push(value);
@@ -1091,6 +1223,15 @@ fn shown(
                 read_only.push(name.to_owned());
             }
         }
+        // A roof shows its type, base offset and overhang, one slope for its sloped edges, then
+        // each edge (whether it slopes, its slope, its own overhang), and what derives from it.
+        ROOF => roof_rows(
+            (snapshot, label),
+            object,
+            &mut fields,
+            &mut values,
+            &mut read_only,
+        ),
         // A door or a window shows the wall that hosts it; a door's sill is the wall's base.
         DOOR | WINDOW => {
             let host = object
@@ -1117,6 +1258,16 @@ fn shown(
             values.push(host.map(Value::String));
             read_only.push("insert_wall".to_owned());
         }
+        // The slope unit of a file from before it is degrees, shown as such.
+        PROJECT => {
+            if let Some(slot) = values.get_mut(types::project::SLOPE_UNIT)
+                && slot.is_none()
+            {
+                *slot = Some(Value::Enum(
+                    archbuilder_model::units::SlopeUnit::Degrees.code(),
+                ));
+            }
+        }
         // The building's base elevation has no effect yet: the levels carry the elevations.
         BUILDING => read_only.push("elevation".to_owned()),
         _ => {}
@@ -1135,6 +1286,116 @@ fn shown(
         values,
         read_only,
     })
+}
+
+/// The rows of a roof: its type, base offset and overhang, one slope for its sloped edges, then
+/// each edge (whether it slopes, its slope, its own overhang), and what derives from it.
+fn roof_rows(
+    (snapshot, label): (&Snapshot, &dyn Fn(&str) -> String),
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    use archbuilder_model::types::roof as rf;
+    let derived = archbuilder_model::roof::Derived::of(snapshot, object).ok();
+    let roof = archbuilder_model::roof::Roof::from_values(&object.values);
+    let kept = archbuilder_model::roof::Roof::kept_slopes(&object.values);
+    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
+        archbuilder_model::units::slope_unit(&p.values)
+    });
+    let text = |a: f64| archbuilder_model::units::slope_text(a, unit, '.');
+    let (decls, vals) = (fields.clone(), values.clone());
+    let order = [rf::NAME, rf::THICKNESS, rf::BASE_OFFSET, rf::OVERHANG];
+    *fields = order
+        .iter()
+        .filter_map(|k| decls.get(*k).cloned())
+        .collect();
+    *values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+    with_type(
+        (snapshot, label),
+        TypeKind::Roof,
+        object,
+        fields,
+        values,
+        read_only,
+    );
+    // One slope when the sloped edges share it, else a note that they differ.
+    let slopes: Vec<f64> = roof
+        .iter()
+        .flat_map(|r| r.edges.iter().filter_map(|e| e.slope))
+        .collect();
+    let shared = slopes
+        .first()
+        .copied()
+        .filter(|a| slopes.iter().all(|b| (a - b).abs() < 1e-9));
+    fields.push(FieldDecl::new("roof_slope", ValueType::String).in_aspect("geometry"));
+    values.push(Some(Value::String(
+        shared.map_or_else(|| label("roof_slopes_mixed"), text),
+    )));
+    let length = |name: String| {
+        FieldDecl::new(&name, ValueType::Quantity(Dimension::LENGTH))
+            .optional()
+            .in_aspect("geometry")
+    };
+    for (k, edge) in roof.iter().flat_map(|r| r.edges.iter().enumerate()) {
+        fields.push(
+            FieldDecl::new(format!("roof_edge_sloped_{k}"), ValueType::Bool).in_aspect("geometry"),
+        );
+        values.push(Some(Value::Bool(edge.slope.is_some())));
+        let slope = edge.slope.or_else(|| kept.get(k).copied());
+        fields.push(
+            FieldDecl::new(format!("roof_edge_slope_{k}"), ValueType::String).in_aspect("geometry"),
+        );
+        values.push(slope.map(|a| Value::String(text(a))));
+        fields.push(length(format!("roof_edge_overhang_{k}")));
+        // The overhang the edge has: its own, else the roof's.
+        values
+            .push(Some(types::length(edge.overhang.unwrap_or_else(|| {
+                roof.as_ref().map_or(0.0, |r| r.overhang)
+            }))));
+    }
+    let storey = object
+        .header
+        .owner
+        .and_then(|id| spatial::get(snapshot, id))
+        .and_then(|s| types::text(&s.values, storey::NAME).map(str::to_owned));
+    let attached = spatial::objects(snapshot, WALL)
+        .iter()
+        .filter(|w| archbuilder_model::wall::attachment(&w.values) == Some(object.id))
+        .count();
+    let follows: Vec<String> = roof
+        .as_ref()
+        .map(archbuilder_model::roof::Roof::walls)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|w| spatial::get(snapshot, w))
+        .filter_map(|w| types::text(&w.values, 0).map(str::to_owned))
+        .collect();
+    for (name, value) in [
+        ("roof_storey", storey),
+        (
+            "roof_area",
+            derived
+                .as_ref()
+                .map(|d| format!("{:.3} m²", d.surface.plan_area())),
+        ),
+        (
+            "roof_top",
+            derived
+                .as_ref()
+                .map(|d| format!("{:.3} m", d.surface.top())),
+        ),
+        ("roof_attached", Some(attached.to_string())),
+        (
+            "roof_follows",
+            Some(follows.join(", ")).filter(|w| !w.is_empty()),
+        ),
+    ] {
+        fields.push(text_field(name));
+        values.push(value.map(Value::String));
+        read_only.push(name.to_owned());
+    }
 }
 
 /// The type choice of an instance of `kind`: the types of the kind in their order (the grid sends
@@ -1212,12 +1473,7 @@ impl Panel for PropertiesPanel {
             return;
         };
         let localize = cx.localize;
-        let label_of = |name: &str| {
-            LABELS
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
-        };
+        let label_of = |name: &str| label_text(localize, name);
         let snapshot = tab.document().snapshot();
         // A selected storey stands for its level, which the grid shows through it.
         let covered: Vec<arc_base::ObjectId> = view
@@ -1289,12 +1545,7 @@ impl Panel for PropertiesPanel {
             units.set(format);
         }
         let localize = cx.localize;
-        let label = |name: &str| {
-            LABELS
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
-        };
+        let label = |name: &str| label_text(localize, name);
         let context = GridContext {
             localize,
             label: &label,

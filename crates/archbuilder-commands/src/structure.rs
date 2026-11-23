@@ -900,6 +900,13 @@ fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
             {
                 return Err(Error::new(codes::FIELD_FROM_TYPE).with_arg("field", field.to_owned()));
             }
+            (types::ROOF, field) if field == "roof_slope" || field.starts_with("roof_edge_") => {
+                if !crate::roof::set_property(ctx, id, field, &p.value)? {
+                    return Err(
+                        Error::new(codes::FIELD_UNKNOWN).with_arg("field", field.to_owned())
+                    );
+                }
+            }
             (LEVEL | STOREY, "elevation") => {
                 let param: QuantityParam = serde_json::from_value(p.value.clone())
                     .map_err(|_| Error::new(codes::VALUE_INVALID))?;

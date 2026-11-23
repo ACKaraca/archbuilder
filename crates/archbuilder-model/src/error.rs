@@ -249,4 +249,58 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-pinned",
     };
+    /// A roof record cannot be read.
+    pub const ROOF_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.roof_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-malformed",
+    };
+    /// A roof's footprint is not a simple loop of edges at least a millimeter long.
+    pub const ROOF_FOOTPRINT: ErrorCode = ErrorCode {
+        code: "ab.model.roof_footprint",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-footprint",
+    };
+    /// A roof's outline (the footprint with its overhangs) crosses or touches itself.
+    pub const ROOF_OUTLINE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_outline",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-outline",
+    };
+    /// No edge of a roof defines a slope.
+    pub const ROOF_NO_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_no_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-no-slope",
+    };
+    /// Two neighboring edges of a roof lie on one line with different slopes.
+    pub const ROOF_COLLINEAR_SLOPES: ErrorCode = ErrorCode {
+        code: "ab.model.roof_collinear_slopes",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-collinear-slopes",
+    };
+    /// No continuous roof surface covers a part of the outline.
+    pub const ROOF_UNCLOSED: ErrorCode = ErrorCode {
+        code: "ab.model.roof_unclosed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-unclosed",
+    };
+    /// The surface of a roof could not be computed reliably.
+    pub const ROOF_DEGENERATE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_degenerate",
+        category: Category::FailedOperation,
+        message_id: "ab-model-roof-degenerate",
+    };
+    /// A wall attached to a roof or floor cannot follow its underside and keeps its own top: a warning.
+    pub const WALL_ATTACH_FAILED: ErrorCode = ErrorCode {
+        code: "ab.model.wall_attach_failed",
+        category: Category::Conflict,
+        message_id: "ab-model-wall-attach-failed",
+    };
+    /// A wall is attached to something that is not a roof or a floor of its building.
+    pub const WALL_ATTACH_TARGET: ErrorCode = ErrorCode {
+        code: "ab.model.wall_attach_target",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-attach-target",
+    };
 }

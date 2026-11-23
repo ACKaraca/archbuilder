@@ -1,7 +1,7 @@
-//! Element types: the wall, floor, door and window types a project owns and its instances refer
+//! Element types: the wall, floor, door, window and roof types a project owns and its instances refer
 //! to (fixed-parameter types of the built-in kinds; there is no family editor).
 //!
-//! A wall type and a floor type are an ordered list of layers ([`Layer`]: a function, a material
+//! A wall type, a floor type and a roof type are an ordered list of layers ([`Layer`]: a function, a material
 //! name and a thickness; a membrane has no thickness) and a core, the index range of the layers
 //! that form the core ([`Layers`]). A wall's layers run from its exterior face to its interior
 //! face, a floor's from the top down. A wall type also carries its function flags: exterior or
@@ -25,8 +25,8 @@ use crate::error::codes;
 use crate::insert::{Kind, Operation};
 use crate::types::{
     self, DOOR, DOOR_TYPE, FLOOR, FLOOR_TYPE, FRAME_DEPTH_RANGE, FRAME_WIDTH_RANGE,
-    INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, SILL_RANGE, THICKNESS_RANGE, WALL,
-    WALL_TYPE, WINDOW, WINDOW_TYPE, insert_type, layered_type,
+    INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, ROOF, ROOF_TYPE, SILL_RANGE,
+    THICKNESS_RANGE, WALL, WALL_TYPE, WINDOW, WINDOW_TYPE, insert_type, layered_type,
 };
 
 /// The most layers a type has.
@@ -64,7 +64,7 @@ coded! {
     }
 }
 
-/// The four kinds of element type.
+/// The kinds of element type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeKind {
     /// Wall types.
@@ -75,11 +75,19 @@ pub enum TypeKind {
     Door,
     /// Window types.
     Window,
+    /// Roof types.
+    Roof,
 }
 
 impl TypeKind {
     /// Every kind, in the order of [`types::TYPE_KEYS`].
-    pub const ALL: [Self; 4] = [Self::Wall, Self::Floor, Self::Door, Self::Window];
+    pub const ALL: [Self; 5] = [
+        Self::Wall,
+        Self::Floor,
+        Self::Door,
+        Self::Window,
+        Self::Roof,
+    ];
 
     /// The key of the type records.
     #[must_use]
@@ -89,6 +97,7 @@ impl TypeKind {
             Self::Floor => FLOOR_TYPE,
             Self::Door => DOOR_TYPE,
             Self::Window => WINDOW_TYPE,
+            Self::Roof => ROOF_TYPE,
         }
     }
 
@@ -100,6 +109,7 @@ impl TypeKind {
             Self::Floor => FLOOR,
             Self::Door => DOOR,
             Self::Window => WINDOW,
+            Self::Roof => ROOF,
         }
     }
 
@@ -122,6 +132,7 @@ impl TypeKind {
             Self::Wall => types::wall::WALL_TYPE,
             Self::Floor => types::floor::FLOOR_TYPE,
             Self::Door | Self::Window => types::insert::INSERT_TYPE,
+            Self::Roof => types::roof::ROOF_TYPE,
         }
     }
 
@@ -132,13 +143,14 @@ impl TypeKind {
             Self::Wall => "wall_type",
             Self::Floor => "floor_type",
             Self::Door | Self::Window => "insert_type",
+            Self::Roof => "roof_type",
         }
     }
 
     /// Whether the types of this kind have layers.
     #[must_use]
     pub const fn layered(self) -> bool {
-        matches!(self, Self::Wall | Self::Floor)
+        matches!(self, Self::Wall | Self::Floor | Self::Roof)
     }
 
     /// The insert kind of a door or window type.
@@ -147,7 +159,7 @@ impl TypeKind {
         match self {
             Self::Door => Some(Kind::Door),
             Self::Window => Some(Kind::Window),
-            Self::Wall | Self::Floor => None,
+            Self::Wall | Self::Floor | Self::Roof => None,
         }
     }
 }
@@ -530,6 +542,15 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
                 )]
             })
             .unwrap_or_default(),
+        TypeKind::Roof => Layers::from_values(values)
+            .map(|l| {
+                vec![(
+                    types::roof::THICKNESS,
+                    "thickness",
+                    types::length(l.total()),
+                )]
+            })
+            .unwrap_or_default(),
         TypeKind::Door | TypeKind::Window => InsertType::from_values(values)
             .map(|t| {
                 use types::insert as i;
@@ -550,7 +571,7 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
 pub fn is_copied(kind: TypeKind, field: &str) -> bool {
     match kind {
         TypeKind::Wall => matches!(field, "thickness" | "core_exterior" | "core_interior"),
-        TypeKind::Floor => field == "thickness",
+        TypeKind::Floor | TypeKind::Roof => field == "thickness",
         TypeKind::Door | TypeKind::Window => matches!(
             field,
             "width" | "height" | "frame_width" | "frame_depth" | "operation"

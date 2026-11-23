@@ -1,5 +1,6 @@
 //! What is under a point of a plan view, as one ordered list: doors and windows first, then
-//! walls, stairs, rooms, floors and levels. The application hovers the first one and a click selects it
+//! walls, roofs near their outline or a ridge, hip or valley line, stairs, rooms, floors, roofs
+//! anywhere over their outline, and levels. The application hovers the first one and a click selects it
 //! (a repeated click steps down the list), so the highlighted object is the one picked.
 //!
 //! Within a kind the object of the higher storey comes first, as it is the one a view from above
@@ -60,6 +61,40 @@ pub fn stack(
         .collect();
     walls.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
     out.extend(walls.into_iter().map(|(_, _, id)| id));
+    // A roof's lines come next; anywhere else over it, it comes after the floors.
+    let mut on_lines: Vec<(f64, ObjectId)> = Vec::new();
+    let mut over: Vec<(f64, ObjectId)> = Vec::new();
+    for o in spatial::objects(snapshot, crate::types::ROOF)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Ok(d) = crate::roof::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let n = d.surface.outline.len();
+        let near = |a: [f64; 2], b: [f64; 2]| segment_distance(a, b, at) <= aperture;
+        let edges =
+            (0..n).any(
+                |k| match (d.surface.outline.get(k), d.surface.outline.get((k + 1) % n)) {
+                    (Some(a), Some(b)) => near(*a, *b),
+                    _ => false,
+                },
+            );
+        let lines = d.surface.lines().iter().any(|l| near(l.from, l.to));
+        let z = -d.surface.top();
+        if edges || lines {
+            on_lines.push((z, o.id));
+        } else if (crate::floor::Boundary {
+            loops: vec![d.surface.outline.clone()],
+        })
+        .contains(at)
+        {
+            over.push((z, o.id));
+        }
+    }
+    on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    over.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(on_lines.into_iter().map(|(_, id)| id));
     // Stairs come after walls: a stair stands between walls, in front of the room around it.
     let mut stairs: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::STAIR)
         .iter()
@@ -97,6 +132,7 @@ pub fn stack(
         .collect();
     floors.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(floors.into_iter().map(|(_, id)| id));
+    out.extend(over.into_iter().map(|(_, id)| id));
     let mut levels: Vec<(f64, ObjectId)> = spatial::objects(snapshot, LEVEL)
         .iter()
         .filter(|_| near_level_outline(at, aperture))
@@ -120,6 +156,18 @@ fn near_level_outline(at: [f64; 2], aperture: f64) -> bool {
     let inside_outer = at[0].abs() <= hx + aperture && at[1].abs() <= hy + aperture;
     let inside_inner = at[0].abs() < hx - aperture && at[1].abs() < hy - aperture;
     inside_outer && !inside_inner
+}
+
+/// The distance from `p` to the segment `ab`, in meters.
+fn segment_distance(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let length2 = d[0] * d[0] + d[1] * d[1];
+    let t = if length2 > 0.0 {
+        (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / length2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - d[0] * t).hypot(p[1] - a[1] - d[1] * t)
 }
 
 /// The distance from `p` to the body of `wall` (0 inside), in meters.
@@ -164,6 +212,9 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         }
         Some(FLOOR) => Derived::of(snapshot, &object)
             .map(|d| d.boundary.loops.iter().map(|l| close(l, d.top)).collect())
+            .unwrap_or_default(),
+        Some(crate::types::ROOF) => crate::roof::Derived::of(snapshot, &object)
+            .map(|d| vec![close(&d.surface.outline, d.surface.base)])
             .unwrap_or_default(),
         Some(crate::types::STAIR) => crate::stair::Placed::of(snapshot, &object)
             .map(|p| vec![close(&p.outline(), p.base)])

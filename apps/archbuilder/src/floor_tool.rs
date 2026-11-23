@@ -12,6 +12,9 @@
 //! (they stay editable, `undo` still removes the last), the second discards the sketch or the
 //! picks and asks again, the third ends the tool. A hole is a sketch of its own, in the selected
 //! floor.
+//!
+//! The same tool runs `archbuilder.roof.create` ([`FloorTool::begin_roof`]): the picks, the sketch
+//! and the keywords are those of a floor, and the walls are picked on their exterior faces.
 
 use std::collections::BTreeMap;
 
@@ -19,6 +22,7 @@ use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{Accept, Point, PromptInput};
 use arc_command::{CommandLine, LineStep, Submitted, Target};
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::roof::ROOF_CREATE;
 use archbuilder_model::floor;
 use serde_json::{Map, Value};
 
@@ -46,6 +50,8 @@ pub struct State {
     pub hole_in: Option<ObjectId>,
     /// Whether the next floor starts as a sketch (the mode the last one ended in).
     pub sketch: bool,
+    /// Whether the tool makes roofs instead of floors.
+    pub roof: bool,
 }
 
 fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -160,6 +166,27 @@ impl FloorTool {
             elevation,
             hole_in,
             sketch: false,
+            roof: false,
+        });
+        self.next(env, run)
+    }
+
+    /// Starts the tool for roofs on the storey of the selection (else the lowest).
+    ///
+    /// # Errors
+    /// `ab.cmd.no_building` without a storey; the errors of the command line.
+    pub fn begin_roof(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        self.line.cancel();
+        self.state = None;
+        let (storey, elevation) = storey_for(&env.document.snapshot(), env.selection)
+            .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_BUILDING))?;
+        self.line.set_last_point(None)?;
+        self.state = Some(State {
+            storey,
+            elevation,
+            hole_in: None,
+            sketch: false,
+            roof: true,
         });
         self.next(env, run)
     }
@@ -174,6 +201,19 @@ impl FloorTool {
             Some(floor) => {
                 preset.insert("floor".into(), Value::from(floor.to_string()));
                 FLOOR_ADD_HOLE
+            }
+            None if state.roof => {
+                if state.sketch {
+                    preset.insert("mode".into(), Value::from("sketch"));
+                }
+                let snapshot = env.document.snapshot();
+                if let Some(t) = crate::tool_type::current_param(
+                    &snapshot,
+                    archbuilder_model::element_type::TypeKind::Roof,
+                ) {
+                    preset.insert("type".into(), Value::from(t));
+                }
+                ROOF_CREATE
             }
             None => {
                 if state.sketch {
@@ -207,7 +247,11 @@ impl FloorTool {
                 self.error = Some(error);
                 Ok(())
             }
-            Ok(Submitted::Ran(outcome)) if outcome.command == FLOOR_CREATE => self.next(env, run),
+            Ok(Submitted::Ran(outcome))
+                if outcome.command == FLOOR_CREATE || outcome.command == ROOF_CREATE =>
+            {
+                self.next(env, run)
+            }
             Ok(Submitted::Ran(_) | Submitted::Cancelled | Submitted::Idle) => {
                 self.state = None;
                 Ok(())

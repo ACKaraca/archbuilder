@@ -768,3 +768,68 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     near(body, derived.volume());
     near(body, (60.0 - 4.0 - 4.53 * 1.1) * 0.2);
 }
+
+/// A hip roof over the upper walls, with those walls attached to it: an `IfcRoof` of the roof
+/// type whose body is the slab, and walls whose bodies are their clipped solids.
+#[test]
+fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let upper_storey = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    let upper_walls: Vec<ObjectId> = spatial::walls(&snapshot, upper_storey)
+        .iter()
+        .map(|w| w.id)
+        .collect();
+    let made = house.run(
+        "archbuilder.roof.create",
+        json!({"storey": upper_storey, "picks": [[5.0, 3.0]], "type": "Timber rafters with insulation and tiles"}),
+    );
+    let roof = House::id(&made["roof"]);
+    house.run("archbuilder.wall.attach_top", json!({"walls": upper_walls}));
+    let snapshot = house.snapshot();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(!exported.report.has_loss(), "{:?}", exported.report);
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    assert_eq!(file.instances_of("IFCROOF").count(), 1);
+    let roof_instance = file.instances_of("IFCROOF").next().unwrap();
+    assert_eq!(
+        roof_instance.records[0].parameters[8],
+        Parameter::Enumeration("HIP_ROOF".into())
+    );
+    let views = file.typed_views(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    assert!(views.types.iter().any(|t| {
+        t.element.global_id.as_deref() == Some(global_id(roof.as_u128()).as_str())
+            && t.element_type.type_name == "IFCROOFTYPE"
+    }));
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let mut volumes: BTreeMap<String, f64> = BTreeMap::new();
+    for item in &geometry.items {
+        let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+        *volumes.entry(gid(&file, item.product)).or_default() +=
+            volume(&mesh, &Limits::DEFAULT).unwrap();
+    }
+    let object = spatial::get(&snapshot, roof).unwrap();
+    let derived = archbuilder_model::roof::Derived::of(&snapshot, &object).unwrap();
+    let slab = derived.surface.solid().unwrap().volume();
+    assert!((volumes[&global_id(roof.as_u128())] - slab).abs() < 1e-6);
+    for wall in upper_walls {
+        let object = spatial::get(&snapshot, wall).unwrap();
+        let clipped = insert::wall_solid(&snapshot, &object).unwrap().unwrap();
+        // Taller than the 3 m prism: the top follows the roof's underside up from the wall line.
+        assert!(clipped.bounding_box().max().z > 6.0 + 1e-3);
+        let gross = volumes[&global_id(wall.as_u128())];
+        let data = archbuilder_model::wall::Wall::of(&snapshot, &object).unwrap();
+        let footprint = join::footprint_of(&snapshot, &object).unwrap();
+        let level =
+            spatial::storey_elevation(&snapshot, &spatial::get(&snapshot, upper_storey).unwrap());
+        let (_, surface) = insert::attached_roof(&snapshot, &object).unwrap();
+        let want = archbuilder_model::wall::under_roof(&data, footprint, level, &surface)
+            .unwrap()
+            .volume();
+        assert!((gross - want).abs() < 1e-6, "{gross} {want}");
+    }
+}

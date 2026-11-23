@@ -79,6 +79,8 @@ meters:
 | `wall_type` | The wall type (schema 1.2) | A reference to a wall type of the project; a type in use cannot be deleted; absent only in files from before types until they are upgraded |
 | `core_exterior`, `core_interior` | The thickness of the type's layers outside the core on the exterior and the interior side (schema 1.2) | Copies of the type, written only with it; 0 when absent |
 | `pinned` | Whether the wall is pinned (schema 1.3) | Absent or false in older files: unpinned; see pin below |
+| `top_offset` | The top's distance above its `top_level` (schema 1.4) | -1000 m to 1000 m; absent: 0; no effect on an unconnected wall |
+| `top_attach` | The roof or floor the top is attached to (schema 1.4) | Optional reference to a roof or floor, cleared when it is deleted; while set, the top follows that element's underside and `top_level`, `top_offset` and `height` wait unchanged for a detach |
 
 The solid is derived, never stored: a prism over the rectangle of the baseline and the thickness,
 from the storey's level elevation plus the base offset, up by the height. With a `top_level` the
@@ -108,7 +110,7 @@ that node stay square; the volume, the property grid and `inspect` use the joine
 closed rectangle counts each corner once. The viewport extracts the walls of a storey again when
 any of them is created, changed or deleted.
 
-Known limits: walls have no constraints, layer wrapping at ends and openings, or curves, and the only inserts are the doors and windows below; a wall that
+Known limits: walls have no base attachment, layer wrapping at ends and openings, or curves, and the only inserts are the doors and windows below; a wall that
 crosses another without ending on it is not joined; a node of three or more walls without a
 straight run (a Y) leaves a small notch at its center; styles other than `auto` apply only at a
 corner of two walls and at a T. The viewport extracts a wall again when its storey or the level of its storey changes. A storey
@@ -345,6 +347,108 @@ writer of the foundation has no stair, flight or railing entity yet, so each sta
 loss report (`ab.io.ifc.stair_not_written`) and nothing is written in its place; its shaft opening is
 written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
 have it taken out.
+
+#### The roof of the first slice
+
+`archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored
+inputs are stored; the outline, the surface, the ridges, hips and valleys and the slab are derived
+each time (`archbuilder_model::roof`).
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `name` | `Roof <n>` (`Çatı <n>`) per storey by default | Not blank, unique within the storey |
+| `thickness` | The slab's thickness: the total of its type's layers | A copy of the type, written only with it |
+| `base_offset` | The underside along the footprint line (the wall line) above the storey's level | -1000 m to 1000 m; by default the top of the highest picked wall, else 0 |
+| `edges` | The footprint, one loop in order, straight edges only. Each edge record: the authored start point `x`, `y`; the optional association `wall`, `face` and `offset` of a floor edge; `sloped` (whether the edge defines a slope); `slope` (an angle, kept while the edge is a gable); `overhang` (absent: the roof's) | 3 to 256 edges; slope 1° to 85°; overhang 0 to 10 m |
+| `overhang` | The overhang of the edges without their own | 0 to 10 m; 0.5 m by default |
+| `roof_type` | The roof type | Absent only in a file edited by hand |
+| `pinned` | Whether the roof is pinned | Absent: unpinned |
+
+Derived: the footprint, from the authored points and the wall faces the associated edges follow,
+exactly as a floor's boundary (so moving or rethickening a picked wall moves the roof; deleting it
+freezes the edge where it was); the outline, every footprint edge moved outward by its overhang;
+the underside, in which each sloped edge's plane passes through its footprint edge at the base
+height and rises inward at the edge's slope, an overhang dropping below the base by the overhang
+times the slope, and a gable edge's plane is vertical through its outline edge. It is solved as
+the weighted straight skeleton (`arc_geom::weighted_skeleton`) of the footprint with each sloped
+edge moved out to where its plane is as low as the lowest eave, and clipped to the outline. The
+slab lies between the underside and the top, whose planes are the underside's moved square to the
+slope by the type's thickness (so the layers are across the slope) and solved the same way. The
+lines of the skeleton inside the outline are the ridges (level), the hips (from convex corners)
+and the valleys (from inward corners). The surface of a roof is derived once per document
+revision and shared by the viewport, the plan, picking and the walls under it.
+
+Rules, checked on every commit that touches the roof or a wall one of its edges follows: the
+footprint is a simple loop of edges of at least 1 mm (`ab.model.roof_footprint`); the outline does
+not cross or touch itself (`ab.model.roof_outline`); at least one edge slopes
+(`ab.model.roof_no_slope`); neighboring collinear edges have one slope
+(`ab.model.roof_collinear_slopes`); every part of the outline is reached by a sloped edge and no
+gable edge meets an inward corner, whose vertical plane would run into the roof
+(`ab.model.roof_unclosed`); the surface could be computed and its cells cover the outline
+(`ab.model.roof_degenerate`). The last three name the point near the problem. A roof is never given
+invented vertical faces or a surface that does not cover its outline.
+
+`archbuilder.roof.create` takes `points`, `walls` or `picks` (as a floor; picked walls give edges
+on their exterior faces), `face`, `edge_offset`, `slope` (15° by default), `gables` (the numbers of
+the edges without slope), `overhang`, `base_offset`, `type` and `name`. `archbuilder.roof.set_edge`
+sets `sloped`, `slope` and `overhang` (or the roof's again with `roof_overhang`) of the given edges
+(all when none are given); a new slope reaches the sloped edges and is kept by the gables.
+`archbuilder.roof.move_vertex` moves a footprint point (the two edges at it stop following walls,
+fixed where they were); `archbuilder.roof.move_edge` moves an edge outward or inward (an edge that
+follows a wall keeps following it at a new offset). Delete, move, copy, rotate, mirror, copy and
+paste, hide and isolate take roofs through the shared kind list; the outliner lists them after the
+stairs. Roof types are as floor types (layers from the top down); a new project starts with a
+generic 300 mm roof type and timber rafters with insulation under tiles, and a document without
+roof types gets the same two when its first roof is made.
+
+The `.archb` addition is backward compatible: the record types `archbuilder.roof` and
+`archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
+project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
+
+In the application the Roof tool (toolbar, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
+New roof in the context menu) is the floor tool's picks and sketch with the keywords `slope` (`s`;
+`k` switches to the sketch), `overhang` and `base`; a prompt's own shortcut letter wins over the
+English letters of other keywords. The slope is typed as in the grid below and refused outside 1°
+to 85° with the range named. The property grid edits the type, base offset, overhang and one slope for
+every sloped edge (a note when they differ), then per edge whether it defines a slope, its slope (typed in the project's
+slope unit, `slope_unit` of the project: degrees, percent or rise to run, degrees for a file from
+before it; an angle with `°`, a percentage with `%` or a rise over a run such as `1:2` is read
+whatever the unit, and a value outside the range is refused naming it) and its overhang; it shows the
+storey, the plan area, the top elevation, the attached walls and the walls the edges follow. A
+selected roof has a square handle at each footprint point and a diamond at the middle of each
+edge. In a view from above the slabs of the roofs of the active storey are left out of the viewport, so
+the walls the plan cuts stay in view and are picked first; the roofs show a faint tint, the
+outline with the overhangs, the ridges and hips as lighter lines and the valleys dashed, and on
+each sloped edge an arrow down the slope with the slope as text, moved along the edge where it
+would cover a room tag or another text (none where nothing is free). The drawing follows the
+camera of each frame.
+
+Wall tops: `archbuilder.wall.attach_top` attaches the tops of the given or selected walls to a
+`target` roof or floor, else to the roof over each wall's middle with the lowest underside above
+its base, else to the floor of the next storey up (in the application Attach top asks for walls
+when none are selected, then for a click on the roof or floor; Enter takes the one above, and the
+history says how many walls follow and how many cannot); `archbuilder.wall.detach_top` detaches them,
+and each wall has the top it had before (its level, offset or height were kept). A wall attached
+to a roof is made from its joined footprint cut by the cells of the roof's underside: each piece
+rises to its cell's plane, so a wall at a gable end gets its triangle, a wall under hips or valleys
+its sloping top and an eaves wall a top sloping across its thickness; a part of the wall outside
+the roof's outline keeps its own top, with a vertical step where they meet. A wall attached to a
+floor stops level at the floor's underside. Nothing derived is stored, so a roof edit (slope, footprint,
+type, base offset) moves the tops in the same transaction; a wall that cannot follow (no part under
+the roof, an underside down to its base) keeps its own top with the warning
+`ab.model.wall_attach_failed`. Deleting a roof or floor detaches its walls in the same step and says
+how many. Typed shortcuts `AT` and `DT`; the context menu of a selection with walls has Attach top and
+Detach top. Known limits: no base attachment, no courtyards or holes, no roof joins or cuts with other
+roofs, no rafter cuts, fascias or dormers, and a wall top clipped to a roof keeps the openings of its
+doors and windows only where they stay below the underside.
+
+IFC mapping: a roof is an `IfcRoof` contained in its storey, with its slab as an `IfcFacetedBrep`
+in the storey's coordinates, `PredefinedType` `HIP_ROOF` when every edge slopes, `GABLE_ROOF` for
+four edges of which two are gables, `SHED_ROOF` for one sloped edge, else `FREEFORM`,
+`Qto_RoofBaseQuantities` (`GrossArea`, the sloped area; `ProjectedArea`) and `Pset_RoofCommon`
+(`IsExternal`). Its type is an `IfcRoofType` with the type's `IfcMaterialLayerSet`. A wall attached
+to a roof writes its clipped solid as an `IfcFacetedBrep` (its openings stay `IfcOpeningElement`s),
+with the gross volume and height of that solid.
 
 IFC mapping: an enclosed room is an `IfcSpace` aggregated by its `IfcBuildingStorey` with
 `IfcRelAggregates` (not contained), `PredefinedType` `INTERNAL`, with a body of an extruded area
@@ -699,7 +803,7 @@ shows the boundaries between its type's layers at the plan cut (1 m above its ba
 dashed lines and the core boundaries solid, interrupted at the openings the cut passes.
 
 IFC mapping: every type is written (`IfcWallType`, `IfcSlabType` `FLOOR`, `IfcDoorType` `DOOR`,
-`IfcWindowType` `WINDOW`) and assigned to its occurrences with `IfcRelDefinesByType`. A wall type is
+`IfcWindowType` `WINDOW`, `IfcRoofType`) and assigned to its occurrences with `IfcRelDefinesByType`. A wall type is
 `PARTITIONING` when it is interior and not load-bearing, else `STANDARD`. Wall and floor types carry
 an `IfcMaterialLayerSet` of their layers (the material, the thickness, the category `LoadBearing`,
 `Insulation` or `Finish` by function, ventilation unknown); each wall gets an

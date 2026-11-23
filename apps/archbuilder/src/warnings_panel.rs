@@ -126,6 +126,11 @@ pub fn bounds(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 
                     points.extend(p.outline());
                 }
             }
+            Some(types::ROOF) => {
+                if let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object) {
+                    points.extend(d.surface.outline.iter().copied());
+                }
+            }
             Some(types::DOOR | types::WINDOW) => {
                 let host = object
                     .header

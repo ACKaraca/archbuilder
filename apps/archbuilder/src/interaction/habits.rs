@@ -227,6 +227,7 @@ fn repeatable(command: &str) -> bool {
         FLOOR_CREATE,
         ROOM_PLACE,
         archbuilder_commands::stair::STAIR_CREATE,
+        archbuilder_commands::roof::ROOF_CREATE,
         MODIFY_MOVE,
         MODIFY_COPY,
         MODIFY_ROTATE,
@@ -283,7 +284,11 @@ impl WallInteraction {
         } else if self.stairs.running() {
             Some(archbuilder_commands::stair::STAIR_CREATE)
         } else if self.floors.running() {
-            Some(FLOOR_CREATE)
+            Some(if self.floors.state().is_some_and(|s| s.roof) {
+                archbuilder_commands::roof::ROOF_CREATE
+            } else {
+                FLOOR_CREATE
+            })
         } else if let Some(state) = self.inserts.state() {
             Some(insert_command(state.kind))
         } else if self.tool.active() {
@@ -342,11 +347,24 @@ impl WallInteraction {
         };
         let snapshot = document.snapshot();
         self.habits.lists = self.habits.vis.lists(&snapshot).clone();
+        // In a view from above the roofs of the storey are drawn as their plan symbol, so the
+        // walls the plan cuts stay in view.
+        let rooms = crate::room_view::shared();
+        if rooms.view().is_some()
+            && let Some(storey) = rooms.active()
+        {
+            self.habits.lists.hidden.extend(
+                spatial::children(&snapshot, archbuilder_model::types::ROOF, storey)
+                    .iter()
+                    .map(|o| o.id),
+            );
+        }
         let hidden_rooms: Vec<ObjectId> = if self.habits.vis.active() {
             // The stairs' plan symbols are drawn with the rooms and hide with them.
             spatial::objects(&snapshot, ROOM)
                 .iter()
                 .chain(spatial::objects(&snapshot, archbuilder_model::types::STAIR).iter())
+                .chain(spatial::objects(&snapshot, archbuilder_model::types::ROOF).iter())
                 .map(|o| o.id)
                 .filter(|id| !self.habits.vis.shows(&snapshot, *id))
                 .collect()

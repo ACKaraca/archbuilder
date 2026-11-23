@@ -173,6 +173,11 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
                     p.outline().into_iter().for_each(&mut add);
                 }
             }
+            Some(archbuilder_model::types::ROOF) => {
+                if let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object) {
+                    d.surface.outline.iter().copied().for_each(&mut add);
+                }
+            }
             Some(DOOR | WINDOW) => {
                 if let Some(host) = object
                     .header
