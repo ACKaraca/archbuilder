@@ -47,6 +47,7 @@ pub mod extract_level;
 pub mod extract_roof;
 pub mod extract_stair;
 pub mod extract_wall;
+pub mod floor_sketch;
 pub mod floor_tool;
 pub mod insert_tool;
 pub mod interaction;
@@ -388,6 +389,7 @@ fn menu() -> Result<Menu> {
             WINDOW_PLACE,
             FLOOR_CREATE,
             FLOOR_ADD_HOLE,
+            archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY,
             ROOM_PLACE,
             ROOM_PLACE_ALL,
             STAIR_CREATE,

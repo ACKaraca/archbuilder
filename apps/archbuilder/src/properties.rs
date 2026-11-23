@@ -931,9 +931,7 @@ fn shown(
             read_only.push("wall_storey".to_owned());
             // The volume of the joined solid, which counts a corner once, minus the openings.
             // Openings of the wall's doors and windows are subtracted.
-            let volume = archbuilder_model::insert::wall_solid(snapshot, object)
-                .and_then(Result::ok)
-                .map(|s| s.volume());
+            let volume = archbuilder_model::cleanup::wall_net_volume(snapshot, object);
             fields.push(text_field("wall_volume"));
             values.push(volume.map(|v| Value::String(format!("{v:.3} m³"))));
             read_only.push("wall_volume".to_owned());

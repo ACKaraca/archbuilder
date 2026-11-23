@@ -301,6 +301,8 @@ pub(crate) fn floor_vertices(
             loop_index: v.loop_index,
             point: xf.point(at),
             edge,
+            // A reflection turns an arc the other way round.
+            bulge: if xf.reflects() { -v.bulge } else { v.bulge },
         });
     }
     (out, lost)
@@ -863,11 +865,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         }
     }
     for (id, vertices) in floor_changes {
-        ctx.txn()?.modify(
-            id,
-            FieldPath::new("vertices"),
-            Some(Floor::vertex_values(&vertices)),
-        )?;
+        crate::floor::set_vertices(ctx, id, &vertices)?;
     }
     for (id, distance) in slides {
         set_length(ctx, id, "distance", distance)?;
@@ -1043,6 +1041,9 @@ pub(crate) fn copy_set(
         }
         if let Some(slot) = values.get_mut(types::floor::VERTICES) {
             *slot = Some(Floor::vertex_values(&vertices));
+        }
+        if let Some(slot) = values.get_mut(types::floor::ARCS) {
+            *slot = Floor::arc_values(&vertices);
         }
         created.push(create(ctx, FLOOR, storey, values)?);
     }

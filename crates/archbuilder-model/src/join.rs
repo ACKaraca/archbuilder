@@ -41,7 +41,7 @@ const MAX_COMPARED: usize = 2000;
 /// A corner must stay this share of the wall's length from the other end.
 const MAX_REACH: f64 = 0.45;
 /// Two unit directions whose cross product is smaller are parallel.
-const PARALLEL: f64 = 1e-9;
+pub(crate) const PARALLEL: f64 = 1e-9;
 /// The edge of a cell of the grid that finds the baselines an end lies on, in meters.
 const CELL: f64 = 4.0;
 /// A baseline that would fill more cells goes to the list every query checks.
@@ -54,31 +54,31 @@ type P = [f64; 2];
 fn sub(a: P, b: P) -> P {
     [a[0] - b[0], a[1] - b[1]]
 }
-fn dot(a: P, b: P) -> f64 {
+pub(crate) fn dot(a: P, b: P) -> f64 {
     a[0] * b[0] + a[1] * b[1]
 }
-fn cross(a: P, b: P) -> f64 {
+pub(crate) fn cross(a: P, b: P) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
 /// The left normal of a unit direction.
-fn left(d: P) -> P {
+pub(crate) fn left(d: P) -> P {
     [-d[1], d[0]]
 }
 /// `p` moved by `d * s`.
-fn along(p: P, d: P, s: f64) -> P {
+pub(crate) fn along(p: P, d: P, s: f64) -> P {
     [p[0] + d[0] * s, p[1] + d[1] * s]
 }
 
 /// A line through a point.
 #[derive(Clone, Copy)]
-struct Line {
-    p: P,
-    d: P,
+pub(crate) struct Line {
+    pub(crate) p: P,
+    pub(crate) d: P,
 }
 
 impl Line {
     /// The point where two lines meet; `None` when they are parallel.
-    fn hit(self, other: Self) -> Option<P> {
+    pub(crate) fn hit(self, other: Self) -> Option<P> {
         let c = cross(self.d, other.d);
         if c.abs() < PARALLEL {
             return None;
@@ -90,26 +90,26 @@ impl Line {
 
 /// One end of a wall seen from its node: a ray into the wall.
 #[derive(Clone, Copy)]
-struct Ray {
-    wall: usize,
-    at_end: bool,
+pub(crate) struct Ray {
+    pub(crate) wall: usize,
+    pub(crate) at_end: bool,
     /// The baseline's end point.
-    point: P,
+    pub(crate) point: P,
     /// The unit direction from the end into the wall.
-    dir: P,
+    pub(crate) dir: P,
     /// The offsets of the right and left faces along the left normal of `dir`.
-    lo: f64,
-    hi: f64,
-    length: f64,
-    thickness: f64,
-    style: JoinStyle,
+    pub(crate) lo: f64,
+    pub(crate) hi: f64,
+    pub(crate) length: f64,
+    pub(crate) thickness: f64,
+    pub(crate) style: JoinStyle,
 }
 
 /// The two corners of a ray's end: the left one (on the face at `hi`) and the right one.
-type Corners = [P; 2];
+pub(crate) type Corners = [P; 2];
 
 impl Ray {
-    fn new(walls: &[Wall], wall: usize, at_end: bool) -> Option<Self> {
+    pub(crate) fn new(walls: &[Wall], wall: usize, at_end: bool) -> Option<Self> {
         let w = &walls[wall];
         let length = w.length();
         if length.is_nan() || length < MIN_WALL_LENGTH || !length.is_finite() {
@@ -180,7 +180,7 @@ impl Ray {
 
     /// Whether `corners` stay within the reach this wall allows, `reference` being the
     /// thickness the limit is counted in.
-    fn fits(&self, corners: Corners, reference: f64) -> bool {
+    pub(crate) fn fits(&self, corners: Corners, reference: f64) -> bool {
         corners.iter().all(|c| {
             let t = dot(sub(*c, self.point), self.dir);
             c[0].is_finite()
@@ -292,15 +292,15 @@ fn star(rays: &[Ray]) -> Option<Vec<Corners>> {
 /// A wall as seen by an end that stops at its face: the unit direction of the baseline, the
 /// offsets of its faces along the left normal, and its thickness.
 #[derive(Clone, Copy)]
-struct Through {
-    dir: P,
-    low: f64,
-    high: f64,
-    thickness: f64,
+pub(crate) struct Through {
+    pub(crate) dir: P,
+    pub(crate) low: f64,
+    pub(crate) high: f64,
+    pub(crate) thickness: f64,
 }
 
 impl Through {
-    fn of(wall: &Wall) -> Self {
+    pub(crate) fn of(wall: &Wall) -> Self {
         let length = wall.length();
         let (low, high) = wall.extent();
         Self {
@@ -345,7 +345,7 @@ fn tee(a: &Ray, through: Through) -> Option<Corners> {
 
 /// Two ends of a node that continue each other with the same faces: a wall running straight
 /// through the node, as `(first, second, the through wall)`.
-fn straight(rays: &[Ray]) -> Option<(usize, usize, Through)> {
+pub(crate) fn straight(rays: &[Ray]) -> Option<(usize, usize, Through)> {
     for (i, a) in rays.iter().enumerate() {
         for (j, b) in rays.iter().enumerate().skip(i + 1) {
             if cross(a.dir, b.dir).abs() < PARALLEL
@@ -381,13 +381,13 @@ fn cell(p: P) -> (i64, i64) {
 }
 
 /// The baselines of the walls by grid cell, to find the ones an end lies on.
-struct Index {
+pub(crate) struct Index {
     cells: HashMap<(i64, i64), Vec<usize>>,
     long: Vec<usize>,
 }
 
 impl Index {
-    fn new(walls: &[Wall], valid: &[bool]) -> Self {
+    pub(crate) fn new(walls: &[Wall], valid: &[bool]) -> Self {
         let mut cells: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         let mut long = Vec::new();
         for (i, w) in walls.iter().enumerate().filter(|(i, _)| valid[*i]) {
@@ -423,7 +423,7 @@ impl Index {
 
     /// The wall whose baseline interior `p` lies on, other than `skip`: the nearest one, the
     /// first of equals.
-    fn through(&self, walls: &[Wall], p: P, skip: &[usize]) -> Option<usize> {
+    pub(crate) fn through(&self, walls: &[Wall], p: P, skip: &[usize]) -> Option<usize> {
         let near = self.cells.get(&cell(p)).map_or(&[][..], Vec::as_slice);
         let mut best: Option<(f64, usize)> = None;
         for &j in near.iter().chain(&self.long) {
@@ -452,7 +452,7 @@ impl Index {
 
 /// The groups of ends within [`JOIN_TOLERANCE`] of each other; each group lists indexes into
 /// `rays` in increasing order, and groups come in order of their first ray.
-fn nodes(rays: &[Ray]) -> Vec<Vec<usize>> {
+pub(crate) fn nodes(rays: &[Ray]) -> Vec<Vec<usize>> {
     let key = |p: P| {
         (
             bucket(p[0], JOIN_TOLERANCE * 4.0),

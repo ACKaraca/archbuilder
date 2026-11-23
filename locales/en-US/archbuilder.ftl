@@ -299,6 +299,12 @@ ab-types-exterior = Exterior
 ab-types-interior = Interior
 ab-types-load-bearing = Load-bearing
 ab-types-room-bounding = Bounds rooms
+ab-types-wrap-ends = Wrap at free ends
+ab-types-wrap-inserts = Wrap at doors and windows
+ab-types-wrap-none = None
+ab-types-wrap-exterior = Exterior
+ab-types-wrap-interior = Interior
+ab-types-wrap-both = Both
 ab-types-layers = Layers
 ab-types-core = Core
 ab-types-function = Function
@@ -417,3 +423,25 @@ ab-notice-attach-not-following = { $count ->
    *[other] { $count } walls are attached but cannot follow the underside (they are not under it, or the underside comes down to their base); they keep their own top. See the warnings.
 }
 ab-prop-roof-slopes-mixed = (mixed: the edges differ)
+ab-prompt-sketch = Edit the boundary: drag a vertex or an edge's diamond, then Enter to finish or Escape to cancel
+ab-prompt-sketch-arc = Click an edge, then a point on the arc it becomes
+ab-prompt-sketch-wall = Select an edge, then click the wall it follows
+ab-keyword-sketch-finish = Finish
+ab-keyword-sketch-cancel = Cancel
+ab-keyword-sketch-add = Add vertex
+ab-keyword-sketch-arc = Arc
+ab-keyword-sketch-wall = Pick wall
+ab-keyword-sketch-straight = Straight
+ab-keyword-sketch-delete = Delete vertex
+ab-notice-sketch-freed = { $count ->
+    [one] One edge that followed a wall is free now.
+   *[other] { $count } edges that followed walls are free now.
+}
+ab-notice-sketch-refused = The boundary cannot be applied yet. Fix it and finish again.
+ab-notice-sketch-cancelled = Boundary edit cancelled; the floor is unchanged.
+ab-notice-sketch-applied = Boundary applied.
+ab-notice-sketch-no-floor = Select a floor first, or double-click one.
+ab-notice-sketch-too-few = Select a vertex first; a loop keeps at least three.
+ab-menu-edit-boundary = Edit boundary
+ab-notice-sketch-pick-edge = Select an edge first (click it), then click the wall it should follow.
+ab-prompt-sketch-delete = Click the vertex to delete

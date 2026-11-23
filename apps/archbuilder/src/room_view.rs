@@ -259,7 +259,10 @@ pub fn layout_tags(
         let t = &tags[k];
         let mut loops = vec![t.polygon.clone()];
         loops.extend(t.holes.iter().cloned());
-        let boundary = Boundary { loops };
+        let boundary = Boundary {
+            loops,
+            ..Boundary::default()
+        };
         let mid = |a: f64, b: f64| (a + b) / 2.0;
         let suits = |c: [f64; 2], taken: &[PixelRect]| {
             let r = rect_at(c, t.size);

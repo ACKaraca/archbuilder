@@ -229,7 +229,33 @@ fn a_door_and_a_window_extract_with_a_leaf_a_pane_apart_in_color_and_the_wall_ha
     let wall_object = spatial::get(&snapshot, wall).unwrap();
     let extraction =
         archbuilder::extract_wall::extract_wall(&snapshot, &wall_object, &cancel).unwrap();
-    assert_eq!(extraction.items.len(), 1);
+    // The layers of the wall are solids of their own, in bands around the opening, and the
+    // opening is cut: the layers hold less than the plain prism of the wall by the door and the
+    // window.
+    assert!(extraction.items.len() > 1);
+    let pieces: f64 = archbuilder_model::cleanup::wall_pieces(&snapshot, &wall_object)
+        .unwrap()
+        .unwrap()
+        .iter()
+        .map(|p| p.solid.volume())
+        .sum();
+    let plain = archbuilder_model::insert::wall_solid(&snapshot, &wall_object)
+        .unwrap()
+        .unwrap()
+        .volume();
+    assert!((pieces - plain).abs() < 1e-6, "{pieces} vs {plain}");
+    let gross = archbuilder_model::wall::Wall::of(&snapshot, &wall_object)
+        .unwrap()
+        .solid_in(
+            archbuilder_model::join::footprint_of(&snapshot, &wall_object).unwrap(),
+            0.0,
+        )
+        .unwrap()
+        .volume();
+    assert!(
+        pieces < gross - 0.1,
+        "the opening is cut: {pieces} vs {gross}"
+    );
 }
 
 #[test]

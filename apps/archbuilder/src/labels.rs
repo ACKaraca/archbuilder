@@ -184,45 +184,31 @@ pub fn symbols(
 }
 
 /// The lines between the layers of each wall at the plan cut, 1 m above its base: thin dashed
-/// lines, the boundaries of the core solid. The openings the cut passes through are left out.
+/// lines, the boundaries of the core solid. Joins are cleaned by layer function, the finish of
+/// a wrapped end or opening turns into it, and the openings the cut passes through are left out.
 fn layer_lines(
     snapshot: &Snapshot,
     shown: &dyn Fn(arc_base::ObjectId) -> bool,
 ) -> Vec<ProductOverlay> {
-    use archbuilder_model::element_type::{Layers, TypeKind, type_of};
     let mut out = Vec::new();
-    for object in spatial::objects(snapshot, types::WALL)
-        .iter()
-        .take(MAX_SYMBOLS)
-    {
-        if !shown(object.id) {
-            continue;
-        }
-        let (Some(wall), Some(layers)) = (
-            archbuilder_model::wall::Wall::of(snapshot, object),
-            type_of(snapshot, TypeKind::Wall, &object.values)
-                .and_then(|t| Layers::from_values(&t.values)),
-        ) else {
-            continue;
-        };
-        if layers.layers.len() < 2 {
-            continue;
-        }
-        let footprint = archbuilder_model::join::footprint_of(snapshot, object)
-            .unwrap_or_else(|| wall.plain_footprint());
-        let gaps: Vec<(f64, f64)> = archbuilder_model::insert::hosted(snapshot, object.id)
-            .into_iter()
-            .filter(|(_, i)| i.sill <= CUT && CUT <= i.top())
-            .map(|(_, i)| i.extent())
-            .collect();
-        let z = object
-            .header
-            .owner
-            .and_then(|s| spatial::get(snapshot, s))
-            .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s))
-            + wall.base_offset
-            + CUT;
-        for (line, core) in wall.layer_lines(footprint, &layers, &gaps) {
+    let mut bases: std::collections::HashMap<arc_base::ObjectId, f64> =
+        std::collections::HashMap::new();
+    for storey in spatial::objects(snapshot, types::STOREY) {
+        let level = spatial::storey_elevation(snapshot, &storey);
+        for (id, line, core) in archbuilder_model::cleanup::plan_lines(snapshot, storey.id, CUT)
+            .iter()
+            .take(MAX_SYMBOLS * 8)
+            .copied()
+        {
+            if !shown(id) {
+                continue;
+            }
+            let base = *bases.entry(id).or_insert_with(|| {
+                spatial::get(snapshot, id)
+                    .and_then(|o| archbuilder_model::wall::Wall::from_values(&o.values))
+                    .map_or(0.0, |w| w.base_offset)
+            });
+            let z = level + base + CUT;
             out.push(ProductOverlay::Path {
                 points: line.iter().map(|p| Point3::new(p[0], p[1], z)).collect(),
                 dashed: !core,

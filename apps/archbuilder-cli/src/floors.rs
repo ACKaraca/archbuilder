@@ -64,7 +64,21 @@ pub(crate) fn floor_of(values: &Value, objects: &[Value]) -> Option<Floor> {
             loop_index: u32::try_from(item[0].as_i64()?).ok()?,
             point: [item[1].as_f64()?, item[2].as_f64()?],
             edge,
+            bulge: 0.0,
         });
+    }
+    // The arc edges are records of a vertex number and a bulge.
+    for arc in values
+        .get("arcs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let (Some(at), Some(bulge)) = (arc[0].as_u64(), arc[1].as_f64())
+            && let Some(v) = usize::try_from(at).ok().and_then(|at| vertices.get_mut(at))
+        {
+            v.bulge = bulge;
+        }
     }
     Some(Floor {
         thickness: number(values, "thickness")?,

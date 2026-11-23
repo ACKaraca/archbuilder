@@ -23,7 +23,7 @@ use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
 use archbuilder_model::types::{DOOR, FLOOR, ROOF, WINDOW, text};
 use archbuilder_model::wall::Wall;
-use archbuilder_model::{join, spatial};
+use archbuilder_model::{cleanup, join, spatial};
 
 use crate::error::{codes, reasons};
 
@@ -254,6 +254,10 @@ impl Mapper<'_> {
         self.exported += 1;
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one wall: body, quantities and inserts"
+    )]
     fn wall(&mut self, object: &Object, storey: ObjectId, level: f64) {
         let Some(wall) = Wall::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCWALL", object);
@@ -314,7 +318,25 @@ impl Mapper<'_> {
         };
         if let Ok(volume) = gross {
             let local = footprint.map(|p| frame.local(p));
+            // A wall of several layers is its cleaned layers: they differ from the plain prism at
+            // joins, wrapped ends and openings and where slabs meet it.
+            // The body is the layers of the wall, cleaned at joins, openings, slabs and roofs.
+            let solids = cleanup::wall_pieces_whole(self.snapshot, object)
+                .and_then(Result::ok)
+                .filter(|p| !p.is_empty());
+            let pieces = solids
+                .as_ref()
+                .and_then(|p| brep(p.iter().map(|x| &x.solid), &frame, level + wall.base_offset));
+            // The net volume is that of the layers with the openings cut: what the body is once
+            // its openings void it.
+            let has_pieces = pieces.is_some();
+            let body_volume = has_pieces.then(|| {
+                cleanup::wall_pieces(self.snapshot, object)
+                    .and_then(Result::ok)
+                    .map(|p| p.iter().map(|x| x.solid.volume()).sum::<f64>())
+            });
             element.body = match &clipped {
+                _ if has_pieces => pieces,
                 Some(solid) => brep([solid], &frame, level + wall.base_offset),
                 None => Some(Body::Extrusion {
                     outer: profile(&local, true),
@@ -323,9 +345,23 @@ impl Mapper<'_> {
                     depth: wall.height,
                 }),
             };
-            quantities.push(Quantity::new("GrossVolume", QuantityValue::Volume(volume)));
-            match insert::wall_solid(self.snapshot, object) {
-                Some(Ok(net)) => {
+            // The gross volume is that of the body written: the layers without the openings.
+            let gross_body = has_pieces.then(|| {
+                solids
+                    .iter()
+                    .flatten()
+                    .map(|p| p.solid.volume())
+                    .sum::<f64>()
+            });
+            quantities.push(Quantity::new(
+                "GrossVolume",
+                QuantityValue::Volume(gross_body.unwrap_or(volume)),
+            ));
+            match (body_volume, insert::wall_solid(self.snapshot, object)) {
+                (Some(Some(net)), _) => {
+                    quantities.push(Quantity::new("NetVolume", QuantityValue::Volume(net)));
+                }
+                (None, Some(Ok(net))) => {
                     quantities.push(Quantity::new(
                         "NetVolume",
                         QuantityValue::Volume(net.volume()),
@@ -537,15 +573,51 @@ impl Mapper<'_> {
             // The layers run from the top, the placement's plane, downward.
             element.layer_usage = Some(LayerSetUsage::new(LayerDirection::Axis3, false, 0.0));
         }
-        let loops = &derived.boundary.loops;
-        if let Some((outer, holes)) = loops.split_first() {
-            element.body = Some(Body::Extrusion {
+        // The slab cut back to the cores of the walls it meets, arcs written as chords within
+        // the model's flattening tolerance; the quantities are those of the authored boundary.
+        let parts = cleanup::clean_floor(self.snapshot, object)
+            .map(|c| cleanup::flatten_parts(&c.region))
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| {
+                let flat = derived
+                    .boundary
+                    .flattened(archbuilder_model::floor::FLAT_CHORD);
+                flat.split_first()
+                    .map(|(o, h)| vec![(o.clone(), h.to_vec())])
+                    .unwrap_or_default()
+            });
+        let slab = match parts.as_slice() {
+            [(outer, holes)] => Some(Body::Extrusion {
                 outer: profile(outer, true),
                 holes: holes.iter().map(|h| profile(h, false)).collect(),
                 direction: -Vector3::z(),
                 depth: thickness,
-            });
-            let gross = signed_area(outer).abs();
+            }),
+            _ => cleanup::floor_solid(self.snapshot, object)
+                .and_then(Result::ok)
+                .and_then(|solid| {
+                    brep(
+                        [&solid],
+                        &Frame {
+                            origin: [0.0, 0.0],
+                            u: [1.0, 0.0],
+                        },
+                        derived.top,
+                    )
+                }),
+        };
+        if let Some(body) = slab {
+            element.body = Some(body);
+            let gross = signed_area(
+                &derived
+                    .boundary
+                    .faceted(archbuilder_model::floor::FLAT_CHORD)
+                    .loops
+                    .first()
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+            .abs();
             let net = derived.area();
             element.quantity_sets.push(QuantitySet::new(
                 "Qto_SlabBaseQuantities",
@@ -662,16 +734,19 @@ fn brep<'a>(
             let [x, y] = frame.local([v.x, v.y]);
             Point3::new(x, y, v.z - z0)
         }));
-        for face in solid.faces() {
-            if !face.holes.is_empty() {
-                return None;
+        for (k, face) in solid.faces().iter().enumerate() {
+            let offset = |i: u32| first + usize::try_from(i).unwrap_or(usize::MAX);
+            if face.holes.is_empty() {
+                faces.push(face.outer.iter().map(|&i| offset(i)).collect());
+            } else {
+                // A loop of vertices holds no hole: such a face is written as its triangles.
+                for t in solid
+                    .triangulate_face(k, &arc_base::Tolerance::DEFAULT)
+                    .ok()?
+                {
+                    faces.push(t.iter().map(|&i| offset(i)).collect());
+                }
             }
-            faces.push(
-                face.outer
-                    .iter()
-                    .map(|&i| first + usize::try_from(i).unwrap_or(usize::MAX))
-                    .collect(),
-            );
         }
     }
     Some(Body::Brep { vertices, faces })

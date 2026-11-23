@@ -439,7 +439,12 @@ fn body_volumes_and_quantities_equal_the_derived_volumes() {
         );
         let footprint = join::footprint_of(&snapshot, &wall).unwrap();
         let gross = data.solid_in(footprint, level).unwrap().volume();
-        near(volumes[&global_id(wall.id.as_u128())], gross);
+        // A wall ends under the slab above it: at most the slab's thickness (0.2 m) is missing.
+        let body = volumes[&global_id(wall.id.as_u128())];
+        assert!(
+            body <= gross + 1e-9 && gross - body <= data.length() * data.thickness * 0.2 + 1e-9,
+            "{body} vs {gross}"
+        );
     }
     for floor in spatial::objects(&snapshot, FLOOR) {
         let derived = Derived::of(&snapshot, &floor).unwrap();
@@ -477,10 +482,13 @@ fn body_volumes_and_quantities_equal_the_derived_volumes() {
         }
     }
     for wall in spatial::objects(&snapshot, WALL) {
-        let net = insert::wall_solid(&snapshot, &wall)
+        // The layers with the openings cut, under the slab above the wall.
+        let net = archbuilder_model::cleanup::wall_pieces(&snapshot, &wall)
             .unwrap()
             .unwrap()
-            .volume();
+            .iter()
+            .map(|p| p.solid.volume())
+            .sum::<f64>();
         let id = global_id(wall.id.as_u128());
         near(quantities[&(id.clone(), "NetVolume".into())], net);
         near(
@@ -821,6 +829,20 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
         let clipped = insert::wall_solid(&snapshot, &object).unwrap().unwrap();
         // Taller than the 3 m prism: the top follows the roof's underside up from the wall line.
         assert!(clipped.bounding_box().max().z > 6.0 + 1e-3);
+        // The layers of the wall are clipped under the roof too, in the viewport and in the file.
+        let pieces = archbuilder_model::cleanup::wall_pieces(&snapshot, &object)
+            .unwrap()
+            .unwrap();
+        assert!(
+            pieces
+                .iter()
+                .any(|p| p.solid.bounding_box().max().z > 6.0 + 1e-3)
+        );
+        assert!(
+            pieces
+                .iter()
+                .all(|p| p.solid.bounding_box().max().z <= clipped.bounding_box().max().z + 1e-6)
+        );
         let gross = volumes[&global_id(wall.as_u128())];
         let data = archbuilder_model::wall::Wall::of(&snapshot, &object).unwrap();
         let footprint = join::footprint_of(&snapshot, &object).unwrap();
@@ -831,5 +853,123 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
             .unwrap()
             .volume();
         assert!((gross - want).abs() < 1e-6, "{gross} {want}");
+    }
+}
+
+/// A floor with an arc edge and the layered walls of the house export without loss and read
+/// back: the slab body is the arc written as chords within the model tolerance.
+#[test]
+fn a_floor_with_an_arc_edge_and_layered_walls_read_back() {
+    let house = House::new();
+    let made = house.run(
+        "archbuilder.floor.create",
+        json!({"points": [[20.0, 0.0], [24.0, 0.0], [24.0, 4.0], [20.0, 4.0]]}),
+    );
+    let floor = House::id(&made["floor"]);
+    let snapshot = house.snapshot();
+    let object = spatial::get(&snapshot, floor).unwrap();
+    let mut vertices: Vec<Json> = archbuilder_model::floor::Floor::from_values(&object.values)
+        .unwrap()
+        .vertices
+        .iter()
+        .map(|v| json!({"loop_index": 0, "point": v.point}))
+        .collect();
+    // A half circle of radius 2 bulging out of the bottom edge.
+    vertices[0]["bulge"] = json!(1.0);
+    house.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor, "vertices": vertices}),
+    );
+    let snapshot = house.snapshot();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(!exported.report.has_loss(), "{:?}", exported.report);
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let mut body = 0.0;
+    for item in &geometry.items {
+        if gid(&file, item.product) == global_id(floor.as_u128()) {
+            let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+            body += volume(&mesh, &Limits::DEFAULT).unwrap();
+        }
+    }
+    let object = spatial::get(&snapshot, floor).unwrap();
+    let derived = Derived::of(&snapshot, &object).unwrap();
+    assert!(derived.boundary.has_arcs());
+    let exact = derived.volume();
+    // The chords lie inside the arc: slightly less, within a tolerance of its length.
+    assert!(
+        body <= exact + 1e-9 && exact - body < 0.01 * exact,
+        "{body} {exact}"
+    );
+}
+
+/// A slab cut into parts by the walls of its own storey, and the walls below it: the slab sits at
+/// its own height in the file (not shifted by the storey), the walls below end under it, and the
+/// volume of each wall body is its net volume.
+#[test]
+fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let upper_storey = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    // A slab over the upper walls, raised 0.15 m so that it reaches into them: the walls' cores
+    // cut it into an inner and an outer part (a B-rep in the file).
+    let made = house.run(
+        "archbuilder.floor.create",
+        json!({"storey": upper_storey, "points": [[-2.0, -2.0], [12.0, -2.0], [12.0, 8.0], [-2.0, 8.0]], "offset": 0.15}),
+    );
+    let slab = House::id(&made["floor"]);
+    let snapshot = house.snapshot();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(!exported.report.has_loss(), "{:?}", exported.report);
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+    let (mut zmin, mut zmax) = (f64::MAX, f64::MIN);
+    let mut volumes: BTreeMap<String, f64> = BTreeMap::new();
+    for item in &geometry.items {
+        let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+        *volumes.entry(gid(&file, item.product)).or_default() +=
+            volume(&mesh, &Limits::DEFAULT).unwrap();
+        if gid(&file, item.product) == global_id(slab.as_u128()) {
+            for p in mesh.positions() {
+                zmin = zmin.min(p.z);
+                zmax = zmax.max(p.z);
+            }
+        }
+    }
+    // The upper storey is at 3 m: the slab top is 3.15 and its underside 2.95.
+    near(zmin, 2.95);
+    near(zmax, 3.15);
+    // The body of a wall is its layers (cleaned, under the slab above it): without openings the
+    // body is the net volume, and a wall with openings is voided by them to its net volume.
+    for wall in spatial::objects(&snapshot, WALL) {
+        let id = global_id(wall.id.as_u128());
+        let whole = archbuilder_model::cleanup::wall_pieces_whole(&snapshot, &wall)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(|p| p.solid.volume())
+            .sum::<f64>();
+        let net = archbuilder_model::cleanup::wall_pieces(&snapshot, &wall)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(|p| p.solid.volume())
+            .sum::<f64>();
+        assert!(
+            (volumes[&id] - whole).abs() < 1e-6,
+            "{id}: {} vs {whole}",
+            volumes[&id]
+        );
+        if insert::hosted(&snapshot, wall.id).is_empty() {
+            assert!((whole - net).abs() < 1e-9);
+        } else {
+            assert!(net < whole);
+        }
     }
 }

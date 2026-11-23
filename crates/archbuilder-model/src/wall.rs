@@ -194,7 +194,46 @@ pub fn under_roof(
     level: f64,
     surface: &crate::roof::Surface,
 ) -> Result<Polyhedron> {
-    use crate::terrain::{self, Bottom, Piece, Plane, clip_convex, double_area, split_quad};
+    // The side faces take the tag of the footprint edge they lie on.
+    let side = |a: [f64; 2], b: [f64; 2]| {
+        let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+        let distance = |k: usize| {
+            let (Some(p), Some(q)) = (footprint.get(k), footprint.get((k + 1) % 4)) else {
+                return f64::INFINITY;
+            };
+            let d = [q[0] - p[0], q[1] - p[1]];
+            let length = d[0].hypot(d[1]).max(f64::MIN_POSITIVE);
+            ((middle[0] - p[0]) * d[1] - (middle[1] - p[1]) * d[0]).abs() / length
+        };
+        let curve = (0..4_u32)
+            .min_by(|x, y| distance(*x as usize).total_cmp(&distance(*y as usize)))
+            .unwrap_or(0);
+        FaceTag::Side {
+            loop_index: 0,
+            curve,
+            facet: 0,
+        }
+    };
+    let triangles: Vec<Vec<[f64; 2]>> = crate::terrain::split_quad(footprint)
+        .iter()
+        .map(|t| t.to_vec())
+        .collect();
+    under_roof_in(wall, &triangles, level, surface, &side)
+}
+
+/// [`under_roof`] over a footprint given as convex pieces (triangles) in plan, and with the face
+/// tags of the sides given by `side`; the layer solids of a wall use it.
+///
+/// # Errors
+/// As [`under_roof`].
+pub fn under_roof_in(
+    wall: &Wall,
+    footprint: &[Vec<[f64; 2]>],
+    level: f64,
+    surface: &crate::roof::Surface,
+    side: &dyn Fn([f64; 2], [f64; 2]) -> FaceTag,
+) -> Result<Polyhedron> {
+    use crate::terrain::{self, Bottom, Piece, Plane, clip_convex, double_area};
     let tolerance = Tolerance::DEFAULT;
     let failed = || {
         arc_base::Error::new(crate::error::codes::WALL_ATTACH_FAILED)
@@ -205,9 +244,9 @@ pub fn under_roof(
     let cells = surface.pieces();
     let mut pieces = Vec::new();
     let mut covered = 0.0;
-    for triangle in split_quad(footprint) {
+    for triangle in footprint {
         for cell in &cells {
-            let part = clip_convex(&triangle, &cell.points);
+            let part = clip_convex(triangle, &cell.points);
             let area = double_area(&part) / 2.0;
             if part.len() >= 3 && area > tolerance.linear * tolerance.linear {
                 covered += area;
@@ -230,8 +269,7 @@ pub fn under_roof(
         return Err(failed());
     }
     // The part outside the roof's outline keeps the wall's own top.
-    let mut outside: Vec<Vec<[f64; 2]>> =
-        split_quad(footprint).iter().map(|t| t.to_vec()).collect();
+    let mut outside: Vec<Vec<[f64; 2]>> = footprint.to_vec();
     for cut in surface.outline_triangles() {
         outside = terrain::subtract_convex(outside, cut, tolerance.linear);
     }
@@ -241,27 +279,7 @@ pub fn under_roof(
         plane: own,
         upper: None,
     }));
-    // The side faces take the tag of the footprint edge they lie on.
-    let side = |a: [f64; 2], b: [f64; 2]| {
-        let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-        let distance = |k: usize| {
-            let (Some(p), Some(q)) = (footprint.get(k), footprint.get((k + 1) % 4)) else {
-                return f64::INFINITY;
-            };
-            let d = [q[0] - p[0], q[1] - p[1]];
-            let length = d[0].hypot(d[1]).max(f64::MIN_POSITIVE);
-            ((middle[0] - p[0]) * d[1] - (middle[1] - p[1]) * d[0]).abs() / length
-        };
-        let curve = (0..4_u32)
-            .min_by(|x, y| distance(*x as usize).total_cmp(&distance(*y as usize)))
-            .unwrap_or(0);
-        FaceTag::Side {
-            loop_index: 0,
-            curve,
-            facet: 0,
-        }
-    };
-    terrain::solid(&pieces, 0.0, Bottom::Level(base), &side)
+    terrain::solid(&pieces, 0.0, Bottom::Level(base), side)
 }
 
 /// The tag of the interior face of a wall solid.

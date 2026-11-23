@@ -22,7 +22,10 @@ use std::collections::BTreeSet;
 use arc_base::math::Point2;
 use arc_base::{Limits, ObjectId, Result, Tolerance};
 use arc_doc::{Snapshot, Value};
-use arc_geom::{Curve2, Loop2, Polyhedron, Region, RegionPart, Segment2, prism};
+use arc_geom::{
+    Curve2, Loop2, Polyhedron, Polyline2, PolylineSegment, PolylineVertex, Region, RegionPart,
+    Segment2, prism,
+};
 
 use crate::types::{self, COORDINATE_RANGE, MIN_WALL_LENGTH, floor};
 use crate::wall::Wall;
@@ -52,11 +55,21 @@ pub enum Face {
     Exterior,
     /// The middle of the core of the wall's type.
     Center,
+    /// The face of the core on the right of the baseline's direction (the interior side).
+    CoreInterior,
+    /// The face of the core on the left of the baseline's direction (the exterior side).
+    CoreExterior,
 }
 
 impl Face {
     /// Every face, in code order.
-    pub const ALL: [Self; 3] = [Self::Interior, Self::Exterior, Self::Center];
+    pub const ALL: [Self; 5] = [
+        Self::Interior,
+        Self::Exterior,
+        Self::Center,
+        Self::CoreInterior,
+        Self::CoreExterior,
+    ];
 
     /// The name in the record.
     #[must_use]
@@ -65,6 +78,8 @@ impl Face {
             Self::Interior => "interior",
             Self::Exterior => "exterior",
             Self::Center => "center",
+            Self::CoreInterior => "core_interior",
+            Self::CoreExterior => "core_exterior",
         }
     }
 
@@ -75,6 +90,8 @@ impl Face {
             Self::Interior => 0,
             Self::Exterior => 1,
             Self::Center => 2,
+            Self::CoreInterior => 3,
+            Self::CoreExterior => 4,
         }
     }
 
@@ -98,6 +115,8 @@ impl Face {
                 let (low, high) = wall.core_extent();
                 (low + high) / 2.0
             }
+            Self::CoreInterior => wall.core_extent().0,
+            Self::CoreExterior => wall.core_extent().1,
         }
     }
 }
@@ -124,6 +143,10 @@ pub struct Vertex {
     pub point: [f64; 2],
     /// The wall the edge from this vertex follows, when it does.
     pub edge: Option<Association>,
+    /// The bulge of the edge that starts here: the tangent of a quarter of its included angle,
+    /// positive for an arc that bends counterclockwise, 0 for a straight edge. An arc edge
+    /// follows no wall.
+    pub bulge: f64,
 }
 
 /// The authored data of a floor, lengths in meters.
@@ -137,12 +160,23 @@ pub struct Floor {
     pub vertices: Vec<Vertex>,
 }
 
-/// The derived boundary: the points of each loop, the outer loop first.
-#[derive(Debug, Clone, PartialEq)]
+/// The derived boundary: the points of each loop, the outer loop first, and the arcs between them.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Boundary {
-    /// The loops; each lists its vertices once, without repeating the first.
+    /// The loops; each lists its vertices once, without repeating the first. An arc edge is
+    /// given by its chord here and by its bulge in [`Self::bulges`].
     pub loops: Vec<Vec<[f64; 2]>>,
+    /// The bulge of the edge that starts at each vertex, like `loops` (see [`Vertex::bulge`]);
+    /// empty, or short, for straight edges.
+    pub bulges: Vec<Vec<f64>>,
 }
+
+/// The least bulge that makes an edge an arc.
+pub const MIN_BULGE: f64 = 1.0e-9;
+/// The largest bulge of an arc edge: a sweep of about 337 degrees.
+pub const MAX_BULGE: f64 = 10.0;
+/// The chord tolerance, in meters, at which arcs are flattened to test, draw and export them.
+pub const FLAT_CHORD: f64 = 0.002;
 
 /// Why a boundary is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,7 +304,22 @@ impl Floor {
                 loop_index,
                 point: [m(floor::vertex::X)?, m(floor::vertex::Y)?],
                 edge,
+                bulge: 0.0,
             });
+        }
+        // The arcs are a list of their own, so that files from before them load as they were.
+        if let Some(Some(Value::List(arcs))) = values.get(floor::ARCS) {
+            for arc in arcs {
+                if let Value::Record(fields) = arc
+                    && let (Some(Some(Value::I64(at))), Some(Some(Value::F64(bulge)))) =
+                        (fields.first(), fields.get(1))
+                    && let Some(v) = usize::try_from(*at)
+                        .ok()
+                        .and_then(|at| vertices.get_mut(at))
+                {
+                    v.bulge = *bulge;
+                }
+            }
         }
         Some(Self {
             thickness,
@@ -299,6 +348,23 @@ impl Floor {
         )
     }
 
+    /// The value of the record's arc list for `vertices`; `None` when no edge is an arc.
+    #[must_use]
+    pub fn arc_values(vertices: &[Vertex]) -> Option<Value> {
+        let arcs: Vec<Value> = vertices
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.bulge.abs() >= MIN_BULGE)
+            .map(|(at, v)| {
+                Value::Record(vec![
+                    Some(Value::I64(i64::try_from(at).unwrap_or(i64::MAX))),
+                    Some(Value::F64(v.bulge)),
+                ])
+            })
+            .collect();
+        (!arcs.is_empty()).then_some(Value::List(arcs))
+    }
+
     /// The walls the edges follow, each once, in the order of the vertices.
     #[must_use]
     pub fn walls(&self) -> Vec<ObjectId> {
@@ -319,7 +385,8 @@ impl Floor {
         wall_of: &dyn Fn(ObjectId) -> Option<Wall>,
     ) -> Option<Line> {
         let v = self.vertices.get(range.start + at)?;
-        if let Some(a) = v.edge
+        if v.bulge.abs() < MIN_BULGE
+            && let Some(a) = v.edge
             && let Some(wall) = wall_of(a.wall)
         {
             return Line::of_face(&wall, a.face, a.offset);
@@ -337,6 +404,7 @@ impl Floor {
     ) -> bool {
         self.vertices
             .get(range.start + at)
+            .filter(|v| v.bulge.abs() < MIN_BULGE)
             .and_then(|v| v.edge)
             .is_some_and(|a| wall_of(a.wall).is_some())
     }
@@ -348,9 +416,11 @@ impl Floor {
     pub fn boundary(&self, wall_of: &dyn Fn(ObjectId) -> Option<Wall>) -> Option<Boundary> {
         let ranges = loop_ranges(&self.vertices)?;
         let mut loops = Vec::with_capacity(ranges.len());
+        let mut bulges = Vec::with_capacity(ranges.len());
         for range in &ranges {
             let n = range.len();
             let mut points = Vec::with_capacity(n);
+            let mut arcs = Vec::with_capacity(n);
             for at in 0..n {
                 let own = self.vertices.get(range.start + at)?.point;
                 let before = (at + n - 1) % n;
@@ -358,22 +428,38 @@ impl Floor {
                     self.follows(range, before, wall_of),
                     self.follows(range, at, wall_of),
                 );
+                let arc_before = self
+                    .vertices
+                    .get(range.start + before)
+                    .is_some_and(|v| v.bulge.abs() >= MIN_BULGE);
+                let arc_at = self
+                    .vertices
+                    .get(range.start + at)
+                    .is_some_and(|v| v.bulge.abs() >= MIN_BULGE);
                 let point = if a || b {
-                    let (l0, l1) = (
-                        self.edge_line(range, before, wall_of)?,
-                        self.edge_line(range, at, wall_of)?,
-                    );
-                    // Parallel edges of a wall and its neighbor: stay on the wall's line.
-                    l0.meet(&l1)
-                        .unwrap_or_else(|| if b { l1.project(own) } else { l0.project(own) })
+                    let l0 = self.edge_line(range, before, wall_of)?;
+                    let l1 = self.edge_line(range, at, wall_of)?;
+                    // Two lines meet where they cross: a wall's edge and the free edge beside it
+                    // (at any angle) too. An arc has no line, so the vertex stays on the line of
+                    // the wall's edge, at the point nearest to where it was drawn; parallel
+                    // edges stay on the wall's line.
+                    match (a, b) {
+                        (true, true) => l0.meet(&l1).unwrap_or_else(|| l1.project(own)),
+                        (true, false) if arc_at => l0.project(own),
+                        (false, true) if arc_before => l1.project(own),
+                        (true, false) => l0.meet(&l1).unwrap_or_else(|| l0.project(own)),
+                        (false, _) => l0.meet(&l1).unwrap_or_else(|| l1.project(own)),
+                    }
                 } else {
                     own
                 };
                 points.push(point);
+                arcs.push(self.vertices.get(range.start + at)?.bulge);
             }
             loops.push(points);
+            bulges.push(arcs);
         }
-        Some(Boundary { loops })
+        Some(Boundary { loops, bulges })
     }
 
     /// The boundary read from the record's own wall data in `snapshot`.
@@ -473,15 +559,11 @@ impl Floor {
                 Face::Interior => Face::Exterior,
                 Face::Exterior => Face::Interior,
                 Face::Center => Face::Center,
+                Face::CoreInterior => Face::CoreExterior,
+                Face::CoreExterior => Face::CoreInterior,
             };
             let mut best: Option<(f64, Face)> = None;
-            for f in [
-                swapped,
-                a.face,
-                Face::Interior,
-                Face::Exterior,
-                Face::Center,
-            ] {
+            for f in [swapped, a.face].into_iter().chain(Face::ALL) {
                 let off = target - f.across(new);
                 if best.is_none_or(|(b, _)| off.abs() + 1.0e-12 < b.abs()) {
                     best = Some((off, f));
@@ -553,16 +635,129 @@ fn loops_touch(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
     })
 }
 
+/// The center, the signed sweep and the radius of the arc from `a` to `b` with `bulge`; `None`
+/// for a straight edge or points that coincide.
+pub(crate) fn arc_geometry(a: [f64; 2], b: [f64; 2], bulge: f64) -> Option<([f64; 2], f64, f64)> {
+    arc_of(a, b, bulge)
+}
+
+fn arc_of(a: [f64; 2], b: [f64; 2], bulge: f64) -> Option<([f64; 2], f64, f64)> {
+    let d = sub(b, a);
+    let chord = d[0].hypot(d[1]);
+    if bulge.abs() < MIN_BULGE || !bulge.is_finite() || chord <= 0.0 || !chord.is_finite() {
+        return None;
+    }
+    let k = 0.25 * (1.0 / bulge - bulge);
+    let center = [
+        (a[0] + b[0]) / 2.0 - d[1] * k,
+        (a[1] + b[1]) / 2.0 + d[0] * k,
+    ];
+    let radius = 0.25 * chord * (1.0 / bulge.abs() + bulge.abs());
+    Some((center, 4.0 * bulge.atan(), radius))
+}
+
+/// The points of the arc from `a` to `b` with `bulge`, from `a` up to but not including `b`, so
+/// that no point of the arc is farther than `chord` from the polyline; `[a]` for a straight edge.
+#[must_use]
+pub fn flatten_edge(a: [f64; 2], b: [f64; 2], bulge: f64, chord: f64) -> Vec<[f64; 2]> {
+    let Some((center, sweep, radius)) = arc_of(a, b, bulge) else {
+        return vec![a];
+    };
+    let step = if chord >= radius {
+        std::f64::consts::FRAC_PI_2
+    } else {
+        2.0 * (1.0 - chord / radius).acos()
+    };
+    let n = (sweep.abs() / step.max(1.0e-3)).ceil().clamp(2.0, 512.0);
+    let first = (a[1] - center[1]).atan2(a[0] - center[0]);
+    let mut out = Vec::new();
+    let mut k = 0.0;
+    while k < n {
+        let t = first + sweep * k / n;
+        out.push(if k == 0.0 {
+            a
+        } else {
+            [center[0] + radius * t.cos(), center[1] + radius * t.sin()]
+        });
+        k += 1.0;
+    }
+    out
+}
+
+/// The area between the arc and its chord, in square meters.
+fn segment_area(a: [f64; 2], b: [f64; 2], bulge: f64) -> f64 {
+    arc_of(a, b, bulge).map_or(0.0, |(_, sweep, r)| {
+        0.5 * r * r * (sweep.abs() - sweep.abs().sin())
+    })
+}
+
 impl Boundary {
+    /// A boundary of straight edges.
+    #[must_use]
+    pub fn polygons(loops: Vec<Vec<[f64; 2]>>) -> Self {
+        Self {
+            loops,
+            bulges: Vec::new(),
+        }
+    }
+
+    /// The bulge of the edge that starts at vertex `at` of loop `l`.
+    #[must_use]
+    pub fn bulge(&self, l: usize, at: usize) -> f64 {
+        self.bulges
+            .get(l)
+            .and_then(|b| b.get(at))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Whether some edge is an arc.
+    #[must_use]
+    pub fn has_arcs(&self) -> bool {
+        self.bulges.iter().flatten().any(|b| b.abs() >= MIN_BULGE)
+    }
+
+    /// The loops with every arc replaced by the chords of [`flatten_edge`] within `chord`.
+    #[must_use]
+    pub fn flattened(&self, chord: f64) -> Vec<Vec<[f64; 2]>> {
+        self.loops
+            .iter()
+            .enumerate()
+            .map(|(l, points)| {
+                let n = points.len();
+                (0..n)
+                    .flat_map(|k| {
+                        flatten_edge(points[k], points[(k + 1) % n], self.bulge(l, k), chord)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The boundary of the flattened loops, which has straight edges only.
+    #[must_use]
+    pub fn faceted(&self, chord: f64) -> Self {
+        Self::polygons(self.flattened(chord))
+    }
+
     /// The area: the outer loop minus the holes, in square meters.
     #[must_use]
     pub fn area(&self) -> f64 {
         self.loops
             .iter()
             .enumerate()
-            .map(|(k, l)| {
-                let a = signed_area(l).abs();
-                if k == 0 { a } else { -a }
+            .map(|(l, points)| {
+                let n = points.len();
+                let a = (signed_area(points)
+                    + (0..n)
+                        .map(|k| {
+                            let b = self.bulge(l, k);
+                            // An arc that bends the way the loop runs adds its segment.
+                            segment_area(points[k], points[(k + 1) % n], b) * b.signum()
+                        })
+                        .sum::<f64>())
+                .abs();
+                if l == 0 { a } else { -a }
             })
             .sum()
     }
@@ -570,7 +765,14 @@ impl Boundary {
     /// Whether `p` is inside the outer loop and outside every hole.
     #[must_use]
     pub fn contains(&self, p: [f64; 2]) -> bool {
-        self.loops
+        let flat;
+        let loops = if self.has_arcs() {
+            flat = self.flattened(FLAT_CHORD / 4.0);
+            &flat
+        } else {
+            &self.loops
+        };
+        loops
             .iter()
             .enumerate()
             .all(|(k, l)| inside(l, p) == (k == 0))
@@ -581,43 +783,70 @@ impl Boundary {
     pub fn perimeter(&self) -> f64 {
         self.loops
             .iter()
-            .flat_map(|l| {
-                (0..l.len()).map(|k| {
-                    let d = sub(l[(k + 1) % l.len()], l[k]);
-                    d[0].hypot(d[1])
-                })
+            .enumerate()
+            .flat_map(|(l, points)| (0..points.len()).map(move |k| (l, k, points)))
+            .map(|(l, k, points)| {
+                let (a, b) = (points[k], points[(k + 1) % points.len()]);
+                let d = sub(b, a);
+                let chord = d[0].hypot(d[1]);
+                arc_of(a, b, self.bulge(l, k)).map_or(chord, |(_, sweep, r)| r * sweep.abs())
             })
             .sum()
     }
 
     /// Checks the boundary: each loop simple with edges of at least [`MIN_EDGE`], an outer loop
-    /// with an area in [`AREA_RANGE`], holes inside it and apart from each other.
+    /// with an area in [`AREA_RANGE`], holes inside it and apart from each other. Arcs are
+    /// checked as the chords of [`flatten_edge`] within [`FLAT_CHORD`].
     ///
     /// # Errors
     /// The [`Refusal`] that names what is wrong.
     pub fn check(&self) -> std::result::Result<(), Refusal> {
         let count: usize = self.loops.iter().map(Vec::len).sum();
         let (low, high) = COORDINATE_RANGE;
+        let arcs = self.has_arcs();
         if self.loops.is_empty()
             || self.loops.len() > MAX_LOOPS
             || count > MAX_VERTICES
-            || self.loops.iter().any(|l| l.len() < 3)
+            || self.loops.iter().enumerate().any(|(l, p)| {
+                p.len()
+                    < if arcs && self.bulges.get(l).is_some() {
+                        2
+                    } else {
+                        3
+                    }
+            })
             || self
                 .loops
                 .iter()
                 .flatten()
                 .any(|p| p.iter().any(|c| !c.is_finite() || *c < low || *c > high))
+            || self
+                .bulges
+                .iter()
+                .flatten()
+                .any(|b| !b.is_finite() || b.abs() > MAX_BULGE)
         {
             return Err(Refusal::Malformed);
         }
+        // The edges are measured on the authored vertices, the crossings on the flattened loops.
         for points in &self.loops {
             let n = points.len();
             for k in 0..n {
-                let (a, b) = (points[k], points[(k + 1) % n]);
-                let d = sub(b, a);
+                let d = sub(points[(k + 1) % n], points[k]);
                 if d[0].hypot(d[1]) < MIN_EDGE {
                     return Err(Refusal::EdgeTooShort);
                 }
+            }
+        }
+        let flat = self.flattened(FLAT_CHORD);
+        for points in &flat {
+            let n = points.len();
+            if n < 3 {
+                return Err(Refusal::Malformed);
+            }
+            for k in 0..n {
+                let (a, b) = (points[k], points[(k + 1) % n]);
+                let d = sub(b, a);
                 // The next edge may only share its start; folding back on itself is a crossing.
                 let e = sub(points[(k + 2) % n], b);
                 if cross(d, e).abs() <= 1.0e-12 * d[0].hypot(d[1]) * e[0].hypot(e[1])
@@ -635,21 +864,30 @@ impl Boundary {
                 }
             }
         }
-        let outer_area = signed_area(&self.loops[0]).abs();
+        let outer_area = self.loop_area(0).abs();
         if outer_area < AREA_RANGE.0 || outer_area > AREA_RANGE.1 {
             return Err(Refusal::Area);
         }
-        for (k, hole) in self.loops.iter().enumerate().skip(1) {
-            if loops_touch(&self.loops[0], hole) || !inside(&self.loops[0], hole[0]) {
+        for (k, hole) in flat.iter().enumerate().skip(1) {
+            if loops_touch(&flat[0], hole) || !inside(&flat[0], hole[0]) {
                 return Err(Refusal::HoleOutside);
             }
-            for other in self.loops.iter().skip(1).take(k - 1) {
+            for other in flat.iter().skip(1).take(k - 1) {
                 if loops_touch(other, hole) || inside(other, hole[0]) || inside(hole, other[0]) {
                     return Err(Refusal::HolesOverlap);
                 }
             }
         }
         Ok(())
+    }
+
+    /// The area of loop `l` alone, arcs included.
+    fn loop_area(&self, l: usize) -> f64 {
+        Self {
+            loops: self.loops.get(l).cloned().into_iter().collect(),
+            bulges: self.bulges.get(l).cloned().into_iter().collect(),
+        }
+        .area()
     }
 
     /// The solid: a prism of the boundary from `top - thickness` up to `top`, where `top` is the
@@ -669,21 +907,33 @@ impl Boundary {
         )
     }
 
-    /// The boundary as a region of the solid kernel.
+    /// The boundary as a region of the solid kernel, with exact arcs.
     ///
     /// # Errors
     /// The solid kernel's errors for loops it cannot make a region of.
     pub fn region(&self) -> Result<Region> {
         let tolerance = Tolerance::DEFAULT;
         let mut parts = Vec::with_capacity(self.loops.len());
-        for points in &self.loops {
+        for (l, points) in self.loops.iter().enumerate() {
             let pts: Vec<Point2> = points.iter().map(|p| Point2::new(p[0], p[1])).collect();
             let mut curves = Vec::with_capacity(pts.len());
             for k in 0..pts.len() {
-                curves.push(Curve2::Segment(Segment2::new(
-                    pts[k],
-                    pts[(k + 1) % pts.len()],
-                )?));
+                let (a, b) = (pts[k], pts[(k + 1) % pts.len()]);
+                let bulge = self.bulge(l, k);
+                if bulge.abs() < MIN_BULGE {
+                    curves.push(Curve2::Segment(Segment2::new(a, b)?));
+                } else {
+                    let line = Polyline2::new(
+                        vec![PolylineVertex::new(a, bulge), PolylineVertex::new(b, 0.0)],
+                        false,
+                    )?;
+                    for segment in line.segments() {
+                        curves.push(match segment {
+                            PolylineSegment::Line(s) => Curve2::Segment(s),
+                            PolylineSegment::Arc(a) => Curve2::Arc(a),
+                        });
+                    }
+                }
             }
             parts.push(Loop2::new(curves, &tolerance)?);
         }
@@ -692,6 +942,24 @@ impl Boundary {
             .next()
             .ok_or_else(|| arc_base::Error::new(arc_geom::error::codes::REGION_EMPTY))?;
         Region::new(vec![RegionPart::new(outer, loops.collect())])
+    }
+
+    /// The boundary of a region of the solid kernel: its first part, one loop per boundary with
+    /// the arcs kept as bulges; `None` when it has several parts or a curve that is neither a
+    /// segment nor a circular arc.
+    #[must_use]
+    pub fn of_region(region: &Region) -> Option<Self> {
+        let [part] = region.parts() else {
+            return None;
+        };
+        let mut loops = Vec::new();
+        let mut bulges = Vec::new();
+        for l in std::iter::once(part.outer()).chain(part.holes()) {
+            let (points, arcs) = loop_points(l)?;
+            loops.push(points);
+            bulges.push(arcs);
+        }
+        Some(Self { loops, bulges })
     }
 
     /// The boundary with the shaft `openings` taken out, and how many openings that reach the
@@ -707,11 +975,13 @@ impl Boundary {
         for opening in merged.iter().take(MAX_LOOPS) {
             let mut hole = out.clone();
             hole.loops.push(opening.clone());
+            hole.bulges.resize(hole.loops.len(), Vec::new());
             if hole.check().is_ok() {
                 out = hole;
                 continue;
             }
-            let outer = &out.loops[0];
+            let flat = out.flattened(FLAT_CHORD);
+            let outer = &flat[0];
             let reaches = opening.iter().any(|p| inside(outer, *p))
                 || outer.iter().any(|p| inside(opening, *p))
                 || loops_touch(outer, opening);
@@ -728,11 +998,7 @@ impl Boundary {
 
     /// The boundary less the polygon `cut`, when the result is one valid boundary.
     fn subtract(&self, cut: &[[f64; 2]]) -> Option<Self> {
-        let tool = Self {
-            loops: vec![cut.to_vec()],
-        }
-        .region()
-        .ok()?;
+        let tool = Self::polygons(vec![cut.to_vec()]).region().ok()?;
         let result = arc_geom::boolean(
             &self.region().ok()?,
             &tool,
@@ -741,22 +1007,26 @@ impl Boundary {
             &Limits::DEFAULT,
         )
         .ok()??;
-        let [part] = result.parts() else {
-            return None;
-        };
-        let points = |l: &Loop2| -> Option<Vec<[f64; 2]>> {
-            l.curves()
-                .iter()
-                .map(|c| c.start_point().map(|p| [p.x, p.y]))
-                .collect()
-        };
-        let mut loops = vec![points(part.outer())?];
-        for hole in part.holes() {
-            loops.push(points(hole)?);
-        }
-        let boundary = Self { loops };
+        let boundary = Self::of_region(&result)?;
         boundary.check().is_ok().then_some(boundary)
     }
+}
+
+/// The start points and bulges of the curves of a loop; `None` for a curve that is neither a
+/// segment nor a circular arc.
+fn loop_points(l: &Loop2) -> Option<(Vec<[f64; 2]>, Vec<f64>)> {
+    let mut points = Vec::new();
+    let mut bulges = Vec::new();
+    for curve in l.curves() {
+        let p = curve.start_point()?;
+        points.push([p.x, p.y]);
+        bulges.push(match curve {
+            Curve2::Segment(_) => 0.0,
+            Curve2::Arc(arc) => (arc.sweep() / 4.0).tan(),
+            _ => return None,
+        });
+    }
+    Some((points, bulges))
 }
 
 /// The union of `loops` as the outer loops of its parts (an enclosed gap is filled); `loops`
@@ -765,13 +1035,7 @@ fn merge_loops(loops: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
     if loops.len() < 2 {
         return loops.to_vec();
     }
-    let region = |l: &Vec<[f64; 2]>| {
-        Boundary {
-            loops: vec![l.clone()],
-        }
-        .region()
-        .ok()
-    };
+    let region = |l: &Vec<[f64; 2]>| Boundary::polygons(vec![l.clone()]).region().ok();
     let mut acc: Option<Region> = None;
     for l in loops.iter().take(MAX_LOOPS) {
         let Some(r) = region(l) else {
@@ -969,15 +1233,16 @@ pub fn vertices_of_walls(
             } else {
                 Face::Interior
             };
-            let away = if toward_area == Face::Exterior {
-                Face::Interior
-            } else {
-                Face::Exterior
-            };
-            if face == Face::Interior {
-                toward_area
-            } else {
-                away
+            // The face the caller asked for, looking toward the area or away from it, on the
+            // wall's surface (`Interior`, `Exterior`) or on its core.
+            let core = matches!(face, Face::CoreInterior | Face::CoreExterior);
+            let toward = matches!(face, Face::Interior | Face::CoreInterior);
+            let left = (toward_area == Face::Exterior) == toward;
+            match (core, left) {
+                (false, true) => Face::Exterior,
+                (false, false) => Face::Interior,
+                (true, true) => Face::CoreExterior,
+                (true, false) => Face::CoreInterior,
             }
         })
         .collect();
@@ -992,6 +1257,7 @@ pub fn vertices_of_walls(
                 face: faces[k],
                 offset,
             }),
+            bulge: 0.0,
         })
         .collect())
 }
@@ -1448,6 +1714,7 @@ mod tests {
             |x0: f64, y0: f64, x1: f64, y1: f64| vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
         let slab = Boundary {
             loops: vec![rect(0.0, 0.0, 10.0, 6.0)],
+            ..Boundary::default()
         };
         let (cut, uncut) =
             slab.with_openings(&[rect(1.0, 1.0, 3.0, 3.0), rect(2.0, 2.0, 4.0, 4.0)]);
@@ -1466,7 +1733,7 @@ mod tests {
                 [at[0], at[1] + s],
             ]
         };
-        let b = |loops: Vec<Vec<[f64; 2]>>| Boundary { loops };
+        let b = |loops: Vec<Vec<[f64; 2]>>| Boundary::polygons(loops);
         assert_eq!(b(vec![square(4.0, [0.0, 0.0])]).check(), Ok(()));
         // A bow tie.
         let bow = vec![[0.0, 0.0], [4.0, 4.0], [4.0, 0.0], [0.0, 4.0]];
@@ -1527,15 +1794,64 @@ mod tests {
 
     #[test]
     fn the_solid_is_the_area_times_the_thickness() {
-        let b = Boundary {
-            loops: vec![
-                vec![[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]],
-                vec![[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]],
-            ],
-        };
+        let b = Boundary::polygons(vec![
+            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]],
+            vec![[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]],
+        ]);
         let solid = b.solid(3.0, 0.2).unwrap();
         assert!((solid.volume() - 59.0 * 0.2).abs() < 1e-9);
         let bounds = solid.bounding_box();
         assert!((bounds.min().z - 2.8).abs() < 1e-9 && (bounds.max().z - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_vertex_between_a_wall_edge_and_an_angled_free_edge_is_where_their_lines_cross() {
+        use arc_base::id::Identifier;
+        let id = ObjectId::from_u128(5);
+        let wall = Wall {
+            start: [0.0, 0.0],
+            end: [10.0, 0.0],
+            thickness: 0.2,
+            core: [0.0, 0.0],
+            height: 3.0,
+            base_offset: 0.0,
+            location: crate::wall::LocationLine::Center,
+            start_join: crate::wall::JoinStyle::Auto,
+            end_join: crate::wall::JoinStyle::Auto,
+        };
+        let v = |x: f64, y: f64, edge: Option<Association>| Vertex {
+            loop_index: 0,
+            point: [x, y],
+            edge,
+            bulge: 0.0,
+        };
+        let follows = Some(Association {
+            wall: id,
+            face: Face::Center,
+            offset: 0.0,
+        });
+        // The edge from the first vertex follows the wall; the edge from (10, 1) to (9, 5) is free
+        // and slanted: the vertex at (10, 1) moves to where that line meets the wall's.
+        let floor = Floor {
+            thickness: 0.2,
+            top_offset: 0.0,
+            vertices: vec![
+                v(0.0, 0.0, follows),
+                v(10.0, 1.0, None),
+                v(9.0, 5.0, None),
+                v(1.0, 5.0, None),
+            ],
+        };
+        let b = floor.boundary(&|w| (w == id).then_some(wall)).unwrap();
+        assert!(
+            (b.loops[0][1][0] - 10.25).abs() < 1e-9 && b.loops[0][1][1].abs() < 1e-9,
+            "{:?}",
+            b.loops[0][1]
+        );
+        // An arc beside the wall's edge cannot meet it: the vertex stays on the wall's line.
+        let mut arc = floor.clone();
+        arc.vertices[1].bulge = 0.5;
+        let b = arc.boundary(&|w| (w == id).then_some(wall)).unwrap();
+        assert!((b.loops[0][1][0] - 10.0).abs() < 1e-9 && b.loops[0][1][1].abs() < 1e-9);
     }
 }

@@ -19,7 +19,7 @@ use arc_ui::egui::{
 use arc_ui::{Intent, Localize};
 use archbuilder_commands::element_type::{TYPE_DELETE, TYPE_DUPLICATE, TYPE_SET};
 use archbuilder_model::element_type::{
-    self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType,
+    self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
 use archbuilder_model::spatial;
@@ -152,6 +152,38 @@ const LOAD_BEARING: Message = Message {
 const ROOM_BOUNDING: Message = Message {
     message_id: "ab-types-room-bounding",
 };
+const WRAP_ENDS: Message = Message {
+    message_id: "ab-types-wrap-ends",
+};
+const WRAP_INSERTS: Message = Message {
+    message_id: "ab-types-wrap-inserts",
+};
+const WRAP_LABELS: [(Wrap, Message); 4] = [
+    (
+        Wrap::None,
+        Message {
+            message_id: "ab-types-wrap-none",
+        },
+    ),
+    (
+        Wrap::Exterior,
+        Message {
+            message_id: "ab-types-wrap-exterior",
+        },
+    ),
+    (
+        Wrap::Interior,
+        Message {
+            message_id: "ab-types-wrap-interior",
+        },
+    ),
+    (
+        Wrap::Both,
+        Message {
+            message_id: "ab-types-wrap-both",
+        },
+    ),
+];
 const LAYERS_HEADING: Message = Message {
     message_id: "ab-types-layers",
 };
@@ -241,6 +273,8 @@ struct Draft {
     exposure: Exposure,
     load_bearing: bool,
     room_bounding: bool,
+    wrap_ends: Wrap,
+    wrap_inserts: Wrap,
     sizes: [String; 5],
     operation: Operation,
 }
@@ -274,6 +308,8 @@ impl Draft {
             exposure: Exposure::Exterior,
             load_bearing: false,
             room_bounding: true,
+            wrap_ends: Wrap::None,
+            wrap_inserts: Wrap::None,
             sizes: Default::default(),
             operation: Operation::SingleSwing,
         };
@@ -294,6 +330,8 @@ impl Draft {
                 draft.exposure = w.exposure;
                 draft.load_bearing = w.load_bearing;
                 draft.room_bounding = w.room_bounding;
+                draft.wrap_ends = w.wrap_ends;
+                draft.wrap_inserts = w.wrap_inserts;
             }
         } else {
             let t = InsertType::from_values(&object.values)?;
@@ -369,6 +407,8 @@ impl Draft {
                 map.insert("exposure".into(), self.exposure.name().into());
                 map.insert("load_bearing".into(), self.load_bearing.into());
                 map.insert("room_bounding".into(), self.room_bounding.into());
+                map.insert("wrap_ends".into(), self.wrap_ends.name().into());
+                map.insert("wrap_inserts".into(), self.wrap_inserts.name().into());
             }
         } else {
             for (name, text) in ["width", "height", "frame_width", "frame_depth", "sill"]
@@ -691,6 +731,29 @@ impl TypePanel {
                         );
                         ui.checkbox(&mut draft.load_bearing, say(localize, &LOAD_BEARING, &[]));
                         ui.checkbox(&mut draft.room_bounding, say(localize, &ROOM_BOUNDING, &[]));
+                    });
+                    ui.horizontal(|ui| {
+                        for (label, salt, value) in [
+                            (
+                                &WRAP_ENDS,
+                                "archbuilder-types-wrap-ends",
+                                &mut draft.wrap_ends,
+                            ),
+                            (
+                                &WRAP_INSERTS,
+                                "archbuilder-types-wrap-inserts",
+                                &mut draft.wrap_inserts,
+                            ),
+                        ] {
+                            ui.label(say(localize, label, &[]));
+                            ComboBox::from_id_salt(salt)
+                                .selected_text(combo_text(&WRAP_LABELS, *value, localize))
+                                .show_ui(ui, |ui| {
+                                    for (w, m) in &WRAP_LABELS {
+                                        ui.selectable_value(value, *w, say(localize, m, &[]));
+                                    }
+                                });
+                        }
                     });
                 }
                 if kind.layered() {

@@ -119,6 +119,13 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-floor-walls-parallel",
     };
+    /// An operation that would cut or offset the outline of a floor with arc edges, which it
+    /// cannot keep.
+    pub const FLOOR_ARCS_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.floor_arcs_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-floor-arcs-unsupported",
+    };
     /// A hole is added and no floor is named or selected.
     pub const NO_FLOOR_SELECTED: ErrorCode = ErrorCode {
         code: "ab.cmd.no_floor_selected",

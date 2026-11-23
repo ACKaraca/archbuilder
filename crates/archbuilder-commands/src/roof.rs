@@ -359,6 +359,7 @@ fn create_roof(ctx: &mut Context<'_>, p: CreateRoof) -> Result<RoofCreated> {
                     loop_index: 0,
                     point: *p,
                     edge: None,
+                    bulge: 0.0,
                 })
                 .collect()
         }

@@ -17,6 +17,7 @@
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
+use std::sync::Arc;
 
 use arc_command::headless::{self, Exit, Product};
 use archbuilder_model::insert::Kind;
@@ -107,6 +108,41 @@ where
     headless::run_with_setup(args, product, None, Some(&setup), stdin, stdout, stderr)
 }
 
+/// The net volume of every wall of the file named in `args` (the first argument after `inspect`
+/// that is not a flag), by identifier; empty when the file cannot be opened.
+fn net_volumes(args: &[OsString], product: &Product) -> std::collections::HashMap<String, f64> {
+    use arc_doc::package::{Mode, Package};
+    let limits = arc_base::Limits::DEFAULT;
+    let Some(file) = args
+        .iter()
+        .skip(1)
+        .find(|a| !a.to_string_lossy().starts_with("--"))
+    else {
+        return std::collections::HashMap::new();
+    };
+    let opened = Package::open(std::path::Path::new(file), Mode::ReadOnly, &limits).and_then(|p| {
+        p.open_document(
+            Arc::clone(&product.types),
+            Arc::clone(&product.evaluators),
+            &arc_doc::LoadOptions {
+                limits,
+                ..arc_doc::LoadOptions::default()
+            },
+            arc_doc::DocumentConfig::default(),
+        )
+    });
+    let Ok(document) = opened else {
+        return std::collections::HashMap::new();
+    };
+    let snapshot = document.snapshot();
+    archbuilder_model::spatial::objects(&snapshot, archbuilder_model::types::WALL)
+        .iter()
+        .filter_map(|w| {
+            archbuilder_model::cleanup::wall_net_volume(&snapshot, w).map(|v| (w.id.to_string(), v))
+        })
+        .collect()
+}
+
 /// The shared `inspect`, with the `walls` list added to its JSON line.
 fn inspect<R, W, E>(
     args: Vec<OsString>,
@@ -122,12 +158,14 @@ where
     E: Write + Send,
 {
     let checked = args.iter().any(|a| a.to_str() == Some("--check"));
+    // The net volume of each wall, from the document itself: the cleaned layers.
+    let net = net_volumes(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
     let enriched = text.lines().next().and_then(|line| {
         let mut dump: serde_json::Value = serde_json::from_str(line).ok()?;
-        let walls = walls::summary(dump.get("objects")?.as_array()?);
+        let walls = walls::summary(dump.get("objects")?.as_array()?, &net);
         let doors = walls::inserts(dump.get("objects")?.as_array()?, Kind::Door);
         let windows = walls::inserts(dump.get("objects")?.as_array()?, Kind::Window);
         let floors = floors::summary(dump.get("objects")?.as_array()?);

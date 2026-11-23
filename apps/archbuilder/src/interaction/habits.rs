@@ -184,6 +184,9 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "selecttype" | "tipisec" if rest.is_empty() => Intent::new(ui::SELECT_TYPE),
         "matchtype" | "tipesle" if rest.is_empty() => Intent::new(ui::MATCH_TYPE),
         "edittype" | "tipduzenle" if rest.is_empty() => Intent::new(ui::EDIT_TYPE),
+        "editboundary" | "sinirduzenle" if rest.is_empty() => {
+            Intent::new(archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY)
+        }
         "exportkeys" if rest.len() == 1 => {
             Intent::new(EXPORT_SHORTCUTS).with("path", rest[0].clone())
         }
@@ -273,6 +276,7 @@ impl WallInteraction {
             || self.modify.running()
             || self.direct.active()
             || self.habits.rename.is_some()
+            || self.sketching.is_some()
     }
 
     /// The command that is running, for Repeat.
@@ -656,8 +660,8 @@ impl WallInteraction {
                 cx.ask(select_intent(&chain, "replace"));
             }
             Some(FLOOR) => {
-                self.stop_all();
-                let r = self.with_floors(cx, |tool, env, run| tool.begin(env, run, Some(id)));
+                // A double click on a floor opens its boundary sketch.
+                let r = self.start_sketch(cx, Some(id));
                 self.note_result(cx, r);
             }
             Some(ROOM) => {

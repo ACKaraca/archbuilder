@@ -64,6 +64,35 @@ coded! {
     }
 }
 
+coded! {
+    /// The sides of a wall whose finish layers wrap around a free end or the reveal of an opening.
+    Wrap {
+        /// No layer wraps.
+        #[default]
+        None = 0, "none";
+        /// The finish layers on the exterior side wrap.
+        Exterior = 1, "exterior";
+        /// The finish layers on the interior side wrap.
+        Interior = 2, "interior";
+        /// The finish layers on both sides wrap.
+        Both = 3, "both";
+    }
+}
+
+impl Wrap {
+    /// Whether the exterior side wraps.
+    #[must_use]
+    pub const fn exterior(self) -> bool {
+        matches!(self, Self::Exterior | Self::Both)
+    }
+
+    /// Whether the interior side wraps.
+    #[must_use]
+    pub const fn interior(self) -> bool {
+        matches!(self, Self::Interior | Self::Both)
+    }
+}
+
 /// The kinds of element type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeKind {
@@ -356,6 +385,10 @@ pub struct WallType {
     pub load_bearing: bool,
     /// Whether the wall bounds rooms.
     pub room_bounding: bool,
+    /// The sides whose finish layers wrap around free ends.
+    pub wrap_ends: Wrap,
+    /// The sides whose finish layers wrap around the openings of doors and windows.
+    pub wrap_inserts: Wrap,
 }
 
 impl WallType {
@@ -371,6 +404,8 @@ impl WallType {
             exposure: Exposure::of_field(values, layered_type::EXPOSURE),
             load_bearing: flag(layered_type::LOAD_BEARING, false),
             room_bounding: flag(layered_type::ROOM_BOUNDING, true),
+            wrap_ends: Wrap::of_field(values, layered_type::WRAP_ENDS),
+            wrap_inserts: Wrap::of_field(values, layered_type::WRAP_INSERTS),
         })
     }
 }
@@ -434,6 +469,8 @@ pub fn wall_type_values(name: &str, wall: &WallType) -> Vec<Option<Value>> {
         Some(Value::Enum(wall.exposure.code())),
         Some(Value::Bool(wall.load_bearing)),
         Some(Value::Bool(wall.room_bounding)),
+        Some(Value::Enum(wall.wrap_ends.code())),
+        Some(Value::Enum(wall.wrap_inserts.code())),
     ]
 }
 
@@ -697,8 +734,21 @@ pub fn wall_type_fields() -> Vec<FieldDecl> {
         FieldDecl::new("room_bounding", ValueType::Bool)
             .with_default(Value::Bool(true))
             .in_aspect("data"),
+        wrap_field("wrap_ends"),
+        wrap_field("wrap_inserts"),
     ]);
     fields
+}
+
+/// A wrapping setting of a wall type, appended in schema 1.1.
+fn wrap_field(name: &str) -> FieldDecl {
+    FieldDecl::new(
+        name,
+        variants(Wrap::ALL.iter().map(|w| (w.name(), w.code()))),
+    )
+    .with_default(Value::Enum(Wrap::None.code()))
+    .in_aspect("data")
+    .since_minor(1)
 }
 
 /// The fields of `archbuilder.floor_type`.

@@ -15,6 +15,7 @@
 
 mod attach;
 mod habits;
+mod sketch;
 mod types;
 
 pub use types::upgrade_invocation;
@@ -301,6 +302,10 @@ pub struct WallInteraction {
     inserts: InsertTool,
     /// The floor tool: floors made from picked walls or a sketch, and their holes.
     floors: FloorTool,
+    /// The boundary sketch of a floor while it is open.
+    sketching: Option<crate::floor_sketch::FloorSketch>,
+    /// Whether the sketch passes the checks of a floor, for its color.
+    sketch_valid: bool,
     /// The modify tool: move, copy, rotate and mirror.
     modify: ModifyTool,
     /// The room tool: rooms placed by clicking inside regions closed by walls.
@@ -403,6 +408,8 @@ impl WallInteraction {
             tool: Tool::new(),
             inserts: InsertTool::new(),
             floors: FloorTool::new(),
+            sketching: None,
+            sketch_valid: true,
             modify: ModifyTool::new(),
             rooms: RoomTool::new(),
             stairs: StairTool::new(),
@@ -689,6 +696,7 @@ impl WallInteraction {
         self.hover = None;
         self.matching = None;
         self.attaching = None;
+        self.sketching = None;
     }
 
     /// The elevation of the plane the running tool works on.
@@ -1113,6 +1121,12 @@ impl Interaction for WallInteraction {
                 self.say(cx, CANCELLED, &[]);
                 Ok(())
             }
+            LineAction::Cancel if self.sketching.is_some() => {
+                self.sketch_cancel(cx);
+                Ok(())
+            }
+            LineAction::Submit(text) if self.sketching.is_some() => self.sketch_text(cx, &text),
+            LineAction::Back if self.sketching.is_some() => Ok(()),
             LineAction::Cancel if rooming => {
                 self.stop_all();
                 Ok(())
@@ -1226,6 +1240,12 @@ impl Interaction for WallInteraction {
             LineAction::Submit(text) if is_roof_word(&text) && !self.tool.active() => {
                 self.intent(cx, &Intent::new(ROOF_CREATE))
             }
+            LineAction::Submit(text) if sketch::is_sketch_word(&text) && !self.tool.active() => {
+                self.intent(
+                    cx,
+                    &Intent::new(archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY),
+                )
+            }
             LineAction::Submit(text) if text.trim() == FLOOR_ADD_HOLE => {
                 self.intent(cx, &Intent::new(FLOOR_ADD_HOLE))
             }
@@ -1297,7 +1317,8 @@ impl Interaction for WallInteraction {
                     .then(archbuilder_commands::modify::select_prompt)
             })
             .or_else(|| self.match_prompt())
-            .or_else(|| self.attach_prompt());
+            .or_else(|| self.attach_prompt())
+            .or_else(|| self.sketch_prompt());
         let options = prompt
             .as_ref()
             .map_or_else(PromptControls::default, |p| PromptControls {
@@ -1331,6 +1352,7 @@ impl Interaction for WallInteraction {
                 .chain(self.angle_label())
                 .chain(self.insert_overlays())
                 .chain(self.floor_overlays())
+                .chain(self.sketch_overlays())
                 .chain(self.room_hover.iter().cloned())
                 .chain(self.stair_ghost.iter().cloned())
                 .chain(self.pick_hover.iter().cloned())
@@ -1377,7 +1399,8 @@ impl Interaction for WallInteraction {
                 && !self.floors.running()
                 && !self.rooms.running()
                 && !self.stairs.running()
-                && !self.modify.running(),
+                && !self.modify.running()
+                && self.sketching.is_none(),
             // A chain of walls or of copies says once when it ends, not after each wall or copy.
             reports_results: self.just_reported
                 || self.tool.chain().is_some_and(|c| c.walls > 0)
@@ -1398,6 +1421,9 @@ impl WallInteraction {
         });
         self.refresh_highlight(cx);
         self.update_view(cx, Some(event));
+        if self.sketching.is_some() {
+            return self.sketch_pointer(cx, event);
+        }
         if self.modify.prompting() {
             return self.modify_pointer(cx, event);
         }
@@ -1698,6 +1724,7 @@ impl WallInteraction {
             || self.rooms.running()
             || self.stairs.running()
             || self.modify.running()
+            || self.sketching.is_some()
     }
 
     /// The camera as direct manipulation reads it.
@@ -1894,6 +1921,9 @@ impl WallInteraction {
             self.stop_all();
             return self.with_stairs(cx, |tool, env, run| tool.begin(env, run));
         }
+        if command == archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY && intent.params.is_empty() {
+            return self.start_sketch(cx, None);
+        }
         if command == FLOOR_ADD_HOLE && intent.params.is_empty() {
             self.tool.stop();
             self.inserts.stop();
@@ -2013,6 +2043,7 @@ impl WallInteraction {
             || self.habits.rename.is_some()
             || self.matching.is_some()
             || self.attaching.is_some()
+            || self.sketching.is_some()
     }
 
     /// After a command of the product: what the pointer outlined may be gone (a delete), so the

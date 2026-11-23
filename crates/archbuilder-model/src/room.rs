@@ -78,7 +78,10 @@ impl Footprint {
     pub fn boundary(&self) -> Boundary {
         let mut loops = vec![self.polygon.clone()];
         loops.extend(self.holes.iter().cloned());
-        Boundary { loops }
+        Boundary {
+            loops,
+            ..Boundary::default()
+        }
     }
 
     /// The loops of the region, the outer one first; none when there is no region.
@@ -135,7 +138,10 @@ fn boundary_of(region: &WallRegion, walls: &[(ObjectId, Wall)]) -> Option<Bounda
     for hole in &region.holes {
         loops.push(chain(hole, Face::Exterior)?);
     }
-    let boundary = Boundary { loops };
+    let boundary = Boundary {
+        loops,
+        ..Boundary::default()
+    };
     boundary.check().is_ok().then_some(boundary)
 }
 
@@ -238,6 +244,7 @@ pub fn enclosed_regions(walls: &[(ObjectId, Wall)]) -> Enclosed {
         };
         if (Boundary {
             loops: loops.clone(),
+            ..Boundary::default()
         })
         .area()
             < MIN_ROOM_AREA
@@ -275,6 +282,7 @@ fn depth(loops: &[Vec<[f64; 2]>], p: [f64; 2]) -> f64 {
         .fold(f64::MAX, f64::min);
     if (Boundary {
         loops: loops.to_vec(),
+        ..Boundary::default()
     })
     .contains(p)
     {
@@ -676,7 +684,13 @@ mod tests {
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {
             assert!((floor::signed_area(&loops[0]).abs() - 27.84).abs() < 1e-9);
-            assert!(Boundary { loops }.contains(point));
+            assert!(
+                Boundary {
+                    loops,
+                    ..Boundary::default()
+                }
+                .contains(point)
+            );
         }
     }
 
@@ -710,6 +724,7 @@ mod tests {
             assert_eq!(found.regions.len(), 1, "{extra:?}");
             let area = Boundary {
                 loops: found.regions[0].1.clone(),
+                ..Boundary::default()
             }
             .area();
             assert!((area - 9.8 * 5.8).abs() < 1e-9, "{area}");
@@ -724,6 +739,7 @@ mod tests {
         assert_eq!(found.regions.len(), 1);
         let area = Boundary {
             loops: found.regions[0].1.clone(),
+            ..Boundary::default()
         }
         .area();
         assert!((area - 9.8 * 5.8).abs() < 1e-9, "{area}");
@@ -777,7 +793,13 @@ mod tests {
         assert_eq!(unresolved, 0);
         assert_eq!(regions.len(), 2);
         for (point, loops) in regions {
-            assert!(Boundary { loops }.contains(point));
+            assert!(
+                Boundary {
+                    loops,
+                    ..Boundary::default()
+                }
+                .contains(point)
+            );
         }
     }
 

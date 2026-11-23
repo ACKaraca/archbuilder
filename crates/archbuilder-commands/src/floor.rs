@@ -44,6 +44,8 @@ use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect, language,
 
 /// The identifier of the create-floor command.
 pub const FLOOR_CREATE: &str = "archbuilder.floor.create";
+/// The identifier of the command that replaces the boundary of a floor.
+pub const FLOOR_EDIT_BOUNDARY: &str = "archbuilder.floor.edit_boundary";
 /// The identifier of the command that cuts a hole in a floor.
 pub const FLOOR_ADD_HOLE: &str = "archbuilder.floor.add_hole";
 
@@ -57,6 +59,10 @@ pub enum FaceParam {
     Exterior,
     /// The center line of the wall (the core center while walls have no layers).
     Center,
+    /// The face of the core that looks into the area the walls enclose.
+    CoreInterior,
+    /// The face of the core that looks away from it.
+    CoreExterior,
 }
 
 impl From<FaceParam> for Face {
@@ -65,6 +71,8 @@ impl From<FaceParam> for Face {
             FaceParam::Interior => Self::Interior,
             FaceParam::Exterior => Self::Exterior,
             FaceParam::Center => Self::Center,
+            FaceParam::CoreInterior => Self::CoreInterior,
+            FaceParam::CoreExterior => Self::CoreExterior,
         }
     }
 }
@@ -135,6 +143,51 @@ pub struct FloorCreated {
     pub face: Option<FaceParam>,
 }
 
+/// One vertex of a sketched boundary, as a command parameter.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SketchVertex {
+    /// The loop: 0 for the outline, 1 and up for the openings.
+    pub loop_index: u32,
+    /// The point `[x, y]` in meters.
+    pub point: [f64; 2],
+    /// The bulge of the edge that starts here: the tangent of a quarter of its included angle,
+    /// positive for an arc that bends counterclockwise; absent or 0 for a straight edge.
+    #[serde(default)]
+    pub bulge: Option<f64>,
+    /// The wall the edge that starts here follows; absent for a free edge.
+    #[serde(default)]
+    pub wall: Option<IdParam>,
+    /// The face of that wall; the interior face when absent.
+    #[serde(default)]
+    pub face: Option<FaceParam>,
+    /// The offset of the edge from that face, in meters; 0 when absent.
+    #[serde(default)]
+    pub offset: Option<f64>,
+}
+
+/// Parameters of `archbuilder.floor.edit_boundary`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EditBoundary {
+    /// The floor; else the selected floor.
+    #[serde(default)]
+    pub floor: Option<IdParam>,
+    /// The new boundary: the vertices of all loops, loop by loop, as a sketch gives them.
+    pub vertices: Vec<SketchVertex>,
+}
+
+/// What `archbuilder.floor.edit_boundary` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BoundaryEdited {
+    /// The floor.
+    pub floor: IdParam,
+    /// The area after the edit, in square meters.
+    pub area: f64,
+    /// How many edges that followed a wall are free now.
+    pub freed: usize,
+}
+
 /// Parameters of `archbuilder.floor.add_hole`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -164,6 +217,20 @@ fn too_big() -> Error {
         .with_arg("points", MAX_VERTICES.to_string())
 }
 
+/// Writes the vertices of floor `id`, with their arcs, as one change.
+///
+/// # Errors
+/// The transaction's errors.
+pub(crate) fn set_vertices(ctx: &mut Context<'_>, id: ObjectId, vertices: &[Vertex]) -> Result<()> {
+    let txn = ctx.txn()?;
+    txn.modify(
+        id,
+        FieldPath::new("vertices"),
+        Some(Floor::vertex_values(vertices)),
+    )?;
+    txn.modify(id, FieldPath::new("arcs"), Floor::arc_values(vertices))
+}
+
 /// The vertices of a free loop `points` as loop `index`.
 fn free_loop(index: u32, points: &[[f64; 2]]) -> Vec<Vertex> {
     points
@@ -172,6 +239,7 @@ fn free_loop(index: u32, points: &[[f64; 2]]) -> Vec<Vertex> {
             loop_index: index,
             point: *p,
             edge: None,
+            bulge: 0.0,
         })
         .collect()
 }
@@ -282,6 +350,8 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
                 Face::Interior => Face::Exterior,
                 Face::Exterior => Face::Interior,
                 Face::Center => Face::Center,
+                Face::CoreInterior => Face::CoreExterior,
+                Face::CoreExterior => Face::CoreInterior,
             };
             for (k, hole) in (1_u32..).zip(holes) {
                 let mut loop_vertices =
@@ -349,7 +419,79 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
             Face::Interior => FaceParam::Interior,
             Face::Exterior => FaceParam::Exterior,
             Face::Center => FaceParam::Center,
+            Face::CoreInterior => FaceParam::CoreInterior,
+            Face::CoreExterior => FaceParam::CoreExterior,
         }),
+    })
+}
+
+/// Replaces the boundary of a floor in one change: the outline and the openings with their arcs
+/// and the walls their edges follow. The new boundary is validated (closed loops that do not
+/// cross, openings inside the outline, no edge shorter than the model tolerance) and a pinned
+/// floor refuses, like every command; the whole edit is one undo step.
+fn edit_boundary(ctx: &mut Context<'_>, p: EditBoundary) -> Result<BoundaryEdited> {
+    let id = match p.floor {
+        Some(IdParam(id)) => id,
+        None => {
+            let snapshot = ctx.snapshot();
+            ctx.selection()
+                .iter()
+                .copied()
+                .find(|id| spatial::type_of(snapshot, *id).as_deref() == Some(FLOOR))
+                .ok_or_else(|| Error::new(codes::NO_FLOOR_SELECTED))?
+        }
+    };
+    let object = expect(ctx.snapshot(), id, FLOOR)?;
+    let old = Floor::from_values(&object.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let loops = p.vertices.last().map_or(0, |v| v.loop_index as usize + 1);
+    if p.vertices.is_empty() || p.vertices.len() > MAX_VERTICES || loops > MAX_LOOPS {
+        return Err(too_big());
+    }
+    let mut vertices = Vec::with_capacity(p.vertices.len());
+    for v in &p.vertices {
+        let edge = match v.wall {
+            Some(IdParam(wall)) => {
+                expect(ctx.snapshot(), wall, WALL)?;
+                Some(floor::Association {
+                    wall,
+                    face: v.face.map_or(Face::Interior, Into::into),
+                    offset: v.offset.unwrap_or(0.0),
+                })
+            }
+            None => None,
+        };
+        let bulge = v.bulge.unwrap_or(0.0);
+        if !bulge.is_finite() || bulge.abs() > floor::MAX_BULGE {
+            return Err(Error::new(archbuilder_model::error::codes::FLOOR_MALFORMED));
+        }
+        vertices.push(Vertex {
+            loop_index: v.loop_index,
+            point: v.point,
+            edge: edge.filter(|_| bulge.abs() < floor::MIN_BULGE),
+            bulge,
+        });
+    }
+    let freed = old
+        .vertices
+        .iter()
+        .filter(|o| o.edge.is_some())
+        .filter(|o| {
+            !vertices
+                .iter()
+                .any(|n| n.edge.map(|a| a.wall) == o.edge.map(|a| a.wall))
+        })
+        .count();
+    crate::floor::set_vertices(ctx, id, &vertices)?;
+    ensure_valid(ctx)?;
+    let txn = ctx.txn()?;
+    let area = spatial::get(txn.snapshot(), id)
+        .and_then(|o| Derived::of(txn.snapshot(), &o))
+        .map_or(0.0, |d| d.area());
+    ctx.set_selection_after(vec![id]);
+    Ok(BoundaryEdited {
+        floor: IdParam(id),
+        area,
+        freed,
     })
 }
 
@@ -374,11 +516,7 @@ fn add_hole(ctx: &mut Context<'_>, p: AddHole) -> Result<HoleAdded> {
     }
     let mut vertices = floor.vertices;
     vertices.extend(free_loop(loops, &p.points));
-    ctx.txn()?.modify(
-        id,
-        FieldPath::new("vertices"),
-        Some(Floor::vertex_values(&vertices)),
-    )?;
+    crate::floor::set_vertices(ctx, id, &vertices)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
     let area = spatial::get(txn.snapshot(), id)
@@ -419,13 +557,8 @@ pub fn freeze_edges(ctx: &mut Context<'_>, deleted: &BTreeSet<ObjectId>) -> Resu
             changes.push((object.id, vertices));
         }
     }
-    let txn = ctx.txn()?;
     for (id, vertices) in changes {
-        txn.modify(
-            id,
-            FieldPath::new("vertices"),
-            Some(Floor::vertex_values(&vertices)),
-        )?;
+        crate::floor::set_vertices(ctx, id, &vertices)?;
     }
     Ok(frozen)
 }
@@ -770,6 +903,18 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         )
         .with_prompt(Arc::new(FloorPrompts { hole: false })),
     )?;
+    const EDIT_LABEL: Msg = Msg {
+        message_id: "ab-cmd-floor-edit-boundary-label",
+    };
+    const EDIT_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-floor-edit-boundary-description",
+    };
+    registry.register(CommandSpec::new(
+        FLOOR_EDIT_BOUNDARY,
+        EDIT_LABEL.message_id,
+        EDIT_DESCRIPTION.message_id,
+        |ctx: &mut Context<'_>, p: EditBoundary| edit_boundary(ctx, p),
+    ))?;
     registry.register(
         CommandSpec::new(
             FLOOR_ADD_HOLE,

@@ -96,6 +96,7 @@ pub fn defaults() -> Vec<(&'static str, &'static str)> {
         ("DR", DOOR_PLACE),
         ("WN", WINDOW_PLACE),
         ("FL", FLOOR_CREATE),
+        ("EB", archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY),
         ("RM", ROOM_PLACE),
         ("ST", archbuilder_commands::stair::STAIR_CREATE),
         ("RF", archbuilder_commands::roof::ROOF_CREATE),

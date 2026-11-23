@@ -331,3 +331,202 @@ fn a_type_picked_while_the_floor_tool_runs_makes_the_next_floor() {
     assert_eq!(floors.len(), 1);
     assert!((floors[0].floor.thickness - 0.26).abs() < 1e-9);
 }
+
+#[test]
+fn the_sketch_moves_a_vertex_adds_an_arc_and_finishes_as_one_step_or_cancels() {
+    use archbuilder::floor_sketch::{FloorSketch, Mode};
+    let rig = Rig::new();
+    rig.invoke("archbuilder.floor.create", json!({"picks": [[5.0, 3.0]]}));
+    let snapshot = rig.document.snapshot();
+    let floor = spatial::objects(&snapshot, FLOOR)[0].clone();
+    let area = Derived::of(&snapshot, &floor).unwrap().area();
+    let walls = archbuilder_model::floor::storey_walls(&snapshot, floor.header.owner.unwrap());
+    let no_wall = |_: [f64; 2]| None;
+    let mut sketch = FloorSketch::begin(&snapshot, floor.id).unwrap();
+    // Drag the vertex at the corner (0.1, 0.1) of the interior faces out: it frees two edges.
+    let corner = sketch.sketch.vertices[0].point;
+    assert!(sketch.press(corner, 100.0));
+    assert!(sketch.moved([corner[0] - 1.0, corner[1] - 1.0]));
+    assert!(sketch.release());
+    assert_eq!(sketch.take_freed(), 2);
+    // An arc on the first edge: click the edge, then a point beyond it.
+    sketch.mode = Mode::Arc;
+    let (a, b) = (
+        sketch.sketch.vertices[0].point,
+        sketch.sketch.vertices[1].point,
+    );
+    let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    sketch.click(mid, 100.0, &no_wall);
+    sketch.click([mid[0] - 1.0, mid[1]], 100.0, &no_wall);
+    assert!(sketch.sketch.vertices[0].bulge != 0.0);
+    let of = |id| walls.iter().find(|(w, _)| *w == id).map(|(_, w)| *w);
+    sketch.check(&of).unwrap();
+    // Applying it is one command and one undo step; the floor then has an arc.
+    let params = sketch.params();
+    rig.invoke("archbuilder.floor.edit_boundary", params);
+    let after = rig.document.snapshot();
+    let derived = Derived::of(&after, &spatial::get(&after, floor.id).unwrap()).unwrap();
+    assert!(derived.boundary.has_arcs());
+    assert!((derived.area() - area).abs() > 0.1);
+    rig.document.undo().wait().unwrap();
+    let undone = rig.document.snapshot();
+    let back = Derived::of(&undone, &spatial::get(&undone, floor.id).unwrap()).unwrap();
+    assert!((back.area() - area).abs() < 1e-9 && !back.boundary.has_arcs());
+    // An invalid loop is refused by the check; nothing was applied.
+    let mut bad = FloorSketch::begin(&undone, floor.id).unwrap();
+    bad.sketch.move_vertex(0, [5.0, -3.0]);
+    assert!(bad.check(&of).is_err());
+}
+
+#[test]
+fn a_floor_edge_on_the_exterior_face_is_cut_back_to_the_core_and_does_not_meet_the_wall() {
+    use archbuilder_model::cleanup;
+    let rig = Rig::new();
+    // A floor on the exterior faces of the walls, at the level of the walls' bases and with its
+    // top raised so that it reaches into them.
+    rig.invoke(
+        "archbuilder.floor.create",
+        json!({"picks": [[5.0, 3.0]], "face": "exterior", "offset": 0.1}),
+    );
+    let snapshot = rig.document.snapshot();
+    let floor = spatial::objects(&snapshot, FLOOR)[0].clone();
+    let derived = Derived::of(&snapshot, &floor).unwrap();
+    let cut = cleanup::floor_solid(&snapshot, &floor).unwrap().unwrap();
+    // The reported area is that of the authored boundary; the body has lost the walls' cores.
+    assert!(
+        (derived.area() - 10.2 * 6.2).abs() < 1e-6,
+        "{}",
+        derived.area()
+    );
+    assert!(cut.volume() < derived.volume() - 1e-6);
+    // No wall solid enters the slab body.
+    for wall in spatial::objects(&snapshot, WALL) {
+        let pieces = cleanup::wall_pieces(&snapshot, &wall).unwrap().unwrap();
+        let bounds = cut.bounding_box();
+        for p in pieces {
+            let b = p.solid.bounding_box();
+            let inside_z = b.min().z < bounds.max().z - 1e-6 && b.max().z > bounds.min().z + 1e-6;
+            if !inside_z {
+                continue;
+            }
+            // Where it shares the slab's heights, its plan lies outside the slab's plan.
+            let c = b.min();
+            let probe = [(c.x + b.max().x) / 2.0, (c.y + b.max().y) / 2.0];
+            let flat = cleanup::clean_floor(&snapshot, &floor).unwrap();
+            let in_plan = flat.flat.iter().any(|poly| {
+                let boundary = archbuilder_model::floor::Boundary::polygons(vec![poly.clone()]);
+                boundary.contains(probe)
+            });
+            assert!(!in_plan, "a wall piece stands in the slab at {probe:?}");
+        }
+    }
+    let _ = Cancel::default();
+    let _ = RenderItem::Mesh;
+}
+
+#[test]
+fn a_changed_slab_redraws_every_wall_and_a_changed_wall_every_slab() {
+    use arc_doc::events::{ChangeGroups, Changes};
+    use arc_doc::schema::TypeKey;
+    let rig = Rig::new();
+    let snapshot = rig.document.snapshot();
+    let upper = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    rig.invoke(
+        "archbuilder.floor.create",
+        json!({"storey": upper, "points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
+    );
+    let snapshot = rig.document.snapshot();
+    let slab = spatial::objects(&snapshot, FLOOR)[0].id;
+    let walls: Vec<_> = spatial::objects(&snapshot, WALL)
+        .iter()
+        .map(|w| w.id)
+        .collect();
+    let listed = |key: &str, group: ChangeGroups| {
+        Changes::Listed([(TypeKey::new(key).unwrap(), group)].into())
+    };
+    // The slab changed: the walls below, on another storey, whose layers stop at it extract again.
+    let slab_changed = listed(
+        FLOOR,
+        ChangeGroups {
+            modified: [slab].into(),
+            ..ChangeGroups::default()
+        },
+    );
+    let redrawn = archbuilder::extract_wall::dependents(&snapshot, &slab_changed);
+    assert!(walls.iter().all(|w| redrawn.contains(w)));
+    // A wall changed: the slab on the storey above extracts again.
+    let wall_changed = listed(
+        WALL,
+        ChangeGroups {
+            modified: [walls[0]].into(),
+            ..ChangeGroups::default()
+        },
+    );
+    assert!(archbuilder::extract_floor::dependents(&snapshot, &wall_changed).contains(&slab));
+}
+
+#[test]
+fn the_sketch_modes_pick_edges_add_and_delete_vertices_and_preview_the_fill() {
+    use arc_ui::ProductOverlay;
+    use archbuilder::floor_sketch::{FloorSketch, Hint, Mode, Sel};
+    let rig = Rig::new();
+    rig.invoke(
+        "archbuilder.floor.create",
+        json!({"points": [[20.0, 0.0], [24.0, 0.0], [24.0, 4.0], [20.0, 4.0]]}),
+    );
+    let snapshot = rig.document.snapshot();
+    let floor = spatial::objects(&snapshot, FLOOR)[0].id;
+    let none = |_: [f64; 2]| None;
+    let mut s = FloorSketch::begin(&snapshot, floor).unwrap();
+    // Pick-wall mode: a click on an edge selects it, and a click on a wall with no edge says so.
+    s.mode = Mode::Wall;
+    s.click([22.0, 0.0], 100.0, &none);
+    assert_eq!(s.selected, Some(Sel::Edge(0)));
+    s.selected = None;
+    let walls = archbuilder_model::floor::storey_walls(
+        &snapshot,
+        spatial::get(&snapshot, floor)
+            .unwrap()
+            .header
+            .owner
+            .unwrap(),
+    );
+    let on_wall = |_: [f64; 2]| walls.first().copied();
+    s.click([2.0, 2.0], 100.0, &on_wall);
+    assert_eq!(s.take_hint(), Some(Hint::PickEdgeFirst));
+    // Add mode puts a vertex on an edge and then leaves, so the next press drags.
+    s.mode = Mode::Add;
+    s.click([22.0, 0.0], 100.0, &none);
+    assert_eq!(s.sketch.vertices.len(), 5);
+    assert_eq!(s.mode, Mode::Select);
+    assert!(s.press([22.0, 0.0], 100.0));
+    assert!(s.release());
+    // Delete mode removes the vertex that is clicked; a loop keeps three.
+    s.mode = Mode::Delete;
+    s.click([22.0, 0.0], 100.0, &none);
+    assert_eq!(s.sketch.vertices.len(), 4);
+    s.click([24.0, 0.0], 100.0, &none);
+    assert_eq!(s.sketch.vertices.len(), 3);
+    s.click([24.0, 4.0], 100.0, &none);
+    assert_eq!(s.sketch.vertices.len(), 3);
+    assert_eq!(s.take_hint(), Some(Hint::LoopTooSmall));
+    // The preview fill follows an arc: more points than the straight outline.
+    let mut a = FloorSketch::begin(&snapshot, floor).unwrap();
+    let fill_points = |sk: &FloorSketch| {
+        sk.overlays(100.0, true)
+            .iter()
+            .find_map(|o| match o {
+                ProductOverlay::Styled { item, .. } => match item.as_ref() {
+                    ProductOverlay::Fill { rings } => Some(rings[0].len()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap()
+    };
+    let straight = fill_points(&a);
+    a.sketch.set_arc_through(0, [22.0, -1.5]);
+    assert!(fill_points(&a) > straight + 5);
+}

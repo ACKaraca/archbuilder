@@ -269,6 +269,9 @@ pub(crate) fn paste_content(
         if let Some(slot) = values.get_mut(types::floor::VERTICES) {
             *slot = Some(Floor::vertex_values(&vertices));
         }
+        if let Some(slot) = values.get_mut(types::floor::ARCS) {
+            *slot = Floor::arc_values(&vertices);
+        }
         crate::element_type::rebind(ctx, FLOOR, &mut values)?;
         created.push(create(ctx, FLOOR, Some(storey), values)?);
     }

@@ -15,7 +15,7 @@ use arc_base::{Dimension, Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Object, Snapshot, Value};
 use archbuilder_model::element_type::{
-    self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType,
+    self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
 use archbuilder_model::{names, spatial, types};
@@ -275,6 +275,8 @@ pub(crate) fn create_defaults(ctx: &mut Context<'_>) -> Result<()> {
                 exposure: Exposure::Exterior,
                 load_bearing: false,
                 room_bounding: true,
+                wrap_ends: Wrap::None,
+                wrap_inserts: Wrap::None,
             },
         ),
         (
@@ -294,6 +296,8 @@ pub(crate) fn create_defaults(ctx: &mut Context<'_>) -> Result<()> {
                 exposure: Exposure::Exterior,
                 load_bearing: true,
                 room_bounding: true,
+                wrap_ends: Wrap::None,
+                wrap_inserts: Wrap::None,
             },
         ),
         (
@@ -310,6 +314,8 @@ pub(crate) fn create_defaults(ctx: &mut Context<'_>) -> Result<()> {
                 exposure: Exposure::Interior,
                 load_bearing: false,
                 room_bounding: true,
+                wrap_ends: Wrap::None,
+                wrap_inserts: Wrap::None,
             },
         ),
     ];
@@ -672,6 +678,8 @@ pub fn ensure(
                     exposure: Exposure::Exterior,
                     load_bearing: false,
                     room_bounding: true,
+                    wrap_ends: Wrap::None,
+                    wrap_inserts: Wrap::None,
                 },
             )
         }
@@ -817,6 +825,31 @@ pub enum ExposureParam {
     Interior,
 }
 
+/// The wrapping of a wall type as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WrapParam {
+    /// No layer wraps.
+    None,
+    /// The finish layers on the exterior side wrap.
+    Exterior,
+    /// The finish layers on the interior side wrap.
+    Interior,
+    /// The finish layers on both sides wrap.
+    Both,
+}
+
+impl From<WrapParam> for Wrap {
+    fn from(w: WrapParam) -> Self {
+        match w {
+            WrapParam::None => Self::None,
+            WrapParam::Exterior => Self::Exterior,
+            WrapParam::Interior => Self::Interior,
+            WrapParam::Both => Self::Both,
+        }
+    }
+}
+
 /// An operation as a command parameter.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -874,6 +907,12 @@ pub struct SetType {
     /// Walls: whether the wall bounds rooms.
     #[serde(default)]
     pub room_bounding: Option<bool>,
+    /// Walls: the sides whose finish layers wrap around free ends.
+    #[serde(default)]
+    pub wrap_ends: Option<WrapParam>,
+    /// Walls: the sides whose finish layers wrap around the openings of doors and windows.
+    #[serde(default)]
+    pub wrap_inserts: Option<WrapParam>,
     /// Doors and windows: the width.
     #[serde(default)]
     pub width: Option<QuantityParam>,
@@ -965,6 +1004,11 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
             ] {
                 if let Some(flag) = flag {
                     fields.push((name, Some(Value::Bool(flag))));
+                }
+            }
+            for (name, wrap) in [("wrap_ends", p.wrap_ends), ("wrap_inserts", p.wrap_inserts)] {
+                if let Some(wrap) = wrap {
+                    fields.push((name, Some(Value::Enum(Wrap::from(wrap).code()))));
                 }
             }
         }

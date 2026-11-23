@@ -40,6 +40,7 @@ fn storey_elevation(snapshot: &Snapshot, owner: Option<ObjectId>) -> f64 {
 /// finds the door or window whose opening it enters first (a vertical ray through `at` without
 /// one).
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one list of the pickable kinds")]
 pub fn stack(
     snapshot: &Snapshot,
     rooms: &[Entry],
@@ -86,6 +87,7 @@ pub fn stack(
             on_lines.push((z, o.id));
         } else if (crate::floor::Boundary {
             loops: vec![d.surface.outline.clone()],
+            ..crate::floor::Boundary::default()
         })
         .contains(at)
         {
@@ -103,6 +105,7 @@ pub fn stack(
             let p = crate::stair::Placed::of(snapshot, o)?;
             let outline = crate::floor::Boundary {
                 loops: vec![p.outline()],
+                ..crate::floor::Boundary::default()
             };
             outline.contains(at).then_some((-p.base, o.id))
         })
@@ -208,7 +211,13 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
                 return Vec::new();
             };
             let z = storey_elevation(snapshot, object.header.owner) + w.base_offset + w.height;
-            vec![close(&w.plain_footprint(), z)]
+            // The outline of the layers, which meet the walls around as the body does.
+            let loops = crate::cleanup::wall_outline(snapshot, &object);
+            if loops.is_empty() {
+                vec![close(&w.plain_footprint(), z)]
+            } else {
+                loops.iter().map(|l| close(l, z)).collect()
+            }
         }
         Some(FLOOR) => Derived::of(snapshot, &object)
             .map(|d| d.boundary.loops.iter().map(|l| close(l, d.top)).collect())

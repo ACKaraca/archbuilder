@@ -447,3 +447,315 @@ fn a_floor_by_click_around_a_courtyard_has_the_hole() {
     near(around.area(), 11.8 * 11.8 - 4.2 * 4.2);
     near(inner.area(), 3.8 * 3.8);
 }
+
+fn sketch_of(env: &Env, id: ObjectId) -> Vec<Json> {
+    let snapshot = env.snapshot();
+    let object = spatial::get(&snapshot, id).unwrap();
+    let floor = Floor::from_values(&object.values).unwrap();
+    floor
+        .vertices
+        .iter()
+        .map(|v| json!({"loop_index": v.loop_index, "point": v.point, "bulge": v.bulge}))
+        .collect()
+}
+
+#[test]
+fn editing_the_boundary_moves_a_vertex_and_adds_an_arc_in_one_undo_step() {
+    let env = Env::new();
+    env.run(
+        "archbuilder.floor.create",
+        json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
+    )
+    .unwrap();
+    let floor = env.floors()[0].id;
+    let before = env.dump();
+    let mut v = sketch_of(&env, floor);
+    // Move the vertex (10, 6) to (12, 6) and bend the edge from (0, 0) to (10, 0) outward into a
+    // half circle of radius 5: the bulge of a half circle is 1, and a positive bulge bends
+    // counterclockwise, which for this loop is outward.
+    v[2]["point"] = json!([12.0, 6.0]);
+    v[0]["bulge"] = json!(1.0);
+    env.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor, "vertices": v}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let derived = Derived::of(&snapshot, &spatial::get(&snapshot, floor).unwrap()).unwrap();
+    derived.boundary.check().unwrap();
+    assert!(derived.boundary.has_arcs());
+    // The quadrilateral (0,0) (10,0) (12,6) (0,6) has area 66; the half disc adds 25 pi / 2.
+    near(derived.area(), 66.0 + 25.0 * std::f64::consts::PI / 2.0);
+    // The faceted outline stays within the model tolerance of the arc.
+    let flat = derived
+        .boundary
+        .faceted(archbuilder_model::floor::FLAT_CHORD);
+    assert!(flat.loops[0].len() > 10);
+    // The solid is made over the exact arc.
+    assert!(derived.solid().unwrap().volume() > 66.0 * 0.2);
+    env.document.undo().wait().unwrap();
+    assert_eq!(env.dump(), before, "one undo step restores the floor");
+    env.document.redo().wait().unwrap();
+    assert!(
+        Floor::from_values(&env.floors()[0].values)
+            .unwrap()
+            .vertices
+            .iter()
+            .any(|v| v.bulge != 0.0)
+    );
+}
+
+#[test]
+fn editing_the_boundary_refuses_a_crossing_loop_and_leaves_the_floor() {
+    let env = Env::new();
+    env.run(
+        "archbuilder.floor.create",
+        json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
+    )
+    .unwrap();
+    let floor = env.floors()[0].id;
+    let before = env.dump();
+    let mut v = sketch_of(&env, floor);
+    // A bow tie: the second and third vertices swap places.
+    v[1]["point"] = json!([10.0, 6.0]);
+    v[2]["point"] = json!([10.0, 0.0]);
+    let refused = env.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor, "vertices": v}),
+    );
+    assert!(refused.is_err());
+    assert_eq!(env.dump(), before);
+}
+
+#[test]
+fn a_floor_from_before_arcs_loads_with_straight_edges() {
+    let env = Env::new();
+    env.run(
+        "archbuilder.floor.create",
+        json!({"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]]}),
+    )
+    .unwrap();
+    let mut values = env.floors()[0].values.clone();
+    // An older record has no arc list at all.
+    values.truncate(archbuilder_model::types::floor::ARCS);
+    let floor = Floor::from_values(&values).unwrap();
+    assert!(floor.vertices.iter().all(|v| v.bulge == 0.0));
+}
+
+#[test]
+fn offset_and_split_refuse_a_floor_with_arcs_and_name_it() {
+    let env = Env::new();
+    let walls = env.house();
+    env.run("archbuilder.floor.create", json!({"picks": [[5.0, 3.0]]}))
+        .unwrap();
+    let floor = env.floors()[0].id;
+    let mut v: Vec<Json> = {
+        let snapshot = env.snapshot();
+        let data = Floor::from_values(&spatial::get(&snapshot, floor).unwrap().values).unwrap();
+        data.vertices
+            .iter()
+            .map(|v| {
+                let mut o = json!({"loop_index": 0, "point": v.point});
+                if let Some(a) = v.edge {
+                    o["wall"] = json!(a.wall.to_string());
+                    o["face"] = json!(a.face.name());
+                }
+                o
+            })
+            .collect()
+    };
+    v[0]["bulge"] = json!(0.3);
+    v[0].as_object_mut().unwrap().remove("wall");
+    env.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor, "vertices": v}),
+    )
+    .unwrap();
+    let before = env.dump();
+    // Splitting a wall the floor follows would cut its edge: refused, nothing changed.
+    let err = env
+        .run("archbuilder.wall.split", json!({"at": [10.0, 3.0]}))
+        .unwrap_err();
+    assert_eq!(err.code(), "ab.cmd.floor_arcs_unsupported");
+    assert_eq!(env.dump(), before);
+    // So is an offset of the floor.
+    let err = env
+        .run(
+            "archbuilder.modify.offset",
+            json!({"objects": [floor], "side": [20.0, 3.0], "distance": 0.5, "copy": false}),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "ab.cmd.floor_arcs_unsupported");
+    assert!(err.arguments().contains_key("name"));
+    let _ = walls;
+}
+
+#[test]
+fn a_slab_over_the_walls_below_stays_one_solid_and_the_walls_stop_under_it() {
+    use archbuilder_model::cleanup;
+    let env = Env::new();
+    env.house();
+    let snapshot = env.snapshot();
+    let upper = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    // A slab with a hole on the upper storey, over the four 3 m walls of the ground storey.
+    env.run(
+        "archbuilder.floor.create",
+        json!({"storey": upper, "points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]],
+               "holes": [[[2.0, 2.0], [4.0, 2.0], [4.0, 4.0], [2.0, 4.0]]]}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let floor = env.floors()[0].clone();
+    let derived = Derived::of(&snapshot, &floor).unwrap();
+    let solid = cleanup::floor_solid(&snapshot, &floor).unwrap().unwrap();
+    assert_eq!(solid.shell_count(), 1, "the slab is one solid");
+    near(solid.volume(), (60.0 - 4.0) * 0.2);
+    near(solid.volume(), derived.volume());
+    // The walls below end at the slab's underside (2.8 m) where it covers them.
+    for wall in spatial::objects(&snapshot, WALL) {
+        let pieces = cleanup::wall_pieces(&snapshot, &wall).unwrap().unwrap();
+        let top = pieces
+            .iter()
+            .map(|p| p.solid.bounding_box().max().z)
+            .fold(f64::MIN, f64::max);
+        assert!((2.8 - 1e-9..=3.0 + 1e-9).contains(&top), "{top}");
+    }
+}
+
+#[test]
+fn the_layers_of_a_wall_are_never_stacked_twice_under_a_cut_slab() {
+    use archbuilder_model::cleanup;
+    let env = Env::new();
+    let walls = env.house();
+    for w in &walls {
+        env.run(
+            "archbuilder.type.assign",
+            json!({"type": "Exterior masonry cavity", "kind": "wall", "objects": [w]}),
+        )
+        .unwrap();
+    }
+    // A slab with a hole, raised into the walls of its own storey: its parts and the hole all
+    // matter to the layers that stop at it.
+    env.run(
+        "archbuilder.floor.create",
+        json!({"points": [[-2.0, -2.0], [12.0, -2.0], [12.0, 8.0], [-2.0, 8.0]],
+               "holes": [[[2.0, 2.0], [4.0, 2.0], [4.0, 4.0], [2.0, 4.0]]],
+               "offset": 0.1}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    for wall in spatial::objects(&snapshot, WALL) {
+        let data = archbuilder_model::wall::Wall::of(&snapshot, &wall).unwrap();
+        let footprint = archbuilder_model::join::footprint_of(&snapshot, &wall).unwrap();
+        let gross = data.solid_in(footprint, 0.0).unwrap().volume();
+        let body: f64 = cleanup::wall_pieces(&snapshot, &wall)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .map(|p| p.solid.volume())
+            .sum();
+        // The layers that stop at the slab lose volume; none is counted twice.
+        assert!(
+            body <= gross + 1e-9 && body > 0.9 * gross,
+            "{body} vs {gross}"
+        );
+    }
+}
+
+#[test]
+fn the_outline_of_a_wall_at_an_acute_corner_follows_its_layers_and_not_its_square_footprint() {
+    use archbuilder_model::cleanup;
+    let env = Env::new();
+    let c = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [4.0, 0.0], "type": "Exterior masonry cavity"}),
+        )
+        .unwrap()
+        .value["wall"]
+        .as_str()
+        .unwrap()
+        .parse::<ObjectId>()
+        .unwrap();
+    let p = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [2.0, 3.4641016], "type": "Interior partition 100"}),
+        )
+        .unwrap()
+        .value["wall"]
+        .as_str()
+        .unwrap()
+        .parse::<ObjectId>()
+        .unwrap();
+    let snapshot = env.snapshot();
+    let masonry = spatial::get(&snapshot, c).unwrap();
+    let partition = spatial::get(&snapshot, p).unwrap();
+    let own = cleanup::wall_outline(&snapshot, &partition);
+    assert!(!own.is_empty());
+    // The square end of the partition's plain footprint would lie inside the masonry wall's body:
+    // no corner of the outline of the layers does.
+    let body = cleanup::wall_outline(&snapshot, &masonry);
+    let inside = |poly: &[[f64; 2]], q: [f64; 2]| {
+        let boundary = archbuilder_model::floor::Boundary::polygons(vec![poly.to_vec()]);
+        let near_edge = (0..poly.len()).any(|k| {
+            let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+            let d = [b[0] - a[0], b[1] - a[1]];
+            let l = d[0].hypot(d[1]).max(1e-12);
+            let t = (((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1]) / (l * l)).clamp(0.0, 1.0);
+            (q[0] - (a[0] + d[0] * t)).hypot(q[1] - (a[1] + d[1] * t)) < 1e-6
+        });
+        boundary.contains(q) && !near_edge
+    };
+    for q in own.iter().flatten() {
+        assert!(
+            !body.iter().any(|l| inside(l, *q)),
+            "a corner of the outline lies inside the other wall: {q:?}"
+        );
+    }
+}
+
+#[test]
+fn the_layers_of_a_storey_are_kept_across_commits_that_do_not_touch_them() {
+    use archbuilder_model::cleanup;
+    let env = Env::new();
+    let walls = env.house();
+    env.run("archbuilder.room.place_all", json!({})).unwrap();
+    let snapshot = env.snapshot();
+    let storey = spatial::get(&snapshot, walls[0])
+        .unwrap()
+        .header
+        .owner
+        .unwrap();
+    let layers = cleanup::storey_layers(&snapshot, storey);
+    let lines = cleanup::plan_lines(&snapshot, storey, 1.0);
+    // A room renamed touches no wall: nothing is made again.
+    let room = spatial::objects(&snapshot, archbuilder_model::types::ROOM)[0].id;
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [room], "field": "name", "value": "Study"}),
+    )
+    .unwrap();
+    let after = env.snapshot();
+    assert!(Arc::ptr_eq(
+        &layers,
+        &cleanup::storey_layers(&after, storey)
+    ));
+    assert!(Arc::ptr_eq(
+        &lines,
+        &cleanup::plan_lines(&after, storey, 1.0)
+    ));
+    // A wall moved: the storey is made again.
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [walls[0]], "displacement": [0.0, 0.5]}),
+    )
+    .unwrap();
+    let moved = env.snapshot();
+    assert!(!Arc::ptr_eq(
+        &layers,
+        &cleanup::storey_layers(&moved, storey)
+    ));
+}

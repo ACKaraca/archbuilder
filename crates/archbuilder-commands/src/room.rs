@@ -231,6 +231,7 @@ fn place_all(ctx: &mut Context<'_>, p: PlaceAll) -> Result<RoomsPlaced> {
         .filter(|(_, loops)| {
             let b = Boundary {
                 loops: loops.clone(),
+                ..Boundary::default()
             };
             !existing.iter().any(|e| b.contains(*e))
         })

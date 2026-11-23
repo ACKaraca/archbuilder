@@ -125,6 +125,9 @@ const CREATE_SIMILAR: Label = Label {
 const MATCH_TYPE: Label = Label {
     message_id: "ab-menu-match-type",
 };
+const EDIT_BOUNDARY: Label = Label {
+    message_id: "ab-menu-edit-boundary",
+};
 const EDIT_TYPE: Label = Label {
     message_id: "ab-menu-edit-type",
 };
@@ -295,6 +298,16 @@ pub fn entries(state: &State) -> Vec<ContextEntry> {
                 LineAction::Invoke(Intent::new(ui::SELECT_ONLY).with("kind", *k)),
             )
         }));
+    }
+    // A floor's boundary can be edited as a sketch.
+    if state.kinds.contains(&FLOOR) && state.selected == 1 {
+        out.extend([
+            ContextEntry::separator(),
+            ContextEntry::command(
+                EDIT_BOUNDARY.message_id,
+                archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY,
+            ),
+        ]);
     }
     // Walls, floors, doors, windows and roofs have types.
     if state

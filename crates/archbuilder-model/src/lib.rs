@@ -54,15 +54,18 @@ macro_rules! coded {
     (@count $head:ident $($tail:ident)*) => { 1 + coded!(@count $($tail)*) };
 }
 
+pub mod cleanup;
 pub mod element_type;
 pub mod error;
 pub mod floor;
 pub mod insert;
 pub mod join;
+pub mod layered;
 pub mod names;
 pub mod pick;
 pub mod roof;
 pub mod room;
+pub mod sketch;
 pub mod spatial;
 pub mod stair;
 pub mod terrain;

@@ -33,7 +33,11 @@ pub fn extract_floor(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> 
     let Some(floor) = Derived::of(snapshot, object) else {
         return Ok(Extraction::default());
     };
-    let solid = floor.solid()?;
+    // The slab cut back to the cores of the walls it meets.
+    let solid = match archbuilder_model::cleanup::floor_solid(snapshot, object) {
+        Some(Ok(solid)) => solid,
+        _ => floor.solid()?,
+    };
     let first = floor.boundary.loops.first().and_then(|l| l.first());
     let origin = Point3::new(
         first.map_or(0.0, |p| p[0]),
@@ -77,12 +81,13 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             _ => {}
         }
     }
+    // A wall of any storey may stop at or cut a slab (the walls below end under it), so a changed
+    // wall extracts every slab again.
+    let any_wall = !storeys.is_empty() || deleted_wall;
     spatial::objects(snapshot, FLOOR)
         .into_iter()
         .filter(|f| {
-            // A deleted wall is gone from the snapshot: its floors changed with it, but a floor
-            // that lost nothing still extracts again, which is cheap.
-            deleted_wall
+            any_wall
                 || f.header.owner.is_some_and(|s| {
                     storeys.contains(&s)
                         || spatial::get(snapshot, s)

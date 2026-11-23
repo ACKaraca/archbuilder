@@ -18,8 +18,9 @@ use arc_doc::events::Changes;
 use arc_doc::{Object, Snapshot};
 use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
+use archbuilder_model::cleanup::PieceClass;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DOOR, LEVEL, STOREY, WALL, WINDOW};
+use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STOREY, WALL, WINDOW};
 use archbuilder_model::wall::Wall;
 
 /// The color of a wall (linear RGB).
@@ -27,6 +28,22 @@ pub const COLOR: Color = Color {
     r: 0.62,
     g: 0.58,
     b: 0.50,
+    a: 1.0,
+};
+
+/// The color of the finish layers of a wall: lighter than its core.
+pub const FINISH_COLOR: Color = Color {
+    r: 0.80,
+    g: 0.77,
+    b: 0.70,
+    a: 1.0,
+};
+
+/// The color of the layers of a wall that are neither core nor finish.
+pub const OTHER_COLOR: Color = Color {
+    r: 0.72,
+    g: 0.66,
+    b: 0.46,
     a: 1.0,
 };
 
@@ -75,19 +92,40 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
         }
         owners.insert(object.id, owner);
     }
-    let Some(solid) = archbuilder_model::insert::wall_solid(snapshot, object) else {
-        return Ok(Extraction::default());
-    };
-    let solid = solid?;
     let origin = Point3::new(wall.start[0], wall.start[1], elevation + wall.base_offset);
-    let mesh = TriMesh::from_polyhedron(&solid, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
     let mut extraction = Extraction::default();
-    let geometry = extraction.add_geometry(mesh, origin);
-    extraction.items.push(RenderItem::Mesh(MeshItem {
-        geometry,
-        origin,
-        instances: vec![MeshInstance::new(COLOR)],
-    }));
+    // The layers, cleaned at the joins, the openings and the slabs; the plain solid of the wall
+    // when they cannot be made.
+    let pieces = archbuilder_model::cleanup::wall_pieces(snapshot, object)
+        .and_then(Result::ok)
+        .filter(|p| !p.is_empty());
+    let Some(pieces) = pieces else {
+        let Some(solid) = archbuilder_model::insert::wall_solid(snapshot, object) else {
+            return Ok(Extraction::default());
+        };
+        let mesh = TriMesh::from_polyhedron(&solid?, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
+        let geometry = extraction.add_geometry(mesh, origin);
+        extraction.items.push(RenderItem::Mesh(MeshItem {
+            geometry,
+            origin,
+            instances: vec![MeshInstance::new(COLOR)],
+        }));
+        return Ok(extraction);
+    };
+    for piece in &pieces {
+        let color = match piece.class {
+            PieceClass::Core => COLOR,
+            PieceClass::Finish => FINISH_COLOR,
+            PieceClass::Other => OTHER_COLOR,
+        };
+        let mesh = TriMesh::from_polyhedron(&piece.solid, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
+        let geometry = extraction.add_geometry(mesh, origin);
+        extraction.items.push(RenderItem::Mesh(MeshItem {
+            geometry,
+            origin,
+            instances: vec![MeshInstance::new(color)],
+        }));
+    }
     Ok(extraction)
 }
 
@@ -122,6 +160,21 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     };
     let deleted = deleted_of(&[WALL]);
     let deleted_inserts = deleted_of(&[DOOR, WINDOW]);
+    // A slab that came, changed or went: the layers of the walls that meet it stop at it, or no
+    // longer do. Slabs and walls of different storeys meet, so every wall extracts again.
+    if !live(FLOOR).is_empty() || !deleted_of(&[FLOOR]).is_empty() {
+        return spatial::objects(snapshot, WALL)
+            .into_iter()
+            .flat_map(|w| {
+                let inserts: Vec<ObjectId> = [DOOR, WINDOW]
+                    .into_iter()
+                    .flat_map(|key| spatial::children(snapshot, key, w.id))
+                    .map(|i| i.id)
+                    .collect();
+                std::iter::once(w.id).chain(inserts)
+            })
+            .collect();
+    }
     if touched.is_empty()
         && changed_walls.is_empty()
         && deleted.is_empty()

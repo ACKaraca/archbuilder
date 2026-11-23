@@ -106,13 +106,44 @@ one wall through (this end stops at the other's face; `square` cuts it square), 
 the other end decides which wall runs through; both ends butt cancel into the miter. `disallowed`
 takes the end out of every join (square end, overlap allowed). A corner that would reach more
 than two thicknesses past the end, or past the middle of the wall, is refused and the ends of
-that node stay square; the volume, the property grid and `inspect` use the joined solid, so a
+that node stay square; the volume of a wall (the property grid, `inspect` and the IFC `NetVolume`: one rule) is that of its cleaned layers with the openings cut and the slab above it taken into account, so a
 closed rectangle counts each corner once. The viewport extracts the walls of a storey again when
-any of them is created, changed or deleted.
+any of them is created, changed or deleted. The cleaned layers, the plan lines and the cleaned slabs are kept while
+the objects they are made from (the walls of the storey, their types and openings, the slab, the stairs, the levels)
+are unchanged, so an edit that touches none of them recomputes nothing.
 
-Known limits: walls have no base attachment, layer wrapping at ends and openings, or curves, and the only inserts are the doors and windows below; a wall that
-crosses another without ending on it is not joined; a node of three or more walls without a
-straight run (a Y) leaves a small notch at its center; styles other than `auto` apply only at a
+**Layers at joins.** The footprint above is divided into the layers of the wall's type, and where
+walls meet, each layer is cleaned by its function. The functions have a priority, from the highest:
+structure, substrate, thermal, finish. At a corner (two walls, or a star) the layers of two
+neighbors are matched in order from the faces that look at each other: layers of the same function
+connect and turn the corner together, and where the next layers differ the one of the lower priority
+stops on the line of the higher one, which goes on. The cores therefore meet core to core and the
+finishes wrap the outer side of a corner, whatever the thicknesses. A wall that ends on another
+(a T, or the four ends of a cross) runs each layer on until the first layer of the other wall with
+the same or a higher priority and stops on its near line, passing over layers of a lower priority;
+where layers of different walls still overlap (the through wall's layers under such a layer, or two
+walls that cross) the higher priority keeps the area, the lower wall number on equal priority.
+The plan draws the lines between the layers that result: a boundary of a layer of one wall with a
+layer of another wall is drawn only where their functions or their core status differ, so layers
+that connect show no line between them. A butt or square end gets the same cleanup as a T (its layers stop at the near line of the wall it meets). What
+the ends of a star of three or more walls leave open in its middle is closed with the core of the strongest wall of the
+node, and anything the cleaned layers leave open or push out of the walls' footprints at a node is given back to, or
+cut from, the proportional layers, so the layers of a node cover exactly the footprints with no gap and no overlap.
+Ends of a disallowed join keep the footprint's end divided in proportion. The cleaned layers are the solids of a wall: its 3D body is the
+solid of each layer, in bands of height where doors and windows open it, and the viewport draws
+the core, the finish layers and the others in three shades. Nothing of this is stored.
+
+**Wrapping.** A wall type says, for free ends (ends in no join) and for the openings of doors and
+windows, which side's finish layers wrap: `none`, `exterior`, `interior` or `both` (see the wall
+type below). Every layer outside the core on a wrapped side (membranes have no
+thickness) turns into the end or the reveal: each becomes an L whose foot covers the end across the thickness (up to the
+middle of the core when both sides wrap), nested outward in, and the core stops short of the end by the total of the
+feet, so the length of the wall and the clear opening do not change. The plan lines and the solids show it.
+
+Known limits: walls have no base attachment or curves, and the only inserts are the doors and windows below; a node of three or more walls without a
+straight run (a Y) leaves a small notch at its center; two collinear walls of different layer stacks
+meet square and show the difference in their lines; at a node of walls of different thickness the
+closed star can leave slivers; layer cleanup applies only at ends with the style `auto`; styles other than `auto` apply only at a
 corner of two walls and at a T. The viewport extracts a wall again when its storey or the level of its storey changes. A storey
 that has walls cannot be deleted; the walls are never deleted with it. `archbuilder.wall.flip` moves a wall's body to the other side of its location line (the
 baseline stays; a center line has no side), and `archbuilder.wall.delete`
@@ -154,7 +185,8 @@ IFC mapping as implemented (`archbuilder-io`, IFC4, lengths in meters, every `Gl
 object's identifier): a wall maps to `IfcWall`, contained in the `IfcBuildingStorey` of its storey and
 placed on the storey with its origin at the baseline's start, base offset up and the x axis along the
 baseline. Its body is the extrusion of the joined footprint by the derived height (the corners the
-joins give, so the volume is the one of `inspect`). `Qto_WallBaseQuantities` holds `Length` (baseline),
+joins give, so the volume is the one of `inspect`); a wall of several layers has instead the cleaned
+layers as one faceted B-rep (joins, wrapping, the slabs that meet it and the roof it follows), without the openings, which void it; `GrossVolume` is that body and `NetVolume` the layers with the openings cut. `Qto_WallBaseQuantities` holds `Length` (baseline),
 `Width`, `Height`, `GrossVolume` (the joined prism) and `NetVolume` (the volume with the openings
 cut, the same rule as the property grid). The wall's own `PredefinedType` stays `NOTDEFINED`; its type
 carries one (see element types below), and `Pset_WallCommon` holds `IsExternal` and `LoadBearing`
@@ -191,9 +223,10 @@ points yet.
 | `name` | Unique within the storey, `Slab <n>` by default | Not blank |
 | `thickness` | The slab's thickness, the total of its type's layers; the slab hangs down from its top | 1 mm to 5 m; a copy of the type, written only with it |
 | `top_offset` | The top's distance above the storey's level | -1000 m to 1000 m; 0 by default |
-| `vertices` | The boundary: the outer loop, then the holes, each loop in order, straight edges only. Each vertex is a record of the loop number (0 outer), the authored point, and the optional association of the edge that starts there: `wall` (reference, cleared when the wall is deleted), `face` (`interior`, `exterior` or `center`) and `offset` | At most 1000 vertices and 64 loops |
+| `vertices` | The boundary: the outer loop, then the holes, each loop in order. Each vertex is a record of the loop number (0 outer), the authored point, and the optional association of the edge that starts there: `wall` (reference, cleared when the wall is deleted), `face` (`interior`, `exterior`, `center`, `core_interior` or `core_exterior`: the faces and the middle of the wall's core; the last two are on the right and on the left of the baseline) and `offset` | At most 1000 vertices and 64 loops |
 | `floor_type` | The floor type (schema 1.1) | A reference to a floor type of the project; absent only in files from before types until they are upgraded |
 | `pinned` | Whether the floor is pinned (schema 1.2) | Absent: unpinned |
+| `arcs` | The arc edges (schema 1.3): records of a vertex number and a bulge, the tangent of a quarter of the edge's included angle (positive for an arc that bends counterclockwise, which is outward for a counterclockwise loop; 0.0 is straight and is not listed) | At most 1000; \|bulge\| at most 10; absent in older files, whose edges are all straight; an arc edge follows no wall |
 
 An edge associated with a wall lies on the line of the chosen face of that wall (the center face is
 the center line of the wall type's core), moved by the offset; a vertex that
@@ -214,8 +247,34 @@ including walls that end on other walls, picks the smallest loop around it), wit
 thickness) and `offset`. `archbuilder.floor.add_hole` cuts a hole from a sketched loop. The
 property grid edits the type and `top_offset` through `archbuilder.property.set` and shows the
 storey, the area, the volume and the associated walls; `inspect` lists each floor with the same
-numbers. Derived, never stored: the boundary, the area (outer loop minus holes), the volume (area
-times thickness) and the solid, a prism of the boundary from the top down by the thickness.
+numbers. Derived, never stored: the boundary, the area (outer loop minus holes, arcs exact), the volume (area
+times thickness) and the solid, a prism of the boundary from the top down by the thickness, built
+on the exact arcs; the boundary is checked, drawn and written to IFC as chords within 2 mm of the
+arcs.
+
+**Cleanup with walls.** Where a floor and a wall *of its own storey* overlap in plan and in height,
+the wall's core runs through: the solid of the floor loses the footprint of the core and, when the floor lies on one
+side only, of the wall's layers on the other side, so a floor whose edge is on the exterior face is
+cut back to the core face it meets. The layers outside the core that the slab still covers stop at
+the slab: they end at its underside when the wall reaches up through it and start at its top when the
+wall stands on it. A wall of another storey (the walls below a slab) ends under the slab, core and layers
+alike, where the slab covers it, and never splits the slab: the slab stays one solid with its openings. A wall
+attached to a roof keeps its layers clipped under the roof, in the viewport and in the file. This changes the bodies only (the viewport, the plan and the IFC body agree); the
+area, the quantities and the room areas are those of the authored boundary and are unchanged.
+
+**Sketch editing.** `archbuilder.floor.edit_boundary` replaces the vertices (with their arcs and the
+walls their edges follow) of a floor in one transaction, validated like every commit (closed loops
+that do not cross, openings inside the outline, no edge under 1 mm), pin-aware and one undo step. The
+window opens it as a sketch: double click on a floor, the context menu or the Structure menu, or the
+typed word `editboundary` (`sinirduzenle`; the shortcut `EB`). The outline and the openings are
+loops of vertices and edges: a press on a vertex or on the diamond at the middle of an edge drags it,
+`add` puts a vertex on an edge, `arc` makes an edge the three-point arc through a clicked point,
+`straight` makes it straight again, `wall` replaces the selected edge by one that follows the wall
+clicked, and `delete` removes the selected vertex (a loop keeps at least three). An edge that follows
+a wall stays linked until an edit moves or reshapes it; the window says how many edges an edit freed.
+Enter or Finish applies everything as one command, Escape or Cancel drops the sketch and leaves the
+floor as it was; a sketch that is not valid is refused with the reason and stays open. Offsetting a floor, or splitting a wall that a floor with arc edges follows, is refused with a message that names the
+floor (the arcs cannot be kept). Roofs share the association of their edges with walls but have no sketch editing yet.
 
 #### The room of the first slice
 
@@ -709,12 +768,13 @@ follows the pointer and keeps the placed points (`undo` still removes the last),
 the sketch or the picks and asks again, the third ends the tool.
 
 IFC mapping as implemented: a floor maps to `IfcSlab` with `PredefinedType` `FLOOR`, contained in the
-`IfcBuildingStorey` of its storey. Its body is an extruded area solid of the boundary (the holes as
-inner curves) hanging from the top: the profile lies at the storey's level plus `top_offset` and the
-extrusion runs down by the thickness. The slab takes its type (below) and a layer set usage of its type's layers from the top down.
+`IfcBuildingStorey` of its storey. Its body is an extruded area solid of the boundary cut back to the
+cores of the walls it meets (the holes as inner curves, arcs as chords within 2 mm) hanging from the
+top: the profile lies at the storey's level plus `top_offset` and the extrusion runs down by the
+thickness; a slab cut into several parts is a faceted B-rep. The slab takes its type (below) and a layer set usage of its type's layers from the top down.
 `Qto_SlabBaseQuantities` holds `Width` (the thickness),
 `GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
-the rule of `inspect`).
+the rule of `inspect`), all of the authored boundary, not of the cut body.
 
 Export: `archbuilder-io` writes the first building of the document with `arc-io-ifc`; `export_ifc`
 takes a snapshot and the caller's file name and time stamp (no clock in the crate) and returns the
@@ -743,7 +803,7 @@ instance's own.
 
 | Type | Fields | Rules |
 |---|---|---|
-| Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding` | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
+| Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding`; `wrap_ends`, `wrap_inserts` (`none`, `exterior`, `interior` or `both`: the wrapping of finish layers at free ends and at the openings of doors and windows; schema 1.1, absent in older files, read as `none`) | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
 | Floor type | `name`, `layers` from the top down, `core_start`, `core_end` | As a wall type |
 | Door type, window type | `name`, `width`, `height`, `frame_width`, `frame_depth`, `operation`, `sill` (the default sill height of new instances) | The ranges of an insert; the frame leaves an opening; the operation suits the kind |
 

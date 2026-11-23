@@ -575,11 +575,24 @@ fn plan_offset(
     })
 }
 
+/// Refuses to change the outline of the floor `id` (data `floor`) when it has arc edges: the
+/// offset and the split of a wall under it cannot keep them.
+fn refuse_arcs(snapshot: &arc_doc::Snapshot, id: ObjectId, floor: &Floor) -> Result<()> {
+    if floor.vertices.iter().any(|v| v.bulge != 0.0) {
+        let name = spatial::get(snapshot, id)
+            .and_then(|o| types::text(&o.values, 0).map(str::to_owned))
+            .unwrap_or_default();
+        return Err(Error::new(codes::FLOOR_ARCS_UNSUPPORTED).with_arg("name", name));
+    }
+    Ok(())
+}
+
 /// The new floor vertices of an offset toward `side` by `distance`: the boundary grows when
 /// `side` is outside it and shrinks inside.
 fn offset_floor(loops: &[Vec<P>], side: P, distance: f64) -> Vec<Vertex> {
     let inside = archbuilder_model::floor::Boundary {
         loops: loops.to_vec(),
+        ..archbuilder_model::floor::Boundary::default()
     }
     .contains(side);
     offset_loops(loops, if inside { -distance } else { distance })
@@ -703,6 +716,7 @@ fn offset_loops(loops: &[Vec<P>], grow: f64) -> Vec<Vertex> {
                 loop_index: u32::try_from(k).unwrap_or(u32::MAX),
                 point: at,
                 edge: None,
+                bulge: 0.0,
             });
         }
     }
@@ -789,6 +803,7 @@ fn offset(ctx: &mut Context<'_>, p: Offset) -> Result<Edited> {
         }
     }
     for (id, floor, loops) in floors {
+        refuse_arcs(&snapshot, *id, floor)?;
         let vertices = offset_floor(loops, p.side, distance);
         out.objects += 1;
         let lost = floor.vertices.iter().filter(|v| v.edge.is_some()).count();
@@ -810,15 +825,14 @@ fn offset(ctx: &mut Context<'_>, p: Offset) -> Result<Edited> {
             if let Some(slot) = values.get_mut(types::floor::VERTICES) {
                 *slot = Some(Floor::vertex_values(&vertices));
             }
+            if let Some(slot) = values.get_mut(types::floor::ARCS) {
+                *slot = Floor::arc_values(&vertices);
+            }
             created.push(create(ctx, FLOOR, storey, values)?);
         } else {
             out.dissociated_edges =
                 Some(out.dissociated_edges.unwrap_or(0) + lost).filter(|n| *n > 0);
-            ctx.txn()?.modify(
-                *id,
-                FieldPath::new("vertices"),
-                Some(Floor::vertex_values(&vertices)),
-            )?;
+            crate::floor::set_vertices(ctx, *id, &vertices)?;
         }
     }
     out.meets = ensure_valid_lenient(ctx)?;
@@ -1052,11 +1066,8 @@ fn split(ctx: &mut Context<'_>, p: Split) -> Result<Edited> {
             high: cut_high,
         };
         if let Some(vertices) = cut.floor_vertices(&data, &boundary) {
-            ctx.txn()?.modify(
-                floor.id,
-                FieldPath::new("vertices"),
-                Some(Floor::vertex_values(&vertices)),
-            )?;
+            refuse_arcs(&snapshot, floor.id, &data)?;
+            crate::floor::set_vertices(ctx, floor.id, &vertices)?;
         }
     }
     let meets = ensure_valid_lenient(ctx)?;
@@ -1131,6 +1142,7 @@ impl SplitCut {
             };
             out.push(Vertex {
                 edge: follow(piece(sp)),
+                bulge: 0.0,
                 ..*v
             });
             let gap = (self.high - self.low) > MIN_FLOOR_GAP;
@@ -1139,12 +1151,14 @@ impl SplitCut {
                     loop_index: v.loop_index,
                     point: at(near),
                     edge: None,
+                    bulge: 0.0,
                 });
             }
             out.push(Vertex {
                 loop_index: v.loop_index,
                 point: at(if gap { far } else { mid }),
                 edge: follow(piece(sq)),
+                bulge: 0.0,
             });
         }
         touched.then_some(out)
@@ -1351,11 +1365,7 @@ fn merge(ctx: &mut Context<'_>, p: Merge) -> Result<Edited> {
                 ..*v
             })
             .collect();
-        ctx.txn()?.modify(
-            floor.id,
-            FieldPath::new("vertices"),
-            Some(Floor::vertex_values(&without_repeats(&vertices))),
-        )?;
+        crate::floor::set_vertices(ctx, floor.id, &without_repeats(&vertices))?;
     }
     let limits = *ctx.limits();
     let txn = ctx.txn()?;

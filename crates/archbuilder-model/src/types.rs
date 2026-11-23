@@ -279,6 +279,11 @@ pub mod layered_type {
     pub const LOAD_BEARING: usize = 5;
     /// Walls: whether the wall bounds rooms.
     pub const ROOM_BOUNDING: usize = 6;
+    /// Walls: the sides whose finish layers wrap around free ends ([`crate::element_type::Wrap`]
+    /// code); appended in schema 1.1, absent in older files, which wrap nothing.
+    pub const WRAP_ENDS: usize = 7;
+    /// Walls: the sides whose finish layers wrap around the openings of doors and windows.
+    pub const WRAP_INSERTS: usize = 8;
 
     /// Field positions of one layer record.
     pub mod layer {
@@ -323,6 +328,9 @@ pub mod floor {
     pub const FLOOR_TYPE: usize = 4;
     /// Whether the floor is pinned.
     pub const PINNED: usize = 5;
+    /// The arc edges: records of a vertex number and a bulge; appended in schema 1.3, absent in
+    /// older files, whose edges are all straight.
+    pub const ARCS: usize = 6;
 
     /// Field positions of one vertex record.
     pub mod vertex {
@@ -650,6 +658,21 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .in_aspect("geometry"),
         type_field("floor_type", FLOOR_TYPE, 1),
         pinned_field(2),
+        FieldDecl::new(
+            "arcs",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("vertex", ValueType::I64).with_default(Value::I64(0)),
+                FieldDecl::new("bulge", ValueType::F64)
+                    .with_default(Value::F64(0.0))
+                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::floor::MAX_VERTICES as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(3),
     ];
     for (key, fields) in [
         (ROOF, roof_fields()),
@@ -1058,6 +1081,7 @@ mod tests {
                     ("vertices", floor::VERTICES),
                     ("floor_type", floor::FLOOR_TYPE),
                     ("pinned", floor::PINNED),
+                    ("arcs", floor::ARCS),
                 ],
             ),
             (DOOR, insert_fields),
@@ -1126,6 +1150,8 @@ mod tests {
                     ("exposure", layered_type::EXPOSURE),
                     ("load_bearing", layered_type::LOAD_BEARING),
                     ("room_bounding", layered_type::ROOM_BOUNDING),
+                    ("wrap_ends", layered_type::WRAP_ENDS),
+                    ("wrap_inserts", layered_type::WRAP_INSERTS),
                 ],
             ),
             (

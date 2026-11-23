@@ -17,7 +17,7 @@ fn number(values: &Value, field: &str) -> Option<f64> {
 
 /// The `walls` list of the dump's `objects`, in the dump's order.
 #[must_use]
-pub fn summary(objects: &[Value]) -> Vec<Value> {
+pub fn summary(objects: &[Value], net: &std::collections::HashMap<String, f64>) -> Vec<Value> {
     let of = |key: &'static str| objects.iter().filter(move |o| o["type_key"] == key);
     let name_of = |id: &Value, key: &'static str| {
         of(key)
@@ -93,9 +93,15 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
             let gross = solid.as_ref().map(|(_, _, s)| s.volume());
             let mut hosted = inserts_of(objects, &object["id"]);
             hosted.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-            let volume = solid
-                .and_then(|(w, elevation, s)| cut(&w, elevation, s, &hosted).ok())
-                .map(|s| s.volume());
+            // The volume of the cleaned layers (under the slab above), when the file could be read.
+            let volume = object["id"]
+                .as_str()
+                .and_then(|id| net.get(id).copied())
+                .or_else(|| {
+                    solid
+                        .and_then(|(w, elevation, s)| cut(&w, elevation, s, &hosted).ok())
+                        .map(|s| s.volume())
+                });
             let data = data.map(|d| d.0);
             json!({
                 "id": object["id"],

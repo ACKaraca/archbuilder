@@ -122,6 +122,7 @@ impl Roof {
                     loop_index: 0,
                     point: [e(edge::X)?, e(edge::Y)?],
                     edge: association,
+                    bulge: 0.0,
                 },
                 slope: sloped.then_some(slope),
                 overhang: e(edge::OVERHANG),
@@ -234,6 +235,7 @@ impl Roof {
     ) -> Option<Vec<Edge>> {
         let boundary = Boundary {
             loops: vec![footprint.to_vec()],
+            ..Boundary::default()
         };
         let vertices = self.as_floor().frozen(&boundary, deleted)?;
         Some(
@@ -321,6 +323,7 @@ pub struct PlanLine {
 fn check_outline(points: &[[f64; 2]]) -> std::result::Result<(), Refusal> {
     Boundary {
         loops: vec![points.to_vec()],
+        ..Boundary::default()
     }
     .check()
     .map_err(|r| match r {
@@ -427,6 +430,7 @@ impl Surface {
         }
         Boundary {
             loops: vec![footprint.clone()],
+            ..Boundary::default()
         }
         .check()
         .map_err(Refusal::Footprint)?;
@@ -464,6 +468,7 @@ impl Surface {
         let over = skeleton_of(&over_outline, &speeds)?;
         let region = Boundary {
             loops: vec![outline.clone()],
+            ..Boundary::default()
         }
         .region()
         .map_err(|_| Refusal::Outline)?;
@@ -511,6 +516,7 @@ impl Surface {
     pub fn underside(&self, p: [f64; 2]) -> Option<f64> {
         let inside = Boundary {
             loops: vec![self.outline.clone()],
+            ..Boundary::default()
         }
         .contains(p);
         if !inside {
@@ -735,6 +741,7 @@ mod tests {
                         loop_index: 0,
                         point: *p,
                         edge: None,
+                        bulge: 0.0,
                     },
                     slope: *s,
                     overhang: None,
