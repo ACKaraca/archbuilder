@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, Point, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -667,7 +667,7 @@ pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &s
 fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
     let storey = storey_for(ctx, p.storey)?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
+        Some(param) => crate::length(ctx, param).map(|q| q.value()),
         None => Ok(default),
     };
     let wall_type = crate::element_type::layered_for(

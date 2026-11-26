@@ -8,7 +8,7 @@
 //! rules ([`archbuilder_model::validate::check`]) on its open transaction, so a refused change
 //! reports the rule and leaves the document unchanged.
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::{
     CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
 };
@@ -233,7 +233,7 @@ pub struct SetProperty {
     /// (a wall's or floor's thickness, a door's or window's width, height, frame and operation)
     /// are edited on the type.
     pub field: String,
-    /// The value in canonical JSON form: a text, a number in meters, an enum name or code, or a
+    /// The value in canonical JSON form: a text, a number in meters (also as a text without a unit, `"0.35"`), an enum name or code, or a
     /// truth value.
     pub value: serde_json::Value,
 }
@@ -464,7 +464,7 @@ fn add_storey(ctx: &mut Context<'_>, p: AddStorey) -> Result<StoreyAdded> {
         None => next_free_name(&existing, &language(ctx)),
     };
     let meters = match &p.elevation {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH)?.value(),
+        Some(param) => crate::length(ctx, param)?.value(),
         None => spatial::levels(ctx.snapshot(), building)
             .last()
             .and_then(|l| types::meters(&l.values, level::ELEVATION))
@@ -537,7 +537,7 @@ fn set_level_elevation(
     elevation: &QuantityParam,
 ) -> Result<ElevationSet> {
     let level_id = level_of(ctx.snapshot(), id)?;
-    let meters = ctx.quantity(elevation, Dimension::LENGTH)?.value();
+    let meters = crate::length(ctx, elevation)?.value();
     ctx.txn()?.modify(
         level_id,
         FieldPath::new("elevation"),
@@ -709,7 +709,12 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         }
         ValueType::Quantity(dimension) => {
             let param: QuantityParam = serde_json::from_value(json.clone()).ok()?;
-            ctx.quantity(&param, *dimension).ok().map(Value::Quantity)
+            let quantity = if *dimension == arc_base::Dimension::LENGTH {
+                crate::length(ctx, &param)
+            } else {
+                ctx.quantity(&param, *dimension)
+            };
+            quantity.ok().map(Value::Quantity)
         }
         _ => None,
     }

@@ -892,6 +892,11 @@ Not done: a band never selects rooms (a room has no scene geometry; a click, Tab
 this kind do, also while isolated); Tab does not step the snap candidates of a point prompt; there is no sketch edit mode for a
 floor; a copied selection is not written to the system clipboard as data.
 
+A length parameter or length field (`archbuilder.property.set`, wall, floor, stair and the other
+creating commands) reads a bare number as meters on every surface: a JSON number, and the text a
+command line delivers (`value=0.3`, `value="0.35"`). A text with a unit (`"400 mm"`) says its own.
+Text that is no length is refused as before.
+
 `archbuilder.modify.move`, `copy`, `rotate` and `mirror` (rotate's `angle`: a JSON number is radians, a text with a unit such as `"90 deg"` says its own, a bare text number is degrees; typed `m`, `co`, `ro`, `mi`, or the
 Turkish `taşı`, `kopyala`, `döndür`, `aynala`) work on the selection, or ask for objects first and
 take the selection on Enter. Each run is one transaction. Walls move by their baselines and their
