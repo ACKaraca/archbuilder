@@ -251,9 +251,18 @@ fn plan_candidates(
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
     // In a plan view the tools work on the view's storey.
-    let (storey, elevation) = crate::plan_state::current_in(tab, &snapshot)
+    let found = crate::plan_state::current_in(tab, &snapshot)
         .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
-        .or_else(|| storey_for(&snapshot, selection))?;
+        .or_else(|| storey_for(&snapshot, selection));
+    // The command tabs and the status bar learn the selection and the storey from here.
+    crate::chrome::publish(
+        tab,
+        selection.len(),
+        found
+            .and_then(|(id, _)| spatial::get(&snapshot, id))
+            .and_then(|o| archbuilder_model::types::text(&o.values, 0).map(str::to_owned)),
+    );
+    let (storey, elevation) = found?;
     // The room drawing follows the storey the viewport works on and the selection.
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
@@ -3275,6 +3284,13 @@ mod tests {
         assert_eq!(notices.first().map(String::as_str), Some("10"));
     }
     use std::path::Path;
+
+    #[test]
+    fn every_typed_word_of_the_command_tabs_is_a_command_of_the_line() {
+        for word in crate::chrome::TYPED_WORDS {
+            assert!(super::habits::typed_word(word).is_some(), "{word}");
+        }
+    }
 
     #[test]
     fn a_level_change_that_puts_a_ceiling_through_the_slab_is_said_in_the_history() {

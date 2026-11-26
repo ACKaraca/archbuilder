@@ -190,6 +190,7 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "hide" if rest.is_empty() => Intent::new(ui::HIDE),
         "isolate" if rest.is_empty() => Intent::new(ui::ISOLATE),
         "unhide" if rest.is_empty() => Intent::new(ui::RESET_VISIBILITY),
+        "warnings" | "uyarilar" if rest.is_empty() => Intent::new(ui::WARNINGS),
         "snap" if rest.is_empty() => Intent::new(ui::SNAP),
         "repeat" if rest.is_empty() => Intent::new(ui::REPEAT),
         "cut" if rest.is_empty() => Intent::new(ui::CUT),

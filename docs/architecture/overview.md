@@ -118,6 +118,20 @@ sequenceDiagram
 | Exchange link engine | `archbuilder-io` | Matches entries by exchange identifier, detects changes by content hash and applies reviewed changes as one transaction |
 | Rule checker | `archbuilder-model`, `archbuilder-io` | IDS and rule sets evaluated over the model and over IFC exports |
 
+## Workspace layout
+
+The window is built on the shell of `arc-core`: a menu bar with quick access buttons (New, Open,
+Save, Save As, Undo, Redo), command tabs below it, a left column, the viewport and a short bottom
+strip. The command tabs (`apps/archbuilder/src/chrome.rs`) are Architecture, Modify, View, Manage
+and Exchange; each holds labeled groups of icon buttons, large for the primary tools and small
+(three to a column) for the secondary ones. A Selection tab shows only while the active document
+has a selection, becomes current when it appears and holds the transform, edit, element, hosted
+element and type commands. Every button submits a command line, so each stays reachable from the
+menus, the context menu and the typed shortcuts. The left column holds the project browser above
+the properties, types and settings tabs; the bottom strip holds the command line and the warnings.
+The status bar shows the working storey and the number of selected objects. The icons are original
+SVG files in `apps/archbuilder/icons` (origin and license in its README).
+
 ## Threading and background work
 
 - The user interface thread never waits on regeneration. It applies committed results and shows

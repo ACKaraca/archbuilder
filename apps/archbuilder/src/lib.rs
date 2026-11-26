@@ -477,28 +477,30 @@ fn menu() -> Result<Menu> {
     Menu::new(items)
 }
 
-/// The shell configuration: the viewport in the middle, the outliner above the property grid on
-/// the right, the command line below; the menu bar and the toolbar; key bindings for the file
+/// The shell configuration: the project browser above the property grid on the left, the viewport
+/// in the middle, the command line below; the menu bar and the command tabs; key bindings for the file
 /// commands and Delete for the storey; the level labels and the starting view. `seed` seeds the invocations (see [`ShellConfig::seed`]).
 ///
 /// # Errors
 /// None for this layout and menu; their validation errors otherwise.
 pub fn config(seed: u64) -> Result<ShellConfig> {
-    let right = Dock::Split {
+    // A left column (project browser above the properties, types and settings), the viewport in
+    // the middle and a short strip with the command line and the warnings below.
+    let left = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.26,
+        fraction: 0.42,
         first: Box::new(tabs(&[OUTLINER])),
         second: Box::new(tabs(&[PROPERTIES, TYPES, SETTINGS])),
     };
     let top = Dock::Split {
         axis: Axis::Horizontal,
-        fraction: 0.62,
-        first: Box::new(tabs(&[VIEWPORT])),
-        second: Box::new(right),
+        fraction: 0.22,
+        first: Box::new(left),
+        second: Box::new(tabs(&[VIEWPORT])),
     };
     let root = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.74,
+        fraction: 0.84,
         first: Box::new(top),
         second: Box::new(tabs(&[COMMAND_LINE, WARNINGS])),
     };
@@ -557,8 +559,12 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         initial_view: Some(InitialView {
             toward_camera: [1.0, -1.4, 0.9],
         }),
-        toolbar: chrome::toolbar(),
+        toolbar: Vec::new(),
+        command_tabs: chrome::command_tabs(),
+        quick_access: chrome::quick_access(),
+        icons: chrome::icons(),
         status: chrome::status(),
+        status_text: Some(chrome::status_text()),
         seed,
     })
 }

@@ -119,13 +119,23 @@ fn each_level_draws_an_outline_and_labels_carry_name_and_elevation_in_the_unit_a
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+use arc_app::shell::ToolItem;
+
+/// Every item of the command tabs and of the quick access row.
+fn all_items() -> Vec<ToolItem> {
+    let mut items = archbuilder::chrome::quick_access();
+    for tab in archbuilder::chrome::command_tabs() {
+        items.extend(tab.groups.into_iter().flat_map(|g| g.items));
+    }
+    items
+}
+
 #[test]
 fn every_label_of_the_toolbar_and_the_commands_is_in_both_catalogs() {
-    use arc_app::shell::ToolItem;
     let mut ids: Vec<String> = Vec::new();
-    for item in archbuilder::chrome::toolbar() {
+    for item in all_items() {
         match item {
-            ToolItem::Button { label, hint, .. } => {
+            ToolItem::Button { label, hint, .. } | ToolItem::IconButton { label, hint, .. } => {
                 ids.push(label);
                 ids.extend(hint);
             }
@@ -133,6 +143,18 @@ fn every_label_of_the_toolbar_and_the_commands_is_in_both_catalogs() {
             _ => {}
         }
     }
+    for tab in archbuilder::chrome::command_tabs() {
+        ids.push(tab.label);
+        ids.extend(tab.groups.into_iter().map(|g| g.label));
+    }
+    ids.extend(
+        [
+            "ab-status-storey",
+            "ab-status-selected",
+            "ab-panel-outliner",
+        ]
+        .map(String::from),
+    );
     let mut registry = archbuilder_commands::registry().unwrap();
     archbuilder_io::register(&mut registry).unwrap();
     for spec in registry.iter() {
@@ -225,4 +247,105 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(dialog.mode, arc_app::product::PathMode::Save);
     assert_eq!(dialog.filters[0].extensions, ["ifc"]);
     assert_eq!(dialog.default_name.as_deref(), Some("{document}.ifc"));
+}
+
+#[test]
+fn every_line_of_the_command_tabs_names_a_command_and_every_icon_exists() {
+    let mut registry = archbuilder_commands::registry().unwrap();
+    archbuilder_io::register(&mut registry).unwrap();
+    arc_app::commands::register(&mut registry).unwrap();
+    let icons = archbuilder::chrome::icons();
+    arc_app::shell::check_icons(&icons).unwrap();
+    let mut lines = Vec::new();
+    for item in all_items() {
+        match item {
+            ToolItem::IconButton { line, icon, .. } => {
+                assert!(
+                    registry.get(&line).is_some()
+                        || archbuilder::chrome::TYPED_WORDS.contains(&line.as_str()),
+                    "{line} is no command"
+                );
+                assert!(icons.iter().any(|(n, _)| *n == icon), "no icon {icon}");
+                lines.push(line);
+            }
+            ToolItem::Button { .. } => panic!("a text button among the command tabs"),
+            _ => {}
+        }
+    }
+    // Everything the flat toolbar offered stays reachable.
+    use archbuilder_commands::{edit, modify};
+    let old = [
+        arc_app::commands::FILE_NEW,
+        arc_app::commands::FILE_OPEN,
+        arc_app::commands::FILE_SAVE,
+        arc_app::commands::FILE_SAVE_AS,
+        arc_app::commands::EDIT_UNDO,
+        arc_app::commands::EDIT_REDO,
+        archbuilder_commands::structure::STOREY_ADD,
+        archbuilder_commands::structure::STOREY_DELETE,
+        archbuilder_commands::wall::WALL_CREATE,
+        archbuilder_commands::insert::DOOR_PLACE,
+        archbuilder_commands::insert::WINDOW_PLACE,
+        archbuilder_commands::floor::FLOOR_CREATE,
+        archbuilder_commands::room::ROOM_PLACE,
+        archbuilder_commands::room::ROOM_PLACE_ALL,
+        archbuilder_commands::stair::STAIR_CREATE,
+        archbuilder_commands::roof::ROOF_CREATE,
+        archbuilder_commands::ceiling::CEILING_CREATE,
+        archbuilder_commands::insert::OPENING_PLACE,
+        archbuilder_commands::opening::SHAFT_CREATE,
+        archbuilder_commands::opening::VERTICAL_OPENING_CREATE,
+        modify::MODIFY_MOVE,
+        modify::MODIFY_COPY,
+        modify::MODIFY_ROTATE,
+        modify::MODIFY_MIRROR,
+        edit::MODIFY_ALIGN,
+        edit::MODIFY_OFFSET,
+        edit::MODIFY_TRIM,
+        edit::MODIFY_TRIM_TO,
+        edit::WALL_SPLIT,
+        edit::WALL_MERGE,
+        edit::MODIFY_ARRAY,
+        edit::MODIFY_ARRAY_RADIAL,
+        edit::ELEMENT_PIN,
+        edit::ELEMENT_UNPIN,
+        archbuilder_commands::wall::OBJECT_DELETE,
+        archbuilder_io::command::EXPORT_IFC,
+    ];
+    for line in old {
+        assert!(lines.iter().any(|l| l == line), "{line} unreachable");
+    }
+    let items = all_items();
+    assert!(
+        items
+            .iter()
+            .any(|i| matches!(i, ToolItem::ZoomExtents { .. }))
+    );
+    assert!(items.iter().any(|i| matches!(i, ToolItem::Choice { .. })));
+}
+
+#[test]
+fn the_selection_tab_shows_only_with_a_selection() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-tabs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut app = app(&dir, 0);
+    let tab = app.new_document_in("en").unwrap();
+    let selection_tab = archbuilder::chrome::command_tabs()
+        .into_iter()
+        .find(|t| t.context.is_some())
+        .unwrap();
+    let shown = |app: &Application| (selection_tab.context.as_ref().unwrap().0)(app, tab);
+    // The controller reports the selection through the work-plane probe, each frame.
+    let _ = archbuilder::interaction::work_plane(&app, tab, &[]);
+    assert!(!shown(&app));
+    let storey = {
+        let snapshot = app.tab(tab).unwrap().document().snapshot();
+        spatial::objects(&snapshot, archbuilder_model::types::STOREY)[0].id
+    };
+    let _ = archbuilder::interaction::work_plane(&app, tab, &[storey]);
+    assert!(shown(&app));
+    let _ = archbuilder::interaction::work_plane(&app, tab, &[]);
+    assert!(!shown(&app));
+    let _ = std::fs::remove_dir_all(&dir);
 }

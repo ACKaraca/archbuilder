@@ -380,7 +380,7 @@ Stairs do not bound rooms.
 
 `archbuilder.stair.create` takes `start`, `to` (a point the first run heads toward) or
 `direction`, `shape`, `turn`, `width`, `tread`, `max_riser`, `waist`, `top_level` and `name`; one
-call is one undo step. The Stair tool (toolbar Stair, Structure menu, the typed shortcut `ST`, the
+call is one undo step. The Stair tool (Architecture tab Stair, Structure menu, the typed shortcut `ST`, the
 words `stair` and `merdiven`, New stair in the context menu with nothing selected) asks for the start
 and the direction point with the keywords straight, L turn and U turn (a turn asks for the side),
 width and tread (another answer to the turn prompt asks the side again, naming the valid answers); every
@@ -464,7 +464,7 @@ The `.archb` addition is backward compatible: the record types `archbuilder.roof
 `archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
 project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
 
-In the application the Roof tool (toolbar, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
+In the application the Roof tool (Architecture tab, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
 New roof in the context menu) is the floor tool's picks and sketch with the keywords `slope` (`s`;
 `k` switches to the sketch), `overhang` and `base`; a prompt's own shortcut letter wins over the
 English letters of other keywords. The slope is typed as in the grid below and refused outside 1°
@@ -591,7 +591,7 @@ valley of a roof is not cut in its body (the opening is still written as a void,
 says so). The plan marks a shaft with its outline and a cross on every storey whose level is within
 its span.
 
-In the application the tools are in the toolbar and the Structure menu and have the typed shortcuts
+In the application the tools are in the Architecture tab, the Selection tab and the Structure menu and have the typed shortcuts
 `CL` (ceiling: a click inside a room makes it, `sketch` sketches it), `OP` (wall opening, placed like a door; the
 keyword `rise` makes it an arch), `SH` (shaft, a sketch) and `VO` (vertical opening in the selected floor, roof
 or ceiling, a sketch); `SO` sets a ceiling's slope arrow (`archbuilder.ceiling.set_slope` with `from`, `to` and
@@ -688,7 +688,7 @@ of them as one undo step.
 ### Editing tools
 
 `archbuilder-commands/src/edit.rs` adds editing commands to move, copy, rotate and mirror. Each is
-one transaction and one undo step, starts from the Modify menu, the toolbar, the context menu where
+one transaction and one undo step, starts from the Modify menu, the Modify tab, the context menu where
 it applies, or a typed name, and runs in the modify tool (pick first or pick later, Enter and
 Escape as for move). Commands that pick take points: a point picks the nearest wall face, wall
 center line or floor edge, or the wall whose body is nearest, within about ten pixels.
@@ -1000,7 +1000,7 @@ window size not matched by an existing type; saving writes them. The history say
 again.
 The headless CLI reads such a file without changing it; its instances then have no type.
 
-In the application the toolbar's type selector lists the types of the running wall, floor, door or
+In the application the command tabs' type selector lists the types of the running wall, floor, door or
 window tool and sets the type it places next (the prompt in progress takes it at once), and without
 a tool lists the types of the selection's kind and retypes all selected objects of that kind. The
 property grid shows the type as a choice after the name and the values the type decides read-only;
