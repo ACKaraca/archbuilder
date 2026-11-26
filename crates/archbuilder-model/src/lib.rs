@@ -68,6 +68,7 @@ pub mod pick;
 pub mod plan;
 pub mod roof;
 pub mod room;
+pub mod selection;
 pub mod sketch;
 pub mod spatial;
 pub mod stair;

@@ -639,6 +639,25 @@ undoing it shows the default view again and, back at the saved state, the docume
 It cannot be deleted. The record type is a backward-compatible addition to the `.archb`
 format: an older application reading a newer file sees the views as records it does not know.
 
+#### Selection sets and model statistics
+
+`archbuilder.selection_set` (schema 1.0) is a named, saved list of elements, owned by the project.
+The record holds a name (unique among the sets, case folded) and its members as one optional
+reference each; element identifiers never change, so a set stays valid across edits, and deleting an
+element removes it from every set (the delete is one undo step that also restores the entry). Only
+building elements are members (not levels, storeys or types). `archbuilder.set.create` (the given
+elements, else the selected ones), `archbuilder.set.update` (add and remove members),
+`archbuilder.set.rename` and `archbuilder.set.delete` are each one undo step;
+`archbuilder.set.select` makes the members the selection (or adds them) and changes no document.
+Rule-based sets (category and parameter conditions) and a report of the members dropped by a delete
+are not built yet.
+
+`archbuilder.model.statistics` returns a report derived from the document and never stored: element
+counts by kind, by type (instances without a type under an empty name) and by storey, and the number
+of plan views, selection sets and element types. `archbuilder-cli inspect` prints it as `statistics`
+beside the `selection_sets` list. Stored size by table, the largest families and measured
+regeneration time are not part of it yet.
+
 The drawing is derived ([`archbuilder_model::plan`]) and never stored: an implementation of the
 `arc-view` source interface for one view. A wall gives one part per layer of its cleaned solids, with
 the layer's material as the join key, so the layers of one material join across walls and a seam shows

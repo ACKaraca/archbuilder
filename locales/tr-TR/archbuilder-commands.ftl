@@ -403,3 +403,16 @@ ab-cmd-view-defaults-label = Varsayılan Plan Görünümlerini Oluştur
 ab-cmd-view-defaults-description = Plan görünümü olmayan her kata varsayılan görünümünü verir.
 ab-cmd-view-set-label = Görünüm Ayarını Değiştir
 ab-cmd-view-set-description = Bir plan görünümünün tek bir ayarını değiştirir; görünümü olmayan bir kat için önce görünümünü oluşturur.
+
+ab-cmd-set-create-label = Seçim Kümesi Oluştur
+ab-cmd-set-create-description = Belgede adlandırılmış bir seçim kümesi kaydeder: verilen öğeler, yoksa seçili öğeler.
+ab-cmd-set-update-label = Seçim Kümesini Değiştir
+ab-cmd-set-update-description = Bir seçim kümesine öğe ekler veya üyelerini çıkarır.
+ab-cmd-set-rename-label = Seçim Kümesini Yeniden Adlandır
+ab-cmd-set-rename-description = Bir seçim kümesini yeniden adlandırır; ad diğer kümelerce kullanılmıyor olmalıdır.
+ab-cmd-set-delete-label = Seçim Kümesini Sil
+ab-cmd-set-delete-description = Bir seçim kümesini siler; öğeleri modelde kalır.
+ab-cmd-set-select-label = Küme Üyelerini Seç
+ab-cmd-set-select-description = Bir seçim kümesinin üyelerini seçer; seçimin yerine geçer veya ona eklenir.
+ab-cmd-statistics-label = Model İstatistikleri
+ab-cmd-statistics-description = Öğe sayılarını tür, tip ve kata göre; ayrıca görünüm, seçim kümesi ve öğe tipi sayısını bildirir.

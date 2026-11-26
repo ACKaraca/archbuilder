@@ -651,7 +651,7 @@ fn selected_with_level(snapshot: &Snapshot, id: ObjectId) -> Vec<ObjectId> {
     std::iter::once(storey).chain(level.map(|l| l.id)).collect()
 }
 
-fn select_objects(ctx: &mut Context<'_>, p: SelectObjects) -> Result<()> {
+pub(crate) fn select_objects(ctx: &mut Context<'_>, p: SelectObjects) -> Result<()> {
     let snapshot = ctx.snapshot();
     let current = ctx.selection().to_vec();
     let mut chosen: Vec<ObjectId> = match p.mode {
