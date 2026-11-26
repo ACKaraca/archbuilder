@@ -28,6 +28,10 @@ ab-tool-undo-hint = Son değişikliği geri al
 ab-tool-redo = Yinele
 ab-tool-redo-hint = Geri alınan değişikliği yinele
 ab-tool-zoom-extents = Tümünü Göster
+ab-tool-plan = Plan
+ab-tool-plan-hint = Etkin katın plan görünümünü aç
+ab-tool-view-3d = 3B
+ab-tool-view-3d-hint = 3B görünüme dön
 
 ab-prop-empty = Özelliklerini görmek için Proje gezgininden bir öğe seçin.
 ab-prop-not-editable = Taban kotları ve kot referansları ileride kullanılmak üzere saklanır, şimdilik bir şey değiştirmez; bu yüzden düzenlenemez.

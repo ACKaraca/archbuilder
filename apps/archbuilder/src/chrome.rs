@@ -41,6 +41,8 @@ pub const TYPED_WORDS: &[&str] = &[
     "matchtype",
     "edittype",
     "warnings",
+    "plan",
+    "3d",
 ];
 
 /// The most tabs whose selection is remembered.
@@ -526,13 +528,40 @@ pub fn command_tabs() -> Vec<CommandTab> {
                     Message {
                         message_id: "ab-group-navigate",
                     },
-                    vec![ToolItem::ZoomExtents {
-                        label: Message {
-                            message_id: "ab-tool-zoom-extents",
-                        }
-                        .message_id
-                        .to_owned(),
-                    }],
+                    vec![
+                        ToolItem::ZoomExtentsIcon {
+                            label: Message {
+                                message_id: "ab-tool-zoom-extents",
+                            }
+                            .message_id
+                            .to_owned(),
+                            hint: None,
+                            icon: "zoom-extents".to_owned(),
+                            size: ButtonSize::Small,
+                        },
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-plan",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-plan-hint",
+                            }),
+                            "plan",
+                            "plan-view",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-view-3d",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-view-3d-hint",
+                            }),
+                            "3d",
+                            "view-3d",
+                            ButtonSize::Small,
+                        ),
+                    ],
                 ),
                 group(
                     Message {

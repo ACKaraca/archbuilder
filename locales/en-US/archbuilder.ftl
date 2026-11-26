@@ -29,6 +29,10 @@ ab-tool-undo-hint = Undo the last change
 ab-tool-redo = Redo
 ab-tool-redo-hint = Redo the change that was undone
 ab-tool-zoom-extents = Zoom Extents
+ab-tool-plan = Plan
+ab-tool-plan-hint = Open the plan view of the active storey
+ab-tool-view-3d = 3D
+ab-tool-view-3d-hint = Back to the 3D view
 
 ab-prop-empty = Select an item in the outliner to see its properties.
 ab-prop-not-editable = Base elevations and elevation references are stored for later use and change nothing yet, so they cannot be edited.

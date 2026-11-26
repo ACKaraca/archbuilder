@@ -489,3 +489,41 @@ fn builds_the_two_storey_house() {
     app.save_as(tab, std::path::Path::new(&path)).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_plan_and_3d_words_open_the_plan_of_the_active_storey_and_the_3d_view() {
+    let dir = temp_dir("words");
+    let mut app = app(&dir, 90);
+    let tab = app.new_document().unwrap();
+    let document = app.tab(tab).unwrap().document();
+    let core = app.product().headless();
+    let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+    Invoker::new(&core.registry)
+        .invoke(
+            document,
+            &session,
+            Invocation {
+                seed: 3,
+                ..Invocation::new(
+                    "archbuilder.wall.create",
+                    serde_json::json!({"start": [0.0, 0.0], "end": [5.0, 0.0]}),
+                )
+            },
+        )
+        .unwrap();
+    let mut ui = Ui::new(app);
+    let snapshot = ui.snapshot();
+    let wall = spatial::objects(&snapshot, WALL)[0].id;
+    let ground = spatial::get(&snapshot, wall).unwrap().header.owner.unwrap();
+    let view = archbuilder_model::view::of_storey(&snapshot, ground)[0].id;
+
+    ui.select(&[wall]);
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", "plan"));
+    assert_eq!(plan_state::current(ui.tab()), Some(view));
+    // Asked again in the plan view, it stays on the view's storey.
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", "plan"));
+    assert_eq!(plan_state::current(ui.tab()), Some(view));
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", "3d"));
+    assert_eq!(plan_state::current(ui.tab()), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

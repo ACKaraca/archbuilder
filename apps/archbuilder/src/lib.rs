@@ -488,7 +488,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
     // the middle and a short strip with the command line and the warnings below.
     let left = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.42,
+        fraction: 0.55,
         first: Box::new(tabs(&[OUTLINER])),
         second: Box::new(tabs(&[PROPERTIES, TYPES, SETTINGS])),
     };
@@ -500,7 +500,7 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
     };
     let root = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.84,
+        fraction: 0.87,
         first: Box::new(top),
         second: Box::new(tabs(&[COMMAND_LINE, WARNINGS])),
     };

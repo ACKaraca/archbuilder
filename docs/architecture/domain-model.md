@@ -872,7 +872,9 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
   | UD | undo | CU | cut |
 
   Typed in the command line: `selectid <id> ...` selects objects by identifier, and `selectall`,
-  `paste`, `pastestorey`, `hide`, `isolate`, `unhide` do what their shortcuts do.
+  `paste`, `pastestorey`, `hide`, `isolate`, `unhide` do what their shortcuts do. `plan` opens the
+  plan view of the active storey (the open view's storey, else the selection's, else the lowest) and
+  `3d` (`3b`) returns to the 3D view; the View tab's Plan and 3D buttons submit these words.
 - **Selection.** Select all, select all of this kind (the kinds in the selection: wall, door, window,
   floor, room), keep one kind of the selection, previous selection (restores the selection before the
   last change; an empty selection never replaces it) and select by identifier. They skip hidden objects.

@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "arc-app"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -111,7 +111,7 @@ dependencies = [
 [[package]]
 name = "arc-base"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "glam 0.34.3",
  "nalgebra",
@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "arc-command"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -140,7 +140,7 @@ dependencies = [
 [[package]]
 name = "arc-doc"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-swap",
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "arc-draft"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "arc-geom"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "robust",
@@ -182,7 +182,7 @@ dependencies = [
 [[package]]
 name = "arc-gpu"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -196,7 +196,7 @@ dependencies = [
 [[package]]
 name = "arc-io-common"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "miniz_oxide 0.9.1",
@@ -207,7 +207,7 @@ dependencies = [
 [[package]]
 name = "arc-io-ifc"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-io-common",
@@ -217,7 +217,7 @@ dependencies = [
 [[package]]
 name = "arc-mesh"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-geom",
@@ -226,7 +226,7 @@ dependencies = [
 [[package]]
 name = "arc-solve"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
 ]
@@ -243,7 +243,7 @@ dependencies = [
 [[package]]
 name = "arc-ui"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "arc-view"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -272,7 +272,7 @@ dependencies = [
 [[package]]
 name = "arc-winsec"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=44216e7cc050a039385d867a7f136ba36bd6f7b6#44216e7cc050a039385d867a7f136ba36bd6f7b6"
+source = "git+https://github.com/ACKaraca/arc-core?rev=1d3fd251a64bd4e692f69e1587455adcdb10e602#1d3fd251a64bd4e692f69e1587455adcdb10e602"
 dependencies = [
  "windows-sys 0.61.2",
 ]

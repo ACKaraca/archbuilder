@@ -140,6 +140,10 @@ fn every_label_of_the_toolbar_and_the_commands_is_in_both_catalogs() {
                 ids.extend(hint);
             }
             ToolItem::ZoomExtents { label } => ids.push(label),
+            ToolItem::ZoomExtentsIcon { label, hint, .. } => {
+                ids.push(label);
+                ids.extend(hint);
+            }
             _ => {}
         }
     }
@@ -268,6 +272,9 @@ fn every_line_of_the_command_tabs_names_a_command_and_every_icon_exists() {
                 assert!(icons.iter().any(|(n, _)| *n == icon), "no icon {icon}");
                 lines.push(line);
             }
+            ToolItem::ZoomExtentsIcon { icon, .. } => {
+                assert!(icons.iter().any(|(n, _)| *n == icon), "no icon {icon}");
+            }
             ToolItem::Button { .. } => panic!("a text button among the command tabs"),
             _ => {}
         }
@@ -319,7 +326,7 @@ fn every_line_of_the_command_tabs_names_a_command_and_every_icon_exists() {
     assert!(
         items
             .iter()
-            .any(|i| matches!(i, ToolItem::ZoomExtents { .. }))
+            .any(|i| matches!(i, ToolItem::ZoomExtentsIcon { .. }))
     );
     assert!(items.iter().any(|i| matches!(i, ToolItem::Choice { .. })));
 }
