@@ -18,3 +18,7 @@ ab-io-command-import-shortcuts-description = Yazılan komut kısayol tablosunu b
 ab-io-loss-stair-not-written = Bir merdiven IFC dosyasında yok: merdivenler, kollar ve korkuluklar henüz yazılamıyor. Üstteki döşemede açtığı boşluk dosyada var.
 ab-io-loss-arc-faceted = Bir yay kenarı veya kemerli üst, iki milimetre içinde düz kirişler olarak yazıldı: buradaki IFC gövdeleri çokyüzlü.
 ab-io-loss-cut-not-applied = Bir şaft veya düşey boşluk, geçtiği elemanın gövdesinden kesilemedi: gövde bütün olarak yazıldı, boşluk dosyada elemanın bir boşluğu olarak yer alıyor.
+ab-io-validation-unreadable = IFC dosyası yazıldı ancak geri okunamadı; dosya eksiktir.
+ab-io-validation-missing = Modeldeki bir nesne IFC dosyasında kendi tanımlayıcısıyla bulunmuyor; dosya eksiktir.
+ab-io-validation-duplicate-id = IFC dosyasındaki iki varlığın genel tanımlayıcısı aynı; dosya eksiktir.
+ab-io-validation-count = IFC dosyasında { $found } öğe var ancak dışa aktarım { $expected } öğe saymıştı; dosya eksiktir.

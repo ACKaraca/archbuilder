@@ -88,4 +88,32 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-cut-not-applied",
     };
+    /// The exported file could not be read back by the independent reader.
+    pub const VALIDATION_UNREADABLE: Reason = Reason {
+        code: "ab.io.ifc.validation_unreadable",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-unreadable",
+    };
+    /// An object of the model is not in the exported file.
+    pub const VALIDATION_MISSING: Reason = Reason {
+        code: "ab.io.ifc.validation_missing",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-missing",
+    };
+    /// Two entities of the exported file share a `GlobalId`.
+    pub const VALIDATION_DUPLICATE_ID: Reason = Reason {
+        code: "ab.io.ifc.validation_duplicate_id",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-duplicate-id",
+    };
+    /// The exported file holds a number of products other than the export counted.
+    pub const VALIDATION_COUNT: Reason = Reason {
+        code: "ab.io.ifc.validation_count",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-count",
+    };
 }

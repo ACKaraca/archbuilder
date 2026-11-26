@@ -964,6 +964,16 @@ relative path resolves against the folder of the saved document, else the docume
 When no file dialog opens or the user cancels, the history says that no file was chosen and the
 typed form with a path still works.
 
+Self-validation (AB-IO-019): after writing, `export_ifc` reads the bytes back with the reader of
+`arc-io-ifc` and checks that the file reads, that the project, site, building, storeys, elements and
+element types are each in the file under their `GlobalId`, that no two rooted entities share a
+`GlobalId`, and that the file holds as many products and openings as elements were written. Each
+problem is a loss item with the outcome `failed` (`ab.io.ifc.validation_unreadable`,
+`validation_missing`, `validation_duplicate_id`, `validation_count`) and `Export::valid` is false;
+`archbuilder.file.export_ifc` and `export-ifc` return it as `valid`. The file is still written, so
+`valid: false` is what marks it incomplete; it is not renamed or removed. Property sets, geometry
+and relationships are not re-checked yet.
+
 #### The element types of the first slice
 
 Wall, floor, door and window types are records the project owns (`archbuilder.wall_type`,

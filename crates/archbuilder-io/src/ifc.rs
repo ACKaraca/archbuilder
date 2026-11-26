@@ -64,8 +64,13 @@ pub struct Export {
     pub bytes: Vec<u8>,
     /// The walls, floors, roofs, rooms, doors and windows written; the openings that void walls are not counted.
     pub elements: usize,
-    /// What was not exported or only approximately; the writer's own entries are included.
+    /// What was not exported or only approximately; the writer's own entries are included, and
+    /// each problem the self-validation found is an item with the outcome `failed`.
     pub report: LossReport,
+    /// Whether the written file passed self-validation (it reads back, holds every object under
+    /// its `GlobalId`, has no repeated `GlobalId` and the product count of the report). A file
+    /// that did not is incomplete.
+    pub valid: bool,
 }
 
 /// The local frame of a wall or an insert in plan: an origin, the direction of its x axis and the
@@ -1127,10 +1132,12 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
     report.header.application = Some(options.application.clone());
     report.header.time = Some(options.timestamp.clone());
     add_losses(&mut report, &mapper.losses);
+    let valid = crate::validate::validate(&written.bytes, &model, options.limits, &mut report);
     Ok(Export {
         bytes: written.bytes,
         elements: mapper.exported,
         report,
+        valid,
     })
 }
 
