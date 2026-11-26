@@ -925,6 +925,14 @@ pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> 
                 crate::ceiling::set_slope_text(ctx, id, text)?;
                 ensure_valid(ctx)?;
             }
+            (types::FLOOR, "floor_slope") => {
+                let text = p
+                    .value
+                    .as_str()
+                    .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
+                crate::floor_slope::set_slope_text(ctx, id, text)?;
+                ensure_valid(ctx)?;
+            }
             (types::SHAFT, "shaft_base" | "shaft_top") => {
                 // The grid sends the number of its choice: 0 is the storey's own level, then the
                 // levels of the building in order; a level's name also does.

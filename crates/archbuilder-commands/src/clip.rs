@@ -302,6 +302,8 @@ pub(crate) fn paste_content(
         }
         if key == CEILING {
             crate::ceiling::moved_values(&mut values, &xf);
+        } else {
+            crate::ceiling::moved_floor_slope(&mut values, &xf);
         }
         crate::element_type::rebind(ctx, &key, &mut values)?;
         let new = create(ctx, &key, Some(storey), values)?;

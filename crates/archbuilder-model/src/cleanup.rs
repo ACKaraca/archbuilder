@@ -306,8 +306,12 @@ pub struct CleanFloor {
     pub storey: Option<ObjectId>,
     /// The bounding box of the slab in plan: `[min x, min y, max x, max y]`.
     pub bbox: [f64; 4],
-    /// The underside and the top of the slab.
+    /// The underside and the top of the slab; for a sloped slab the lowest and the highest.
     pub z: (f64, f64),
+    /// The plane of the top when the slab slopes.
+    pub slope: Option<crate::terrain::Plane>,
+    /// The thickness of the slab.
+    pub thickness: f64,
 }
 
 /// The points of a loop, arcs flattened within [`FLAT_CHORD`].
@@ -408,7 +412,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
 fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloor> {
     let derived = Derived::of(snapshot, object)?;
     let mut region = derived.boundary.region().ok()?;
-    let z = (derived.top - derived.floor.thickness, derived.top);
+    let z = derived.z_range();
     let outer = derived.boundary.faceted(FLAT_CHORD);
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for p in outer.loops.iter().flatten() {
@@ -536,6 +540,8 @@ fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloo
         flat,
         faceted,
         z,
+        slope: derived.sloped().then_some(derived.plane),
+        thickness: derived.floor.thickness,
     })
 }
 
@@ -544,6 +550,17 @@ fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloo
 #[must_use]
 pub fn floor_solid(snapshot: &Snapshot, object: &Object) -> Option<arc_base::Result<Polyhedron>> {
     let clean = clean_floor(snapshot, object)?;
+    if let Some(plane) = clean.slope {
+        let flat = prism(
+            &clean.region,
+            -clean.thickness,
+            clean.thickness,
+            CHORD,
+            &Tolerance::DEFAULT,
+            &Limits::DEFAULT,
+        );
+        return Some(flat.and_then(|f| crate::floor::shear(&f, plane)));
+    }
     Some(prism(
         &clean.region,
         clean.z.0,

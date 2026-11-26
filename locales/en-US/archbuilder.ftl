@@ -523,3 +523,4 @@ ab-prop-view-depth = View depth
 ab-warnings-view-failed = The open plan view could not be drawn ({ $code }).
 ab-warnings-view-left-out = The open plan view left an element out of its drawing ({ $code }).
 ab-prop-view-default-note = This is the storey's default view, which the file does not hold yet. The first change to a setting, a rename or a duplicate makes it a view of its own.
+ab-prop-floor-slope = Slope

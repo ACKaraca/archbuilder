@@ -860,7 +860,9 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
             walls.contains(&w).then_some(w)
         });
         dissociated += lost;
-        floor_changes.push((*id, vertices));
+        let mut moved = object.values.clone();
+        crate::ceiling::moved_floor_slope(&mut moved, xf);
+        floor_changes.push((*id, vertices, moved, object.values.clone()));
     }
     let mut slides = Vec::new();
     for id in &set.inserts {
@@ -894,8 +896,18 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
             }
         }
     }
-    for (id, vertices) in floor_changes {
+    for (id, vertices, moved, old) in floor_changes {
         crate::floor::set_vertices(ctx, id, &vertices)?;
+        let txn = ctx.txn()?;
+        for (field, at) in [
+            ("slope_x", types::floor::SLOPE_X),
+            ("slope_y", types::floor::SLOPE_Y),
+            ("slope_direction", types::floor::SLOPE_DIRECTION),
+        ] {
+            if moved.get(at) != old.get(at) {
+                txn.modify(id, FieldPath::new(field), moved.get(at).cloned().flatten())?;
+            }
+        }
     }
     for (id, distance) in slides {
         set_length(ctx, id, "distance", distance)?;
@@ -1078,6 +1090,7 @@ pub(crate) fn copy_set(
             None => return Err(Error::new(codes::KIND_MISMATCH)),
         };
         let mut values = object.values.clone();
+        crate::ceiling::moved_floor_slope(&mut values, xf);
         if let Some(slot) = values.get_mut(types::floor::NAME) {
             *slot = Some(Value::String(name));
         }

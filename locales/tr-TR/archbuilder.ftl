@@ -498,3 +498,4 @@ ab-prop-view-depth = Görünüm derinliği
 ab-warnings-view-failed = Açık plan görünümü çizilemedi ({ $code }).
 ab-warnings-view-left-out = Açık plan görünümü bir öğeyi çizimin dışında bıraktı ({ $code }).
 ab-prop-view-default-note = Bu, katın dosyada henüz bulunmayan varsayılan görünümüdür. Bir ayarın ilk değişikliği, yeniden adlandırma ya da çoğaltma onu ayrı bir görünüm yapar.
+ab-prop-floor-slope = Eğim

@@ -813,8 +813,7 @@ fn surfaces(
             continue;
         }
         if let Some(d) = floor::Derived::of(snapshot, f) {
-            let plane = Plane::level(d.top - d.floor.thickness);
-            out.push((Bound::Slab(f.id), d.boundary.pieces(plane)));
+            out.push((Bound::Slab(f.id), d.boundary.pieces(d.underside())));
         }
     }
     // Only what lies above the base can bound the room.

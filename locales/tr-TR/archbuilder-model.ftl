@@ -56,6 +56,7 @@ ab-model-ceiling-boundary = "{ $name }" tavanının sınırı kullanılamıyor: 
 ab-model-ceiling-edge-unsupported = "{ $name }" tavanının bir kenarı "{ $wall }" duvarını izliyor ama uçlarının ötesine geçiyor: duvar artık tavanı orada sınırlamıyor.
 ab-model-opening-footprint = "{ $name }" izdüşümü kullanılamıyor: en az üç noktası olmalı, kendini kesmemeli ve alanı olmalı.
 ab-model-opening-outside-host = "{ $name }" boşluğu, onu barındıran "{ $host }" elemanının dışına taşıyor: dışarıdaki kısım hiçbir şey kesmez.
+ab-model-floor-slope = "{ $name }" döşemesinin eğimi 85°'den dik. Daha düşük bir eğim, daha uzun bir ok ya da daha küçük bir uç yüksekliği verin.
 ab-model-ceiling-slope = "{ $name }" tavanının eğimi 85°'den dik. Daha düşük bir eğim, daha uzun bir ok ya da daha küçük bir uç yüksekliği verin.
 ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğinin dışına çıkıyor: kotun altına ya da üstündeki kotun üzerine geçiyor. Eğim okunu taşıyın ya da eğimi azaltın.
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.

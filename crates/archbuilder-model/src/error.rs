@@ -333,6 +333,12 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-opening-outside-host",
     };
+    /// A floor's slope is steeper than the limit.
+    pub const FLOOR_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-slope",
+    };
     /// A ceiling's slope is steeper than the limit.
     pub const CEILING_SLOPE: ErrorCode = ErrorCode {
         code: "ab.model.ceiling_slope",

@@ -58,7 +58,42 @@ pub struct Arrow {
     pub rise: Rise,
 }
 
+/// Where a record keeps its slope arrow.
+#[derive(Debug, Clone, Copy)]
+pub struct ArrowSlots {
+    /// The x of a point of the start line.
+    pub x: usize,
+    /// The y of that point.
+    pub y: usize,
+    /// The direction, an angle.
+    pub direction: usize,
+    /// The length of the arrow.
+    pub length: usize,
+    /// The slope angle.
+    pub slope: usize,
+    /// The height at the arrow's end.
+    pub end_height: usize,
+}
+
 impl Arrow {
+    /// The slope arrow of a record's field values at `slots`; `None` when it has none.
+    #[must_use]
+    pub fn read(values: &[Option<Value>], slots: ArrowSlots) -> Option<Self> {
+        let m = |at| types::meters(values, at);
+        let (x, y) = (m(slots.x)?, m(slots.y)?);
+        let rise = match (angle_of(values, slots.slope), m(slots.end_height)) {
+            (Some(a), _) => Rise::Angle(a),
+            (None, Some(h)) => Rise::EndHeight(h),
+            (None, None) => return None,
+        };
+        Some(Self {
+            start: [x, y],
+            direction: angle_of(values, slots.direction).unwrap_or(0.0),
+            length: m(slots.length).unwrap_or(1.0).max(0.001),
+            rise,
+        })
+    }
+
     /// The rise per meter along the arrow, for a ceiling whose underside is `height` above its
     /// level at the start line.
     #[must_use]
@@ -106,22 +141,7 @@ impl Ceiling {
     pub fn from_values(values: &[Option<Value>]) -> Option<Self> {
         let shape = Floor::from_values(values)?;
         let m = |at| types::meters(values, at);
-        let arrow = match (m(ceiling::SLOPE_X), m(ceiling::SLOPE_Y)) {
-            (Some(x), Some(y)) => {
-                let rise = match (angle_of(values, ceiling::SLOPE), m(ceiling::END_HEIGHT)) {
-                    (Some(a), _) => Some(Rise::Angle(a)),
-                    (None, Some(h)) => Some(Rise::EndHeight(h)),
-                    (None, None) => None,
-                };
-                rise.map(|rise| Arrow {
-                    start: [x, y],
-                    direction: angle_of(values, ceiling::SLOPE_DIRECTION).unwrap_or(0.0),
-                    length: m(ceiling::SLOPE_LENGTH).unwrap_or(1.0).max(0.001),
-                    rise,
-                })
-            }
-            _ => None,
-        };
+        let arrow = Arrow::read(values, ceiling::ARROW);
         Some(Self {
             shape,
             grid_origin: [

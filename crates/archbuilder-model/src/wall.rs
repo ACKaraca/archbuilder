@@ -359,7 +359,7 @@ impl Wall {
             .and_then(|id| crate::spatial::get(snapshot, id))
             .filter(|o| crate::spatial::type_of(snapshot, o.id).as_deref() == Some(types::FLOOR))
             .and_then(|o| crate::floor::Derived::of(snapshot, &o))
-            .map(|d| d.top - d.floor.thickness);
+            .map(|d| d.z_range().0);
         Some(wall.constrained(storey, floor_top.or(top)))
     }
 

@@ -404,9 +404,8 @@ pub fn attach_problem(candidate: &Snapshot, wall: &Object) -> Option<Error> {
             }
             Err(_) => true,
         },
-        Some(FLOOR) => crate::floor::Derived::of(candidate, &target).is_none_or(|d| {
-            d.top - d.floor.thickness - (level + data.base_offset) < types::HEIGHT_RANGE.0
-        }),
+        Some(FLOOR) => crate::floor::Derived::of(candidate, &target)
+            .is_none_or(|d| d.z_range().0 - (level + data.base_offset) < types::HEIGHT_RANGE.0),
         _ => true,
     };
     fails.then(|| {
@@ -442,7 +441,8 @@ fn check_floors(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>, out:
         let error = match crate::floor::Derived::of(candidate, &floor) {
             None => codes::FLOOR_MALFORMED,
             Some(d) => match d.boundary.check() {
-                Ok(()) => continue,
+                Ok(()) if d.slope_ok() => continue,
+                Ok(()) => codes::FLOOR_SLOPE,
                 Err(r) => refusal_code(r),
             },
         };

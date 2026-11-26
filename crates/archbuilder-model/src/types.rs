@@ -375,6 +375,28 @@ pub mod floor {
     /// The arc edges: records of a vertex number and a bulge; appended in schema 1.3, absent in
     /// older files, whose edges are all straight.
     pub const ARCS: usize = 6;
+    /// The x of a point on the slope arrow's start line; absent for a flat floor; appended in
+    /// schema 1.4. The top offset is the height of the top at that line.
+    pub const SLOPE_X: usize = 7;
+    /// The y of that point.
+    pub const SLOPE_Y: usize = 8;
+    /// The direction of the slope arrow, an angle from the x axis.
+    pub const SLOPE_DIRECTION: usize = 9;
+    /// The length of the arrow, in meters.
+    pub const SLOPE_LENGTH: usize = 10;
+    /// The slope as an angle; absent when the end height gives it.
+    pub const SLOPE: usize = 11;
+    /// The top's height above the level at the arrow's end, in meters.
+    pub const END_HEIGHT: usize = 12;
+    /// The slots of the slope arrow.
+    pub const ARROW: crate::ceiling::ArrowSlots = crate::ceiling::ArrowSlots {
+        x: SLOPE_X,
+        y: SLOPE_Y,
+        direction: SLOPE_DIRECTION,
+        length: SLOPE_LENGTH,
+        slope: SLOPE,
+        end_height: END_HEIGHT,
+    };
 
     /// Field positions of one vertex record.
     pub mod vertex {
@@ -533,6 +555,15 @@ pub mod ceiling {
     pub const SLOPE: usize = 14;
     /// The underside's height above the level at the arrow's end, in meters.
     pub const END_HEIGHT: usize = 15;
+    /// The slots of the slope arrow.
+    pub const ARROW: crate::ceiling::ArrowSlots = crate::ceiling::ArrowSlots {
+        x: SLOPE_X,
+        y: SLOPE_Y,
+        direction: SLOPE_DIRECTION,
+        length: SLOPE_LENGTH,
+        slope: SLOPE,
+        end_height: END_HEIGHT,
+    };
 }
 
 /// Field positions of `archbuilder.wall_opening`.
@@ -842,6 +873,19 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         type_field("floor_type", FLOOR_TYPE, 1),
         pinned_field(2),
         arcs_field(3),
+        optional_length("slope_x", COORDINATE_RANGE).since_minor(4),
+        optional_length("slope_y", COORDINATE_RANGE).since_minor(4),
+        angle_field("slope_direction").optional().since_minor(4),
+        optional_length("slope_length", (0.001, 100_000.0)).since_minor(4),
+        FieldDecl::new("slope", ValueType::Quantity(Dimension::ANGLE))
+            .optional()
+            .with_bound(real((
+                -crate::ceiling::MAX_SLOPE,
+                crate::ceiling::MAX_SLOPE,
+            )))
+            .in_aspect("geometry")
+            .since_minor(4),
+        optional_length("end_height", BASE_OFFSET_RANGE).since_minor(4),
     ];
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
@@ -1439,6 +1483,12 @@ mod tests {
                     ("floor_type", floor::FLOOR_TYPE),
                     ("pinned", floor::PINNED),
                     ("arcs", floor::ARCS),
+                    ("slope_x", floor::SLOPE_X),
+                    ("slope_y", floor::SLOPE_Y),
+                    ("slope_direction", floor::SLOPE_DIRECTION),
+                    ("slope_length", floor::SLOPE_LENGTH),
+                    ("slope", floor::SLOPE),
+                    ("end_height", floor::END_HEIGHT),
                 ],
             ),
             (DOOR, insert_fields),

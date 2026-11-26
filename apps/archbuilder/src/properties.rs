@@ -198,6 +198,12 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "floor_slope",
+        Message {
+            message_id: "ab-prop-floor-slope",
+        },
+    ),
+    (
         "ceiling_slope",
         Message {
             message_id: "ab-prop-ceiling-slope",
@@ -1361,8 +1367,21 @@ fn shown(
                 &mut values,
                 &mut read_only,
             );
+            let slope = derived.as_ref().and_then(|d| {
+                d.arrow.map(|a| {
+                    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
+                        archbuilder_model::units::slope_unit(&p.values)
+                    });
+                    archbuilder_model::units::slope_text(
+                        a.gradient(d.floor.top_offset).atan(),
+                        unit,
+                        '.',
+                    )
+                })
+            });
             for (name, value) in [
                 ("floor_storey", storey),
+                ("floor_slope", slope),
                 (
                     "floor_area",
                     derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
@@ -1378,7 +1397,10 @@ fn shown(
             ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
-                read_only.push(name.to_owned());
+                // The slope is typed: an angle, a percentage or a rise over a run.
+                if name != "floor_slope" {
+                    read_only.push(name.to_owned());
+                }
             }
         }
         // A room shows its record, the upper limit as a choice, and what the walls make of it.

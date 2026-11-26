@@ -56,6 +56,7 @@ ab-model-ceiling-boundary = The boundary of the ceiling "{ $name }" is not usabl
 ab-model-ceiling-edge-unsupported = An edge of the ceiling "{ $name }" follows the wall "{ $wall }" but runs past its ends: the wall no longer bounds the ceiling there.
 ab-model-opening-footprint = The footprint of "{ $name }" is not usable: it needs at least three points, must not cross itself and must have an area.
 ab-model-opening-outside-host = The opening "{ $name }" reaches outside "{ $host }", which hosts it: the part outside cuts nothing.
+ab-model-floor-slope = The slope of the floor "{ $name }" is steeper than 85°. Give it a lower slope, a longer arrow or a smaller end height.
 ab-model-ceiling-slope = The slope of the ceiling "{ $name }" is steeper than 85°. Give it a lower slope, a longer arrow or a smaller end height.
 ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the height of its storey: it would lie below the level or above the level over it. Move the slope arrow or lower the slope.
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.

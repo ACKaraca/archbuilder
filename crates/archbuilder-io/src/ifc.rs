@@ -744,7 +744,7 @@ impl Mapper<'_> {
         let mut hosts: Vec<(std::sync::Arc<Object>, (f64, f64))> = Vec::new();
         for floor in spatial::objects(self.snapshot, FLOOR) {
             if let Some(d) = Derived::of(self.snapshot, &floor) {
-                hosts.push((floor, (d.top - d.floor.thickness, d.top)));
+                hosts.push((floor, d.z_range()));
             }
         }
         for roof in spatial::objects(self.snapshot, ROOF) {
@@ -896,7 +896,8 @@ impl Mapper<'_> {
                     .unwrap_or_default()
             });
         let slab = match parts.as_slice() {
-            [(outer, holes)] => Some(Body::Extrusion {
+            // A sloped slab is a solid of its own: no vertical extrusion has a sloped top.
+            [(outer, holes)] if !derived.sloped() => Some(Body::Extrusion {
                 outer: profile(outer, true),
                 holes: holes.iter().map(|h| profile(h, false)).collect(),
                 direction: -Vector3::z(),
@@ -943,12 +944,7 @@ impl Mapper<'_> {
         }
         self.elements.push(element);
         self.exported += 1;
-        self.cuts_of(
-            object,
-            storey,
-            level,
-            (derived.top - thickness, derived.top),
-        );
+        self.cuts_of(object, storey, level, derived.z_range());
     }
 }
 
