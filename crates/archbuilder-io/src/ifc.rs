@@ -22,7 +22,8 @@ use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
 use archbuilder_model::types::{
-    CEILING, DOOR, FLOOR, FLOOR_EDGE, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
+    CEILING, DOOR, FLOOR, FLOOR_EDGE, ROOF, ROOF_EXTRUSION, SHAFT, VERTICAL_OPENING, WALL_OPENING,
+    WINDOW, text,
 };
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
@@ -165,6 +166,10 @@ impl Mapper<'_> {
         for roof in spatial::children(self.snapshot, ROOF, storey) {
             self.cancel.check()?;
             self.roof(&roof, storey, level);
+        }
+        for roof in spatial::children(self.snapshot, ROOF_EXTRUSION, storey) {
+            self.cancel.check()?;
+            self.roof_extrusion(&roof, storey, level);
         }
         for ceiling in spatial::children(self.snapshot, CEILING, storey) {
             self.cancel.check()?;
@@ -856,6 +861,52 @@ impl Mapper<'_> {
             level,
             (surface.base - surface.drop, surface.top()),
         );
+    }
+
+    /// A roof by extrusion as an `IfcRoof` of the predefined type `FREEFORM`, with its roof type
+    /// and the body extruded from the profile, one solid in the storey's frame.
+    fn roof_extrusion(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Ok(derived) = archbuilder_model::roof_extrusion::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCROOF", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Roof,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("FREEFORM".to_owned());
+        element.element_type =
+            et::type_of(self.snapshot, TypeKind::Roof, &object.values).map(|t| t.id.as_u128());
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        match derived.solid().ok().and_then(|s| brep([&s], &frame, level)) {
+            Some(body) => {
+                element.body = Some(body);
+                let projected: f64 = derived
+                    .pieces()
+                    .iter()
+                    .map(|p| archbuilder_model::terrain::double_area(&p.points).abs() / 2.0)
+                    .sum();
+                element.quantity_sets.push(QuantitySet::new(
+                    "Qto_RoofBaseQuantities",
+                    vec![
+                        Quantity::new("GrossArea", QuantityValue::Area(derived.surface_area())),
+                        Quantity::new("ProjectedArea", QuantityValue::Area(projected)),
+                    ],
+                ));
+                element.property_sets.push(PropertySet::new(
+                    "Pset_RoofCommon",
+                    vec![Property::new("IsExternal", PropertyValue::Boolean(true))],
+                ));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCROOF", object),
+        }
+        self.elements.push(element);
+        self.exported += 1;
     }
 
     fn floor(&mut self, object: &Object, storey: ObjectId, level: f64) {

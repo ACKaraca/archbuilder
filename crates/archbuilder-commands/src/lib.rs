@@ -30,6 +30,7 @@ pub mod insert;
 pub mod modify;
 pub mod opening;
 pub mod roof;
+pub mod roof_extrusion;
 pub mod room;
 pub mod stair;
 pub mod structure;
@@ -73,6 +74,7 @@ pub fn registry() -> Result<Registry> {
     room::register(&mut registry)?;
     stair::register(&mut registry)?;
     roof::register(&mut registry)?;
+    roof_extrusion::register(&mut registry)?;
     ceiling::register(&mut registry)?;
     opening::register(&mut registry)?;
     element_type::register(&mut registry)?;

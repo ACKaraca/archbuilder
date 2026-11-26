@@ -414,3 +414,7 @@ ab-cmd-floor-edge-create-label = Floor edge
 ab-cmd-floor-edge-create-description = Sweeps a profile along selected edges of a floor (slab edge, curb, nosing), mitered at corners and following the floor when its edges change.
 ab-cmd-floor-edge-edit-label = Edit floor edge
 ab-cmd-floor-edge-edit-description = Changes the profile or the edges of a floor edge.
+ab-cmd-roof-extrusion-create-label = Roof by extrusion
+ab-cmd-roof-extrusion-create-description = Creates a roof by extruding an open profile sketched in a vertical plane between a start and an end distance, with the layers of its type offset normal to the profile.
+ab-cmd-roof-extrusion-edit-label = Edit roof by extrusion
+ab-cmd-roof-extrusion-edit-description = Changes the plane, the profile or the extrusion distances of a roof by extrusion.

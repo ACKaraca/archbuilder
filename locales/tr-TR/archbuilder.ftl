@@ -503,3 +503,7 @@ ab-kind-floor-edge = Döşeme kenarı
 ab-prop-edge-floor = Döşeme
 ab-prop-edge-length = Uzunluk
 ab-prop-edge-volume = Hacim
+ab-kind-roof-extrusion = Ekstrüzyonla çatı
+ab-prop-extrusion-type = Tür
+ab-prop-extrusion-area = Yüzey alanı
+ab-prop-extrusion-volume = Hacim

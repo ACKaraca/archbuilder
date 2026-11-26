@@ -386,3 +386,81 @@ fn floor_edges_are_copied_with_their_floor_and_undone_and_deleted_with_it() {
     env.document.undo().wait().unwrap();
     assert_eq!(count(&env), 2);
 }
+
+fn extrusion(env: &Env, id: ObjectId) -> archbuilder_model::roof_extrusion::Derived {
+    let s = env.snapshot();
+    archbuilder_model::roof_extrusion::Derived::of(&s, &spatial::get(&s, id).unwrap()).unwrap()
+}
+
+#[test]
+fn a_roof_by_extrusion_thickens_its_profile_normally_and_bounds_the_rooms_under_it() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    env.house(ground);
+    let room = env.room(ground);
+    let flat = env.volume(room).0;
+    // A profile rising 1 m over 12 m along x, over the whole house, extruded from y = -1 to 7.
+    let made = env
+        .run(
+            "archbuilder.roof_extrusion.create",
+            json!({"plane": [[-1.0, 0.0], [0.0, 0.0]], "profile": [[0.0, 2.5], [12.0, 3.5]],
+                   "start": -1.0, "end": 7.0}),
+        )
+        .unwrap();
+    let roof = Env::id(&made, "roof");
+    let t = made.value["thickness"].as_f64().unwrap();
+    assert!(t > 0.0);
+    let d = extrusion(&env, roof);
+    // One straight segment: the section is a parallelogram of area length x thickness.
+    let length = 12.0_f64.hypot(1.0);
+    assert!(
+        (d.volume() - length * t * 8.0).abs() < 1e-9,
+        "{}",
+        d.volume()
+    );
+    assert!((made.value["area"].as_f64().unwrap() - length * 8.0).abs() < 1e-9);
+    // The solid is the body: same volume, closed.
+    let solid = d.solid().unwrap();
+    assert!((solid.volume() - d.volume()).abs() < 1e-9);
+    // The top is the profile (the highest corner is at z 3.5) and the underside is below it.
+    let (lo, hi) = d.z_range();
+    assert!((hi - 3.5).abs() < 1e-9 && lo < 2.5 - t * 0.9, "{lo} {hi}");
+    // The underside is below the room's 3 m top for half of its length: the room is smaller.
+    assert!(
+        env.volume(room).0 < flat - 1.0,
+        "{} {flat}",
+        env.volume(room).0
+    );
+    // A thickness the profile's bends cannot hold is refused; so is an extrusion of no length.
+    assert!(
+        env.run(
+            "archbuilder.roof_extrusion.edit",
+            json!({"roof": roof.to_string(), "profile": [[0.0, 3.0], [0.2, 4.0], [0.4, 3.0]]}),
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.roof_extrusion.edit",
+            json!({"roof": roof.to_string(), "end": -1.0}),
+        )
+        .is_err()
+    );
+    // Edit the profile to a ridge: two segments, the section area follows.
+    env.run(
+        "archbuilder.roof_extrusion.edit",
+        json!({"roof": roof.to_string(), "plane": [[-1.0, 0.0], [0.0, 0.0]],
+               "profile": [[0.0, 3.2], [6.0, 4.2], [12.0, 3.2]]}),
+    )
+    .unwrap();
+    let ridge = extrusion(&env, roof);
+    assert!(ridge.section_area() > 2.0 * 6.0_f64.hypot(1.0) * t * 0.99);
+    // Undo restores the single segment.
+    env.document.undo().wait().unwrap();
+    assert!((extrusion(&env, roof).volume() - length * t * 8.0).abs() < 1e-9);
+    // The roof goes with a delete and comes back with its undo.
+    env.delete(&[roof]).unwrap();
+    assert!(spatial::get(&env.snapshot(), roof).is_none());
+    env.document.undo().wait().unwrap();
+    assert!(spatial::get(&env.snapshot(), roof).is_some());
+}

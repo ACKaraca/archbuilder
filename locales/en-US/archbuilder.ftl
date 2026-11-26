@@ -528,3 +528,7 @@ ab-kind-floor-edge = Floor edge
 ab-prop-edge-floor = Floor
 ab-prop-edge-length = Length
 ab-prop-edge-volume = Volume
+ab-kind-roof-extrusion = Roof by extrusion
+ab-prop-extrusion-type = Type
+ab-prop-extrusion-area = Surface area
+ab-prop-extrusion-volume = Volume

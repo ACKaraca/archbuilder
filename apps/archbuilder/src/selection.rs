@@ -190,6 +190,13 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
                     s.outline.into_iter().for_each(&mut add);
                 }
             }
+            Some(archbuilder_model::types::ROOF_EXTRUSION) => {
+                if let Ok(d) = archbuilder_model::roof_extrusion::Derived::of(snapshot, &object) {
+                    for p in d.pieces().iter().flat_map(|p| p.points.iter()) {
+                        add(*p);
+                    }
+                }
+            }
             Some(archbuilder_model::types::FLOOR_EDGE) => {
                 if let Some(d) = archbuilder_model::floor_edge::Derived::of(snapshot, &object) {
                     d.chains

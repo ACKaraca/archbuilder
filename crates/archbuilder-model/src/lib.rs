@@ -68,6 +68,7 @@ pub mod opening;
 pub mod pick;
 pub mod plan;
 pub mod roof;
+pub mod roof_extrusion;
 pub mod room;
 pub mod sketch;
 pub mod spatial;
@@ -227,6 +228,17 @@ pub mod defaults {
             format!("Kesik {n}")
         } else {
             format!("Cut {n}")
+        }
+    }
+
+    /// The name of the roof by extrusion numbered `n` in `language`: `Extruded roof 3`,
+    /// `Ekstrüzyon çatı 3`.
+    #[must_use]
+    pub fn roof_extrusion(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Ekstrüzyon çatı {n}")
+        } else {
+            format!("Extruded roof {n}")
         }
     }
 

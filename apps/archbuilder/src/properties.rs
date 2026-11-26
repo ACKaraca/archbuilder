@@ -270,6 +270,24 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "extrusion_type",
+        Message {
+            message_id: "ab-prop-extrusion-type",
+        },
+    ),
+    (
+        "extrusion_area",
+        Message {
+            message_id: "ab-prop-extrusion-area",
+        },
+    ),
+    (
+        "extrusion_volume",
+        Message {
+            message_id: "ab-prop-extrusion-volume",
+        },
+    ),
+    (
         "edge_floor",
         Message {
             message_id: "ab-prop-edge-floor",
@@ -1125,6 +1143,12 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-floor-edge",
         },
     ),
+    (
+        types::ROOF_EXTRUSION,
+        Message {
+            message_id: "ab-kind-roof-extrusion",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -1828,6 +1852,34 @@ fn shown(
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A roof by extrusion shows its plane's direction and distances, its type and what derives
+        // from it; the profile is edited by the command.
+        types::ROOF_EXTRUSION => {
+            let derived = archbuilder_model::roof_extrusion::Derived::of(snapshot, object).ok();
+            let kind =
+                archbuilder_model::element_type::type_of(snapshot, TypeKind::Roof, &object.values)
+                    .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            fields.truncate(types::roof_extrusion::ROOF_TYPE);
+            values.truncate(types::roof_extrusion::ROOF_TYPE);
+            read_only.push("thickness".to_owned());
+            for (name, value) in [
+                ("extrusion_type", kind),
+                (
+                    "extrusion_area",
+                    derived
+                        .as_ref()
+                        .map(|d| format!("{:.3} m²", d.surface_area())),
+                ),
+                (
+                    "extrusion_volume",
+                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+            ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());

@@ -138,3 +138,30 @@ fn floor_edges_are_molding_coverings_with_a_swept_body_and_the_report_says_so() 
             .all(|i| i.reason != "ab.io.ifc.body_not_exported")
     );
 }
+
+#[test]
+fn a_roof_by_extrusion_is_a_roof_with_its_type_and_a_swept_body() {
+    let (document, registry) = open();
+    // A ridge profile (two segments, a mitered peak) extruded 8 m, of the default roof type.
+    run(
+        &document,
+        &registry,
+        "archbuilder.roof_extrusion.create",
+        json!({"plane": [[0.0, 0.0], [1.0, 0.0]], "profile": [[0.0, 3.0], [5.0, 5.0], [10.0, 3.0]],
+               "start": 0.0, "end": 8.0}),
+    );
+    let out = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+    keep(&out.bytes, "roof_extrusion.ifc");
+    let file = read(&out.bytes, &mut ReadOptions::default()).unwrap().file;
+    assert_eq!(file.instances_of("IFCROOF").count(), 1);
+    assert_eq!(file.instances_of("IFCFACETEDBREP").count(), 1);
+    assert!(file.instances_of("IFCROOFTYPE").count() >= 1);
+    assert_eq!(file.instances_of("IFCBUILDINGELEMENTPROXY").count(), 0);
+    assert!(
+        out.report
+            .items
+            .iter()
+            .all(|i| i.reason != "ab.io.ifc.body_not_exported"
+                && i.reason != "ab.io.ifc.object_not_exported")
+    );
+}

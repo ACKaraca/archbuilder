@@ -357,6 +357,7 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_ceilings(candidate, touched, &mut out);
     check_openings(candidate, touched, &mut out);
     check_floor_edges(candidate, touched, &mut out);
+    check_roof_extrusions(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
     out
@@ -592,6 +593,33 @@ fn check_openings(
             .is_some_and(|b| b.loops.len() == 1 && b.check().is_ok());
         if !ok {
             out.push(Error::new(codes::OPENING_FOOTPRINT).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
+/// The roofs by extrusion that changed must have a body the model can build.
+fn check_roof_extrusions(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    use crate::roof_extrusion::{Derived, Refusal};
+    for (id, change) in touched {
+        if *change == Change::Deleted
+            || type_of(candidate, *id).as_deref() != Some(types::ROOF_EXTRUSION)
+        {
+            continue;
+        }
+        let Some(object) = get(candidate, *id) else {
+            continue;
+        };
+        if let Err(refusal) = Derived::of(candidate, &object) {
+            let code = match refusal {
+                Refusal::Malformed | Refusal::Profile => codes::ROOF_EXTRUSION_PROFILE,
+                Refusal::Section => codes::ROOF_EXTRUSION_SECTION,
+                Refusal::Span => codes::ROOF_EXTRUSION_SPAN,
+            };
+            out.push(Error::new(code).with_arg("name", display_name(&object)));
         }
     }
 }
@@ -998,6 +1026,11 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::vertical_opening::PINNED,
         ],
         types::FLOOR_EDGE => &[types::floor_edge::NAME, types::floor_edge::PINNED],
+        types::ROOF_EXTRUSION => &[
+            types::roof_extrusion::NAME,
+            types::roof_extrusion::THICKNESS,
+            types::roof_extrusion::PINNED,
+        ],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
 }

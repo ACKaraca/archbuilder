@@ -413,3 +413,7 @@ ab-cmd-floor-edge-create-label = Döşeme kenarı
 ab-cmd-floor-edge-create-description = Seçilen döşeme kenarları boyunca bir profili süpürür (döşeme kenarı, bordür, damlalık); köşelerde gönyelenir ve kenarlar değişince döşemeyi izler.
 ab-cmd-floor-edge-edit-label = Döşeme kenarını düzenle
 ab-cmd-floor-edge-edit-description = Bir döşeme kenarının profilini ya da kenarlarını değiştirir.
+ab-cmd-roof-extrusion-create-label = Ekstrüzyonla çatı
+ab-cmd-roof-extrusion-create-description = Düşey bir düzlemde çizilen açık bir profili bir başlangıç ve bir bitiş uzaklığı arasında ekstrüde ederek çatı oluşturur; türünün katmanları profile dik ötelenir.
+ab-cmd-roof-extrusion-edit-label = Ekstrüzyonla çatıyı düzenle
+ab-cmd-roof-extrusion-edit-description = Ekstrüzyonla çatının düzlemini, profilini ya da ekstrüzyon uzaklıklarını değiştirir.

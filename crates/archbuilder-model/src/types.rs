@@ -65,6 +65,9 @@ pub const WALL_OPENING: &str = "archbuilder.wall_opening";
 pub const SHAFT: &str = "archbuilder.shaft";
 /// A vertical opening: a sketched cut in one floor, roof or ceiling, which hosts it.
 pub const VERTICAL_OPENING: &str = "archbuilder.vertical_opening";
+/// A roof by extrusion on a storey: an open profile sketched in a vertical plane, extruded along
+/// the plane's normal between two distances, thickened normal to the profile.
+pub const ROOF_EXTRUSION: &str = "archbuilder.roof_extrusion";
 /// An edge element: a profile swept along edges of one floor; the floor owns it.
 pub const FLOOR_EDGE: &str = "archbuilder.floor_edge";
 /// A ceiling type: layers, a core, the height above the level and the grid pattern; owned by the
@@ -95,7 +98,7 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 12] = [
+pub const ELEMENTS: [&str; 13] = [
     WALL,
     DOOR,
     WINDOW,
@@ -108,10 +111,20 @@ pub const ELEMENTS: [&str; 12] = [
     SHAFT,
     VERTICAL_OPENING,
     FLOOR_EDGE,
+    ROOF_EXTRUSION,
 ];
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 7] = [WALL, FLOOR, ROOM, STAIR, ROOF, CEILING, SHAFT];
+pub const STOREY_ELEMENTS: [&str; 8] = [
+    WALL,
+    FLOOR,
+    ROOM,
+    STAIR,
+    ROOF,
+    CEILING,
+    SHAFT,
+    ROOF_EXTRUSION,
+];
 
 /// The elements that host a vertical opening.
 pub const VERTICAL_HOSTS: [&str; 3] = [FLOOR, ROOF, CEILING];
@@ -129,7 +142,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 24] = [
+pub const KEYS: [&str; 25] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -154,6 +167,7 @@ pub const KEYS: [&str; 24] = [
     CEILING_TYPE,
     PLAN_VIEW,
     FLOOR_EDGE,
+    ROOF_EXTRUSION,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -608,6 +622,31 @@ pub mod shaft {
     pub const TOP_LEVEL: usize = 7;
 }
 
+/// Field positions of `archbuilder.roof_extrusion`.
+pub mod roof_extrusion {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The thickness normal to the profile: a copy of the type's total, in meters.
+    pub const THICKNESS: usize = 1;
+    /// The start of the extrusion: its distance from the plane along the plane's normal, in
+    /// meters.
+    pub const START: usize = 2;
+    /// The end of the extrusion, in the same distance.
+    pub const END: usize = 3;
+    /// The direction of the plane's horizontal axis, an angle from the x axis.
+    pub const DIRECTION: usize = 4;
+    /// The roof type (the same position as a roof's, for the readers of types).
+    pub const ROOF_TYPE: usize = 5;
+    /// Whether the roof is pinned.
+    pub const PINNED: usize = 6;
+    /// The x of the plane's origin, in meters.
+    pub const X: usize = 7;
+    /// The y of the plane's origin, in meters.
+    pub const Y: usize = 8;
+    /// The profile: records of `u` (along the plane's axis) and `z` (above the storey's level).
+    pub const PROFILE: usize = 9;
+}
+
 /// Field positions of `archbuilder.floor_edge`.
 pub mod floor_edge {
     /// The name.
@@ -911,6 +950,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (SHAFT, shaft_fields()),
         (VERTICAL_OPENING, vertical_opening_fields()),
         (FLOOR_EDGE, floor_edge_fields()),
+        (ROOF_EXTRUSION, roof_extrusion_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
         (ROOF_TYPE, crate::element_type::floor_type_fields()),
@@ -1112,6 +1152,31 @@ fn shaft_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn roof_extrusion_fields() -> Vec<FieldDecl> {
+    use crate::roof_extrusion::{MAX_PROFILE, PROFILE_RANGE, SPAN_RANGE};
+    let point = ValueType::Record(vec![
+        length_field("u", Some(real(PROFILE_RANGE))),
+        length_field("z", Some(real(BASE_OFFSET_RANGE))),
+    ]);
+    vec![
+        name_field("identity"),
+        length_field("thickness", Some(real(THICKNESS_RANGE)))
+            .with_default(length(crate::roof::DEFAULT_THICKNESS)),
+        length_field("start", Some(real(SPAN_RANGE))),
+        length_field("end", Some(real(SPAN_RANGE))).with_default(length(1.0)),
+        angle_field("direction"),
+        type_field("roof_type", ROOF_TYPE, 0),
+        pinned_field(0),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("profile", ValueType::List(Box::new(point)))
+            .with_bound(Bound::Length {
+                max: MAX_PROFILE as u64,
+            })
+            .in_aspect("geometry"),
+    ]
+}
+
 fn floor_edge_fields() -> Vec<FieldDecl> {
     let profile = ValueType::Record(vec![
         length_field("u", Some(real(crate::floor_edge::PROFILE_RANGE))),
@@ -1294,6 +1359,7 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         SHAFT => shaft::PINNED,
         VERTICAL_OPENING => vertical_opening::PINNED,
         FLOOR_EDGE => floor_edge::PINNED,
+        ROOF_EXTRUSION => roof_extrusion::PINNED,
         _ => return None,
     })
 }

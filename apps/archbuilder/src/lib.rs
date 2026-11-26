@@ -48,6 +48,7 @@ pub mod extract_floor_edge;
 pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_roof;
+pub mod extract_roof_extrusion;
 pub mod extract_stair;
 pub mod extract_view;
 pub mod extract_wall;
@@ -206,6 +207,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
         out.extend(extract_floor_edge::dependents(snapshot, changes));
+        out.extend(extract_roof_extrusion::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
@@ -341,6 +343,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_ceiling::extract_ceiling(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.roof_extrusion".into(),
+        types: vec![archbuilder_model::types::ROOF_EXTRUSION.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_extrusion::extract_roof_extrusion(snapshot, object, cancel)
             })
         }),
     })?;

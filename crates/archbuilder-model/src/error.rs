@@ -345,6 +345,25 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-floor-edge-orphan",
     };
+    /// The profile of a roof by extrusion is unreadable or has too few points, a segment of no
+    /// length or a point out of range.
+    pub const ROOF_EXTRUSION_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-profile",
+    };
+    /// The thickness of a roof by extrusion makes its section cross itself.
+    pub const ROOF_EXTRUSION_SECTION: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_section",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-section",
+    };
+    /// The extrusion of a roof is too short or too long.
+    pub const ROOF_EXTRUSION_SPAN: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_span",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-span",
+    };
     /// A floor's slope is steeper than the limit.
     pub const FLOOR_SLOPE: ErrorCode = ErrorCode {
         code: "ab.model.floor_slope",

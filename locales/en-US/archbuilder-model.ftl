@@ -64,3 +64,6 @@ ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would 
 ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.
 ab-model-floor-edge-profile = The edge element "{ $name }" needs at least one floor edge and a profile that is a simple loop of at least three points.
 ab-model-floor-edge-orphan = The edge element "{ $name }" names { $count } edge(s) that its floor no longer has. Select the edges again or delete the element.
+ab-model-roof-extrusion-profile = The profile of the roof "{ $name }" needs at least two points, no segment of no length and every point within range.
+ab-model-roof-extrusion-section = The thickness of the roof "{ $name }" is too large for the bends of its profile: its section would cross itself. Give it a smaller thickness or a gentler profile.
+ab-model-roof-extrusion-span = The extrusion of the roof "{ $name }" must run between 10 mm and 500 m.

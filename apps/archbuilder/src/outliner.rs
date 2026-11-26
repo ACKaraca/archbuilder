@@ -182,6 +182,7 @@ impl<'a> Structure<'a> {
                         walls.extend(roofs);
                         // Then its ceilings and shafts, by name.
                         for key in [
+                            archbuilder_model::types::ROOF_EXTRUSION,
                             archbuilder_model::types::CEILING,
                             archbuilder_model::types::SHAFT,
                         ] {
