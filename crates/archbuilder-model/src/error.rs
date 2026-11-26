@@ -333,6 +333,18 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-opening-outside-host",
     };
+    /// The profile of a floor edge is not a simple loop, or the floor edge names no edge.
+    pub const FLOOR_EDGE_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-edge-profile",
+    };
+    /// A floor edge names an edge its floor no longer has (a warning).
+    pub const FLOOR_EDGE_ORPHAN: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_orphan",
+        category: Category::Conflict,
+        message_id: "ab-model-floor-edge-orphan",
+    };
     /// A floor's slope is steeper than the limit.
     pub const FLOOR_SLOPE: ErrorCode = ErrorCode {
         code: "ab.model.floor_slope",

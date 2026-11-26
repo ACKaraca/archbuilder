@@ -203,6 +203,15 @@ impl<'a> Structure<'a> {
                             .iter()
                             .map(|c| (c.id, labelled(snapshot, c)))
                             .collect();
+                            let edges: Vec<_> = spatial::children(
+                                snapshot,
+                                archbuilder_model::types::FLOOR_EDGE,
+                                host,
+                            )
+                            .iter()
+                            .map(|c| (c.id, labelled(snapshot, c)))
+                            .collect();
+                            let cuts: Vec<_> = cuts.into_iter().chain(edges).collect();
                             if !cuts.is_empty() {
                                 children.insert(Some(host), cuts);
                             }

@@ -244,3 +244,145 @@ fn a_floor_slopes_from_an_edge_or_through_three_elevations() {
         .unwrap();
     assert!((derived(&env, floor).plane.z([14.0, 4.0]) - before).abs() < 1e-9);
 }
+
+fn edge_volume(env: &Env, edge: ObjectId) -> (f64, f64) {
+    let s = env.snapshot();
+    let d =
+        archbuilder_model::floor_edge::Derived::of(&s, &spatial::get(&s, edge).unwrap()).unwrap();
+    (d.length(), d.volume())
+}
+
+#[test]
+fn a_floor_edge_sweeps_a_mitered_profile_and_follows_the_floor() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.floor.create",
+            json!({"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]]}),
+        )
+        .unwrap();
+    let floor = Env::id(&made, "floor");
+    let thickness = derived(&env, floor).floor.thickness;
+    // The whole loop: a ring of a board 50 mm wide and as high as the slab, mitered at the
+    // four corners: (4.1^2 - 4^2) * thickness exactly.
+    let made = env
+        .run(
+            "archbuilder.floor_edge.create",
+            json!({"floor": floor.to_string()}),
+        )
+        .unwrap();
+    let edge = Env::id(&made, "floor_edge");
+    let (length, volume) = edge_volume(&env, edge);
+    assert!((length - 16.0).abs() < 1e-9);
+    assert!(
+        (volume - (4.1_f64.powi(2) - 16.0) * thickness).abs() < 1e-9,
+        "{volume}"
+    );
+    // Two consecutive edges are one open chain with one mitered corner and square ends.
+    env.run(
+        "archbuilder.floor_edge.edit",
+        json!({"floor_edge": edge.to_string(), "edges": [0, 1]}),
+    )
+    .unwrap();
+    let (length, volume) = edge_volume(&env, edge);
+    // The bottom strip (4 x 0.05) and the right strip, which also covers the mitered corner
+    // (0.05 x 4.05).
+    assert!((length - 8.0).abs() < 1e-9);
+    assert!(
+        (volume - (4.0 * 0.05 + 0.05 * 4.05) * thickness).abs() < 1e-9,
+        "{volume}"
+    );
+    // A profile that crosses itself, and an edge the floor does not have, are refused.
+    assert!(
+        env.run(
+            "archbuilder.floor_edge.edit",
+            json!({"floor_edge": edge.to_string(), "profile": [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]]}),
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.floor_edge.edit",
+            json!({"floor_edge": edge.to_string(), "edges": [9]}),
+        )
+        .is_err()
+    );
+    // The edge follows the floor: widen the slab and the swept length grows with it.
+    env.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor.to_string(), "vertices": [
+            {"loop_index": 0, "point": [0.0, 0.0]}, {"loop_index": 0, "point": [6.0, 0.0]}, {"loop_index": 0, "point": [6.0, 4.0]}, {"loop_index": 0, "point": [0.0, 4.0]}]}),
+    )
+    .unwrap();
+    assert!((edge_volume(&env, edge).0 - 10.0).abs() < 1e-9);
+    // On a sloped floor the profile rises with the slab's top, also outward of the edge.
+    env.run(
+        "archbuilder.floor.set_slope",
+        json!({"floor": floor.to_string(), "from": [0.0, 0.0], "to": [6.0, 0.0], "slope": 0.1}),
+    )
+    .unwrap();
+    let s = env.snapshot();
+    let d =
+        archbuilder_model::floor_edge::Derived::of(&s, &spatial::get(&s, edge).unwrap()).unwrap();
+    let (_, hi) = d.z_range().unwrap();
+    assert!((hi - 6.05 * 0.1_f64.tan()).abs() < 1e-9, "{hi}");
+    // Removing a vertex orphans the edge that started there: a warning, never a rebinding.
+    env.run(
+        "archbuilder.floor_edge.edit",
+        json!({"floor_edge": edge.to_string(), "edges": [0, 3]}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.floor.edit_boundary",
+        json!({"floor": floor.to_string(), "vertices": [
+            {"loop_index": 0, "point": [0.0, 0.0]}, {"loop_index": 0, "point": [6.0, 0.0]}, {"loop_index": 0, "point": [0.0, 4.0]}]}),
+    )
+    .unwrap();
+    assert!(
+        archbuilder_model::validate::register(&env.snapshot())
+            .iter()
+            .any(|w| w.error.code() == "ab.model.floor_edge_orphan")
+    );
+}
+
+#[test]
+fn floor_edges_are_copied_with_their_floor_and_undone_and_deleted_with_it() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.floor.create",
+            json!({"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]]}),
+        )
+        .unwrap();
+    let floor = Env::id(&made, "floor");
+    let count = |env: &Env| {
+        let s = env.snapshot();
+        spatial::objects(&s, archbuilder_model::types::FLOOR_EDGE).len()
+    };
+    env.run(
+        "archbuilder.floor_edge.create",
+        json!({"floor": floor.to_string(), "edges": [0]}),
+    )
+    .unwrap();
+    assert_eq!(count(&env), 1);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env), 0);
+    env.document.redo().wait().unwrap();
+    assert_eq!(count(&env), 1);
+    let invocation = Invocation {
+        seed: env.seed,
+        selection: vec![floor],
+        ..Invocation::new(
+            "archbuilder.modify.copy",
+            json!({"displacement": [10.0, 0.0]}),
+        )
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert_eq!(count(&env), 2);
+    env.delete(&[floor]).unwrap();
+    assert_eq!(count(&env), 1);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env), 2);
+}

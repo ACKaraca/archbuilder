@@ -22,7 +22,7 @@ use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
 use archbuilder_model::types::{
-    CEILING, DOOR, FLOOR, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
+    CEILING, DOOR, FLOOR, FLOOR_EDGE, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
 };
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
@@ -945,6 +945,50 @@ impl Mapper<'_> {
         self.elements.push(element);
         self.exported += 1;
         self.cuts_of(object, storey, level, derived.z_range());
+        for edge in spatial::children(self.snapshot, FLOOR_EDGE, object.id) {
+            self.floor_edge(&edge, storey, level);
+        }
+    }
+
+    /// A floor edge as an `IfcCovering` of the predefined type `MOLDING`: the profile swept
+    /// along the edges, one solid, written in the storey's frame.
+    fn floor_edge(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(derived) = archbuilder_model::floor_edge::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        if !derived.orphans.is_empty() {
+            self.lose(reasons::FLOOR_EDGE_ORPHAN, "IFCCOVERING", object);
+        }
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        let Some(body) = derived
+            .solid()
+            .ok()
+            .flatten()
+            .and_then(|s| brep([&s], &frame, level))
+        else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Covering,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("MOLDING".to_owned());
+        element.body = Some(body);
+        let us = derived.edge.profile.iter().map(|p| p[0]);
+        let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_CoveringBaseQuantities",
+            vec![Quantity::new("Width", QuantityValue::Length(width))],
+        ));
+        self.lose(reasons::FLOOR_EDGE_AS_COVERING, "IFCCOVERING", object);
+        self.elements.push(element);
+        self.exported += 1;
     }
 }
 

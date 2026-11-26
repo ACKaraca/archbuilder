@@ -24,6 +24,7 @@ pub mod edit;
 pub mod element_type;
 pub mod error;
 pub mod floor;
+pub mod floor_edge;
 pub mod floor_slope;
 pub mod insert;
 pub mod modify;
@@ -65,6 +66,7 @@ pub fn registry() -> Result<Registry> {
     wall::register(&mut registry)?;
     insert::register(&mut registry)?;
     floor::register(&mut registry)?;
+    floor_edge::register(&mut registry)?;
     floor_slope::register(&mut registry)?;
     modify::register(&mut registry)?;
     edit::register(&mut registry)?;

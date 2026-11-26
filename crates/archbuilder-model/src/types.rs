@@ -65,6 +65,8 @@ pub const WALL_OPENING: &str = "archbuilder.wall_opening";
 pub const SHAFT: &str = "archbuilder.shaft";
 /// A vertical opening: a sketched cut in one floor, roof or ceiling, which hosts it.
 pub const VERTICAL_OPENING: &str = "archbuilder.vertical_opening";
+/// An edge element: a profile swept along edges of one floor; the floor owns it.
+pub const FLOOR_EDGE: &str = "archbuilder.floor_edge";
 /// A ceiling type: layers, a core, the height above the level and the grid pattern; owned by the
 /// project.
 pub const CEILING_TYPE: &str = "archbuilder.ceiling_type";
@@ -93,7 +95,7 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 11] = [
+pub const ELEMENTS: [&str; 12] = [
     WALL,
     DOOR,
     WINDOW,
@@ -105,6 +107,7 @@ pub const ELEMENTS: [&str; 11] = [
     WALL_OPENING,
     SHAFT,
     VERTICAL_OPENING,
+    FLOOR_EDGE,
 ];
 
 /// The elements a storey owns directly.
@@ -126,7 +129,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 23] = [
+pub const KEYS: [&str; 24] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -150,6 +153,7 @@ pub const KEYS: [&str; 23] = [
     VERTICAL_OPENING,
     CEILING_TYPE,
     PLAN_VIEW,
+    FLOOR_EDGE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -604,6 +608,19 @@ pub mod shaft {
     pub const TOP_LEVEL: usize = 7;
 }
 
+/// Field positions of `archbuilder.floor_edge`.
+pub mod floor_edge {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The profile: records of `u` (outward from the edge) and `v` (above the top of the slab).
+    pub const PROFILE: usize = 1;
+    /// The edges of the floor's boundary, by the number of the vertex each starts at (a list of
+    /// whole numbers).
+    pub const EDGES: usize = 2;
+    /// Whether the edge element is pinned.
+    pub const PINNED: usize = 3;
+}
+
 /// Field positions of `archbuilder.vertical_opening`.
 pub mod vertical_opening {
     /// The name.
@@ -893,6 +910,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (WALL_OPENING, wall_opening_fields()),
         (SHAFT, shaft_fields()),
         (VERTICAL_OPENING, vertical_opening_fields()),
+        (FLOOR_EDGE, floor_edge_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
         (ROOF_TYPE, crate::element_type::floor_type_fields()),
@@ -1094,6 +1112,27 @@ fn shaft_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn floor_edge_fields() -> Vec<FieldDecl> {
+    let profile = ValueType::Record(vec![
+        length_field("u", Some(real(crate::floor_edge::PROFILE_RANGE))),
+        length_field("v", Some(real(crate::floor_edge::PROFILE_RANGE))),
+    ]);
+    vec![
+        name_field("identity"),
+        FieldDecl::new("profile", ValueType::List(Box::new(profile)))
+            .with_bound(Bound::Length {
+                max: crate::floor_edge::MAX_PROFILE as u64,
+            })
+            .in_aspect("geometry"),
+        FieldDecl::new("edges", ValueType::List(Box::new(ValueType::I64)))
+            .with_bound(Bound::Length {
+                max: crate::floor::MAX_VERTICES as u64,
+            })
+            .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
 fn vertical_opening_fields() -> Vec<FieldDecl> {
     vec![
         name_field("identity"),
@@ -1254,6 +1293,7 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         WALL_OPENING => wall_opening::PINNED,
         SHAFT => shaft::PINNED,
         VERTICAL_OPENING => vertical_opening::PINNED,
+        FLOOR_EDGE => floor_edge::PINNED,
         _ => return None,
     })
 }

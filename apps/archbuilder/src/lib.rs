@@ -44,6 +44,7 @@ pub mod clipboard;
 pub mod direct;
 pub mod extract_ceiling;
 pub mod extract_floor;
+pub mod extract_floor_edge;
 pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_roof;
@@ -204,6 +205,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_stair::dependents(snapshot, changes));
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
+        out.extend(extract_floor_edge::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
@@ -339,6 +341,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_ceiling::extract_ceiling(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.floor_edge".into(),
+        types: vec![archbuilder_model::types::FLOOR_EDGE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_floor_edge::extract_floor_edge(snapshot, object, cancel)
             })
         }),
     })?;

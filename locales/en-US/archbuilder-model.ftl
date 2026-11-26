@@ -62,3 +62,5 @@ ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the hei
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.
 
 ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.
+ab-model-floor-edge-profile = The edge element "{ $name }" needs at least one floor edge and a profile that is a simple loop of at least three points.
+ab-model-floor-edge-orphan = The edge element "{ $name }" names { $count } edge(s) that its floor no longer has. Select the edges again or delete the element.

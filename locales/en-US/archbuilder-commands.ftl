@@ -410,3 +410,7 @@ ab-cmd-floor-slope-edge-label = Floor slope from an edge
 ab-cmd-floor-slope-edge-description = Slopes a floor away from one of its boundary edges, which stays at the top offset.
 ab-cmd-floor-slope-points-label = Floor slope by three points
 ab-cmd-floor-slope-points-description = Slopes a floor so that its top passes through three given elevations.
+ab-cmd-floor-edge-create-label = Floor edge
+ab-cmd-floor-edge-create-description = Sweeps a profile along selected edges of a floor (slab edge, curb, nosing), mitered at corners and following the floor when its edges change.
+ab-cmd-floor-edge-edit-label = Edit floor edge
+ab-cmd-floor-edge-edit-description = Changes the profile or the edges of a floor edge.

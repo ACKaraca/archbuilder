@@ -59,6 +59,7 @@ pub mod cleanup;
 pub mod element_type;
 pub mod error;
 pub mod floor;
+pub mod floor_edge;
 pub mod insert;
 pub mod join;
 pub mod layered;
@@ -226,6 +227,16 @@ pub mod defaults {
             format!("Kesik {n}")
         } else {
             format!("Cut {n}")
+        }
+    }
+
+    /// The name of the floor edge numbered `n` in `language`: `Slab edge 3`, `Döşeme kenarı 3`.
+    #[must_use]
+    pub fn floor_edge(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Döşeme kenarı {n}")
+        } else {
+            format!("Slab edge {n}")
         }
     }
 

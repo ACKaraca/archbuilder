@@ -62,3 +62,5 @@ ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğin
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
 
 ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.
+ab-model-floor-edge-profile = "{ $name }" kenar elemanı için en az bir döşeme kenarı ve en az üç noktalı, kendini kesmeyen bir profil gerekir.
+ab-model-floor-edge-orphan = "{ $name }" kenar elemanı, döşemesinde artık bulunmayan { $count } kenarı adlandırıyor. Kenarları yeniden seçin ya da elemanı silin.

@@ -47,6 +47,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
+        types::FLOOR_EDGE => Some(&[FLOOR]),
         k if types::TYPE_KEYS.contains(&k) => Some(&[PROJECT]),
         _ => None,
     }
@@ -355,6 +356,7 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_floors(candidate, touched, &mut out);
     check_ceilings(candidate, touched, &mut out);
     check_openings(candidate, touched, &mut out);
+    check_floor_edges(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
     out
@@ -594,6 +596,30 @@ fn check_openings(
     }
 }
 
+/// The floor edges that changed need a profile that can be swept and at least one edge.
+fn check_floor_edges(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    for (id, change) in touched {
+        if *change == Change::Deleted
+            || type_of(candidate, *id).as_deref() != Some(types::FLOOR_EDGE)
+        {
+            continue;
+        }
+        let Some(object) = get(candidate, *id) else {
+            continue;
+        };
+        let ok = crate::floor_edge::FloorEdge::from_values(&object.values).is_some_and(|e| {
+            !e.edges.is_empty() && crate::floor_edge::FloorEdge::profile_ok(&e.profile)
+        });
+        if !ok {
+            out.push(Error::new(codes::FLOOR_EDGE_PROFILE).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
 /// The error code of a boundary refusal.
 #[must_use]
 pub fn refusal_code(refusal: crate::floor::Refusal) -> arc_base::ErrorCode {
@@ -791,6 +817,40 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         }
     }
     out.extend(ceiling_warnings(candidate, touched));
+    out.extend(floor_edge_warnings(candidate, touched));
+    out
+}
+
+/// The warnings about floor edge elements: an edge element names edges of its floor by number;
+/// when the floor loses an edge it is an orphan, reported and never moved to another edge.
+fn floor_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut out = Vec::new();
+    let mut edges: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(types::FLOOR_EDGE) => edges.extend(get(candidate, *id)),
+            Some(FLOOR) => {
+                edges.extend(crate::spatial::children(candidate, types::FLOOR_EDGE, *id))
+            }
+            _ => {}
+        }
+    }
+    edges.sort_by_key(|e| e.id);
+    edges.dedup_by_key(|e| e.id);
+    for edge in edges {
+        let orphans = crate::floor_edge::orphans_of(candidate, &edge);
+        if !orphans.is_empty() {
+            out.push(
+                Error::new(codes::FLOOR_EDGE_ORPHAN)
+                    .with_arg("name", display_name(&edge))
+                    .with_arg("count", orphans.len().to_string())
+                    .with_detail(OBJECT, edge.id.to_string()),
+            );
+        }
+    }
     out
 }
 
@@ -937,6 +997,7 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::vertical_opening::NAME,
             types::vertical_opening::PINNED,
         ],
+        types::FLOOR_EDGE => &[types::floor_edge::NAME, types::floor_edge::PINNED],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
 }
@@ -1157,7 +1218,9 @@ pub fn is_ceiling_range(error: &Error) -> bool {
 /// Whether `error` is a warning of the structure: it is reported, never refused.
 #[must_use]
 pub fn is_warning(error: &Error) -> bool {
-    error.code() == codes::INSERT_MEETS_WALL.code || is_ceiling_range(error)
+    error.code() == codes::INSERT_MEETS_WALL.code
+        || error.code() == codes::FLOOR_EDGE_ORPHAN.code
+        || is_ceiling_range(error)
 }
 
 /// The commit validator of the structure: every violation of [`check`] is an error, except the

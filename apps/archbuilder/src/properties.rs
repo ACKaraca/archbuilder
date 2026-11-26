@@ -270,6 +270,24 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "edge_floor",
+        Message {
+            message_id: "ab-prop-edge-floor",
+        },
+    ),
+    (
+        "edge_length",
+        Message {
+            message_id: "ab-prop-edge-length",
+        },
+    ),
+    (
+        "edge_volume",
+        Message {
+            message_id: "ab-prop-edge-volume",
+        },
+    ),
+    (
         "room_height",
         Message {
             message_id: "ab-prop-room-height",
@@ -1101,6 +1119,12 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-vertical-opening",
         },
     ),
+    (
+        types::FLOOR_EDGE,
+        Message {
+            message_id: "ab-kind-floor-edge",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -1804,6 +1828,33 @@ fn shown(
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A floor edge shows its floor, the length it runs along and the volume of its body; the
+        // edges are chosen by the command, the profile edited there.
+        types::FLOOR_EDGE => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::floor_edge::Derived::of(snapshot, object);
+            fields.truncate(types::floor_edge::PROFILE);
+            values.truncate(types::floor_edge::PROFILE);
+            for (name, value) in [
+                ("edge_floor", host),
+                (
+                    "edge_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "edge_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                ),
+            ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());

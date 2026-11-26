@@ -409,3 +409,7 @@ ab-cmd-floor-slope-edge-label = Kenardan döşeme eğimi
 ab-cmd-floor-slope-edge-description = Döşemeyi, üst kotta kalan sınır kenarlarından biri boyunca eğimlendirir.
 ab-cmd-floor-slope-points-label = Üç noktayla döşeme eğimi
 ab-cmd-floor-slope-points-description = Döşemeyi, üst yüzü verilen üç kottan geçecek biçimde eğimlendirir.
+ab-cmd-floor-edge-create-label = Döşeme kenarı
+ab-cmd-floor-edge-create-description = Seçilen döşeme kenarları boyunca bir profili süpürür (döşeme kenarı, bordür, damlalık); köşelerde gönyelenir ve kenarlar değişince döşemeyi izler.
+ab-cmd-floor-edge-edit-label = Döşeme kenarını düzenle
+ab-cmd-floor-edge-edit-description = Bir döşeme kenarının profilini ya da kenarlarını değiştirir.

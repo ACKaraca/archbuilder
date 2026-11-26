@@ -1147,6 +1147,8 @@ pub(crate) fn copy_set(
     hosts.extend(ceilings.iter().copied());
     created.extend(ceilings.into_iter().map(|(_, new)| new));
     dissociated += lost;
+    // The edge elements of the floors copied go with them: they follow the new floor's edges.
+    created.extend(crate::floor_edge::copy_for(ctx, &snapshot, &hosts)?);
     created.extend(crate::opening::copy_cuts(
         ctx,
         &snapshot,

@@ -18,3 +18,5 @@ ab-io-command-import-shortcuts-description = Reads a typed command shortcut tabl
 ab-io-loss-stair-not-written = A stair is not in the IFC file: stairs, flights and railings cannot be written yet. The shaft opening it cuts in the floor above is in the file.
 ab-io-loss-arc-faceted = An arc edge or an arched top is written as straight chords within two millimeters: IFC bodies here are faceted.
 ab-io-loss-cut-not-applied = A shaft or vertical opening could not be cut out of the body of the element it passes through: the body is written whole and the opening is in the file as a void of the element.
+ab-io-loss-floor-edge-as-covering = IFC4 has no element for the edge of a slab: a floor edge is written as a covering of the type molding with its swept body.
+ab-io-loss-floor-edge-orphan = A floor edge names edges that its floor no longer has: those edges are not in the file.
