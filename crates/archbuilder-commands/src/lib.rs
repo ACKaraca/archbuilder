@@ -11,7 +11,7 @@
 //! `archbuilder.window.place`, `archbuilder.insert.flip_hand` and `archbuilder.insert.flip_facing`; [`floor`]:
 //! `archbuilder.floor.create` and `archbuilder.floor.add_hole`; [`modify`]: `archbuilder.modify.move`,
 //! `copy`, `rotate` and `mirror`; [`edit`]: align, offset, trim, split, merge, arrays, pin and unpin; [`room`]: `archbuilder.room.place` and `archbuilder.room.place_all`; [`stair`]: `archbuilder.stair.create`; [`roof`]: `archbuilder.roof.create`, `set_edge`, `move_vertex`, `move_edge`, `archbuilder.wall.attach_top` and `detach_top`; [`ceiling`]: `archbuilder.ceiling.create` and `set_slope`; [`opening`]: `archbuilder.shaft.create` and `archbuilder.vertical_opening.create` (`archbuilder.opening.place` is in [`insert`]); [`element_type`]: `archbuilder.type.set`, `duplicate`,
-//! `delete`, `assign`, `match` and `upgrade`; [`view`]: `archbuilder.view.duplicate`, `rename`, `delete`,
+//! `delete`, `assign`, `match` and `upgrade`; [`curtain`]: `archbuilder.curtain.type`, `wall`, `grid_add`, `grid_remove`, `grid_move` and `panel`; [`view`]: `archbuilder.view.duplicate`, `rename`, `delete`,
 //! `hide_elements`, `show_elements` and `ensure_defaults` (plan views); [`selection`]:
 //! `archbuilder.set.create`, `update`, `rename`, `delete` and `select` (selection sets); [`stats`]:
 //! `archbuilder.model.statistics` (counts of the model, derived).
@@ -23,6 +23,7 @@
 pub mod ceiling;
 pub mod circulation;
 pub mod clip;
+pub mod curtain;
 pub mod datum;
 pub mod edit;
 pub mod element_type;
@@ -104,6 +105,7 @@ pub fn registry() -> Result<Registry> {
     opening::register(&mut registry)?;
     datum::register(&mut registry)?;
     element_type::register(&mut registry)?;
+    curtain::register(&mut registry)?;
     view::register(&mut registry)?;
     selection::register(&mut registry)?;
     stats::register(&mut registry)?;

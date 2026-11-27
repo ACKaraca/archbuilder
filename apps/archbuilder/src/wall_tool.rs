@@ -167,6 +167,32 @@ impl Tool {
         self.line.active().is_some()
     }
 
+    /// Starts a chain of curtain walls: the first curtain wall type of the document (one is made
+    /// when there is none) is the type of the walls drawn.
+    ///
+    /// # Errors
+    /// The errors of the type command and of [`Self::begin`].
+    pub fn begin_curtain(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        let snapshot = env.document.snapshot();
+        let id = match archbuilder_commands::curtain::first_type(&snapshot) {
+            Some(id) => id,
+            None => {
+                let outcome = run(Invocation::new(
+                    archbuilder_commands::curtain::CURTAIN_TYPE,
+                    serde_json::json!({}),
+                ))?;
+                outcome
+                    .value
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .and_then(|t| t.parse().ok())
+                    .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_BUILDING))?
+            }
+        };
+        crate::tool_type::choose(TypeKind::Wall, id);
+        self.begin(env, run)
+    }
+
     /// Starts a chain: the start-point prompt of the first wall, on the storey of the selection
     /// or the lowest storey.
     ///

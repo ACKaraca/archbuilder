@@ -603,3 +603,7 @@ ab-strength-none = Yok
 ab-source-points = Üç nokta
 ab-source-grid = Aks
 ab-source-reference-plane = Referans düzlemi
+ab-tool-curtain-wall = Perde duvar
+ab-tool-curtain-wall-hint = Seçili katta, ilk perde duvar tipiyle camlı panel ve doğramalardan oluşan ızgaralı perde duvar çiz
+ab-prop-curtain-panels = Paneller (adet / alan)
+ab-prop-curtain-mullions = Doğramalar (adet / uzunluk)

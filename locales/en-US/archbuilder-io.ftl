@@ -28,3 +28,4 @@ ab-io-loss-railing-not-written = A railing is not in the IFC file: railings cann
 ab-io-loss-ramp-not-written = A ramp is not in the IFC file: ramps and ramp flights cannot be written yet. The opening it cuts in the floor above is in the file.
 ab-io-loss-grid-not-written = A grid is not in the IFC file: grid lines and their axes cannot be written yet, and a stand-in entity would hide the loss.
 ab-io-loss-datum-not-written = A reference plane or work plane is not in the IFC file: it is a drawing aid with no IFC entity.
+ab-io-loss-curtain-not-written = A curtain wall is not in the IFC file: curtain walls, plates and members cannot be written yet, so the wall, its { $count } panels or mullions of this kind are left out. A basic wall that holds it still has its opening.

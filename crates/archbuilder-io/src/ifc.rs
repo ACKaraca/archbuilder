@@ -133,6 +133,7 @@ struct Loss {
     kind: &'static str,
     object: ObjectId,
     name: String,
+    count: i64,
 }
 
 /// The mapping in progress.
@@ -150,12 +151,27 @@ fn name_of(object: &Object) -> String {
 
 impl Mapper<'_> {
     fn lose(&mut self, reason: Reason, kind: &'static str, object: &Object) {
+        self.lose_n(reason, kind, object, 1);
+    }
+
+    fn lose_n(&mut self, reason: Reason, kind: &'static str, object: &Object, count: usize) {
         self.losses.push(Loss {
             reason,
             kind,
             object: object.id,
             name: name_of(object),
+            count: i64::try_from(count).unwrap_or(i64::MAX),
         });
+    }
+
+    /// A curtain wall: the writer of the foundation has no `IfcCurtainWall`, `IfcPlate` or
+    /// `IfcMember`, so the wall, its panels and its mullions are named in the loss report, never
+    /// written as a wall or a proxy.
+    fn curtain_wall(&mut self, object: &Object, derived: &archbuilder_model::curtain::Derived) {
+        let (panels, mullions) = derived.counts();
+        self.lose(reasons::CURTAIN_NOT_WRITTEN, "IFCCURTAINWALL", object);
+        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCPLATE", object, panels);
+        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCMEMBER", object, mullions);
     }
 
     /// The walls, then the floors of a storey whose level is at `level`.
@@ -312,6 +328,9 @@ impl Mapper<'_> {
         reason = "one wall: body, quantities and inserts"
     )]
     fn wall(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        if let Some(derived) = archbuilder_model::curtain::Derived::of(self.snapshot, object) {
+            return self.curtain_wall(object, &derived);
+        }
         let Some(wall) = Wall::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCWALL", object);
         };
@@ -455,6 +474,12 @@ impl Mapper<'_> {
         });
         for (object, item) in found {
             self.insert(&object, &item, (host, wall, frame), storey, level);
+        }
+        // The openings that curtain walls inside this wall cut; each is named after its wall.
+        for (id, item) in archbuilder_model::curtain::embedded(self.snapshot, host) {
+            if let Some(curtain) = spatial::get(self.snapshot, id) {
+                self.wall_opening(&curtain, &item, (host, wall, frame), storey);
+            }
         }
     }
 
@@ -1085,6 +1110,12 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
     let mut out = Vec::new();
     for kind in TypeKind::ALL {
         for object in et::of_kind(snapshot, kind) {
+            // A curtain wall type has no wall in the file to be the type of.
+            if kind == TypeKind::Wall
+                && archbuilder_model::curtain::CurtainType::from_values(&object.values).is_some()
+            {
+                continue;
+            }
             let (ifc_kind, predefined) = match kind {
                 TypeKind::Wall => (ElementKind::Wall, "STANDARD"),
                 TypeKind::Floor => (ElementKind::Slab, "FLOOR"),
@@ -1271,7 +1302,7 @@ fn add_losses(report: &mut LossReport, losses: &[Loss]) {
             _ => summary.dropped += 1,
         }
         let mut arguments = std::collections::BTreeMap::new();
-        arguments.insert("count".to_owned(), Argument::Int(1));
+        arguments.insert("count".to_owned(), Argument::Int(loss.count));
         arguments.insert("name".to_owned(), Argument::Text(loss.name.clone()));
         report.items.push(LossItem {
             outcome: loss.reason.outcome,

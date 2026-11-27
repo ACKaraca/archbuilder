@@ -117,6 +117,15 @@ pub mod reasons {
         severity: Severity::Info,
         message_id: "ab-io-loss-datum-not-written",
     };
+    /// A curtain wall: the IFC writer of the foundation has no curtain wall, plate or member
+    /// entity yet, so the wall, its panels and its mullions are left out. The count is the
+    /// number of entities of that kind the wall would write.
+    pub const CURTAIN_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.curtain_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-curtain-not-written",
+    };
     /// An arc edge of a boundary or an arched opening, written as chords within the model's
     /// flattening tolerance: IFC bodies here are faceted.
     pub const ARC_FACETED: Reason = Reason {

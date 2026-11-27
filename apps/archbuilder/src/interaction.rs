@@ -2118,6 +2118,11 @@ impl WallInteraction {
             self.hover = None;
             return self.with_tool(cx, |tool, env, run| tool.begin(env, run));
         }
+        if command == archbuilder_commands::curtain::CURTAIN_WALL && intent.params.is_empty() {
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_tool(cx, |tool, env, run| tool.begin_curtain(env, run));
+        }
         if command == FLOOR_CREATE && intent.params.is_empty() {
             self.tool.stop();
             self.inserts.stop();

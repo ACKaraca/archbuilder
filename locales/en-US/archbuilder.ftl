@@ -628,3 +628,7 @@ ab-strength-none = None
 ab-source-points = Three points
 ab-source-grid = Grid
 ab-source-reference-plane = Reference plane
+ab-tool-curtain-wall = Curtain wall
+ab-tool-curtain-wall-hint = Draw curtain walls: a grid of glazed panels and mullions on the selected storey, with the first curtain wall type
+ab-prop-curtain-panels = Panels (count / area)
+ab-prop-curtain-mullions = Mullions (count / length)

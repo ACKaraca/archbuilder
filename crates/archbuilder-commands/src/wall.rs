@@ -666,7 +666,7 @@ pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &s
         .unwrap_or_default()
 }
 
-fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
+pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
     let storey = storey_for(ctx, p.storey)?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
         Some(param) => crate::length(ctx, param).map(|q| q.value()),

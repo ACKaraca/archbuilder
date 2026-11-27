@@ -342,6 +342,12 @@ pub mod wall {
     /// The roof or floor the top is attached to; appended in schema 1.4. While it is set the
     /// top follows that element's underside and the top level and height wait unchanged.
     pub const TOP_ATTACH: usize = 17;
+    /// The authored grid-line edits of a curtain wall: a list of records (see
+    /// [`crate::curtain::grid_edit`]).
+    pub const GRID_EDITS: usize = 18;
+    /// The authored per-cell panel overrides of a curtain wall: a list of records (see
+    /// [`crate::curtain::cell_override`]).
+    pub const CELL_OVERRIDES: usize = 19;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -1137,6 +1143,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .optional()
             .in_aspect("geometry")
             .since_minor(4),
+        crate::curtain::grid_edits_field(5),
+        crate::curtain::cell_overrides_field(5),
     ];
     let floor = vec![
         name_field("identity"),
@@ -1200,6 +1208,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         match key {
             WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
                 decl.validators.push(crate::element_type::layer_findings);
+                if key == WALL_TYPE {
+                    decl.validators.push(crate::curtain::type_findings);
+                }
             }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
             _ => {}
@@ -2204,6 +2215,8 @@ mod tests {
                     ("pinned", wall::PINNED),
                     ("top_offset", wall::TOP_OFFSET),
                     ("top_attach", wall::TOP_ATTACH),
+                    ("grid_edits", wall::GRID_EDITS),
+                    ("cell_overrides", wall::CELL_OVERRIDES),
                 ],
             ),
             (
@@ -2218,6 +2231,28 @@ mod tests {
                     ("room_bounding", layered_type::ROOM_BOUNDING),
                     ("wrap_ends", layered_type::WRAP_ENDS),
                     ("wrap_inserts", layered_type::WRAP_INSERTS),
+                    ("curtain", crate::curtain::slot::CURTAIN),
+                    ("vertical_rule", crate::curtain::slot::VERTICAL),
+                    ("vertical_value", crate::curtain::slot::VERTICAL + 1),
+                    ("vertical_justify", crate::curtain::slot::VERTICAL + 2),
+                    ("vertical_offset", crate::curtain::slot::VERTICAL + 3),
+                    ("horizontal_rule", crate::curtain::slot::HORIZONTAL),
+                    ("horizontal_value", crate::curtain::slot::HORIZONTAL + 1),
+                    ("horizontal_justify", crate::curtain::slot::HORIZONTAL + 2),
+                    ("horizontal_offset", crate::curtain::slot::HORIZONTAL + 3),
+                    ("panel", crate::curtain::slot::PANEL),
+                    ("panel_thickness", crate::curtain::slot::PANEL_THICKNESS),
+                    ("panel_material", crate::curtain::slot::PANEL_MATERIAL),
+                    ("interior_profile", crate::curtain::slot::INTERIOR),
+                    ("interior_width", crate::curtain::slot::INTERIOR + 1),
+                    ("interior_depth", crate::curtain::slot::INTERIOR + 2),
+                    ("border_profile", crate::curtain::slot::BORDER),
+                    ("border_width", crate::curtain::slot::BORDER + 1),
+                    ("border_depth", crate::curtain::slot::BORDER + 2),
+                    ("corner_profile", crate::curtain::slot::CORNER),
+                    ("corner_width", crate::curtain::slot::CORNER + 1),
+                    ("corner_depth", crate::curtain::slot::CORNER + 2),
+                    ("priority", crate::curtain::slot::PRIORITY),
                 ],
             ),
             (
