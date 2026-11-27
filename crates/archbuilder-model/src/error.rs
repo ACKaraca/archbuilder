@@ -31,6 +31,14 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-project-not-unique",
     };
+    /// A project information field has a value it cannot hold: an issue date that is no calendar
+    /// date `YYYY-MM-DD`, or a year of construction that is not four digits. The `field` argument
+    /// names it.
+    pub const PROJECT_INFO_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.project_info_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-project-info-invalid",
+    };
     /// A wall's baseline is shorter than [`crate::types::MIN_WALL_LENGTH`].
     pub const WALL_TOO_SHORT: ErrorCode = ErrorCode {
         code: "ab.model.wall_too_short",

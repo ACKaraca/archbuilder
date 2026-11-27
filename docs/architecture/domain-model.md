@@ -1448,6 +1448,60 @@ plane of its own) detaches it, and when the plane is deleted it returns to the p
 store the plane without following it. In a 3D view the active work plane is where the tools' points land (the wall, floor, railing
 and datum tools draw along it); a plan view keeps the storey's plane.
 
+## Display units
+
+Stored values are SI whatever the display units are. The project record sets, per kind, how values are shown and read: `length_unit`
+(meter, millimeter, centimeter, foot, inch), `area_unit` (square meter, square centimeter, square millimeter, square foot),
+`volume_unit` (cubic meter, liter, cubic foot, cubic yard), `angle_unit` (degree, radian, gradian) and `slope_unit` (degrees, percent,
+rise to run); then `<kind>_precision` (0 to 8 decimals) and `<kind>_rounding` (a step in the display unit) for each of the five kinds.
+Every field is optional and appended in schema 1.3, so a file from before loads unchanged with the defaults (meters, square meters,
+cubic meters, degrees; the decimals the unit usually needs; no rounding). `archbuilder.project.set_units` sets any of them in one
+undo step (`reset` clears every precision and rounding; without values it selects the project, whose properties list the same fields).
+
+`UnitSettings` (`archbuilder_model::units`) writes and reads the text. The property grid, the temporary dimensions and live labels
+of the viewport, the level labels, the slope labels and the statistics report write in these units. A typed value takes a unit symbol
+(`350 mm`, `100 ft²`, `500 L`, `100 gon`; `m2`, `m3` and `deg` are accepted spellings). A bare number in a command parameter keeps the
+rule above: meters, square meters, cubic meters; a bare angle or slope is read in the project's angle or slope unit (degrees by
+default). The command line of the shell reads a bare typed number in the project's length, area, volume or angle unit.
+
+## Project information
+
+The project record carries, besides the name, `number`, `client` and `address`, the optional text fields `status`, `issue_date`
+(a calendar date `YYYY-MM-DD`, refused otherwise), `author`, `organization`, `description`, `long_name`, and for the building
+`occupancy_type`, `year_of_construction` (four digits) and `construction_method`; all are appended in schema 1.4, so a file from
+before loads with every one absent. `archbuilder.project.set_info` sets any of them in one undo step (an empty text clears a field;
+without values it selects the project, whose properties list and edit the same fields, as `archbuilder.property.set` does).
+
+The IFC export writes them. The writer of the foundation gives the project, site and building only a name, so `archbuilder-io`
+completes its output before the read-back check: `Name`, `Description` (the description), `LongName` and `Phase` (the status) of the
+`IfcProject`; the address as an `IfcPostalAddress` on the `IfcSite` and the `IfcBuilding` (the building's own address when it has
+one); the client as an `IfcOrganization` with the role `CLIENT` and the author, with the issuing organization, as an
+`IfcPersonAndOrganization`, each in an `IfcActor` assigned to the project by an `IfcRelAssignsToActor`; and `Pset_BuildingCommon` on the
+building with `Reference` (the project number), `OccupancyType`, `YearOfConstruction` and `ConstructionMethod`, the names and data
+types of the IFC4 template. IFC4 has no `Pset_ProjectCommon` and no attribute for an issue date: the date is named in the loss
+report. The file validates against the IFC4 schema with the EXPRESS rules.
+
+## Templates, standards transfer and purge
+
+A template is an ordinary `.archb` document; the project's `template` flag marks it as one (`archbuilder.property.set` edits it).
+`archbuilder.file.new_from_template` (File > New From Template; a path or the open dialog) starts the open document's project from
+one. It is for a document without elements: the document's structure is replaced by copies of the template's project (with its
+units and information, `template` cleared and the file name kept as `template_source`, schema 1.4), site, building, storeys,
+levels, element types and plan views, under new identifiers, so the `GlobalId`s of two projects never coincide. The hidden elements and
+grid overrides of the template's views are not carried over. Elements, datums and selection sets of the template are not copied and
+are listed in the result. The template file is only read, and the command is one undo step.
+
+`archbuilder.file.transfer_standards` copies element types (wall, floor, door, window, roof, ceiling, railing and ramp types) and the
+display unit settings from another document file, which it reads without changing (an open document is reached through its saved
+file). A type whose name the document already has is `keep` (default), `overwrite` (only when nothing refers to it) or `rename`
+(copied as `Name (2)`), set for all types and over by name; a type that refers to other objects is skipped. The result lists each type
+with what happened and why a type was left out. It is one undo step.
+
+`archbuilder.project.purge` lists (`preview`) or removes the element types that nothing refers to, in one undo step, each with its
+reason: `unused`, or `used_only_by_unused` for a type that only other removed types use, which go together. A type that anything in
+use refers to is never offered and is refused when asked for, and the last type of a kind stays. Materials are layer names of the
+types, so they are removed with a type; there are no other families, styles, filters or view templates yet.
+
 ## Location: origins, north and the geodetic reference
 
 The internal origin is fixed: every stored coordinate is measured from it. The project record holds, as optional fields (a file

@@ -92,3 +92,4 @@ ab-model-dormer-invalid = "{ $name }" çatı penceresinin bir ölçüsü aralı�
 ab-model-roof-edge-profile = "{ $name }" çatı kenarı elemanı için en az bir eğimli çatı kenarı ve en az üç noktalı, kendini kesmeyen bir profil gerekir.
 ab-model-roof-edge-orphan = "{ $name }" çatı kenarı elemanı, çatısında artık bulunmayan ya da eğimi olmayan { $count } kenarı adlandırıyor. Kenarları yeniden seçin ya da elemanı silin.
 ab-model-stair-headroom = "{ $name }" merdiveninin ({ $x }, { $y }) m noktasındaki serbest yüksekliği { $clear } m; gereken { $least } m'nin altında, yolda "{ $by }" var.
+ab-model-project-info-invalid = Proje bilgisi "{ $field }" geçerli değil. Yayın tarihini YYYY-AA-GG biçiminde, yapım yılını dört haneli yazın.

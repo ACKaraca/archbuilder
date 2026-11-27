@@ -109,7 +109,8 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             .with_undo(UndoBehavior::NotUndoable)
             .with_permissions([Permission::Read, Permission::FileWrite]),
     )?;
-    register_shortcuts(registry)
+    register_shortcuts(registry)?;
+    crate::standards::register(registry)
 }
 
 /// The identifier of the command that writes the shortcut table to a file.

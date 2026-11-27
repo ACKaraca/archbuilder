@@ -69,6 +69,11 @@ pub struct Statistics {
     pub selection_sets: usize,
     /// Element types (wall, floor, door, window, roof and ceiling types).
     pub element_types: usize,
+    /// The display units of the project, by kind (`length`, `area`, `volume`, `angle`, `slope`),
+    /// the names of the unit registry; the quantities below are written in them.
+    pub display_units: BTreeMap<String, String>,
+    /// The sum of the floors' areas, in the project's area unit.
+    pub floor_area: String,
 }
 
 /// The storey an element stands on, walking up through its hosts.
@@ -135,6 +140,20 @@ pub fn statistics(snapshot: &Snapshot) -> Statistics {
             kinds: kinds(counts),
         })
         .collect();
+    let units = spatial::unit_settings(snapshot);
+    let floor_area: f64 = spatial::objects(snapshot, types::FLOOR)
+        .iter()
+        .filter_map(|f| archbuilder_model::floor::Derived::of(snapshot, f))
+        .map(|d| d.area())
+        .sum();
+    let mut display_units = BTreeMap::new();
+    for kind in archbuilder_model::units::UnitKind::ALL {
+        let name = units
+            .unit_name(kind)
+            .unwrap_or_else(|| units.slope.name())
+            .to_owned();
+        display_units.insert(kind.name().to_owned(), name);
+    }
     Statistics {
         elements,
         by_kind: kinds(by_kind),
@@ -153,6 +172,8 @@ pub fn statistics(snapshot: &Snapshot) -> Statistics {
             .iter()
             .map(|k| spatial::objects(snapshot, k).len())
             .sum(),
+        display_units,
+        floor_area: units.area_text(floor_area, '.'),
     }
 }
 

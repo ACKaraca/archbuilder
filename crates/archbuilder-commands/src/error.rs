@@ -204,6 +204,19 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-type-in-use",
     };
+    /// The file is not a template a project can start from: it holds no project, site, building
+    /// and storey, or cannot be read as a document.
+    pub const TEMPLATE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.cmd.template_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-template-invalid",
+    };
+    /// A project is started from a template in a document that already has elements.
+    pub const TEMPLATE_TARGET_HAS_ELEMENTS: ErrorCode = ErrorCode {
+        code: "ab.cmd.template_target_has_elements",
+        category: Category::Conflict,
+        message_id: "ab-cmd-template-target-has-elements",
+    };
     /// The last type of a kind cannot be deleted.
     pub const TYPE_LAST: ErrorCode = ErrorCode {
         code: "ab.cmd.type_last",

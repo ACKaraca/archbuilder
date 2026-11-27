@@ -136,6 +136,13 @@ fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry
     }
 }
 
+const TEMPLATE_TITLE: Message = Message {
+    message_id: "ab-template-title",
+};
+const TRANSFER_STANDARDS_TITLE: Message = Message {
+    message_id: "ab-transfer-standards-title",
+};
+
 const EXPORT_IFC_TITLE: Message = Message {
     message_id: "ab-export-ifc-title",
 };
@@ -150,6 +157,20 @@ fn export_ifc_dialog() -> PathDialog {
             extensions: vec!["ifc".into()],
         }],
         default_name: Some("{document}.ifc".into()),
+    }
+}
+
+/// The open dialog of the commands that read another document: the template of a new project and
+/// the document standards are copied from.
+fn document_dialog(title: &str) -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: title.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-file-archb".into(),
+            extensions: vec!["archb".into()],
+        }],
+        default_name: None,
     }
 }
 
@@ -235,6 +256,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     builder.path_dialog(
         archbuilder_io::command::IMPORT_SHORTCUTS,
         shortcuts_dialog(PathMode::Open, SHORTCUTS_IMPORT_TITLE.message_id),
+    );
+    // A template and the document standards come from are chosen in an open dialog.
+    builder.path_dialog(
+        archbuilder_io::standards::NEW_FROM_TEMPLATE,
+        document_dialog(TEMPLATE_TITLE.message_id),
+    );
+    builder.path_dialog(
+        archbuilder_io::standards::TRANSFER_STANDARDS,
+        document_dialog(TRANSFER_STANDARDS_TITLE.message_id),
     );
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
@@ -501,6 +531,18 @@ fn menu() -> Result<Menu> {
             .iter()
             .position(|i| matches!(i, MenuItem::Command { command } if command == arc_app::commands::FILE_SAVE_AS))
             .map_or(file.len(), |k| k + 1);
+        // After New: File > New From Template.
+        let after_new = file
+            .iter()
+            .position(|i| matches!(i, MenuItem::Command { command } if command == arc_app::commands::FILE_NEW))
+            .map_or(0, |k| k + 1);
+        file.insert(
+            after_new,
+            MenuItem::Command {
+                command: archbuilder_io::standards::NEW_FROM_TEMPLATE.into(),
+            },
+        );
+        let at = at + 1;
         file.insert(
             at,
             MenuItem::Submenu {

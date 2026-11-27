@@ -776,7 +776,7 @@ struct Shown {
     flip_facing: bool,
     turkish: bool,
     separator: char,
-    unit: archbuilder_model::units::LengthUnit,
+    unit: archbuilder_model::units::UnitSettings,
 }
 
 impl Shown {
@@ -839,7 +839,7 @@ impl Shown {
             flip_facing: flag("flip_facing"),
             turkish: language.starts_with("tr"),
             separator: decimal_separator(&language),
-            unit: spatial::length_unit(snapshot),
+            unit: spatial::unit_settings(snapshot),
         }
     }
 

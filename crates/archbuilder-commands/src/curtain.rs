@@ -176,12 +176,7 @@ fn apply_rule(
         rule.offset = meters(ctx, o)?;
     }
     if let Some(a) = &p.angle {
-        rule.angle = match a {
-            QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
-                t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-            }
-            other => ctx.quantity(other, Dimension::ANGLE)?.value(),
-        };
+        rule.angle = crate::angle(ctx, a)?;
     }
     Ok(())
 }

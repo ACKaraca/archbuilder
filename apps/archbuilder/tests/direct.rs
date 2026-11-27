@@ -180,7 +180,7 @@ impl Pointer {
             shift: false,
             ctrl: self.ctrl,
             free: false,
-            unit: LengthUnit::Meter,
+            unit: LengthUnit::Meter.into(),
             separator: '.',
             plan: None,
         }

@@ -192,7 +192,7 @@ fn set(ctx: &mut Context<'_>, p: SetCoordinates) -> Result<LocationSet> {
         }
     }
     if let Some(north) = &p.true_north {
-        let radians = ctx.quantity(north, Dimension::ANGLE)?.value();
+        let radians = crate::angle(ctx, north)?;
         if !radians.is_finite() {
             return Err(Error::new(codes::VALUE_INVALID));
         }

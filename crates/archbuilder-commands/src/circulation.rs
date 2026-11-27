@@ -763,22 +763,12 @@ pub struct RunParam {
     pub slope: Option<f64>,
 }
 
-/// An angle as a command parameter: a JSON number is radians, a text number is degrees.
-fn angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
-    match param {
-        QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
-            Ok(t.trim().parse::<f64>().unwrap_or(0.0).to_radians())
-        }
-        other => Ok(ctx.quantity(other, Dimension::ANGLE)?.value()),
-    }
-}
-
 fn run_of(ctx: &Context<'_>, p: &RunParam) -> Result<archbuilder_model::ramp::Run> {
     Ok(archbuilder_model::ramp::Run {
         turn: p
             .turn
             .as_ref()
-            .map(|t| angle(ctx, t))
+            .map(|t| crate::angle(ctx, t))
             .transpose()?
             .unwrap_or(0.0),
         length: meters(ctx, Some(&p.length))?.ok_or_else(invalid)?,
@@ -819,7 +809,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
             }
             d[1].atan2(d[0])
         }
-        (None, Some(param)) => angle(ctx, param)?,
+        (None, Some(param)) => crate::angle(ctx, param)?,
         (None, None) => 0.0,
     };
     let length = match (meters(ctx, p.length.as_ref())?, p.to) {
@@ -1006,7 +996,7 @@ fn set_ramp_run(ctx: &mut Context<'_>, p: SetRampRun) -> Result<RampEdited> {
     edit_ramp(ctx, p.ramp.0, |ctx, body| {
         let length = meters(ctx, p.length.as_ref())?;
         let landing = meters(ctx, p.landing.as_ref())?;
-        let turn = p.turn.as_ref().map(|t| angle(ctx, t)).transpose()?;
+        let turn = p.turn.as_ref().map(|t| crate::angle(ctx, t)).transpose()?;
         let slope = if p.clear_slope {
             Some(None)
         } else {

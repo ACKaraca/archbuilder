@@ -305,7 +305,60 @@ pub mod project {
     pub const HEIGHT: usize = 18;
     /// The distance from the internal origin beyond which geometry is reported, in meters.
     pub const PRECISION_DISTANCE: usize = 19;
+    /// The unit areas are shown in ([`crate::units::AreaUnit`] code); appended in schema 1.3 with
+    /// the rest of the display unit fields, all optional.
+    pub const AREA_UNIT: usize = 20;
+    /// The unit volumes are shown in ([`crate::units::VolumeUnit`] code).
+    pub const VOLUME_UNIT: usize = 21;
+    /// The unit angles are shown in ([`crate::units::AngleUnit`] code).
+    pub const ANGLE_UNIT: usize = 22;
+    /// The decimals of lengths.
+    pub const LENGTH_PRECISION: usize = 23;
+    /// The decimals of areas.
+    pub const AREA_PRECISION: usize = 24;
+    /// The decimals of volumes.
+    pub const VOLUME_PRECISION: usize = 25;
+    /// The decimals of angles.
+    pub const ANGLE_PRECISION: usize = 26;
+    /// The decimals of slopes.
+    pub const SLOPE_PRECISION: usize = 27;
+    /// The rounding increment of lengths, in the length unit.
+    pub const LENGTH_ROUNDING: usize = 28;
+    /// The rounding increment of areas, in the area unit.
+    pub const AREA_ROUNDING: usize = 29;
+    /// The rounding increment of volumes, in the volume unit.
+    pub const VOLUME_ROUNDING: usize = 30;
+    /// The rounding increment of angles, in the angle unit.
+    pub const ANGLE_ROUNDING: usize = 31;
+    /// The rounding increment of slopes, in the slope unit.
+    pub const SLOPE_ROUNDING: usize = 32;
+    /// The project status, a short phase name (`Design`, `Permit`); appended in schema 1.4 with
+    /// the rest of the project information, all optional.
+    pub const STATUS: usize = 33;
+    /// The issue date, `YYYY-MM-DD`.
+    pub const ISSUE_DATE: usize = 34;
+    /// The author of the project information.
+    pub const AUTHOR: usize = 35;
+    /// The organization that issues the project.
+    pub const ORGANIZATION: usize = 36;
+    /// A description of the project.
+    pub const DESCRIPTION: usize = 37;
+    /// The long name of the project.
+    pub const LONG_NAME: usize = 38;
+    /// What the building is used for, in words.
+    pub const OCCUPANCY_TYPE: usize = 39;
+    /// The year the building is or was built, four digits.
+    pub const YEAR_OF_CONSTRUCTION: usize = 40;
+    /// How the building is constructed, in words.
+    pub const CONSTRUCTION_METHOD: usize = 41;
+    /// The file name of the template the project was made from (AB-DATUM-001).
+    pub const TEMPLATE_SOURCE: usize = 42;
 }
+
+/// The longest project information text, in bytes.
+pub const INFO_BYTES: u64 = 128;
+/// The longest project description, in bytes.
+pub const DESCRIPTION_BYTES: u64 = 1024;
 
 /// Field positions of `archbuilder.site`.
 pub mod site {
@@ -1192,6 +1245,56 @@ fn length_unit_variants() -> Vec<EnumVariant> {
         .collect()
 }
 
+/// The issue date is a real calendar date written `YYYY-MM-DD` and the year of construction is four
+/// digits; the other project information is free text.
+fn project_info_findings(values: &[Option<Value>]) -> Vec<Finding> {
+    let text = |at: usize| match values.get(at) {
+        Some(Some(Value::String(t))) if !t.is_empty() => Some(t.as_str()),
+        _ => None,
+    };
+    let invalid = |field: &str| Finding {
+        severity: Severity::Error,
+        error: arc_base::Error::new(codes::PROJECT_INFO_INVALID).with_arg("field", field),
+    };
+    let mut found = Vec::new();
+    if let Some(date) = text(project::ISSUE_DATE)
+        && !is_iso_date(date)
+    {
+        found.push(invalid("issue_date"));
+    }
+    if let Some(year) = text(project::YEAR_OF_CONSTRUCTION)
+        && !(year.len() == 4 && year.bytes().all(|b| b.is_ascii_digit()))
+    {
+        found.push(invalid("year_of_construction"));
+    }
+    found
+}
+
+/// Whether `text` is a calendar date `YYYY-MM-DD`.
+#[must_use]
+pub fn is_iso_date(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    let [y, m, d] = parts.as_slice() else {
+        return false;
+    };
+    let digits = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_digit());
+    if !(digits(y, 4) && digits(m, 2) && digits(d, 2)) {
+        return false;
+    }
+    let (Ok(y), Ok(m), Ok(d)) = (y.parse::<u32>(), m.parse::<u32>(), d.parse::<u32>()) else {
+        return false;
+    };
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let days = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&d)
+}
+
 /// A non-blank name is checked by every type that has one.
 fn blank_name(values: &[Option<Value>]) -> Vec<Finding> {
     match values.first() {
@@ -1266,6 +1369,71 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         located("survey_height", ELEVATION_RANGE),
         located("precision_distance", (1.0, COORDINATE_RANGE.1)),
     ]);
+    // The display units of areas, volumes and angles, and the decimals and rounding of every
+    // kind (AB-DATUM-004). Optional, so older files load unchanged.
+    let unit_enum = |name: &str, variants: Vec<EnumVariant>| {
+        FieldDecl::new(name, ValueType::Enum(variants))
+            .optional()
+            .in_aspect("units")
+            .since_minor(3)
+    };
+    project.push(unit_enum(
+        "area_unit",
+        crate::units::AreaUnit::ALL
+            .iter()
+            .map(|u| EnumVariant::new(u.name(), u.code()))
+            .collect(),
+    ));
+    project.push(unit_enum(
+        "volume_unit",
+        crate::units::VolumeUnit::ALL
+            .iter()
+            .map(|u| EnumVariant::new(u.name(), u.code()))
+            .collect(),
+    ));
+    project.push(unit_enum(
+        "angle_unit",
+        crate::units::AngleUnit::ALL
+            .iter()
+            .map(|u| EnumVariant::new(u.name(), u.code()))
+            .collect(),
+    ));
+    for kind in ["length", "area", "volume", "angle", "slope"] {
+        project.push(
+            FieldDecl::new(format!("{kind}_precision"), ValueType::I64)
+                .optional()
+                .with_bound(Bound::Int {
+                    min: 0,
+                    max: crate::units::MAX_PRECISION,
+                })
+                .in_aspect("units")
+                .since_minor(3),
+        );
+    }
+    for kind in ["length", "area", "volume", "angle", "slope"] {
+        project.push(
+            FieldDecl::new(format!("{kind}_rounding"), ValueType::F64)
+                .optional()
+                .with_bound(real(crate::units::ROUNDING_RANGE))
+                .in_aspect("units")
+                .since_minor(3),
+        );
+    }
+    // The project information beyond the name, number, client and address (AB-DATUM-002).
+    for (name, max) in [
+        ("status", 64),
+        ("issue_date", 10),
+        ("author", INFO_BYTES),
+        ("organization", INFO_BYTES),
+        ("description", DESCRIPTION_BYTES),
+        ("long_name", INFO_BYTES),
+        ("occupancy_type", INFO_BYTES),
+        ("year_of_construction", 4),
+        ("construction_method", INFO_BYTES),
+        ("template_source", NAME_BYTES),
+    ] {
+        project.push(text_field(name, max).since_minor(4));
+    }
     let site = vec![name_field("identity")];
     let building = vec![
         name_field("identity"),
@@ -1414,6 +1582,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
                 }
             }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
+            PROJECT => decl.validators.push(project_info_findings),
             _ => {}
         }
         registry.register(decl)?;
@@ -2726,6 +2895,29 @@ mod tests {
                     ("northings", project::NORTHINGS),
                     ("survey_height", project::HEIGHT),
                     ("precision_distance", project::PRECISION_DISTANCE),
+                    ("area_unit", project::AREA_UNIT),
+                    ("volume_unit", project::VOLUME_UNIT),
+                    ("angle_unit", project::ANGLE_UNIT),
+                    ("length_precision", project::LENGTH_PRECISION),
+                    ("area_precision", project::AREA_PRECISION),
+                    ("volume_precision", project::VOLUME_PRECISION),
+                    ("angle_precision", project::ANGLE_PRECISION),
+                    ("slope_precision", project::SLOPE_PRECISION),
+                    ("length_rounding", project::LENGTH_ROUNDING),
+                    ("area_rounding", project::AREA_ROUNDING),
+                    ("volume_rounding", project::VOLUME_ROUNDING),
+                    ("angle_rounding", project::ANGLE_ROUNDING),
+                    ("slope_rounding", project::SLOPE_ROUNDING),
+                    ("status", project::STATUS),
+                    ("issue_date", project::ISSUE_DATE),
+                    ("author", project::AUTHOR),
+                    ("organization", project::ORGANIZATION),
+                    ("description", project::DESCRIPTION),
+                    ("long_name", project::LONG_NAME),
+                    ("occupancy_type", project::OCCUPANCY_TYPE),
+                    ("year_of_construction", project::YEAR_OF_CONSTRUCTION),
+                    ("construction_method", project::CONSTRUCTION_METHOD),
+                    ("template_source", project::TEMPLATE_SOURCE),
                 ],
             ),
             (SITE, &[("name", site::NAME)]),

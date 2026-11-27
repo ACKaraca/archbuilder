@@ -737,3 +737,56 @@ ab-tool-stair-sketch = Stair by sketch
 ab-tool-stair-sketch-hint = Create a stair along sketched run lines with landings
 ab-tool-rehost = Host
 ab-tool-rehost-hint = Move the selected doors, windows and openings to the selected wall
+ab-prop-area-unit = Area unit
+ab-prop-volume-unit = Volume unit
+ab-prop-angle-unit = Angle unit
+ab-prop-length-precision = Length decimals
+ab-prop-area-precision = Area decimals
+ab-prop-volume-precision = Volume decimals
+ab-prop-angle-precision = Angle decimals
+ab-prop-slope-precision = Slope decimals
+ab-prop-length-rounding = Length rounding step
+ab-prop-area-rounding = Area rounding step
+ab-prop-volume-rounding = Volume rounding step
+ab-prop-angle-rounding = Angle rounding step
+ab-prop-slope-rounding = Slope rounding step
+ab-unit-square-meter = Square meters
+ab-unit-square-centimeter = Square centimeters
+ab-unit-square-millimeter = Square millimeters
+ab-unit-square-foot = Square feet
+ab-unit-cubic-meter = Cubic meters
+ab-unit-liter = Liters
+ab-unit-cubic-foot = Cubic feet
+ab-unit-cubic-yard = Cubic yards
+ab-unit-degree = Degrees
+ab-unit-radian = Radians
+ab-unit-gradian = Gradians
+ab-prop-status = Status
+ab-prop-issue-date = Issue date (YYYY-MM-DD)
+ab-prop-author = Author
+ab-prop-organization = Organization
+ab-prop-description = Description
+ab-prop-long-name = Long name
+ab-prop-occupancy-type = Occupancy type
+ab-prop-year-of-construction = Year of construction
+ab-prop-construction-method = Construction method
+ab-group-project = Project
+ab-tool-project-info = Project Information
+ab-tool-project-info-hint = Edit the name, number, client, address, status and the rest of the project information in the properties panel.
+ab-tool-units = Units
+ab-tool-units-hint = Set the display unit, decimals and rounding of lengths, areas, volumes, angles and slopes in the properties panel.
+ab-tool-purge = Purge
+ab-tool-purge-hint = Remove the element types nothing uses, in one step you can undo.
+ab-tool-transfer-standards = Transfer Standards
+ab-tool-transfer-standards-hint = Copy element types and unit settings from another project file.
+ab-template-title = Choose a template
+ab-transfer-standards-title = Copy standards from a project
+ab-notice-purged = { $count ->
+    [one] Removed 1 unused type: { $names }. Undo brings it back.
+   *[other] Removed { $count } unused types: { $names }. Undo brings them back.
+}
+ab-notice-purge-nothing = No unused types: everything is in use, or is the last type of its kind.
+ab-notice-standards = { $count ->
+    [one] Copied 1 type, kept or skipped { $skipped }.
+   *[other] Copied { $count } types, kept or skipped { $skipped }.
+}

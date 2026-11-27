@@ -860,7 +860,7 @@ impl Shown {
                 .or_else(|| state.preset.get(key))
                 .and_then(Json::as_f64)
         };
-        let unit = spatial::length_unit(snapshot);
+        let unit = spatial::unit_settings(snapshot);
         let language = state
             .setting(LANGUAGE_SETTING)
             .and_then(|v| v.as_str().map(str::to_owned))

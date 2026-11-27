@@ -92,3 +92,4 @@ ab-model-dormer-invalid = The dormer "{ $name }" has a size out of range, or its
 ab-model-roof-edge-profile = The roof edge element "{ $name }" needs at least one sloped roof edge and a profile that is a simple loop of at least three points.
 ab-model-roof-edge-orphan = The roof edge element "{ $name }" names { $count } edge(s) that its roof no longer has or that define no slope. Select the edges again or delete the element.
 ab-model-stair-headroom = The stair "{ $name }" has { $clear } m of clear height at ({ $x }, { $y }) m, below the { $least } m it needs; "{ $by }" is in the way.
+ab-model-project-info-invalid = The project information "{ $field }" is not valid. Write an issue date as YYYY-MM-DD and a year of construction with four digits.

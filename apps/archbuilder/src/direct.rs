@@ -53,7 +53,7 @@ use archbuilder_model::insert::{self, Insert};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
 use archbuilder_model::types::{self, DOOR, FLOOR, RAILING, RAMP, ROOF, STAIR, WALL, WINDOW};
-use archbuilder_model::units::{LengthUnit, length_text};
+use archbuilder_model::units::{LengthUnit, UnitSettings, length_text};
 use archbuilder_model::wall::Wall;
 use serde_json::json;
 
@@ -326,7 +326,7 @@ pub struct Input<'a> {
     /// Whether snapping is off for this event (Alt held).
     pub free: bool,
     /// The project's length unit.
-    pub unit: LengthUnit,
+    pub unit: UnitSettings,
     /// The decimal separator of the interface language.
     pub separator: char,
     /// In a plan view, the objects its drawing has under the pointer, in picking order (the
@@ -414,7 +414,7 @@ struct Edit {
     invalid: bool,
     dim: Dim,
     text: String,
-    unit: LengthUnit,
+    unit: UnitSettings,
     at: V2,
 }
 
@@ -1407,8 +1407,9 @@ impl Direct {
                 out.label = Some((
                     p3(to, drag.z),
                     format!(
-                        "{}  {degrees:.1}\u{b0}",
-                        length_text(dist2(to, fixed), i.unit, i.separator)
+                        "{}  {}",
+                        length_text(dist2(to, fixed), i.unit, i.separator),
+                        i.unit.angle_text(degrees.to_radians(), i.separator)
                     ),
                 ));
                 let _ = moved;
@@ -1480,7 +1481,10 @@ impl Direct {
                     from: p3(*center, drag.z),
                     to: p3(at, drag.z),
                 });
-                out.label = Some((p3(at, drag.z), format!("{degrees:.0}\u{b0}")));
+                out.label = Some((
+                    p3(at, drag.z),
+                    i.unit.angle_text(degrees.to_radians(), i.separator),
+                ));
             }
             What::RoofVertex { roof, vertex } => {
                 let Some(f) = roof_footprint(snapshot, *roof) else {
@@ -1740,7 +1744,8 @@ impl Direct {
                 None
             }
             DynamicEvent::Enter { .. } => {
-                let Some(value) = parse_length(&edit.text, edit.unit).filter(|v| *v >= 0.0) else {
+                let Some(value) = parse_length(&edit.text, edit.unit.length).filter(|v| *v >= 0.0)
+                else {
                     // The input stays open; the controller says the value is not a length.
                     edit.invalid = true;
                     return None;
@@ -1806,7 +1811,7 @@ impl Direct {
         snapshot: &Snapshot,
         selection: &[ObjectId],
         frame: &Frame,
-        unit: LengthUnit,
+        unit: UnitSettings,
         separator: char,
     ) -> Vec<ProductOverlay> {
         let mut out = Vec::new();

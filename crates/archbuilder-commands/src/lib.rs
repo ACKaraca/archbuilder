@@ -36,6 +36,7 @@ pub mod floor_slope;
 pub mod insert;
 pub mod modify;
 pub mod opening;
+pub mod project;
 pub mod roof;
 pub mod roof_extrusion;
 pub mod roof_parts;
@@ -44,6 +45,7 @@ pub mod selection;
 pub mod stair;
 pub mod stats;
 pub mod structure;
+pub mod transfer;
 pub mod view;
 pub mod wall;
 
@@ -72,6 +74,59 @@ pub(crate) fn length(
         return Ok(arc_base::Quantity::new(meters, arc_base::Dimension::LENGTH));
     }
     ctx.quantity(param, arc_base::Dimension::LENGTH)
+}
+
+/// An angle in radians: a JSON number is radians; a text with a unit (`"90 deg"`, `"100 gon"`)
+/// says its own and a bare text number is in the project's angle unit (degrees by default).
+///
+/// # Errors
+/// The errors of [`arc_command::Context::quantity`] for any other text.
+pub(crate) fn angle(
+    ctx: &arc_command::Context<'_>,
+    param: &arc_command::QuantityParam,
+) -> Result<f64> {
+    if let arc_command::QuantityParam::Text(text) = param
+        && let Some(radians) = archbuilder_model::spatial::unit_settings(ctx.snapshot()).parse(
+            archbuilder_model::units::UnitKind::Angle,
+            text,
+            '.',
+        )
+    {
+        return Ok(radians);
+    }
+    Ok(ctx.quantity(param, arc_base::Dimension::ANGLE)?.value())
+}
+
+/// A quantity of `dimension`: a bare text number of an area or a volume is square or cubic
+/// meters, a length is meters, an angle is read by [`angle`]; a text with a unit says its own.
+///
+/// # Errors
+/// The errors of [`arc_command::Context::quantity`] for any other text.
+pub(crate) fn quantity(
+    ctx: &arc_command::Context<'_>,
+    param: &arc_command::QuantityParam,
+    dimension: arc_base::Dimension,
+) -> Result<arc_base::Quantity> {
+    use archbuilder_model::units::UnitKind;
+    let kind = [
+        (arc_base::Dimension::AREA, UnitKind::Area),
+        (arc_base::Dimension::VOLUME, UnitKind::Volume),
+    ]
+    .into_iter()
+    .find_map(|(d, k)| (d == dimension).then_some(k));
+    if let (arc_command::QuantityParam::Text(text), Some(kind)) = (param, kind)
+        && let Some(si) =
+            archbuilder_model::spatial::unit_settings(ctx.snapshot()).parse(kind, text, '.')
+    {
+        return Ok(arc_base::Quantity::new(si, dimension));
+    }
+    if dimension == arc_base::Dimension::ANGLE {
+        return Ok(arc_base::Quantity::new(angle(ctx, param)?, dimension));
+    }
+    if dimension == arc_base::Dimension::LENGTH {
+        return length(ctx, param);
+    }
+    ctx.quantity(param, dimension)
 }
 
 /// The name the product's headless runner reports.
@@ -115,6 +170,7 @@ pub fn registry() -> Result<Registry> {
     view::register(&mut registry)?;
     selection::register(&mut registry)?;
     stats::register(&mut registry)?;
+    project::register(&mut registry)?;
     Ok(registry)
 }
 

@@ -712,3 +712,56 @@ ab-tool-stair-sketch = Çizimle merdiven
 ab-tool-stair-sketch-hint = Çizilen kol çizgileri boyunca sahanlıklı merdiven oluştur
 ab-tool-rehost = Ana duvar
 ab-tool-rehost-hint = Seçilen kapı, pencere ve boşlukları seçilen duvara taşı
+ab-prop-area-unit = Alan birimi
+ab-prop-volume-unit = Hacim birimi
+ab-prop-angle-unit = Açı birimi
+ab-prop-length-precision = Uzunluk ondalık basamağı
+ab-prop-area-precision = Alan ondalık basamağı
+ab-prop-volume-precision = Hacim ondalık basamağı
+ab-prop-angle-precision = Açı ondalık basamağı
+ab-prop-slope-precision = Eğim ondalık basamağı
+ab-prop-length-rounding = Uzunluk yuvarlama adımı
+ab-prop-area-rounding = Alan yuvarlama adımı
+ab-prop-volume-rounding = Hacim yuvarlama adımı
+ab-prop-angle-rounding = Açı yuvarlama adımı
+ab-prop-slope-rounding = Eğim yuvarlama adımı
+ab-unit-square-meter = Metrekare
+ab-unit-square-centimeter = Santimetrekare
+ab-unit-square-millimeter = Milimetrekare
+ab-unit-square-foot = Fit kare
+ab-unit-cubic-meter = Metreküp
+ab-unit-liter = Litre
+ab-unit-cubic-foot = Fit küp
+ab-unit-cubic-yard = Yarda küp
+ab-unit-degree = Derece
+ab-unit-radian = Radyan
+ab-unit-gradian = Gon
+ab-prop-status = Durum
+ab-prop-issue-date = Yayın tarihi (YYYY-AA-GG)
+ab-prop-author = Yazar
+ab-prop-organization = Kuruluş
+ab-prop-description = Açıklama
+ab-prop-long-name = Uzun ad
+ab-prop-occupancy-type = Kullanım türü
+ab-prop-year-of-construction = Yapım yılı
+ab-prop-construction-method = Yapım yöntemi
+ab-group-project = Proje
+ab-tool-project-info = Proje Bilgisi
+ab-tool-project-info-hint = Proje adını, numarasını, işvereni, adresi, durumu ve diğer proje bilgilerini özellikler panelinde düzenleyin.
+ab-tool-units = Birimler
+ab-tool-units-hint = Uzunluk, alan, hacim, açı ve eğimin birimini, ondalık basamağını ve yuvarlamasını özellikler panelinde belirleyin.
+ab-tool-purge = Temizle
+ab-tool-purge-hint = Hiçbir şeyin kullanmadığı eleman tiplerini geri alınabilir tek adımda kaldırın.
+ab-tool-transfer-standards = Standartları Aktar
+ab-tool-transfer-standards-hint = Eleman tiplerini ve birim ayarlarını başka bir proje dosyasından kopyalayın.
+ab-template-title = Bir şablon seçin
+ab-transfer-standards-title = Standartları bir projeden kopyalayın
+ab-notice-purged = { $count ->
+    [one] Kullanılmayan 1 tip kaldırıldı: { $names }. Geri alma onu geri getirir.
+   *[other] Kullanılmayan { $count } tip kaldırıldı: { $names }. Geri alma onları geri getirir.
+}
+ab-notice-purge-nothing = Kullanılmayan tip yok: her şey kullanımda ya da türünün son tipi.
+ab-notice-standards = { $count ->
+    [one] 1 tip kopyalandı, { $skipped } tip korundu ya da atlandı.
+   *[other] { $count } tip kopyalandı, { $skipped } tip korundu ya da atlandı.
+}

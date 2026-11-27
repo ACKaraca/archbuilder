@@ -225,7 +225,10 @@ pub struct SetProperty {
     #[schemars(length(min = 1, max = 1000))]
     pub objects: Vec<IdParam>,
     /// The field: `name` of any object, `elevation` of a level, a storey (its level's) or a
-    /// building, `number`, `client`, `address`, `length_unit` or `template` of the project,
+    /// building, `number`, `client`, `address`, `status`, `issue_date`, `author`, `organization`, `description`,
+    /// `long_name`, `occupancy_type`, `year_of_construction`, `construction_method`, `length_unit`,
+    /// `area_unit`, `volume_unit`, `angle_unit`, `slope_unit`, a `…_precision` or a `…_rounding` or
+    /// `template` of the project,
     /// `start_x`, `start_y`, `end_x`, `end_y`, `thickness`, `height`, `base_offset` (lengths) or
     /// `location_line` (`center`, `exterior`, `interior`, `core_center`, `core_exterior`,
     /// `core_interior`) of a wall, and `type` (a type's name or identifier, or its number in the
@@ -697,6 +700,7 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         ValueType::String => Some(Value::String(json.as_str()?.trim().to_owned())),
         ValueType::Bool => Some(Value::Bool(json.as_bool()?)),
         ValueType::F64 => json.as_f64().filter(|v| v.is_finite()).map(Value::F64),
+        ValueType::I64 => json.as_i64().map(Value::I64),
         ValueType::Enum(variants) => {
             let code = match json.as_str() {
                 Some(name) => variants.iter().find(|v| v.name == name)?.code,
@@ -709,12 +713,9 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         }
         ValueType::Quantity(dimension) => {
             let param: QuantityParam = serde_json::from_value(json.clone()).ok()?;
-            let quantity = if *dimension == arc_base::Dimension::LENGTH {
-                crate::length(ctx, &param)
-            } else {
-                ctx.quantity(&param, *dimension)
-            };
-            quantity.ok().map(Value::Quantity)
+            crate::quantity(ctx, &param, *dimension)
+                .ok()
+                .map(Value::Quantity)
         }
         _ => None,
     }
