@@ -61,6 +61,17 @@ use crate::room_tool::RoomTool;
 use crate::stair_tool::StairTool;
 use crate::wall_tool::{Env, Tool, storey_for};
 
+/// The seed of an invocation from the controller's counter `state`: the SplitMix64 output, not
+/// the counter. The command context mixes the snapshot revision in as a multiple of the same
+/// constant the counter steps by, so raw counter values `a` and `b` met at revisions `b` and `a`
+/// would give two invocations one stream of identifiers ("already exists").
+fn mixed(state: u64) -> u64 {
+    let mut z = state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// The commands whose button starts their prompts once, on the stair tool's machinery.
 const PROMPTED: [&str; 4] = [
     FLOOR_SET_SLOPE,
@@ -625,7 +636,7 @@ impl WallInteraction {
             registry: archbuilder_commands::registry()
                 .and_then(|mut r| archbuilder_io::register(&mut r).map(|()| r))
                 .ok(),
-            seed: seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed),
+            seed: mixed(seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)),
             cursor: None,
             snap: None,
             guides: Vec::new(),
@@ -691,7 +702,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.tool, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -721,7 +732,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.inserts, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -751,7 +762,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.floors, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -781,7 +792,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.rooms, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -811,7 +822,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         // The members a selection set command chose become the tab's selection, which the shell
         // applies only for commands it runs itself.
@@ -852,7 +863,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.datums, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -882,7 +893,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.modify, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -1107,7 +1118,7 @@ impl WallInteraction {
     /// The next invocation's seed.
     fn next_seed(&mut self) -> u64 {
         self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        self.seed
+        mixed(self.seed)
     }
 
     /// `text` as the active prompt reads it: a decimal comma becomes a point where the language
