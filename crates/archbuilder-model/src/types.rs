@@ -2465,7 +2465,7 @@ mod tests {
                 assert_eq!(decl.schema.fields[*at].name, *name, "{key}");
             }
             // A type whose sketch is made on a work plane ends with the reference to it.
-            let stored = usize::from(ON_WORK_PLANE.iter().any(|k| *k == key));
+            let stored = usize::from(ON_WORK_PLANE.contains(&key));
             assert_eq!(decl.schema.fields.len(), fields.len() + stored, "{key}");
             if stored == 1 {
                 assert_eq!(decl.schema.fields[fields.len()].name, "work_plane", "{key}");
