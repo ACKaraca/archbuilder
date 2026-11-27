@@ -6,6 +6,7 @@
 pub mod def;
 pub mod eval;
 pub mod fixtures;
+pub mod package;
 pub mod text;
 
 pub use def::{Definition, Version};

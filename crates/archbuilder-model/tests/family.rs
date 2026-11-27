@@ -255,3 +255,50 @@ fn the_evaluation_budget_bounds_a_hostile_definition() {
     let e = d.evaluate(None, &BTreeMap::new()).unwrap_err();
     assert_eq!(e.code(), "ab.family.limit_exceeded");
 }
+
+#[test]
+fn publishing_checks_the_version_step_and_runs_the_tests() {
+    use archbuilder_model::family::Version;
+    use archbuilder_model::family::package::publish;
+    let v = |a, b, c| Version {
+        major: a,
+        minor: b,
+        patch: c,
+    };
+    let old = publish(&table(), None, v(1, 0, 0)).unwrap();
+    let old = old.definition().unwrap();
+    // The same version, or an older one, is not newer.
+    assert_eq!(
+        code(publish(&table(), Some(&old), v(1, 0, 0))),
+        "ab.family.version_invalid"
+    );
+    // A parameter added needs a minor step.
+    let mut added = table();
+    let mut p = added.parameters[0].clone();
+    p.id = arc_base::id::Identifier::from_u128(0x99);
+    p.key = "Extra".into();
+    p.name = "Extra".into();
+    added.parameters.push(p);
+    assert_eq!(
+        code(publish(&added, Some(&old), v(1, 0, 1))),
+        "ab.family.version_invalid"
+    );
+    assert!(publish(&added, Some(&old), v(1, 1, 0)).is_ok());
+    // A parameter removed needs a major step.
+    let mut removed = table();
+    removed.parameters.retain(|p| p.key != "LegSize");
+    removed.tests.clear();
+    removed.forms.clear();
+    removed.profiles.clear();
+    assert_eq!(
+        code(publish(&removed, Some(&old), v(1, 5, 0))),
+        "ab.family.version_invalid"
+    );
+    // A failing test case refuses the publication.
+    let mut failing = table();
+    failing.tests[0].volume = Some(1.0);
+    assert_eq!(
+        code(publish(&failing, None, v(1, 0, 0))),
+        "ab.family.test_failed"
+    );
+}

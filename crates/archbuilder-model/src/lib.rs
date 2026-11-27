@@ -392,7 +392,8 @@ pub mod defaults {
 /// # Errors
 /// The registry's errors; none occur for these declarations.
 pub fn register_types(registry: &mut TypeRegistry) -> Result<()> {
-    types::register(registry)
+    types::register(registry)?;
+    family::package::register(registry)
 }
 
 /// The document type set of the model.
