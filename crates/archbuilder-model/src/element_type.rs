@@ -23,6 +23,7 @@ use arc_doc::{
 
 use crate::error::codes;
 use crate::insert::{Kind, Operation};
+use crate::roof::RafterCut;
 use crate::types::{
     self, CEILING, CEILING_TYPE, DOOR, DOOR_TYPE, FLOOR, FLOOR_TYPE, FRAME_DEPTH_RANGE,
     FRAME_WIDTH_RANGE, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, ROOF, ROOF_TYPE,
@@ -829,6 +830,28 @@ fn wrap_field(name: &str) -> FieldDecl {
 #[must_use]
 pub fn floor_type_fields() -> Vec<FieldDecl> {
     layered_fields()
+}
+
+/// The fields of `archbuilder.roof_type`: the layered fields, then the optional `rafter_cut` and
+/// `fascia_depth` (schema 1.1) that shape the eave end of every roof of the type.
+#[must_use]
+pub fn roof_type_fields() -> Vec<FieldDecl> {
+    let mut fields = layered_fields();
+    fields.extend([
+        FieldDecl::new(
+            "rafter_cut",
+            variants(RafterCut::ALL.iter().map(|c| (c.name(), c.code()))),
+        )
+        .with_default(Value::Enum(RafterCut::Plumb.code()))
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+        types::length_field("fascia_depth", Some(types::real(types::FASCIA_DEPTH_RANGE)))
+            .with_default(types::length(crate::roof::DEFAULT_FASCIA_DEPTH))
+            .optional()
+            .since_minor(1),
+    ]);
+    fields
 }
 
 /// The fields of `archbuilder.ceiling_type`: the layered fields, the height of a new ceiling and

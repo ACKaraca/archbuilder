@@ -1,8 +1,8 @@
 //! What the viewport draws for a roof: the triangles of its slab ([`archbuilder_model::roof`]),
 //! shaded in a tile red. Nothing is stored: the surface derives from the record, its type and the
-//! walls its edges follow, so a change of a wall, a storey or a level extracts every roof again,
-//! and a change of a roof extracts the walls attached to roofs again, whose tops follow it
-//! ([`dependents`]).
+//! walls its edges follow, so a change of a wall, a storey, a level or a roof type (its eave cut)
+//! extracts every roof again, and a change of a roof extracts the walls attached to roofs again,
+//! whose tops follow it ([`dependents`]).
 
 use arc_base::math::Point3;
 use arc_base::{Cancel, Color, Limits, ObjectId, Result, Tolerance};
@@ -12,7 +12,9 @@ use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::roof::Derived;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{FLOOR, LEVEL, ROOF, SHAFT, STOREY, VERTICAL_OPENING, WALL};
+use archbuilder_model::types::{
+    FLOOR, LEVEL, ROOF, ROOF_TYPE, SHAFT, STOREY, VERTICAL_OPENING, WALL,
+};
 
 /// The color of a roof (linear RGB): a tile red.
 pub const COLOR: Color = Color {
@@ -65,7 +67,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             && group.recreated.is_empty()
             && group.deleted.is_empty());
         match key.as_str() {
-            WALL | STOREY | LEVEL | SHAFT | VERTICAL_OPENING => roofs |= any,
+            WALL | STOREY | LEVEL | SHAFT | VERTICAL_OPENING | ROOF_TYPE => roofs |= any,
             ROOF | FLOOR => walls |= any,
             _ => {}
         }

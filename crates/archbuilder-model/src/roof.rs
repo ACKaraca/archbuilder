@@ -16,11 +16,11 @@
 //! underside's moved square to the slope by the type's thickness ([`crate::terrain::solid`]).
 //! Ridges, hips and valleys are the skeleton's lines inside the outline.
 
-use arc_base::math::Point2;
-use arc_base::{ObjectId, Result, Tolerance};
+use arc_base::math::{Point2, Point3, Vector3};
+use arc_base::{Limits, ObjectId, Result, Tolerance};
 use arc_doc::{Snapshot, Value};
 pub use arc_geom::ArcKind;
-use arc_geom::{FaceTag, Polyhedron, Skeleton, weighted_skeleton};
+use arc_geom::{ClipSide, FaceTag, Plane3, Polyhedron, Skeleton, weighted_skeleton};
 
 use crate::floor::{self, Association, Boundary, Face, Floor, Vertex};
 use crate::terrain::{self, Bottom, Piece, Plane};
@@ -39,6 +39,88 @@ pub const OVERHANG_RANGE: (f64, f64) = (0.0, 10.0);
 pub const DEFAULT_OVERHANG: f64 = 0.5;
 /// The thickness of a roof without a type, in meters.
 pub const DEFAULT_THICKNESS: f64 = 0.3;
+
+/// The depth of the fascia face of a two-cut eave when the type gives none, in meters.
+pub const DEFAULT_FASCIA_DEPTH: f64 = 0.15;
+
+coded! {
+    /// How the eave end of a roof slab is cut, in the vertical section square to the eave edge.
+    /// The cut passes through the slab's top corner on the outline (the line the overhang
+    /// reaches); the faces of the cut never lie outside the outline.
+    RafterCut {
+        /// A vertical face from the underside to the top, on the outline.
+        #[default]
+        Plumb = 0, "plumb";
+        /// A face square to the slope, through the top corner: the underside ends short of the
+        /// outline by the thickness times the sine of the slope.
+        Square = 1, "square";
+        /// A vertical face of the fascia depth, measured down from the top corner, then a level
+        /// soffit back to the underside.
+        TwoCutPlumb = 2, "two_cut_plumb";
+        /// A face square to the slope whose length is the fascia depth, measured from the top
+        /// corner, then a level soffit back to the underside.
+        TwoCutSquare = 3, "two_cut_square";
+    }
+}
+
+impl RafterCut {
+    /// Whether the end face is square to the slope.
+    #[must_use]
+    pub const fn is_square(self) -> bool {
+        matches!(self, Self::Square | Self::TwoCutSquare)
+    }
+}
+
+/// The cut of the eave ends of every roof of one type: set on the type, so all roofs of the type
+/// and all their layers (which share the cut faces) follow it. Gable edges have no eave and keep
+/// their vertical plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EaveCut {
+    /// The kind of cut.
+    pub cut: RafterCut,
+    /// The depth of the fascia face of a two-cut end, in meters; unused by the single cuts.
+    pub fascia_depth: f64,
+}
+
+impl Default for EaveCut {
+    fn default() -> Self {
+        Self {
+            cut: RafterCut::Plumb,
+            fascia_depth: DEFAULT_FASCIA_DEPTH,
+        }
+    }
+}
+
+impl EaveCut {
+    /// The cut a roof type's field values give; a type without the optional fields cuts plumb.
+    #[must_use]
+    pub fn from_values(values: &[Option<Value>]) -> Self {
+        let (low, high) = types::FASCIA_DEPTH_RANGE;
+        Self {
+            cut: RafterCut::of_field(values, types::roof_type::RAFTER_CUT),
+            fascia_depth: types::meters(values, types::roof_type::FASCIA_DEPTH)
+                .filter(|d| (low..=high).contains(d))
+                .unwrap_or(DEFAULT_FASCIA_DEPTH),
+        }
+    }
+
+    /// How far below the top corner the level soffit lies on an eave of slope `tan` and
+    /// thickness `thickness` (square to the slope); `None` when the cut has no soffit there (a
+    /// single cut, or a fascia face as long as the whole end).
+    #[must_use]
+    pub fn soffit_drop(&self, tan: f64, thickness: f64) -> Option<f64> {
+        let secant = (1.0 + tan * tan).sqrt();
+        match self.cut {
+            RafterCut::TwoCutPlumb => {
+                (self.fascia_depth < thickness * secant - 1e-9).then_some(self.fascia_depth)
+            }
+            RafterCut::TwoCutSquare => {
+                (self.fascia_depth < thickness - 1e-9).then(|| self.fascia_depth / secant)
+            }
+            RafterCut::Plumb | RafterCut::Square => None,
+        }
+    }
+}
 
 /// One edge of the footprint.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +163,8 @@ pub enum Refusal {
     Unclosed([f64; 2]),
     /// The surface could not be computed reliably near this point.
     Degenerate([f64; 2]),
+    /// Two neighboring eaves with a two-cut end would end at different heights near this point.
+    CutConflict([f64; 2]),
 }
 
 impl Roof {
@@ -304,6 +388,10 @@ pub struct Surface {
     pub drop: f64,
     /// The thickness, measured square to the slope.
     pub thickness: f64,
+    /// How the eave ends are cut; plumb until [`Surface::with_cut`] sets the type's.
+    pub cut: EaveCut,
+    /// The tangent of each footprint edge's slope; `None` for a gable.
+    tans: Vec<Option<f64>>,
     /// The outline cut into triangles, which the pieces are clipped to.
     triangles: Vec<Vec<[f64; 2]>>,
 }
@@ -363,17 +451,47 @@ fn plane_of(skeleton: &Skeleton, edge: usize, at: [f64; 2], lift: f64) -> Option
     })
 }
 
-/// The sloped cells of `skeleton` with their planes, lifted by `lift`.
-fn cells(skeleton: &Skeleton, lift: f64) -> Vec<(Vec<[f64; 2]>, Plane)> {
+/// The sloped cells of `skeleton` with their planes, lifted by `lift`, and the edge of each.
+fn cells(skeleton: &Skeleton, lift: f64) -> Vec<(usize, Vec<[f64; 2]>, Plane)> {
     skeleton
         .cells
         .iter()
         .filter_map(|cell| {
             let first = cell.points.first()?;
             let plane = plane_of(skeleton, cell.edge, [first.x, first.y], lift)?;
-            Some((cell.points.iter().map(|p| [p.x, p.y]).collect(), plane))
+            Some((
+                cell.edge,
+                cell.points.iter().map(|p| [p.x, p.y]).collect(),
+                plane,
+            ))
         })
         .collect()
+}
+
+/// `points` (a convex polygon) cut where `f` is zero: the part where `f >= 0` and the part
+/// where `f <= 0`.
+fn split_by(points: &[[f64; 2]], f: &dyn Fn([f64; 2]) -> f64) -> (Vec<[f64; 2]>, Vec<[f64; 2]>) {
+    let (mut above, mut below) = (Vec::new(), Vec::new());
+    let n = points.len();
+    for i in 0..n {
+        let (Some(&a), Some(&b)) = (points.get(i), points.get((i + 1) % n)) else {
+            continue;
+        };
+        let (fa, fb) = (f(a), f(b));
+        if fa >= 0.0 {
+            above.push(a);
+        }
+        if fa <= 0.0 {
+            below.push(a);
+        }
+        if (fa > 0.0 && fb < 0.0) || (fa < 0.0 && fb > 0.0) {
+            let t = fa / (fa - fb);
+            let q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            above.push(q);
+            below.push(q);
+        }
+    }
+    (above, below)
 }
 
 /// The part of the segment `a`-`b` inside the convex counterclockwise polygon `poly`.
@@ -501,8 +619,65 @@ impl Surface {
             base,
             drop,
             thickness: roof.thickness,
+            cut: EaveCut::default(),
+            tans,
             triangles,
         })
+    }
+
+    /// The surface with the eave ends cut as `cut` says (the roof type's).
+    #[must_use]
+    pub fn with_cut(mut self, cut: EaveCut) -> Self {
+        self.cut = cut;
+        self
+    }
+
+    /// The top corner of the end of eave `k`: where the top plane meets the outline line, with
+    /// the top plane itself.
+    fn top_corner(&self, k: usize) -> Option<(Point3, Plane)> {
+        let at = *self.outline.get(k)?;
+        let plane = plane_of(&self.over, k, at, self.base - self.drop)?;
+        Some((Point3::new(at[0], at[1], plane.z), plane))
+    }
+
+    /// The elevation of the level soffit of eave `k`, when its end has one.
+    fn soffit(&self, k: usize) -> Option<f64> {
+        let tan = (*self.tans.get(k)?)?;
+        let drop = self.cut.soffit_drop(tan, self.thickness)?;
+        Some(self.top_corner(k)?.0.z - drop)
+    }
+
+    /// The first outline corner where two neighboring sloped eaves would end at different
+    /// heights because a level soffit is on one of them only, or at different heights on each:
+    /// the underside would need a step, which the slab does not have.
+    #[must_use]
+    pub fn cut_conflict(&self) -> Option<[f64; 2]> {
+        let n = self.outline.len();
+        (0..n).find_map(|k| {
+            let j = (k + 1) % n;
+            self.tans.get(k).copied().flatten()?;
+            self.tans.get(j).copied().flatten()?;
+            let (a, b) = (self.soffit(k), self.soffit(j));
+            if a.is_none() && b.is_none() {
+                return None;
+            }
+            // Where an end has no soffit its underside stays at its eave.
+            let floor = |e: usize, soffit: Option<f64>| {
+                let eave = self.eave_elevation(e)?;
+                Some(soffit.map_or(eave, |s| s.max(eave)))
+            };
+            let (fa, fb) = (floor(k, a)?, floor(j, b)?);
+            if (fa - fb).abs() > 1e-6 {
+                return self.outline.get(j).copied();
+            }
+            None
+        })
+    }
+
+    /// The elevation of the underside of eave `k` at its outline line.
+    fn eave_elevation(&self, k: usize) -> Option<f64> {
+        let at = *self.outline.get(k)?;
+        Some(plane_of(&self.skeleton, k, at, self.base - self.drop)?.z)
     }
 
     /// The outline cut into counterclockwise triangles.
@@ -554,17 +729,37 @@ impl Surface {
     /// The underside over the outline as convex pieces with their planes.
     #[must_use]
     pub fn pieces(&self) -> Vec<Piece> {
+        self.under_pieces(false)
+    }
+
+    /// The underside as [`Surface::pieces`] with the level soffits of the eave cut in it.
+    fn under_pieces(&self, cut: bool) -> Vec<Piece> {
         let lift = self.base - self.drop;
         let mut out = Vec::new();
-        for (cell, plane) in cells(&self.skeleton, lift) {
+        for (edge, cell, plane) in cells(&self.skeleton, lift) {
             for triangle in &self.triangles {
                 let part = terrain::clip_convex(triangle, &cell);
                 if part.len() >= 3 && terrain::double_area(&part) > AREA {
-                    out.push(Piece {
-                        points: part,
-                        plane,
-                        upper: None,
-                    });
+                    let soffit = if cut { self.soffit(edge) } else { None };
+                    let Some(level) = soffit else {
+                        out.push(Piece {
+                            points: part,
+                            plane,
+                            upper: None,
+                        });
+                        continue;
+                    };
+                    // Under the soffit the underside is level; above it follows the slope.
+                    let (sloped, flat) = split_by(&part, &|p| plane.z(p) - level);
+                    for (points, plane) in [(sloped, plane), (flat, Plane::level(level))] {
+                        if points.len() >= 3 && terrain::double_area(&points) > AREA {
+                            out.push(Piece {
+                                points,
+                                plane,
+                                upper: None,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -576,8 +771,8 @@ impl Surface {
         let lift = self.base - self.drop;
         let tops = cells(&self.over, lift);
         let mut out = Vec::new();
-        for piece in self.pieces() {
-            for (cell, upper) in &tops {
+        for piece in self.under_pieces(true) {
+            for (_, cell, upper) in &tops {
                 let part = terrain::clip_convex(&piece.points, cell);
                 if part.len() >= 3 && terrain::double_area(&part) > AREA {
                     out.push(Piece {
@@ -591,14 +786,49 @@ impl Surface {
         out
     }
 
-    /// The slab between the underside and the top, the thickness square to the slope.
+    /// The slab between the underside and the top, the thickness square to the slope, with its
+    /// eave ends cut as [`Surface::cut`] says.
     ///
     /// # Errors
-    /// The solid kernel's errors.
+    /// The solid kernel's errors; `ab.model.roof_cut_conflict` for eave ends that would need a
+    /// step.
     pub fn solid(&self) -> Result<Polyhedron> {
-        terrain::solid(&self.slab_pieces(), 0.0, Bottom::Pieces(0.0), &|_, _| {
+        if let Some(at) = self.cut_conflict() {
+            return Err(refusal_error(Refusal::CutConflict(at), ""));
+        }
+        let mut body = terrain::solid(&self.slab_pieces(), 0.0, Bottom::Pieces(0.0), &|_, _| {
             FaceTag::Untagged
-        })
+        })?;
+        if self.cut.cut.is_square() {
+            for k in 0..self.tans.len() {
+                if let Some(plane) = self.square_plane(k) {
+                    let number = u32::try_from(k).unwrap_or(u32::MAX);
+                    body = body
+                        .clip(
+                            &plane?,
+                            ClipSide::Positive,
+                            number,
+                            &Tolerance::DEFAULT,
+                            &Limits::DEFAULT,
+                        )?
+                        .ok_or_else(|| {
+                            arc_base::Error::new(arc_geom::error::codes::SOLID_CLIP_DEGENERATE)
+                        })?;
+                }
+            }
+        }
+        Ok(body)
+    }
+
+    /// The plane square to the slope of eave `k` through its top corner; the slab lies on its
+    /// positive side (up the slope). `None` for a gable.
+    fn square_plane(&self, k: usize) -> Option<Result<Plane3>> {
+        self.tans.get(k).copied().flatten()?;
+        let (corner, top) = self.top_corner(k)?;
+        let [gx, gy] = top.grad;
+        // The steepest way up the slope, which is the normal of the plane square to it.
+        let normal = Vector3::new(gx, gy, gx * gx + gy * gy);
+        Some(Plane3::new(corner, normal))
     }
 
     /// The ridges, hips and valleys in plan, inside the outline.
@@ -740,7 +970,17 @@ impl Derived {
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
         let footprint = roof.footprint_in(snapshot).ok_or(Refusal::Malformed)?;
-        let surface = Surface::compute(&roof, footprint, level + roof.base_offset)?;
+        let cut = crate::element_type::type_of(
+            snapshot,
+            crate::element_type::TypeKind::Roof,
+            &object.values,
+        )
+        .map(|t| EaveCut::from_values(&t.values))
+        .unwrap_or_default();
+        let surface = Surface::compute(&roof, footprint, level + roof.base_offset)?.with_cut(cut);
+        if let Some(at) = surface.cut_conflict() {
+            return Err(Refusal::CutConflict(at));
+        }
         let cuts = crate::opening::cuts(
             snapshot,
             object,
@@ -780,6 +1020,7 @@ pub fn refusal_error(refusal: Refusal, name: &str) -> arc_base::Error {
         Refusal::CollinearSlopes(p) => located(codes::ROOF_COLLINEAR_SLOPES, p),
         Refusal::Unclosed(p) => located(codes::ROOF_UNCLOSED, p),
         Refusal::Degenerate(p) => located(codes::ROOF_DEGENERATE, p),
+        Refusal::CutConflict(p) => located(codes::ROOF_CUT_CONFLICT, p),
     }
 }
 
@@ -881,6 +1122,89 @@ mod tests {
             solid.volume()
         );
         assert!((solid.bounding_box().max().z - 5.0).abs() < 1e-9);
+    }
+
+    /// A gable roof 10 m long: eaves on the two long edges with a 0.5 m overhang, gables without.
+    fn gable(cut: EaveCut) -> Surface {
+        let theta = 30.0_f64.to_radians();
+        let mut r = roof(&RECT, &[Some(theta), None, Some(theta), None], 0.0);
+        r.edges[0].overhang = Some(0.5);
+        r.edges[2].overhang = Some(0.5);
+        Surface::compute(&r, RECT.to_vec(), 3.0)
+            .unwrap()
+            .with_cut(cut)
+    }
+
+    /// The section of the removed end of one eave, in square meters, from the definitions of the
+    /// cuts: the thickness `t` is square to the slope `theta`, the fascia depth `d`.
+    fn removed_per_eave(cut: RafterCut, d: f64) -> f64 {
+        let (t, theta) = (0.3_f64, 30.0_f64.to_radians());
+        let h = t / theta.cos();
+        let square = 0.5 * t * t * theta.tan();
+        match cut {
+            RafterCut::Plumb => 0.0,
+            RafterCut::Square => square,
+            RafterCut::TwoCutPlumb => 0.5 * (h - d).max(0.0).powi(2) / theta.tan(),
+            RafterCut::TwoCutSquare => square + 0.5 * (t - d).max(0.0).powi(2) / theta.tan(),
+        }
+    }
+
+    #[test]
+    fn every_eave_cut_removes_exactly_its_end_section() {
+        let whole = gable(EaveCut::default()).solid().unwrap().volume();
+        for (cut, depth) in [
+            (RafterCut::Square, 0.1),
+            (RafterCut::TwoCutPlumb, 0.1),
+            (RafterCut::TwoCutPlumb, 0.2),
+            (RafterCut::TwoCutPlumb, 0.5),
+            (RafterCut::TwoCutSquare, 0.1),
+            (RafterCut::TwoCutSquare, 0.25),
+            (RafterCut::TwoCutSquare, 0.5),
+        ] {
+            let surface = gable(EaveCut {
+                cut,
+                fascia_depth: depth,
+            });
+            let solid = surface.solid().unwrap();
+            // Two eaves, each 10 m long, and the cut never reaches beyond the outline.
+            let expected = whole - 2.0 * 10.0 * removed_per_eave(cut, depth);
+            assert!(
+                (solid.volume() - expected).abs() < 1e-6,
+                "{cut:?} {depth}: {} against {expected}",
+                solid.volume()
+            );
+            assert!(solid.bounding_box().min().y >= -0.5 - 1e-9);
+            assert!(solid.bounding_box().max().y <= 6.5 + 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_square_cut_miters_at_hips_and_neighbors_with_different_soffits_conflict() {
+        let a = 35.0_f64.to_radians();
+        let r = roof(&RECT, &[Some(a); 4], 0.5);
+        let plumb = Surface::compute(&r, RECT.to_vec(), 3.0).unwrap();
+        let square = Surface::compute(&r, RECT.to_vec(), 3.0)
+            .unwrap()
+            .with_cut(EaveCut {
+                cut: RafterCut::Square,
+                fascia_depth: 0.2,
+            });
+        let (p, q) = (plumb.solid().unwrap(), square.solid().unwrap());
+        assert!(q.volume() < p.volume() - 1e-3);
+        assert!(q.shell_count() == 1);
+        // Equal neighbors have no conflict; a longer overhang on one edge puts one eave lower.
+        let two = EaveCut {
+            cut: RafterCut::TwoCutPlumb,
+            fascia_depth: 0.1,
+        };
+        assert!(plumb.clone().with_cut(two).solid().is_ok());
+        let mut r = r;
+        r.edges[0].overhang = Some(1.0);
+        let uneven = Surface::compute(&r, RECT.to_vec(), 3.0)
+            .unwrap()
+            .with_cut(two);
+        assert!(uneven.cut_conflict().is_some());
+        assert!(uneven.solid().is_err());
     }
 
     #[test]

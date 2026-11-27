@@ -215,6 +215,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-io-mesh"
+version = "0.1.0"
+source = "git+https://github.com/ACKaraca/arc-core?rev=6f3ef188af0f2ba6dbbf765d6a7cda7d1eee33f0#6f3ef188af0f2ba6dbbf765d6a7cda7d1eee33f0"
+dependencies = [
+ "arc-base",
+ "arc-io-common",
+ "arc-mesh",
+ "serde_json",
+]
+
+[[package]]
 name = "arc-mesh"
 version = "0.1.0"
 source = "git+https://github.com/ACKaraca/arc-core?rev=6f3ef188af0f2ba6dbbf765d6a7cda7d1eee33f0#6f3ef188af0f2ba6dbbf765d6a7cda7d1eee33f0"
@@ -338,6 +349,7 @@ dependencies = [
  "arc-geom",
  "arc-io-common",
  "arc-io-ifc",
+ "arc-io-mesh",
  "arc-mesh",
  "archbuilder-commands",
  "archbuilder-model",

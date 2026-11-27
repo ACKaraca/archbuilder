@@ -11,15 +11,19 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use arc_base::{Error, Result};
-use arc_command::{CommandSpec, Context, Permission, Registry, UndoBehavior};
+use arc_command::{CommandSpec, Context, IdParam, Permission, Registry, UndoBehavior};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::ifc::{ExportOptions, export_ifc};
+use crate::mesh::{MeshFormat, MeshOptions, Unit, export_mesh};
 use crate::time::iso8601;
 
 /// The identifier of the export command.
 pub const EXPORT_IFC: &str = "archbuilder.file.export_ifc";
+
+/// The identifier of the mesh export command.
+pub const EXPORT_MESH: &str = "archbuilder.file.export_mesh";
 
 /// A message of this crate.
 struct Message {
@@ -31,6 +35,13 @@ const LABEL: Message = Message {
 };
 const DESCRIPTION: Message = Message {
     message_id: "ab-io-command-export-ifc-description",
+};
+
+const MESH_LABEL: Message = Message {
+    message_id: "ab-io-command-export-mesh-label",
+};
+const MESH_DESCRIPTION: Message = Message {
+    message_id: "ab-io-command-export-mesh-description",
 };
 
 /// Parameters of `archbuilder.file.export_ifc`.
@@ -98,6 +109,187 @@ fn export(ctx: &mut Context<'_>, p: ExportParams) -> Result<Exported> {
     })
 }
 
+/// The format of a mesh file as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MeshFormatParam {
+    /// Wavefront OBJ with an MTL file beside it.
+    Obj,
+    /// Binary STL.
+    Stl,
+    /// glTF 2.0 JSON with the buffer embedded.
+    Gltf,
+    /// glTF 2.0 binary container.
+    Glb,
+}
+
+/// The unit of a mesh file as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnitParam {
+    /// Meters.
+    Meter,
+    /// Centimeters.
+    Centimeter,
+    /// Millimeters.
+    Millimeter,
+    /// Feet.
+    Foot,
+    /// Inches.
+    Inch,
+}
+
+const fn yes() -> bool {
+    true
+}
+
+/// Parameters of `archbuilder.file.export_mesh`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportMeshParams {
+    /// The file to write, inside the session's write roots. An OBJ file with materials is
+    /// written with an MTL file of the same name beside it.
+    #[schemars(length(min = 1, max = 4095))]
+    pub path: String,
+    /// The format; by default the one the extension of the path names.
+    #[serde(default)]
+    pub format: Option<MeshFormatParam>,
+    /// The unit of the coordinates; meters by default. glTF is always in meters.
+    #[serde(default)]
+    pub unit: Option<UnitParam>,
+    /// Write only the selected elements.
+    #[serde(default)]
+    pub selection: bool,
+    /// Write only these elements (instead of the selection or the whole model).
+    #[serde(default)]
+    #[schemars(length(max = 100000))]
+    pub elements: Vec<IdParam>,
+    /// Leave out these elements: the ones the caller's view does not show.
+    #[serde(default)]
+    #[schemars(length(max = 100000))]
+    pub hidden: Vec<IdParam>,
+    /// One object for the whole model, split only by material.
+    #[serde(default)]
+    pub merge: bool,
+    /// Whether colors are written (OBJ with MTL, glTF materials); on by default.
+    #[serde(default = "yes")]
+    pub materials: bool,
+}
+
+/// What `archbuilder.file.export_mesh` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MeshExported {
+    /// The name of the file written, without its directory.
+    pub file: String,
+    /// The name of the MTL file written beside an OBJ file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub materials_file: Option<String>,
+    /// The bytes written to the main file.
+    pub bytes: u64,
+    /// The elements written (1 when merged).
+    pub elements: u64,
+    /// The triangles written.
+    pub triangles: u64,
+    /// The bounding box of the positions, minimum then maximum, in the unit of the file.
+    pub bounds: Option<[[f64; 3]; 2]>,
+    /// Objects not exported and occurrences not carried, counted by the loss report.
+    pub dropped: u64,
+    /// Occurrences written with an approximation.
+    pub approximated: u64,
+    /// The loss report.
+    pub report: serde_json::Value,
+}
+
+fn export_mesh_command(ctx: &mut Context<'_>, p: ExportMeshParams) -> Result<MeshExported> {
+    ctx.checkpoint()?;
+    let path = Path::new(&p.path);
+    let file = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let format = match p.format {
+        Some(MeshFormatParam::Obj) => MeshFormat::Obj,
+        Some(MeshFormatParam::Stl) => MeshFormat::Stl,
+        Some(MeshFormatParam::Gltf) => MeshFormat::Gltf,
+        Some(MeshFormatParam::Glb) => MeshFormat::Glb,
+        None => path
+            .extension()
+            .and_then(|e| e.to_str())
+            .and_then(MeshFormat::of_extension)
+            .ok_or_else(|| Error::new(crate::error::codes::MESH_FORMAT_UNKNOWN))?,
+    };
+    let only = if !p.elements.is_empty() {
+        Some(p.elements.iter().map(|i| i.0).collect())
+    } else if p.selection {
+        let selected: std::collections::BTreeSet<_> = ctx.selection().iter().copied().collect();
+        if selected.is_empty() {
+            return Err(Error::new(crate::error::codes::MESH_SELECTION_EMPTY));
+        }
+        Some(selected)
+    } else {
+        None
+    };
+    let mtl_path = path.with_extension("mtl");
+    let mtl_name = mtl_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let options = MeshOptions {
+        format,
+        unit: match p.unit.unwrap_or(UnitParam::Meter) {
+            UnitParam::Meter => Unit::Meter,
+            UnitParam::Centimeter => Unit::Centimeter,
+            UnitParam::Millimeter => Unit::Millimeter,
+            UnitParam::Foot => Unit::Foot,
+            UnitParam::Inch => Unit::Inch,
+        },
+        only,
+        hidden: p.hidden.iter().map(|i| i.0).collect(),
+        merge: p.merge,
+        materials: p.materials,
+        mtl_name,
+        application: format!("archbuilder {}", env!("CARGO_PKG_VERSION")),
+        timestamp: iso8601(ctx.now_unix_millis()),
+        file_name: file.clone(),
+        limits: *ctx.limits(),
+        ..MeshOptions::default()
+    };
+    let export = export_mesh(ctx.snapshot(), &options)?;
+    let report = serde_json::to_value(&export.report)
+        .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
+    let io = |e| Error::new(arc_command::error::codes::PATH_IO).with_source(e);
+    let mut target = ctx.create_write(path)?;
+    target
+        .write_all(&export.bytes)
+        .and_then(|()| target.flush())
+        .map_err(io)?;
+    let materials_file = match &export.mtl {
+        Some(mtl) => {
+            let mut target = ctx.create_write(&mtl_path)?;
+            target
+                .write_all(mtl)
+                .and_then(|()| target.flush())
+                .map_err(io)?;
+            Some(options.mtl_name.clone())
+        }
+        None => None,
+    };
+    let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    Ok(MeshExported {
+        file,
+        materials_file,
+        bytes: count(export.bytes.len()),
+        elements: count(export.elements),
+        triangles: count(export.triangles),
+        bounds: export.bounds,
+        dropped: export.report.summary.dropped,
+        approximated: export.report.summary.approximated,
+        report,
+    })
+}
+
 /// Registers `archbuilder.file.export_ifc` (permission classes `read` and `file_write`, not
 /// undoable) and the two shortcut file commands into `registry`.
 ///
@@ -108,6 +300,16 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         CommandSpec::new(EXPORT_IFC, LABEL.message_id, DESCRIPTION.message_id, export)
             .with_undo(UndoBehavior::NotUndoable)
             .with_permissions([Permission::Read, Permission::FileWrite]),
+    )?;
+    registry.register(
+        CommandSpec::new(
+            EXPORT_MESH,
+            MESH_LABEL.message_id,
+            MESH_DESCRIPTION.message_id,
+            export_mesh_command,
+        )
+        .with_undo(UndoBehavior::NotUndoable)
+        .with_permissions([Permission::Read, Permission::FileWrite]),
     )?;
     register_shortcuts(registry)?;
     crate::standards::register(registry)

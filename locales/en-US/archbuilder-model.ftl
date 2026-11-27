@@ -50,6 +50,7 @@ ab-model-roof-no-slope = No edge of the roof "{ $name }" defines a slope. Give a
 ab-model-roof-collinear-slopes = Two neighboring edges of the roof "{ $name }" lie on one line near ({ $x }, { $y }) with different slopes. Give them the same slope or remove the point between them.
 ab-model-roof-unclosed = No continuous surface covers the roof "{ $name }" near ({ $x }, { $y }): that part is enclosed only by edges without slope, or an edge without slope meets an inward corner. Give that edge a slope.
 ab-model-roof-degenerate = The surface of the roof "{ $name }" could not be computed reliably near ({ $x }, { $y }). Remove very short or nearly parallel edges there.
+ab-model-roof-cut-conflict = The eave cut of the roof "{ $name }" leaves a step near ({ $x }, { $y }): neighboring eaves with a two-cut end must end at the same height. Give them the same overhang and slope, or use a plumb or square cut.
 ab-model-wall-attach-failed = The wall "{ $name }" cannot follow the underside of "{ $target }": part of it is outside it, or the underside comes down to the wall's base. It keeps its own top until that changes.
 ab-model-wall-attach-target = The wall "{ $name }" can attach its top only to a roof or a floor of its building.
 ab-model-ceiling-malformed = The ceiling "{ $name }" has no usable boundary: each loop needs at least three points inside the allowed range, and its edges must be readable.

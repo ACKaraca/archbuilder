@@ -18,6 +18,7 @@ use archbuilder_model::element_type::{
     self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
+use archbuilder_model::roof::RafterCut;
 use archbuilder_model::{names, spatial, types};
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use schemars::JsonSchema;
@@ -1095,6 +1096,31 @@ impl From<OperationParam> for Operation {
     }
 }
 
+/// The cut of the eave end of a roof type as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RafterCutParam {
+    /// A vertical end face.
+    Plumb,
+    /// An end face square to the slope.
+    Square,
+    /// A vertical fascia face, then a level soffit.
+    TwoCutPlumb,
+    /// A fascia face square to the slope, then a level soffit.
+    TwoCutSquare,
+}
+
+impl From<RafterCutParam> for RafterCut {
+    fn from(c: RafterCutParam) -> Self {
+        match c {
+            RafterCutParam::Plumb => Self::Plumb,
+            RafterCutParam::Square => Self::Square,
+            RafterCutParam::TwoCutPlumb => Self::TwoCutPlumb,
+            RafterCutParam::TwoCutSquare => Self::TwoCutSquare,
+        }
+    }
+}
+
 /// Parameters of `archbuilder.type.set`; every field but the type is optional and only the given
 /// ones change.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1148,6 +1174,12 @@ pub struct SetType {
     /// Doors and windows: the sill height new instances get.
     #[serde(default)]
     pub sill: Option<QuantityParam>,
+    /// Roofs: how the eave ends of every roof of the type are cut.
+    #[serde(default)]
+    pub rafter_cut: Option<RafterCutParam>,
+    /// Roofs: the depth of the fascia face of a two-cut end, 10 mm to 2 m.
+    #[serde(default)]
+    pub fascia_depth: Option<QuantityParam>,
 }
 
 /// What a type command returns.
@@ -1176,6 +1208,9 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
     let mut fields: Vec<(&str, Option<Value>)> = Vec::new();
     if let Some(name) = &p.name {
         fields.push(("name", Some(Value::String(name.trim().to_owned()))));
+    }
+    if kind != TypeKind::Roof && (p.rafter_cut.is_some() || p.fascia_depth.is_some()) {
+        return Err(Error::new(codes::KIND_MISMATCH));
     }
     if kind.layered() {
         let mut layers =
@@ -1207,6 +1242,14 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
             ("core_start", Some(start)),
             ("core_end", Some(end)),
         ]);
+        if kind == TypeKind::Roof {
+            if let Some(c) = p.rafter_cut {
+                fields.push(("rafter_cut", Some(Value::Enum(RafterCut::from(c).code()))));
+            }
+            if let Some(m) = meters(ctx, p.fascia_depth.as_ref())? {
+                fields.push(("fascia_depth", Some(types::length(m))));
+            }
+        }
         if kind == TypeKind::Wall {
             if let Some(e) = p.exposure {
                 let e = match e {

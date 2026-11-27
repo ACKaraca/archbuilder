@@ -908,6 +908,78 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
     }
 }
 
+/// The roof body follows the eave cut of its type: for each cut the body read back from the file
+/// has the volume of the derived solid, which is smaller than the plumb slab. Written to
+/// `ABSLAB_IFC_OUT` for independent validation when that is set.
+#[test]
+fn the_roof_body_follows_the_eave_cut_of_its_type() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let upper_storey = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    let made = house.run(
+        "archbuilder.roof.create",
+        json!({"storey": upper_storey, "picks": [[5.0, 3.0]], "type": "Timber rafters with insulation and tiles"}),
+    );
+    let roof = House::id(&made["roof"]);
+    let ty = spatial::objects(&house.snapshot(), archbuilder_model::types::ROOF_TYPE)
+        .into_iter()
+        .find(|t| {
+            archbuilder_model::element_type::name(t) == "Timber rafters with insulation and tiles"
+        })
+        .unwrap()
+        .id;
+    let slab_volume = |snapshot: &Snapshot| {
+        let object = spatial::get(snapshot, roof).unwrap();
+        archbuilder_model::roof::Derived::of(snapshot, &object)
+            .unwrap()
+            .solid()
+            .unwrap()
+            .volume()
+    };
+    let plumb = slab_volume(&house.snapshot());
+    for (cut, depth, name) in [
+        ("square", "0.1", "roof_square.ifc"),
+        ("two_cut_plumb", "0.1", "roof_two_cut_plumb.ifc"),
+        ("two_cut_square", "0.1", "roof_two_cut_square.ifc"),
+        ("plumb", "0.1", "roof_plumb.ifc"),
+    ] {
+        house.run(
+            "archbuilder.type.set",
+            json!({"type": ty, "rafter_cut": cut, "fascia_depth": depth}),
+        );
+        let snapshot = house.snapshot();
+        let exported = export_ifc(&snapshot, &options()).unwrap();
+        assert!(exported.valid, "{cut}: {:?}", exported.report.items);
+        assert!(!exported.report.has_loss(), "{cut}: {:?}", exported.report);
+        if let Ok(dir) = std::env::var("ABSLAB_IFC_OUT") {
+            std::fs::write(std::path::Path::new(&dir).join(name), &exported.bytes).unwrap();
+        }
+        let file = read(&exported.bytes, &mut ReadOptions::default())
+            .unwrap()
+            .file;
+        let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+        let mut written = 0.0;
+        for item in &geometry.items {
+            if gid(&file, item.product) == global_id(roof.as_u128()) {
+                let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+                written += volume(&mesh, &Limits::DEFAULT).unwrap();
+            }
+        }
+        let derived = slab_volume(&snapshot);
+        assert!(
+            (written - derived).abs() < 1e-6,
+            "{cut}: {written} against {derived}"
+        );
+        if cut == "plumb" {
+            assert!((derived - plumb).abs() < 1e-9);
+        } else {
+            assert!(derived < plumb - 1e-3, "{cut}");
+        }
+    }
+}
+
 /// A floor with an arc edge and the layered walls of the house export without loss and read
 /// back: the slab body is the arc written as chords within the model tolerance.
 #[test]

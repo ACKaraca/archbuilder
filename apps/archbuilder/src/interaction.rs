@@ -182,6 +182,16 @@ const IFC_LOSS: Message = Message {
     message_id: "ab-notice-ifc-loss",
 };
 
+/// What a mesh export says when it wrote the file.
+const MESH_EXPORTED: Message = Message {
+    message_id: "ab-notice-mesh-exported",
+};
+
+/// What a mesh export says when its loss report is not empty.
+const MESH_LOSS: Message = Message {
+    message_id: "ab-notice-mesh-loss",
+};
+
 /// What a delete says when walls lost the roof or floor their top was attached to.
 const WALLS_DETACHED: Message = Message {
     message_id: "ab-notice-walls-detached",
@@ -2246,6 +2256,14 @@ impl WallInteraction {
                 .and_then(serde_json::Value::as_str);
             return self.export_ifc(cx, path.map(str::to_owned));
         }
+        if command == archbuilder_io::command::EXPORT_MESH {
+            self.stop_all();
+            let path = intent
+                .params
+                .get("path")
+                .and_then(serde_json::Value::as_str);
+            return self.export_mesh(cx, path.map(str::to_owned));
+        }
         if command == WALL_CREATE && intent.params.is_empty() {
             self.inserts.stop();
             self.hover = None;
@@ -2778,6 +2796,78 @@ impl WallInteraction {
             if loss > 0 {
                 lines.push(said(
                     IFC_LOSS.message_id,
+                    &[("count", arc_base::error::Value::Int(loss))],
+                ));
+            }
+            for line in lines {
+                self.push_notice(line);
+            }
+        }
+        Ok(())
+    }
+
+    /// Exports the elements as a mesh file to `path`, as [`Self::export_ifc`] does: the selection
+    /// when there is one, else the whole model, without the elements this view hides (the hide
+    /// and isolate state belongs to the view, so it is handed to the command).
+    fn export_mesh(&mut self, cx: &InteractionContext<'_>, path: Option<String>) -> Result<()> {
+        use archbuilder_io::command::EXPORT_MESH;
+        let Some(path) = path else {
+            cx.ask(Intent::new(EXPORT_MESH));
+            return Ok(());
+        };
+        let path = Some(path)
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| Error::new(archbuilder_io::error::codes::PATH_REQUIRED))?;
+        let target = export_base(cx.document_path()).join(path.trim());
+        let target = std::path::absolute(target)
+            .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
+        let directory = target
+            .parent()
+            .map_or_else(|| target.clone(), PathBuf::from);
+        let mut session = Self::session(cx);
+        session.roots = Roots::new([&directory], [&directory])?;
+        let seed = self.next_seed();
+        let (Some(registry), document) = (self.registry.as_ref(), cx.document()?) else {
+            return Ok(());
+        };
+        let snapshot = document.snapshot();
+        let hidden: Vec<String> = archbuilder_model::types::ELEMENTS
+            .into_iter()
+            .flat_map(|key| archbuilder_model::spatial::objects(&snapshot, key))
+            .filter(|o| !self.habits.vis.shows(&snapshot, o.id))
+            .take(100_000)
+            .map(|o| o.id.to_string())
+            .collect();
+        let mut invocation = Invocation::new(
+            EXPORT_MESH.to_owned(),
+            serde_json::json!({
+                "path": target.display().to_string(),
+                "selection": !cx.selection().is_empty(),
+                "hidden": hidden,
+            }),
+        );
+        invocation.seed = seed;
+        invocation.selection = cx.selection().to_vec();
+        let outcome = Invoker::new(registry).invoke(document, &session, invocation)?;
+        let number = |key: &str| outcome.value.get(key).and_then(serde_json::Value::as_i64);
+        let name = target.display().to_string();
+        let (count, loss) = (
+            number("elements").unwrap_or(0),
+            number("dropped").unwrap_or(0) + number("approximated").unwrap_or(0),
+        );
+        if let Some(localizer) = self.localizer(cx.language()) {
+            let said =
+                |id: &str, args: &[(&str, arc_base::error::Value)]| localizer.format(id, args).text;
+            let mut lines = vec![said(
+                MESH_EXPORTED.message_id,
+                &[
+                    ("name", name.into()),
+                    ("count", arc_base::error::Value::Int(count)),
+                ],
+            )];
+            if loss > 0 {
+                lines.push(said(
+                    MESH_LOSS.message_id,
                     &[("count", arc_base::error::Value::Int(loss))],
                 ));
             }
