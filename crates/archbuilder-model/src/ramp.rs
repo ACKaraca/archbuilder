@@ -269,6 +269,44 @@ impl Ramp {
         }
     }
 
+    /// The ramp with its foot (`end` false) or the end of its first sloped run (`end` true) moved
+    /// to `to`. The end keeps the foot and the landing in front of the slope and turns and
+    /// lengthens the run; the foot keeps the end of the run where it is, so the direction and the
+    /// length change. `None` when the run would not be as long as [`LENGTH_RANGE`] allows.
+    #[must_use]
+    pub fn with_end_moved(&self, end: bool, to: [f64; 2]) -> Option<Self> {
+        if !to.iter().all(|v| v.is_finite()) {
+            return None;
+        }
+        let (s, c) = crate::transform::sin_cos(self.direction);
+        let run_start = [
+            self.start[0] + c * self.landing_start,
+            self.start[1] + s * self.landing_start,
+        ];
+        let run_end = [
+            run_start[0] + c * self.length,
+            run_start[1] + s * self.length,
+        ];
+        let fits = |length: f64| (LENGTH_RANGE.0..=LENGTH_RANGE.1).contains(&length);
+        if end {
+            let d = [to[0] - run_start[0], to[1] - run_start[1]];
+            let length = d[0].hypot(d[1]);
+            return fits(length).then(|| Self {
+                direction: d[1].atan2(d[0]),
+                length,
+                ..self.clone()
+            });
+        }
+        let d = [run_end[0] - to[0], run_end[1] - to[1]];
+        let length = d[0].hypot(d[1]) - self.landing_start;
+        fits(length).then(|| Self {
+            start: to,
+            direction: d[1].atan2(d[0]),
+            length,
+            ..self.clone()
+        })
+    }
+
     /// The horizontal lengths of the runs, the first one included.
     fn run_lengths(&self) -> Vec<f64> {
         std::iter::once(self.length)
@@ -1166,6 +1204,27 @@ mod tests {
             }],
             ..ramp()
         }
+    }
+
+    #[test]
+    fn the_foot_and_the_end_of_the_first_run_move_one_at_a_time() {
+        let r = Ramp {
+            landing_start: 1.0,
+            ..ramp()
+        };
+        // The run starts 1 m on and ends 7 m on. Moving the end keeps the foot and its landing.
+        let moved = r.with_end_moved(true, [1.0, 4.0]).unwrap();
+        assert_eq!(moved.start, [0.0, 0.0]);
+        assert!((moved.length - 4.0).abs() < 1.0e-9);
+        assert!((moved.direction - std::f64::consts::FRAC_PI_2).abs() < 1.0e-9);
+        // Moving the foot keeps the end of the run, 7 m on: the run is 7 - (-3) - 1 = 9 m.
+        let moved = r.with_end_moved(false, [-3.0, 0.0]).unwrap();
+        assert_eq!(moved.start, [-3.0, 0.0]);
+        assert!((moved.length - 9.0).abs() < 1.0e-9 && moved.direction.abs() < 1.0e-9);
+        // A run shorter than the least, or a point that is not a number, is not made.
+        assert!(r.with_end_moved(true, [1.0, 0.05]).is_none());
+        assert!(r.with_end_moved(false, [6.95, 0.0]).is_none());
+        assert!(r.with_end_moved(true, [f64::NAN, 0.0]).is_none());
     }
 
     #[test]

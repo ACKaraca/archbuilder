@@ -993,3 +993,98 @@ fn a_mirrored_ramp_of_runs_turns_the_other_way() {
         .collect();
     assert!(close(turns[0] + turns[1], 0.0) && close(turns[0].abs(), std::f64::consts::FRAC_PI_2));
 }
+
+#[test]
+fn the_foot_and_the_end_of_a_ramp_and_a_point_of_a_railing_move_in_one_undo_step_each() {
+    let env = Env::new();
+    let ramp = id_at(
+        &env.ramp(
+            json!({"start": [1.0, 1.0], "to": [7.0, 1.0], "rise": 1.0, "landing_start": 1.0}),
+        )
+        .unwrap(),
+        "ramp",
+    );
+    // The run starts at (2, 1) and ends at (7, 1) (the line to (7, 1) is the whole ramp).
+    let before = ramp_of(&env, ramp);
+    // The end of the run goes to (2, 5): the run turns north and is 4 m long; the foot stays.
+    let moved = env
+        .run(
+            "archbuilder.ramp.move_end",
+            json!({"ramp": ramp.to_string(), "end": "end", "to": [2.0, 5.0]}),
+        )
+        .unwrap();
+    let now = ramp_of(&env, ramp);
+    assert_eq!(now.start, before.start);
+    assert!(close(now.length, 4.0) && close(now.direction, std::f64::consts::FRAC_PI_2));
+    assert!(close(moved.value["rise"].as_f64().unwrap(), 1.0));
+    // The railings on the ramp follow: their rails end at the new top.
+    for r in spatial::objects(&env.snapshot(), RAILING) {
+        let d = Derived::of(&env.snapshot(), &r).unwrap();
+        assert!(d.rail.last().unwrap()[1] > 1.0, "the rail runs north");
+    }
+    // The foot goes to (1, -1); the end of the run, now at (1, 6), stays: 7 m, less the 1 m
+    // landing in front of the slope.
+    env.run(
+        "archbuilder.ramp.move_end",
+        json!({"ramp": ramp.to_string(), "end": "start", "to": [1.0, -1.0]}),
+    )
+    .unwrap();
+    let now = ramp_of(&env, ramp);
+    assert_eq!(now.start, [1.0, -1.0]);
+    assert!(close(now.length, 6.0) && close(now.direction, std::f64::consts::FRAC_PI_2));
+    env.document.undo().wait().unwrap();
+    assert_eq!(ramp_of(&env, ramp).start, before.start);
+    // A bad name, a run that would be shorter than the least and a number that is not one are
+    // refused and leave the ramp as it is.
+    for params in [
+        json!({"ramp": ramp.to_string(), "end": "middle", "to": [2.0, 5.0]}),
+        json!({"ramp": ramp.to_string(), "end": "end", "to": [1.0, 2.05]}),
+        json!({"ramp": ramp.to_string(), "end": "start", "to": [1.0, 5.95]}),
+    ] {
+        assert!(env.run("archbuilder.ramp.move_end", params).is_err());
+    }
+    assert!(close(ramp_of(&env, ramp).length, 4.0));
+    // A point of a railing by path moves in plan and keeps its height.
+    let rail = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 10.0, 0.5], [4.0, 10.0, 0.5], [4.0, 13.0, 0.5]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let moved = env
+        .run(
+            "archbuilder.railing.move_point",
+            json!({"railing": rail.to_string(), "vertex": 1, "to": [6.0, 10.0]}),
+        )
+        .unwrap();
+    assert!(close(
+        moved.value["length"].as_f64().unwrap(),
+        6.0 + (4.0_f64 + 9.0).sqrt()
+    ));
+    let d = env.railing(rail);
+    assert_eq!(d.railing.path[1].point, [6.0, 10.0, 0.5]);
+    env.document.undo().wait().unwrap();
+    assert_eq!(env.railing(rail).railing.path[1].point, [4.0, 10.0, 0.5]);
+    // A hosted railing, a point that is not there and a point on its neighbor are refused.
+    let hosted = spatial::objects(&env.snapshot(), RAILING)
+        .iter()
+        .find(|r| Derived::of(&env.snapshot(), r).is_ok_and(|d| d.railing.host.is_some()))
+        .map(|r| r.id)
+        .unwrap();
+    for (railing, vertex, to) in [
+        (hosted, 0, [0.0, 0.0]),
+        (rail, 7, [0.0, 0.0]),
+        (rail, 1, [0.0, 10.0]),
+    ] {
+        assert!(
+            env.run(
+                "archbuilder.railing.move_point",
+                json!({"railing": railing.to_string(), "vertex": vertex, "to": to}),
+            )
+            .is_err()
+        );
+    }
+    assert_eq!(env.railing(rail).railing.path[1].point, [4.0, 10.0, 0.5]);
+}

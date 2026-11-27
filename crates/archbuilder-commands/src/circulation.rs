@@ -15,6 +15,8 @@
 //!   a slope over the type's largest is a warning. More `runs` follow the first, each turned at
 //!   the middle of the landing before it and with a slope of its own if it is given one.
 //!   Railings are created on the sides named in `railings` (both by default), hosted on the ramp.
+//! - `archbuilder.ramp.move_end` and `archbuilder.railing.move_point`: what the drag handles run,
+//!   the foot or the end of the first run of a ramp and a point of the path of a railing.
 //! - `archbuilder.ramp.set_run` and `archbuilder.ramp.add_run`: change one run of a ramp (its
 //!   length, landing, turn or slope; remove it) and add a run. A change of one run's slope moves
 //!   the elevations of the runs after it.
@@ -56,6 +58,10 @@ pub const RAMP_TYPE_DEFINE: &str = "archbuilder.ramp_type.define";
 pub const RAMP_SET_RUN: &str = "archbuilder.ramp.set_run";
 /// The identifier of the command that adds a run to a ramp.
 pub const RAMP_ADD_RUN: &str = "archbuilder.ramp.add_run";
+/// The identifier of the command that moves the foot or the end of the first run of a ramp.
+pub const RAMP_MOVE_END: &str = "archbuilder.ramp.move_end";
+/// The identifier of the command that moves a point of the path of a railing.
+pub const RAILING_MOVE_POINT: &str = "archbuilder.railing.move_point";
 
 fn invalid() -> Error {
     Error::new(arc_command::error::codes::PARAMS_INVALID)
@@ -1023,6 +1029,77 @@ fn set_ramp_run(ctx: &mut Context<'_>, p: SetRampRun) -> Result<RampEdited> {
     })
 }
 
+/// Parameters of `archbuilder.ramp.move_end`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveRampEnd {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// `start`: the foot, the end of the first run stays; `end`: the end of the first sloped run,
+    /// the foot stays.
+    pub end: String,
+    /// Where it goes, `[x, y]` in meters.
+    pub to: [f64; 2],
+}
+
+fn move_ramp_end(ctx: &mut Context<'_>, p: MoveRampEnd) -> Result<RampEdited> {
+    let end = match p.end.as_str() {
+        "start" => false,
+        "end" => true,
+        _ => return Err(invalid()),
+    };
+    edit_ramp(ctx, p.ramp.0, |_, body| {
+        *body = body.with_end_moved(end, p.to).ok_or_else(invalid)?;
+        Ok(())
+    })
+}
+
+/// Parameters of `archbuilder.railing.move_point`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveRailingPoint {
+    /// The railing by path (a hosted railing follows its host).
+    pub railing: IdParam,
+    /// The point, counted from 0.
+    pub vertex: usize,
+    /// Where it goes, `[x, y]` in meters; the height stays.
+    pub to: [f64; 2],
+}
+
+/// What `archbuilder.railing.move_point` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RailingMoved {
+    /// The railing.
+    pub railing: IdParam,
+    /// The length along the walking surface in meters.
+    pub length: f64,
+}
+
+fn move_railing_point(ctx: &mut Context<'_>, p: MoveRailingPoint) -> Result<RailingMoved> {
+    let object = expect(ctx.snapshot(), p.railing.0, RAILING)?;
+    let name = types::text(&object.values, 0)
+        .unwrap_or_default()
+        .to_owned();
+    let mut railing = Railing::from_values(&object.values).ok_or_else(invalid)?;
+    if railing.host.is_some() || !p.to.iter().all(|v| v.is_finite()) {
+        return Err(invalid());
+    }
+    let vertex = railing.path.get_mut(p.vertex).ok_or_else(invalid)?;
+    vertex.point[0] = p.to[0];
+    vertex.point[1] = p.to[1];
+    write_changes(ctx, RAILING, &object, railing.values(&name))?;
+    ensure_valid(ctx)?;
+    let derived = {
+        let txn = ctx.txn()?;
+        spatial::get(txn.snapshot(), p.railing.0).and_then(|o| Derived::of(txn.snapshot(), &o).ok())
+    }
+    .ok_or_else(|| Error::new(crate::error::codes::KIND_MISMATCH))?;
+    Ok(RailingMoved {
+        railing: p.railing,
+        length: derived.length(),
+    })
+}
+
 fn add_ramp_run(ctx: &mut Context<'_>, p: AddRampRun) -> Result<RampEdited> {
     edit_ramp(ctx, p.ramp.0, |ctx, body| {
         body.runs.push(run_of(
@@ -1412,6 +1489,11 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         description,
         |ctx: &mut Context<'_>, p: DefineRailingType| define_railing_type(ctx, p),
     ))?;
+    register_ramps(registry)
+}
+
+/// Registers the commands of the ramps.
+fn register_ramps(registry: &mut Registry) -> Result<()> {
     const RMC_LABEL: Msg = Msg {
         message_id: "ab-cmd-ramp-create-label",
     };
@@ -1453,6 +1535,32 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         label,
         description,
         |ctx: &mut Context<'_>, p: SetRampRun| set_ramp_run(ctx, p),
+    ))?;
+    const RME_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-move-end-label",
+    };
+    const RME_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-move-end-description",
+    };
+    let (label, description) = (RME_LABEL.message_id, RME_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_MOVE_END,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: MoveRampEnd| move_ramp_end(ctx, p),
+    ))?;
+    const RMP_LABEL: Msg = Msg {
+        message_id: "ab-cmd-railing-move-point-label",
+    };
+    const RMP_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-railing-move-point-description",
+    };
+    let (label, description) = (RMP_LABEL.message_id, RMP_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAILING_MOVE_POINT,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: MoveRailingPoint| move_railing_point(ctx, p),
     ))?;
     const RAR_LABEL: Msg = Msg {
         message_id: "ab-cmd-ramp-add-run-label",

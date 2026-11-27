@@ -862,6 +862,14 @@ Shift) still starts the selection band. A drag shorter than 4 pixels is a click.
   handle about the center of its bounds, in steps of 15 degrees (free with Shift)
   (`archbuilder.modify.rotate`). A selected door or window has two flip handles that flip its hand
   and its facing on a click.
+- **Handles** of a single selected ramp: a square at the foot (`archbuilder.ramp.move_end`, the
+  end of the first run stays, so the run turns and changes length), a square at the end of the
+  first sloped run (the foot and the landing in front of the slope stay) and a diamond at the
+  middle of the left edge of that run, in steps of 50 mm (`archbuilder.property.set` of `width`; a
+  ramp by sketch has none). A single selected railing by path has a square at each point of its
+  path (`archbuilder.railing.move_point`, the height stays; a point dropped on its neighbor makes
+  nothing); a railing on a stair, ramp or floor follows its host and has none. A selected ramp or
+  railing by path is dragged and turned like a stair.
 - **Alt** held during a drag turns snapping off (the pointer's own point, whole millimeters of
   height, free rotation). Escape ends a drag and leaves the keyboard focus in the viewport.
 - **Temporary dimensions.** A single selected wall shows the distance between its center line and

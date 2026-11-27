@@ -24,6 +24,11 @@
 //! - **Rotation handle** of a selection with walls, floors or stairs: the selection turns about the
 //!   center of its bounds in steps of 15 degrees (free with Shift).
 //! - **Flip handles** of a selected door or window flip its hand and its facing on a click.
+//! - **Ramp handles** of a selected ramp: a square at the foot moves the foot (the end of the first
+//!   run stays, so the run turns and changes length), a square at the end of the first sloped run
+//!   moves that end (the foot stays), a diamond at the middle of the left edge sets the width.
+//! - **Railing handles** of a selected railing by path: a square at each point of the path moves
+//!   the point in plan; a railing on a stair, ramp or floor follows its host and has none.
 //! - **Roof handles** of a selected roof: a square at each footprint point moves the point (the
 //!   two edges at it stop following walls), a diamond at the middle of each edge moves the edge
 //!   across itself (an edge that follows a wall keeps following it at a new offset).
@@ -47,7 +52,7 @@ use archbuilder_model::floor::Floor;
 use archbuilder_model::insert::{self, Insert};
 use archbuilder_model::spatial;
 use archbuilder_model::transform::Xform;
-use archbuilder_model::types::{self, DOOR, FLOOR, ROOF, STAIR, WALL, WINDOW};
+use archbuilder_model::types::{self, DOOR, FLOOR, RAILING, RAMP, ROOF, STAIR, WALL, WINDOW};
 use archbuilder_model::units::{LengthUnit, length_text};
 use archbuilder_model::wall::Wall;
 use serde_json::json;
@@ -190,6 +195,19 @@ pub enum HandleKind {
     FlipHand(ObjectId),
     /// The facing of a door or window.
     FlipFacing(ObjectId),
+    /// The foot of a ramp.
+    RampStart(ObjectId),
+    /// The end of the first sloped run of a ramp.
+    RampEnd(ObjectId),
+    /// The width of a ramp.
+    RampWidth(ObjectId),
+    /// A point of the path of a railing.
+    RailingPoint {
+        /// The railing.
+        railing: ObjectId,
+        /// The point.
+        vertex: usize,
+    },
     /// A point of a roof's footprint.
     RoofVertex {
         /// The roof.
@@ -351,6 +369,17 @@ enum What {
         roof: ObjectId,
         edge: usize,
     },
+    RampEnd {
+        ramp: ObjectId,
+        end: bool,
+    },
+    RampWidth {
+        ramp: ObjectId,
+    },
+    RailingPoint {
+        railing: ObjectId,
+        vertex: usize,
+    },
     Click(Hit),
 }
 
@@ -490,6 +519,16 @@ fn points_of(snapshot: &Snapshot, id: ObjectId) -> Vec<V2> {
             .map(|d| d.surface.footprint)
             .unwrap_or_default();
     }
+    if kind_of(snapshot, id).as_deref() == Some(RAMP) {
+        return archbuilder_model::ramp::Placed::of(snapshot, &object)
+            .map(|p| p.outline())
+            .unwrap_or_default();
+    }
+    if kind_of(snapshot, id).as_deref() == Some(RAILING) {
+        return archbuilder_model::railing::Railing::from_values(&object.values)
+            .map(|r| r.path.iter().map(|v| [v.point[0], v.point[1]]).collect())
+            .unwrap_or_default();
+    }
     archbuilder_model::room::Room::from_values(&object.values)
         .map(|r| vec![r.point])
         .unwrap_or_default()
@@ -504,12 +543,17 @@ fn rotation_of(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Vec<Objec
         .filter(|id| kind_of(snapshot, *id).is_some_and(|k| types::is_storey_element(&k)))
         .take(archbuilder_commands::modify::MAX_OBJECTS)
         .collect();
-    if !objects.iter().any(|id| {
-        matches!(
-            kind_of(snapshot, *id).as_deref(),
-            Some(WALL | FLOOR | STAIR | ROOF)
-        )
-    }) {
+    if !objects
+        .iter()
+        .any(|id| match kind_of(snapshot, *id).as_deref() {
+            Some(WALL | FLOOR | STAIR | ROOF | RAMP) => true,
+            // A railing on a host follows it and does not turn by itself.
+            Some(RAILING) => spatial::get(snapshot, *id)
+                .and_then(|o| archbuilder_model::railing::Railing::from_values(&o.values))
+                .is_some_and(|r| r.host.is_none()),
+            _ => false,
+        })
+    {
         return None;
     }
     let mut min = [f64::INFINITY; 2];
@@ -528,8 +572,76 @@ fn rotation_of(snapshot: &Snapshot, selection: &[ObjectId]) -> Option<(Vec<Objec
     Some((objects, center, z))
 }
 
+/// The ramp `id` as authored.
+fn ramp_of(snapshot: &Snapshot, id: ObjectId) -> Option<archbuilder_model::ramp::Ramp> {
+    archbuilder_model::ramp::Ramp::from_values(&spatial::get(snapshot, id)?.values)
+}
+
+/// The handles of a ramp: its foot, the end of its first sloped run and, for a ramp of runs, the
+/// middle of the left edge of that run (the width).
+fn ramp_handles(snapshot: &Snapshot, id: ObjectId) -> Vec<Handle> {
+    let Some(placed) =
+        spatial::get(snapshot, id).and_then(|o| archbuilder_model::ramp::Placed::of(snapshot, &o))
+    else {
+        return Vec::new();
+    };
+    let Ok(layout) = &placed.layout else {
+        return Vec::new();
+    };
+    let r = &layout.ramp;
+    let (s, c) = r.direction.sin_cos();
+    let at = |a: f64, side: f64| [r.start[0] + c * a - s * side, r.start[1] + s * a + c * side];
+    let (z0, z1) = layout.elevations().first().copied().unwrap_or((0.0, 0.0));
+    let mut out = Vec::new();
+    let foot = at(0.0, 0.0);
+    out.push(Handle {
+        kind: HandleKind::RampStart(id),
+        at: [foot[0], foot[1], placed.base],
+    });
+    let end = at(r.landing_start + r.length, 0.0);
+    out.push(Handle {
+        kind: HandleKind::RampEnd(id),
+        at: [end[0], end[1], placed.base + z1],
+    });
+    if r.boundary.is_empty() {
+        let m = at(r.landing_start + r.length / 2.0, r.width / 2.0);
+        out.push(Handle {
+            kind: HandleKind::RampWidth(id),
+            at: [m[0], m[1], placed.base + (z0 + z1) / 2.0],
+        });
+    }
+    out
+}
+
+/// A ramp as it would be, dashed: its outline and its walking line.
+fn ramp_ghost(ramp: &archbuilder_model::ramp::Ramp, z: f64) -> Vec<ProductOverlay> {
+    // Only the plan is drawn, so any height that makes a layout will do.
+    let Ok(layout) = archbuilder_model::ramp::Layout::new(ramp, Some(1.0), 1.0) else {
+        return Vec::new();
+    };
+    let plan = layout.plan();
+    let path = |points: &[V2], closed: bool| ProductOverlay::Path {
+        points: points
+            .iter()
+            .chain(points.first().filter(|_| closed))
+            .map(|p| p3(*p, z))
+            .collect(),
+        dashed: true,
+    };
+    vec![path(&plan.outline, true), path(&plan.walk, false)]
+}
+
+/// A path as it would be, dashed.
+fn path_ghost(points: &[V2], z: f64) -> ProductOverlay {
+    ProductOverlay::Path {
+        points: points.iter().map(|p| p3(*p, z)).collect(),
+        dashed: true,
+    }
+}
+
 /// The handles of the selection.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm per kind of object")]
 pub fn handles(snapshot: &Snapshot, selection: &[ObjectId], frame: &Frame) -> Vec<Handle> {
     let mut out = Vec::new();
     if let [id] = selection {
@@ -575,6 +687,22 @@ pub fn handles(snapshot: &Snapshot, selection: &[ObjectId], frame: &Frame) -> Ve
                         kind: HandleKind::FlipFacing(*id),
                         at: [facing[0], facing[1], z],
                     });
+                }
+            }
+            Some(RAMP) => out.extend(ramp_handles(snapshot, *id)),
+            Some(RAILING) => {
+                let derived = spatial::get(snapshot, *id)
+                    .and_then(|o| archbuilder_model::railing::Derived::of(snapshot, &o).ok());
+                if let Some(d) = derived.filter(|d| d.railing.host.is_none()) {
+                    for (k, v) in d.railing.path.iter().enumerate() {
+                        out.push(Handle {
+                            kind: HandleKind::RailingPoint {
+                                railing: *id,
+                                vertex: k,
+                            },
+                            at: [v.point[0], v.point[1], d.base + v.point[2]],
+                        });
+                    }
                 }
             }
             Some(ROOF) => {
@@ -744,7 +872,7 @@ pub fn body_at(i: &Input<'_>) -> Option<ObjectId> {
             .copied()
             .find(|id| match kind_of(i.snapshot, *id).as_deref() {
                 Some(WALL | DOOR | WINDOW | types::WALL_OPENING) => true,
-                Some(FLOOR | STAIR | ROOF) => i.selection.contains(id),
+                Some(FLOOR | STAIR | ROOF | RAMP | RAILING) => i.selection.contains(id),
                 _ => false,
             });
     }
@@ -789,7 +917,7 @@ pub fn body_at(i: &Input<'_>) -> Option<ObjectId> {
         .find(|id| {
             matches!(
                 kind_of(i.snapshot, *id).as_deref(),
-                Some(FLOOR | STAIR | ROOF)
+                Some(FLOOR | STAIR | ROOF | RAMP | RAILING)
             ) && i.selection.contains(id)
         })
 }
@@ -860,6 +988,17 @@ fn ghost(
         {
             let moved: Vec<V2> = placed.outline().iter().map(|p| xf.point(*p)).collect();
             out.push(closed(&moved));
+        } else if kind_of(snapshot, *id).as_deref() == Some(RAMP)
+            && let Some(placed) = archbuilder_model::ramp::Placed::of(snapshot, &object)
+        {
+            let moved: Vec<V2> = placed.outline().iter().map(|p| xf.point(*p)).collect();
+            out.push(closed(&moved));
+        } else if kind_of(snapshot, *id).as_deref() == Some(RAILING)
+            && let Ok(d) = archbuilder_model::railing::Derived::of(snapshot, &object)
+            && d.railing.host.is_none()
+        {
+            let moved: Vec<V2> = d.plan_line().iter().map(|p| xf.point(*p)).collect();
+            out.push(path_ghost(&moved, z));
         } else if kind_of(snapshot, *id).as_deref() == Some(ROOF)
             && let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object)
         {
@@ -1117,6 +1256,12 @@ impl Direct {
                 What::RoofVertex { roof, vertex }
             }
             Hit::Handle(HandleKind::RoofEdge { roof, edge }) => What::RoofEdge { roof, edge },
+            Hit::Handle(HandleKind::RampStart(ramp)) => What::RampEnd { ramp, end: false },
+            Hit::Handle(HandleKind::RampEnd(ramp)) => What::RampEnd { ramp, end: true },
+            Hit::Handle(HandleKind::RampWidth(ramp)) => What::RampWidth { ramp },
+            Hit::Handle(HandleKind::RailingPoint { railing, vertex }) => {
+                What::RailingPoint { railing, vertex }
+            }
             Hit::Handle(HandleKind::Rotate) => {
                 let Some((objects, center, _)) = rotation_of(i.snapshot, i.selection) else {
                     return false;
@@ -1393,12 +1538,91 @@ impl Direct {
                 out.ghost = vec![roof_ghost(&moved, drag.z)];
                 out.label = Some((p3(at, drag.z), length_text(distance, i.unit, i.separator)));
             }
+            What::RampEnd { ramp, end } => {
+                let Some(r) = ramp_of(snapshot, *ramp) else {
+                    return;
+                };
+                let lines = baselines(snapshot, &[*ramp], &[]);
+                let mut ends = vec![[0.0, 0.0]];
+                ends.extend(lines.iter().flatten().copied());
+                let hit =
+                    snap::snap(&snap::Input::new(at, ppu, &ends, &lines, None)).filter(|_| !i.free);
+                let to = hit.as_ref().map_or(at, |h| h.point);
+                out.to = to;
+                out.snap = hit
+                    .as_ref()
+                    .and_then(|h| snap_kind(h.kind).map(|k| (k, h.point)));
+                let moved = r.with_end_moved(*end, to);
+                out.valid = moved.is_some();
+                if let Some(m) = &moved {
+                    out.ghost = ramp_ghost(m, drag.z);
+                    out.label = Some((p3(to, drag.z), length_text(m.length, i.unit, i.separator)));
+                }
+            }
+            What::RampWidth { ramp } => {
+                let Some(r) = ramp_of(snapshot, *ramp) else {
+                    return;
+                };
+                let (s, c) = r.direction.sin_cos();
+                let across = -(at[0] - r.start[0]) * s + (at[1] - r.start[1]) * c;
+                let step = if i.free { 0.005 } else { 0.05 };
+                let width = (2.0 * across.abs() / step).round() * step;
+                out.height = width;
+                out.valid = (archbuilder_model::ramp::WIDTH_RANGE.0
+                    ..=archbuilder_model::ramp::WIDTH_RANGE.1)
+                    .contains(&width)
+                    && (width - r.width).abs() > 1.0e-9;
+                out.ghost = ramp_ghost(
+                    &archbuilder_model::ramp::Ramp {
+                        width: width.max(0.01),
+                        ..r
+                    },
+                    drag.z,
+                );
+                out.label = Some((p3(at, drag.z), length_text(width, i.unit, i.separator)));
+            }
+            What::RailingPoint { railing, vertex } => {
+                let Some(d) = spatial::get(snapshot, *railing)
+                    .and_then(|o| archbuilder_model::railing::Derived::of(snapshot, &o).ok())
+                else {
+                    return;
+                };
+                let path: Vec<V2> = d
+                    .railing
+                    .path
+                    .iter()
+                    .map(|v| [v.point[0], v.point[1]])
+                    .collect();
+                let lines = baselines(snapshot, &[*railing], &[]);
+                let mut ends = vec![[0.0, 0.0]];
+                ends.extend(lines.iter().flatten().copied());
+                let hit =
+                    snap::snap(&snap::Input::new(at, ppu, &ends, &lines, None)).filter(|_| !i.free);
+                let to = hit.as_ref().map_or(at, |h| h.point);
+                out.to = to;
+                out.snap = hit
+                    .as_ref()
+                    .and_then(|h| snap_kind(h.kind).map(|k| (k, h.point)));
+                let n = path.len();
+                // A point on a neighbor would make an edge of no length.
+                out.valid = path.get(*vertex).is_some_and(|p| dist2(*p, to) > 1.0e-9)
+                    && [vertex.checked_sub(1), Some(vertex + 1).filter(|k| *k < n)]
+                        .into_iter()
+                        .flatten()
+                        .all(|k| path.get(k).is_none_or(|p| dist2(*p, to) > 1.0e-3));
+                let mut moved = path;
+                if let Some(p) = moved.get_mut(*vertex) {
+                    *p = to;
+                }
+                out.ghost = vec![path_ghost(&moved, drag.z)];
+            }
             What::Click(_) => {}
         }
         drag.out = out;
     }
 
     /// A release of the primary button: the commands the gesture ends in, if any.
+    #[allow(clippy::too_many_lines, reason = "one arm per kind of drag")]
     pub fn release(&mut self, i: &Input<'_>) -> Option<Done> {
         let drag = self.drag.take()?;
         if !drag.live {
@@ -1466,6 +1690,23 @@ impl Direct {
                 params: json!({
                     "objects": [wall.to_string()], "field": "height", "value": out.height
                 }),
+            },
+            What::RampEnd { ramp, end } => Command {
+                name: archbuilder_commands::circulation::RAMP_MOVE_END,
+                params: json!({
+                    "ramp": ramp.to_string(), "end": if end { "end" } else { "start" },
+                    "to": out.to,
+                }),
+            },
+            What::RampWidth { ramp } => Command {
+                name: PROPERTY_SET,
+                params: json!({
+                    "objects": [ramp.to_string()], "field": "width", "value": out.height
+                }),
+            },
+            What::RailingPoint { railing, vertex } => Command {
+                name: archbuilder_commands::circulation::RAILING_MOVE_POINT,
+                params: json!({"railing": railing.to_string(), "vertex": vertex, "to": out.to}),
             },
             What::Rotate { objects, center } => Command {
                 name: MODIFY_ROTATE,
@@ -1692,7 +1933,11 @@ fn shape(frame: &Frame, h: &Handle) -> Vec<Point3> {
             .collect(),
         HandleKind::FlipHand(_) => vec![[-r, -r], [r + 1.0, 0.0], [-r, r]],
         HandleKind::FlipFacing(_) => vec![[-r, -r], [r, -r], [0.0, r + 1.0]],
-        HandleKind::RoofVertex { .. } => vec![[-r, -r], [r, -r], [r, r], [-r, r]],
+        HandleKind::RoofVertex { .. }
+        | HandleKind::RampStart(_)
+        | HandleKind::RampEnd(_)
+        | HandleKind::RailingPoint { .. } => vec![[-r, -r], [r, -r], [r, r], [-r, r]],
+        HandleKind::RampWidth(_) => vec![[0.0, -r], [r, 0.0], [0.0, r], [-r, 0.0]],
         HandleKind::RoofEdge { .. } => vec![[0.0, -r], [r, 0.0], [0.0, r], [-r, 0.0]],
     };
     offsets
