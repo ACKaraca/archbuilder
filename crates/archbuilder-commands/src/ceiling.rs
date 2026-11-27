@@ -131,7 +131,7 @@ pub struct SetSlope {
 }
 
 /// The slope in radians a parameter gives: an angle, or text in the project's slope unit.
-fn slope_angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
+pub(crate) fn slope_angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
     let value = match param {
         QuantityParam::Text(t) => crate::roof::parse_slope(ctx.snapshot(), t)?,
         QuantityParam::Si(_) => ctx.quantity(param, Dimension::ANGLE)?.value(),
@@ -144,7 +144,7 @@ fn slope_angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
 }
 
 /// Writes the slope fields of ceiling `id`: the arrow from `from` to `to` and its rise.
-fn write_slope(
+pub(crate) fn write_slope(
     ctx: &mut Context<'_>,
     id: ObjectId,
     from: [f64; 2],
@@ -155,6 +155,8 @@ fn write_slope(
     let length = (to[0] - from[0]).hypot(to[1] - from[1]);
     // The slope the arrow gives, whichever way it is given, stays within the limit.
     let height = spatial::get(ctx.txn()?.snapshot(), id)
+        // The height at the start line: the ceiling's height offset, a floor's top offset (the
+        // same field position).
         .and_then(|o| types::meters(&o.values, types::ceiling::HEIGHT_OFFSET))
         .unwrap_or(0.0);
     let angle = match (slope, end_height) {
@@ -188,7 +190,7 @@ fn write_slope(
     Ok(())
 }
 
-fn clear_slope(ctx: &mut Context<'_>, id: ObjectId) -> Result<()> {
+pub(crate) fn clear_slope(ctx: &mut Context<'_>, id: ObjectId) -> Result<()> {
     let txn = ctx.txn()?;
     for field in ["slope_x", "slope_y", "slope_length", "slope", "end_height"] {
         txn.modify(id, FieldPath::new(field), None)?;
@@ -379,6 +381,34 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         .message_id,
         |ctx: &mut Context<'_>, p: SetSlope| set_slope(ctx, p),
     ))
+}
+
+/// The slope arrow of the floor values `values` under `xf`.
+pub(crate) fn moved_floor_slope(values: &mut [Option<Value>], xf: &Xform) {
+    use types::floor as f;
+    let m = |values: &[Option<Value>], at| types::meters(values, at);
+    if let (Some(x), Some(y)) = (m(values, f::SLOPE_X), m(values, f::SLOPE_Y)) {
+        let theta = match values.get(f::SLOPE_DIRECTION) {
+            Some(Some(Value::Quantity(q))) => q.value(),
+            _ => 0.0,
+        };
+        let (a, b) = (
+            xf.point([x, y]),
+            xf.point([x + theta.cos(), y + theta.sin()]),
+        );
+        for (slot, value) in [
+            (f::SLOPE_X, types::length(a[0])),
+            (f::SLOPE_Y, types::length(a[1])),
+            (
+                f::SLOPE_DIRECTION,
+                types::angle((b[1] - a[1]).atan2(b[0] - a[0])),
+            ),
+        ] {
+            if let Some(v) = values.get_mut(slot) {
+                *v = Some(value);
+            }
+        }
+    }
 }
 
 /// The grid origin and rotation and the slope arrow of the ceiling values `values` under `xf`.

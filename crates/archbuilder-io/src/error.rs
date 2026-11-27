@@ -72,6 +72,21 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-stair-not-written",
     };
+    /// A floor edge element: IFC4 has no element for an edge of a slab, so it is written as a
+    /// molding covering that carries its swept body.
+    pub const FLOOR_EDGE_AS_COVERING: Reason = Reason {
+        code: "ab.io.ifc.floor_edge_as_covering",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-floor-edge-as-covering",
+    };
+    /// A floor edge element that names edges its floor no longer has: those edges are not written.
+    pub const FLOOR_EDGE_ORPHAN: Reason = Reason {
+        code: "ab.io.ifc.floor_edge_orphan",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-floor-edge-orphan",
+    };
     /// An arc edge of a boundary or an arched opening, written as chords within the model's
     /// flattening tolerance: IFC bodies here are faceted.
     pub const ARC_FACETED: Reason = Reason {

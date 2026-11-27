@@ -56,8 +56,14 @@ ab-model-ceiling-boundary = "{ $name }" tavanının sınırı kullanılamıyor: 
 ab-model-ceiling-edge-unsupported = "{ $name }" tavanının bir kenarı "{ $wall }" duvarını izliyor ama uçlarının ötesine geçiyor: duvar artık tavanı orada sınırlamıyor.
 ab-model-opening-footprint = "{ $name }" izdüşümü kullanılamıyor: en az üç noktası olmalı, kendini kesmemeli ve alanı olmalı.
 ab-model-opening-outside-host = "{ $name }" boşluğu, onu barındıran "{ $host }" elemanının dışına taşıyor: dışarıdaki kısım hiçbir şey kesmez.
+ab-model-floor-slope = "{ $name }" döşemesinin eğimi 85°'den dik. Daha düşük bir eğim, daha uzun bir ok ya da daha küçük bir uç yüksekliği verin.
 ab-model-ceiling-slope = "{ $name }" tavanının eğimi 85°'den dik. Daha düşük bir eğim, daha uzun bir ok ya da daha küçük bir uç yüksekliği verin.
 ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğinin dışına çıkıyor: kotun altına ya da üstündeki kotun üzerine geçiyor. Eğim okunu taşıyın ya da eğimi azaltın.
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
 
 ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.
+ab-model-floor-edge-profile = "{ $name }" kenar elemanı için en az bir döşeme kenarı ve en az üç noktalı, kendini kesmeyen bir profil gerekir.
+ab-model-floor-edge-orphan = "{ $name }" kenar elemanı, döşemesinde artık bulunmayan { $count } kenarı adlandırıyor. Kenarları yeniden seçin ya da elemanı silin.
+ab-model-roof-extrusion-profile = "{ $name }" çatısının profili en az iki nokta, sıfır uzunlukta segment içermeyen ve her noktası sınırlar içinde olmalı.
+ab-model-roof-extrusion-section = "{ $name }" çatısının kalınlığı profilinin kıvrımları için fazla büyük: kesiti kendini keserdi. Daha küçük bir kalınlık ya da daha yumuşak bir profil verin.
+ab-model-roof-extrusion-span = "{ $name }" çatısının ekstrüzyonu 10 mm ile 500 m arasında olmalı.

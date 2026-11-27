@@ -159,6 +159,11 @@ pub fn extent(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 
                     points.extend(d.surface.outline.iter().copied());
                 }
             }
+            Some(types::ROOF_EXTRUSION) => {
+                if let Ok(d) = archbuilder_model::roof_extrusion::Derived::of(snapshot, &object) {
+                    points.extend(d.pieces().iter().flat_map(|p| p.points.iter().copied()));
+                }
+            }
             Some(types::CEILING) => {
                 if let Some(b) = archbuilder_model::ceiling::Ceiling::from_values(&object.values)
                     .and_then(|c| c.shape.boundary_in(snapshot))

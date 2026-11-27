@@ -333,6 +333,43 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-opening-outside-host",
     };
+    /// The profile of a floor edge is not a simple loop, or the floor edge names no edge.
+    pub const FLOOR_EDGE_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-edge-profile",
+    };
+    /// A floor edge names an edge its floor no longer has (a warning).
+    pub const FLOOR_EDGE_ORPHAN: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_orphan",
+        category: Category::Conflict,
+        message_id: "ab-model-floor-edge-orphan",
+    };
+    /// The profile of a roof by extrusion is unreadable or has too few points, a segment of no
+    /// length or a point out of range.
+    pub const ROOF_EXTRUSION_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-profile",
+    };
+    /// The thickness of a roof by extrusion makes its section cross itself.
+    pub const ROOF_EXTRUSION_SECTION: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_section",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-section",
+    };
+    /// The extrusion of a roof is too short or too long.
+    pub const ROOF_EXTRUSION_SPAN: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_span",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-span",
+    };
+    /// A floor's slope is steeper than the limit.
+    pub const FLOOR_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-slope",
+    };
     /// A ceiling's slope is steeper than the limit.
     pub const CEILING_SLOPE: ErrorCode = ErrorCode {
         code: "ab.model.ceiling_slope",

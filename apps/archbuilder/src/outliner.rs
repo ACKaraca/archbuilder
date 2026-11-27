@@ -182,6 +182,7 @@ impl<'a> Structure<'a> {
                         walls.extend(roofs);
                         // Then its ceilings and shafts, by name.
                         for key in [
+                            archbuilder_model::types::ROOF_EXTRUSION,
                             archbuilder_model::types::CEILING,
                             archbuilder_model::types::SHAFT,
                         ] {
@@ -203,6 +204,15 @@ impl<'a> Structure<'a> {
                             .iter()
                             .map(|c| (c.id, labelled(snapshot, c)))
                             .collect();
+                            let edges: Vec<_> = spatial::children(
+                                snapshot,
+                                archbuilder_model::types::FLOOR_EDGE,
+                                host,
+                            )
+                            .iter()
+                            .map(|c| (c.id, labelled(snapshot, c)))
+                            .collect();
+                            let cuts: Vec<_> = cuts.into_iter().chain(edges).collect();
                             if !cuts.is_empty() {
                                 children.insert(Some(host), cuts);
                             }

@@ -22,3 +22,5 @@ ab-io-validation-unreadable = The IFC file was written but could not be read bac
 ab-io-validation-missing = An object of the model is not in the IFC file under its identifier, so the file is incomplete.
 ab-io-validation-duplicate-id = Two entities of the IFC file have the same global identifier, so the file is incomplete.
 ab-io-validation-count = The IFC file holds { $found } elements but the export counted { $expected }, so the file is incomplete.
+ab-io-loss-floor-edge-as-covering = IFC4 has no element for the edge of a slab: a floor edge is written as a covering of the type molding with its swept body.
+ab-io-loss-floor-edge-orphan = A floor edge names edges that its floor no longer has: those edges are not in the file.

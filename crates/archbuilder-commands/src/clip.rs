@@ -154,6 +154,17 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
     // The vertical openings of the floors, roofs and ceilings copied go with them.
     for id in ids.iter().take(MAX_ITEMS) {
         let key = spatial::type_of(snapshot, *id).unwrap_or_default();
+        if key == FLOOR {
+            for edge in spatial::children(snapshot, types::FLOOR_EDGE, *id) {
+                push(
+                    &mut items,
+                    edge.id,
+                    Some(*id),
+                    Json::Array(edge.values.iter().map(encode).collect()),
+                    types::FLOOR_EDGE,
+                );
+            }
+        }
         if types::VERTICAL_HOSTS.contains(&key.as_str()) {
             for cut in spatial::children(snapshot, VERTICAL_OPENING, *id) {
                 push(
@@ -302,6 +313,8 @@ pub(crate) fn paste_content(
         }
         if key == CEILING {
             crate::ceiling::moved_values(&mut values, &xf);
+        } else {
+            crate::ceiling::moved_floor_slope(&mut values, &xf);
         }
         crate::element_type::rebind(ctx, &key, &mut values)?;
         let new = create(ctx, &key, Some(storey), values)?;
@@ -386,6 +399,21 @@ pub(crate) fn paste_content(
         let new = create(ctx, ROOF, Some(storey), values)?;
         hosts.insert(old, new);
         created.push(new);
+    }
+    for (key, _, host, mut values) in decoded.iter().cloned() {
+        if key != types::FLOOR_EDGE {
+            continue;
+        }
+        let Some(host) = host.and_then(|h| hosts.get(&h).copied()) else {
+            continue;
+        };
+        let seen = ctx.txn()?.snapshot().clone();
+        if let Some(slot) = values.get_mut(types::floor_edge::NAME) {
+            *slot = Some(Value::String(crate::floor_edge::next_name(
+                &seen, host, &tongue,
+            )));
+        }
+        created.push(create(ctx, types::FLOOR_EDGE, Some(host), values)?);
     }
     for (key, _, host, mut values) in decoded.iter().cloned() {
         if key != VERTICAL_OPENING {

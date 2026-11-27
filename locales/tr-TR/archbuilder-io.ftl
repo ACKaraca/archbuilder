@@ -22,3 +22,5 @@ ab-io-validation-unreadable = IFC dosyası yazıldı ancak geri okunamadı; dosy
 ab-io-validation-missing = Modeldeki bir nesne IFC dosyasında kendi tanımlayıcısıyla bulunmuyor; dosya eksiktir.
 ab-io-validation-duplicate-id = IFC dosyasındaki iki varlığın genel tanımlayıcısı aynı; dosya eksiktir.
 ab-io-validation-count = IFC dosyasında { $found } öğe var ancak dışa aktarım { $expected } öğe saymıştı; dosya eksiktir.
+ab-io-loss-floor-edge-as-covering = IFC4'te döşeme kenarı için bir eleman yok: döşeme kenarı, süpürülmüş gövdesiyle pervaz türünde bir kaplama olarak yazıldı.
+ab-io-loss-floor-edge-orphan = Bir döşeme kenarı, döşemesinde artık bulunmayan kenarları adlandırıyor: bu kenarlar dosyada yok.

@@ -198,6 +198,12 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "floor_slope",
+        Message {
+            message_id: "ab-prop-floor-slope",
+        },
+    ),
+    (
         "ceiling_slope",
         Message {
             message_id: "ab-prop-ceiling-slope",
@@ -261,6 +267,42 @@ const LABELS: &[(&str, Message)] = &[
         "cut_area",
         Message {
             message_id: "ab-prop-cut-area",
+        },
+    ),
+    (
+        "extrusion_type",
+        Message {
+            message_id: "ab-prop-extrusion-type",
+        },
+    ),
+    (
+        "extrusion_area",
+        Message {
+            message_id: "ab-prop-extrusion-area",
+        },
+    ),
+    (
+        "extrusion_volume",
+        Message {
+            message_id: "ab-prop-extrusion-volume",
+        },
+    ),
+    (
+        "edge_floor",
+        Message {
+            message_id: "ab-prop-edge-floor",
+        },
+    ),
+    (
+        "edge_length",
+        Message {
+            message_id: "ab-prop-edge-length",
+        },
+    ),
+    (
+        "edge_volume",
+        Message {
+            message_id: "ab-prop-edge-volume",
         },
     ),
     (
@@ -1095,6 +1137,18 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-vertical-opening",
         },
     ),
+    (
+        types::FLOOR_EDGE,
+        Message {
+            message_id: "ab-kind-floor-edge",
+        },
+    ),
+    (
+        types::ROOF_EXTRUSION,
+        Message {
+            message_id: "ab-kind-roof-extrusion",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -1361,8 +1415,21 @@ fn shown(
                 &mut values,
                 &mut read_only,
             );
+            let slope = derived.as_ref().and_then(|d| {
+                d.arrow.map(|a| {
+                    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
+                        archbuilder_model::units::slope_unit(&p.values)
+                    });
+                    archbuilder_model::units::slope_text(
+                        a.gradient(d.floor.top_offset).atan(),
+                        unit,
+                        '.',
+                    )
+                })
+            });
             for (name, value) in [
                 ("floor_storey", storey),
+                ("floor_slope", slope),
                 (
                     "floor_area",
                     derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
@@ -1378,7 +1445,10 @@ fn shown(
             ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
-                read_only.push(name.to_owned());
+                // The slope is typed: an angle, a percentage or a rise over a run.
+                if name != "floor_slope" {
+                    read_only.push(name.to_owned());
+                }
             }
         }
         // A room shows its record, the upper limit as a choice, and what the walls make of it.
@@ -1782,6 +1852,61 @@ fn shown(
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A roof by extrusion shows its plane's direction and distances, its type and what derives
+        // from it; the profile is edited by the command.
+        types::ROOF_EXTRUSION => {
+            let derived = archbuilder_model::roof_extrusion::Derived::of(snapshot, object).ok();
+            let kind =
+                archbuilder_model::element_type::type_of(snapshot, TypeKind::Roof, &object.values)
+                    .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            fields.truncate(types::roof_extrusion::ROOF_TYPE);
+            values.truncate(types::roof_extrusion::ROOF_TYPE);
+            read_only.push("thickness".to_owned());
+            for (name, value) in [
+                ("extrusion_type", kind),
+                (
+                    "extrusion_area",
+                    derived
+                        .as_ref()
+                        .map(|d| format!("{:.3} m²", d.surface_area())),
+                ),
+                (
+                    "extrusion_volume",
+                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A floor edge shows its floor, the length it runs along and the volume of its body; the
+        // edges are chosen by the command, the profile edited there.
+        types::FLOOR_EDGE => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::floor_edge::Derived::of(snapshot, object);
+            fields.truncate(types::floor_edge::PROFILE);
+            values.truncate(types::floor_edge::PROFILE);
+            for (name, value) in [
+                ("edge_floor", host),
+                (
+                    "edge_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "edge_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                ),
+            ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());

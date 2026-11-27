@@ -22,7 +22,8 @@ use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
 use archbuilder_model::types::{
-    CEILING, DOOR, FLOOR, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
+    CEILING, DOOR, FLOOR, FLOOR_EDGE, ROOF, ROOF_EXTRUSION, SHAFT, VERTICAL_OPENING, WALL_OPENING,
+    WINDOW, text,
 };
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
@@ -170,6 +171,10 @@ impl Mapper<'_> {
         for roof in spatial::children(self.snapshot, ROOF, storey) {
             self.cancel.check()?;
             self.roof(&roof, storey, level);
+        }
+        for roof in spatial::children(self.snapshot, ROOF_EXTRUSION, storey) {
+            self.cancel.check()?;
+            self.roof_extrusion(&roof, storey, level);
         }
         for ceiling in spatial::children(self.snapshot, CEILING, storey) {
             self.cancel.check()?;
@@ -749,7 +754,7 @@ impl Mapper<'_> {
         let mut hosts: Vec<(std::sync::Arc<Object>, (f64, f64))> = Vec::new();
         for floor in spatial::objects(self.snapshot, FLOOR) {
             if let Some(d) = Derived::of(self.snapshot, &floor) {
-                hosts.push((floor, (d.top - d.floor.thickness, d.top)));
+                hosts.push((floor, d.z_range()));
             }
         }
         for roof in spatial::objects(self.snapshot, ROOF) {
@@ -863,6 +868,52 @@ impl Mapper<'_> {
         );
     }
 
+    /// A roof by extrusion as an `IfcRoof` of the predefined type `FREEFORM`, with its roof type
+    /// and the body extruded from the profile, one solid in the storey's frame.
+    fn roof_extrusion(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Ok(derived) = archbuilder_model::roof_extrusion::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCROOF", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Roof,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("FREEFORM".to_owned());
+        element.element_type =
+            et::type_of(self.snapshot, TypeKind::Roof, &object.values).map(|t| t.id.as_u128());
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        match derived.solid().ok().and_then(|s| brep([&s], &frame, level)) {
+            Some(body) => {
+                element.body = Some(body);
+                let projected: f64 = derived
+                    .pieces()
+                    .iter()
+                    .map(|p| archbuilder_model::terrain::double_area(&p.points).abs() / 2.0)
+                    .sum();
+                element.quantity_sets.push(QuantitySet::new(
+                    "Qto_RoofBaseQuantities",
+                    vec![
+                        Quantity::new("GrossArea", QuantityValue::Area(derived.surface_area())),
+                        Quantity::new("ProjectedArea", QuantityValue::Area(projected)),
+                    ],
+                ));
+                element.property_sets.push(PropertySet::new(
+                    "Pset_RoofCommon",
+                    vec![Property::new("IsExternal", PropertyValue::Boolean(true))],
+                ));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCROOF", object),
+        }
+        self.elements.push(element);
+        self.exported += 1;
+    }
+
     fn floor(&mut self, object: &Object, storey: ObjectId, level: f64) {
         let Some(derived) = Derived::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCSLAB", object);
@@ -901,7 +952,8 @@ impl Mapper<'_> {
                     .unwrap_or_default()
             });
         let slab = match parts.as_slice() {
-            [(outer, holes)] => Some(Body::Extrusion {
+            // A sloped slab is a solid of its own: no vertical extrusion has a sloped top.
+            [(outer, holes)] if !derived.sloped() => Some(Body::Extrusion {
                 outer: profile(outer, true),
                 holes: holes.iter().map(|h| profile(h, false)).collect(),
                 direction: -Vector3::z(),
@@ -948,12 +1000,51 @@ impl Mapper<'_> {
         }
         self.elements.push(element);
         self.exported += 1;
-        self.cuts_of(
-            object,
-            storey,
-            level,
-            (derived.top - thickness, derived.top),
+        self.cuts_of(object, storey, level, derived.z_range());
+        for edge in spatial::children(self.snapshot, FLOOR_EDGE, object.id) {
+            self.floor_edge(&edge, storey, level);
+        }
+    }
+
+    /// A floor edge as an `IfcCovering` of the predefined type `MOLDING`: the profile swept
+    /// along the edges, one solid, written in the storey's frame.
+    fn floor_edge(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(derived) = archbuilder_model::floor_edge::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        if !derived.orphans.is_empty() {
+            self.lose(reasons::FLOOR_EDGE_ORPHAN, "IFCCOVERING", object);
+        }
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        let Some(body) = derived
+            .solid()
+            .ok()
+            .flatten()
+            .and_then(|s| brep([&s], &frame, level))
+        else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Covering,
+            &name_of(object),
+            storey.as_u128(),
         );
+        element.predefined_type = Some("MOLDING".to_owned());
+        element.body = Some(body);
+        let us = derived.edge.profile.iter().map(|p| p[0]);
+        let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_CoveringBaseQuantities",
+            vec![Quantity::new("Width", QuantityValue::Length(width))],
+        ));
+        self.lose(reasons::FLOOR_EDGE_AS_COVERING, "IFCCOVERING", object);
+        self.elements.push(element);
+        self.exported += 1;
     }
 }
 

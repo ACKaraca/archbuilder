@@ -800,6 +800,14 @@ fn surfaces(
         }
         out.push((Bound::Roof(o.id), pieces));
     }
+    for o in spatial::objects(snapshot, types::ROOF_EXTRUSION)
+        .iter()
+        .take(MAX_SURFACES)
+    {
+        if let Ok(d) = crate::roof_extrusion::Derived::of(snapshot, o) {
+            out.push((Bound::Roof(o.id), d.pieces()));
+        }
+    }
     for f in spatial::objects(snapshot, types::FLOOR)
         .iter()
         .take(MAX_SURFACES)
@@ -813,8 +821,7 @@ fn surfaces(
             continue;
         }
         if let Some(d) = floor::Derived::of(snapshot, f) {
-            let plane = Plane::level(d.top - d.floor.thickness);
-            out.push((Bound::Slab(f.id), d.boundary.pieces(plane)));
+            out.push((Bound::Slab(f.id), d.boundary.pieces(d.underside())));
         }
     }
     // Only what lies above the base can bound the room.
@@ -1003,9 +1010,9 @@ fn shape_deps(snapshot: &Snapshot, entry: &Entry) -> Option<(Arc<Object>, crate:
     deps.push(Arc::clone(&storey));
     deps.extend(spatial::children(snapshot, types::CEILING, storey.id));
     let level = spatial::storey_elevation(snapshot, &storey);
-    for key in [types::ROOF, types::FLOOR] {
+    for key in [types::ROOF, types::ROOF_EXTRUSION, types::FLOOR] {
         deps.extend(spatial::objects(snapshot, key).into_iter().filter(|o| {
-            key == types::ROOF
+            key != types::FLOOR
                 || o.header
                     .owner
                     .and_then(|s| spatial::get(snapshot, s))
