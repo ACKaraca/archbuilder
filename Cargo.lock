@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "arc-app"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -111,7 +111,7 @@ dependencies = [
 [[package]]
 name = "arc-base"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "glam 0.34.3",
  "nalgebra",
@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "arc-command"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -140,7 +140,7 @@ dependencies = [
 [[package]]
 name = "arc-doc"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-swap",
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "arc-draft"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "arc-geom"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "robust",
@@ -182,7 +182,7 @@ dependencies = [
 [[package]]
 name = "arc-gpu"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -196,7 +196,7 @@ dependencies = [
 [[package]]
 name = "arc-io-common"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "miniz_oxide 0.9.1",
@@ -207,9 +207,10 @@ dependencies = [
 [[package]]
 name = "arc-io-ifc"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
+ "arc-geom",
  "arc-io-common",
  "arc-mesh",
 ]
@@ -217,7 +218,7 @@ dependencies = [
 [[package]]
 name = "arc-io-mesh"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-io-common",
@@ -228,7 +229,7 @@ dependencies = [
 [[package]]
 name = "arc-mesh"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-geom",
@@ -237,7 +238,7 @@ dependencies = [
 [[package]]
 name = "arc-solve"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
 ]
@@ -254,7 +255,7 @@ dependencies = [
 [[package]]
 name = "arc-ui"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-command",
@@ -271,7 +272,7 @@ dependencies = [
 [[package]]
 name = "arc-view"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "arc-base",
  "arc-doc",
@@ -283,7 +284,7 @@ dependencies = [
 [[package]]
 name = "arc-winsec"
 version = "0.1.0"
-source = "git+https://github.com/ACKaraca/arc-core?rev=dfbe8cdf543c386e7132c040097ccdedc57e0389#dfbe8cdf543c386e7132c040097ccdedc57e0389"
+source = "git+https://github.com/ACKaraca/arc-core?rev=07e7142b40a79a8139745b2c60e5b4aa9c1f067a#07e7142b40a79a8139745b2c60e5b4aa9c1f067a"
 dependencies = [
  "windows-sys 0.61.2",
 ]
