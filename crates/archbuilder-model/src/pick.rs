@@ -341,10 +341,30 @@ fn segment_distance(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> f64 {
 }
 
 /// The distance from `p` to the body of `wall` (0 inside), in meters.
+fn segment_miss(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let l2 = d[0] * d[0] + d[1] * d[1];
+    let t = if l2 > 0.0 {
+        (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - d[0] * t).hypot(p[1] - a[1] - d[1] * t)
+}
+
 fn distance_to_body(wall: &Wall, p: [f64; 2]) -> f64 {
     let length = wall.length();
     if length <= 0.0 {
         return f64::MAX;
+    }
+    if wall.is_arc() {
+        let outline = wall.plain_outline();
+        if crate::wall::inside_outline(&outline, p) {
+            return 0.0;
+        }
+        return (0..outline.len())
+            .map(|k| segment_miss(p, outline[k], outline[(k + 1) % outline.len()]))
+            .fold(f64::MAX, f64::min);
     }
     let (ux, uy) = (
         (wall.end[0] - wall.start[0]) / length,
@@ -404,7 +424,7 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             // The outline of the layers, which meet the walls around as the body does.
             let loops = crate::cleanup::wall_outline(snapshot, &object);
             if loops.is_empty() {
-                vec![close(&w.plain_footprint(), z)]
+                vec![close(&w.plain_outline(), z)]
             } else {
                 loops.iter().map(|l| close(l, z)).collect()
             }

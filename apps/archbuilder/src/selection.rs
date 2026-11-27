@@ -155,7 +155,7 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
     };
     match spatial::type_of(snapshot, id).as_deref() {
         Some(WALL) => Wall::from_values(&object.values)
-            .map(|w| w.plain_footprint().to_vec())
+            .map(|w| w.plain_outline())
             .unwrap_or_default(),
         Some(FLOOR) => archbuilder_model::floor::Floor::from_values(&object.values)
             .and_then(|f| f.boundary_in(snapshot))

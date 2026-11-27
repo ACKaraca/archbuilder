@@ -1112,6 +1112,8 @@ mod tests {
             location: crate::wall::LocationLine::Center,
             start_join: crate::wall::JoinStyle::Auto,
             end_join: crate::wall::JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         };
         let solid = crate::wall::under_roof(&wall, wall.plain_footprint(), 0.0, &s).unwrap();
         // Under the hip from x = 8 to 10 the top rises to 3 + (10 - x); beyond the outline the

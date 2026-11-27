@@ -812,7 +812,108 @@ pub fn wall_type_fields() -> Vec<FieldDecl> {
         wrap_field("wrap_inserts"),
     ]);
     fields.extend(crate::curtain::type_fields());
+    fields.push(stack_field());
     fields
+}
+
+/// The position of the stack of a stacked wall type in the type record (appended in schema 1.6).
+pub const STACK: usize = 33;
+/// The most segments of a stacked wall type.
+pub const MAX_STACK: usize = 16;
+
+/// One segment of a stacked wall type: the wall type that fills it and its height, which is 0
+/// for the one variable segment.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StackEntry {
+    /// The type of the segment.
+    pub type_id: ObjectId,
+    /// The fixed height in meters; 0 for the variable segment.
+    pub height: f64,
+}
+
+/// The declaration of the stack of a wall type.
+#[must_use]
+pub fn stack_field() -> FieldDecl {
+    FieldDecl::new(
+        "stack",
+        ValueType::List(Box::new(ValueType::Record(vec![
+            FieldDecl::new("type", ValueType::Reference(types::reference_to(WALL_TYPE))),
+            types::length_field("height", Some(types::real((0.0, types::HEIGHT_RANGE.1)))),
+        ]))),
+    )
+    .with_bound(Bound::Length {
+        max: MAX_STACK as u64,
+    })
+    .optional()
+    .in_aspect("data")
+    .since_minor(6)
+}
+
+impl StackEntry {
+    /// The stack of a wall type record, from the base up; empty for a type that is not stacked.
+    #[must_use]
+    pub fn of(values: &[Option<Value>]) -> Vec<Self> {
+        let Some(Some(Value::List(items))) = values.get(STACK) else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .take(MAX_STACK)
+            .filter_map(|item| {
+                let Value::Record(f) = item else { return None };
+                let Some(Some(Value::Reference(id))) = f.first() else {
+                    return None;
+                };
+                Some(Self {
+                    type_id: *id,
+                    height: types::meters(f, 1)?,
+                })
+            })
+            .collect()
+    }
+
+    /// The records of a stack, for the type's field.
+    #[must_use]
+    pub fn value(stack: &[Self]) -> Value {
+        Value::List(
+            stack
+                .iter()
+                .map(|e| {
+                    Value::Record(vec![
+                        Some(Value::Reference(e.type_id)),
+                        Some(types::length(e.height)),
+                    ])
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The height ranges of the segments of a stack in a wall `height` high, from the base: each
+/// fixed segment its height, the variable one the rest. `None` when the stack has no single
+/// variable segment, fewer than two segments, or the rest is under 1 mm.
+#[must_use]
+pub fn stack_ranges(stack: &[StackEntry], height: f64) -> Option<Vec<(f64, f64)>> {
+    let variable = stack.iter().filter(|e| e.height <= 0.0).count();
+    if stack.len() < 2 || variable != 1 {
+        return None;
+    }
+    let fixed: f64 = stack.iter().map(|e| e.height).sum();
+    let rest = height - fixed;
+    if rest < 1.0e-3 {
+        return None;
+    }
+    let mut at = 0.0;
+    Some(
+        stack
+            .iter()
+            .map(|e| {
+                let h = if e.height <= 0.0 { rest } else { e.height };
+                at += h;
+                (at - h, at)
+            })
+            .collect(),
+    )
 }
 
 /// A wrapping setting of a wall type, appended in schema 1.1.

@@ -173,6 +173,10 @@ struct Mapper<'a> {
     types: Vec<ElementType>,
     losses: Vec<Loss>,
     exported: usize,
+    /// How far the opening of the insert being written reaches past the faces of its wall, on
+    /// the right and on the left: an arc wall curves away from the opening's straight box, and
+    /// a band projects from a face.
+    opening_pad: [f64; 2],
 }
 
 fn name_of(object: &Object) -> String {
@@ -463,6 +467,31 @@ impl Mapper<'_> {
                 ));
             }
         }
+        // A stacked wall lists its segments from the base: the body shows their layers, the type
+        // carries the layers of the variable one.
+        if let Some(t) = et::type_of(self.snapshot, TypeKind::Wall, &object.values) {
+            let stack = et::StackEntry::of(&t.values);
+            let ranges = archbuilder_model::cleanup::stack_ranges_of(self.snapshot, object);
+            if !ranges.is_empty() && ranges.len() == stack.len() {
+                let text: Vec<String> = stack
+                    .iter()
+                    .zip(&ranges)
+                    .map(|(e, (a, b))| {
+                        let name = spatial::get(self.snapshot, e.type_id)
+                            .map(|t| et::name(&t).to_owned())
+                            .unwrap_or_default();
+                        format!("{name} {a:.3}-{b:.3} m")
+                    })
+                    .collect();
+                element.property_sets.push(PropertySet::new(
+                    "ArchBuilder_StackedWall",
+                    vec![Property::new(
+                        "Segments",
+                        PropertyValue::Label(text.join("; ")),
+                    )],
+                ));
+            }
+        }
         let gross = wall.solid_in(footprint, level).map(|s| s.volume());
         let mut quantities = vec![
             Quantity::new("Length", QuantityValue::Length(wall.length())),
@@ -570,7 +599,36 @@ impl Mapper<'_> {
                 .then_with(|| a.0.id.cmp(&b.0.id))
         });
         for (object, item) in found {
-            self.insert(&object, &item, (host, wall, frame), storey, level);
+            // An opening in an arc wall is on its tangent frame, faceted to the chord.
+            let (straight, local) = insert::on_arc(wall, &item);
+            let tangent = Frame::new(
+                straight.start,
+                [
+                    straight.end[0] - straight.start[0],
+                    straight.end[1] - straight.start[1],
+                ],
+            );
+            let sag = wall.radius_at(0.0).map_or(0.0, |r| {
+                let half = (item.width / 2.0).min(r);
+                r - (r * r - half * half).sqrt() + 0.02
+            });
+            let bands = archbuilder_model::wall::Band::of(&host.values);
+            let reach = |face| {
+                bands
+                    .iter()
+                    .filter(|b| b.face == face && b.depth > 0.0)
+                    .map(|b| b.depth)
+                    .fold(0.0, f64::max)
+            };
+            self.opening_pad = [
+                sag + reach(archbuilder_model::wall::BandFace::Interior),
+                sag + reach(archbuilder_model::wall::BandFace::Exterior),
+            ];
+            match tangent.filter(|_| wall.is_arc()) {
+                Some(f) => self.insert(&object, &local, (host, &straight, &f), storey, level),
+                None => self.insert(&object, &item, (host, wall, frame), storey, level),
+            }
+            self.opening_pad = [0.0; 2];
         }
         // The openings that curtain walls inside this wall cut; each is named after its wall.
         for (id, item) in archbuilder_model::curtain::embedded(self.snapshot, host) {
@@ -624,6 +682,8 @@ impl Mapper<'_> {
         let z = wall.base_offset + item.sill;
         let (low, high) = wall.extent();
         let half = item.width / 2.0;
+        let [pad_low, pad_high] = self.opening_pad;
+        let (low, high) = (low - pad_low, high + pad_high);
         let corners = [(-half, low), (half, low), (half, high), (-half, high)]
             .map(|(x, y)| frame.local(wall_frame.at(item.distance + x, y)));
         let storey_id = storey.as_u128();
@@ -1592,6 +1652,7 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         types: Vec::new(),
         losses: Vec::new(),
         exported: 0,
+        opening_pad: [0.0; 2],
     };
     for other in spatial::buildings(snapshot).into_iter().skip(1) {
         mapper.lose(reasons::NOT_EXPORTED, "IFCBUILDING", &other);

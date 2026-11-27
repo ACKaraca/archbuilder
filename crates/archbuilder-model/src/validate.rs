@@ -100,6 +100,7 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         if !top_is_above(candidate, object) {
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
+        out.extend(wall_shape_problems(candidate, object));
     }
     if key == WALL {
         out.extend(crate::curtain::problems(candidate, object));
@@ -964,6 +965,10 @@ fn label_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) ->
 /// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
 /// would open into another wall. They concern the touched walls and the floors of their storeys.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one list of every warning of a change"
+)]
 pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
     let mut out = Vec::new();
     let mut storeys: Vec<ObjectId> = Vec::new();
@@ -1021,6 +1026,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             .iter()
             .enumerate()
             .filter_map(|(k, o)| crate::wall::Wall::from_values(&o.values).map(|w| (k, w)))
+            .filter(|(_, w)| !w.is_arc())
             .collect();
         let plain: Vec<crate::wall::Wall> = data.iter().map(|(_, w)| *w).collect();
         for (i, j) in crate::join::open_corners(&plain) {
@@ -1040,7 +1046,9 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
                 continue;
             };
             let wall_of = |id: ObjectId| {
-                get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values))
+                get(candidate, id)
+                    .and_then(|o| crate::wall::Wall::from_values(&o.values))
+                    .filter(|w| !w.is_arc())
             };
             // The edges are matched to the vertices, so the boundary without the shaft openings.
             let Some(raw) = derived.floor.boundary_in(candidate) else {
@@ -1134,8 +1142,11 @@ fn roof_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>
 /// bounds the ceiling there, and an opening that reaches outside the element that hosts it.
 fn ceiling_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
     let mut out = Vec::new();
-    let wall_of =
-        |id: ObjectId| get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values));
+    let wall_of = |id: ObjectId| {
+        get(candidate, id)
+            .and_then(|o| crate::wall::Wall::from_values(&o.values))
+            .filter(|w| !w.is_arc())
+    };
     for ceiling in objects(candidate, CEILING) {
         let storey_touched = ceiling.header.owner.is_some_and(|s| {
             touched.iter().any(|(id, c)| {
@@ -1590,6 +1601,81 @@ pub fn validator() -> DocumentValidator {
 /// path has none; the headless runner and the tests install it.
 pub fn install(document: &Document) {
     document.add_validator(validator());
+}
+
+/// What is wrong with the shape of a wall record: an arc whose faces have no radius, a lean that
+/// leaves no thickness at the top, shapes that cannot be combined, a profile or a band that does
+/// not fit, and doors or windows the profile leaves out.
+fn wall_shape_problems(candidate: &Snapshot, object: &Object) -> Vec<Error> {
+    use crate::wall::{Band, Profile, Wall};
+    let Some(wall) = Wall::from_values(&object.values) else {
+        return Vec::new();
+    };
+    let name = display_name(object);
+    let mut out = Vec::new();
+    let profile = Profile::of(&object.values);
+    let bands = Band::of(&object.values);
+    let combination = |first: &str, second: &str| {
+        Error::new(codes::WALL_SHAPE_COMBINATION)
+            .with_arg("name", name.clone())
+            .with_arg("first", first)
+            .with_arg("second", second)
+    };
+    if !wall.shape_fits() {
+        out.push(Error::new(codes::WALL_SHAPE_INVALID).with_arg("name", name.clone()));
+    }
+    if profile.is_some() && wall.is_arc() {
+        out.push(combination("profile", "arc"));
+    }
+    if profile.is_some() && wall.leans() {
+        out.push(combination("profile", "lean"));
+    }
+    if !bands.is_empty() && (wall.is_arc() || wall.leans() || profile.is_some()) {
+        out.push(combination(
+            "bands",
+            if wall.is_arc() {
+                "arc"
+            } else if wall.leans() {
+                "lean"
+            } else {
+                "profile"
+            },
+        ));
+    }
+    if let Some(profile) = &profile {
+        if !profile.fits(wall.length(), wall.height) {
+            out.push(Error::new(codes::WALL_PROFILE_INVALID).with_arg("name", name.clone()));
+        } else {
+            let left: Vec<String> = crate::insert::hosted(candidate, object.id)
+                .into_iter()
+                .filter(|(_, i)| {
+                    let (x0, x1) = i.extent();
+                    !profile.holds((x0, x1), (i.sill, i.top()))
+                })
+                .map(|(o, _)| display_name(&o))
+                .collect();
+            if !left.is_empty() {
+                out.push(
+                    Error::new(codes::WALL_PROFILE_INSERTS)
+                        .with_arg("name", name.clone())
+                        .with_arg("count", left.len().to_string())
+                        .with_arg("inserts", left.join(", ")),
+                );
+            }
+        }
+    }
+    for band in &bands {
+        let span = if band.vertical {
+            wall.length()
+        } else {
+            wall.height
+        };
+        if !band.fits(span) {
+            out.push(Error::new(codes::WALL_BAND_INVALID).with_arg("name", name.clone()));
+            break;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

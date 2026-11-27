@@ -6,7 +6,7 @@
 //! document.
 
 use archbuilder_model::insert::{Facing, Hand, Insert, Kind, Operation, cut};
-use archbuilder_model::join::footprints;
+use archbuilder_model::join::{carrier, expand, footprints};
 use archbuilder_model::types::{DOOR, LEVEL, STOREY, WALL, WINDOW};
 use archbuilder_model::wall::{JoinStyle, LocationLine, Wall};
 use serde_json::{Value, json};
@@ -17,6 +17,10 @@ fn number(values: &Value, field: &str) -> Option<f64> {
 
 /// The `walls` list of the dump's `objects`, in the dump's order.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass: the walls, their joins and their solids"
+)]
 pub fn summary(objects: &[Value], net: &std::collections::HashMap<String, f64>) -> Vec<Value> {
     let of = |key: &'static str| objects.iter().filter(move |o| o["type_key"] == key);
     let name_of = |id: &Value, key: &'static str| {
@@ -57,6 +61,11 @@ pub fn summary(objects: &[Value], net: &std::collections::HashMap<String, f64>) 
                     .unwrap_or_default(),
                 start_join: join_of(&values["start_join"]),
                 end_join: join_of(&values["end_join"]),
+                bulge: number(values, "bulge").unwrap_or(0.0),
+                lean: [
+                    number(values, "lean_exterior").unwrap_or(0.0),
+                    number(values, "lean_interior").unwrap_or(0.0),
+                ],
             }
             .constrained(elevation, top_elevation),
             elevation,
@@ -78,8 +87,11 @@ pub fn summary(objects: &[Value], net: &std::collections::HashMap<String, f64>) 
             .iter()
             .filter_map(|&k| all[k].1.map(|d| d.0))
             .collect();
-        for (&k, f) in members.iter().zip(footprints(&walls)) {
-            feet[k] = Some(f);
+        // An arc wall is joined by its facets; its footprint carries the ends.
+        let (flat, ranges) = expand(&walls);
+        let joined = footprints(&flat);
+        for ((&k, w), range) in members.iter().zip(&walls).zip(ranges) {
+            feet[k] = joined.get(range).and_then(|f| carrier(w, f));
         }
     }
     all.iter()

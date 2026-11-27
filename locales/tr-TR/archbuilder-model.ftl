@@ -53,6 +53,18 @@ ab-model-roof-degenerate = "{ $name }" çatısının yüzeyi ({ $x }, { $y }) ya
 ab-model-roof-cut-conflict = "{ $name }" çatısının saçak kesimi ({ $x }, { $y }) yakınında basamak bırakıyor: çift kesimli uçları olan komşu saçaklar aynı yükseklikte bitmelidir. Aynı çıkma ve eğimi verin ya da çekül veya dik kesim kullanın.
 ab-model-wall-attach-failed = "{ $name }" duvarı "{ $target }" altını izleyemiyor: bir bölümü onun dışında kalıyor veya alt yüzey duvarın tabanına iniyor. Bu değişene kadar kendi üst kotunu korur.
 ab-model-wall-attach-target = "{ $name }" duvarının üstü yalnızca binasındaki bir çatıya veya döşemeye bağlanabilir.
+ab-model-wall-shape-invalid = "{ $name }" duvarının biçimi katı oluşturmuyor: yay duvarın iç yüzünün yarıçapı en az 5 cm olmalı, eğimli duvar üstte kalınlığını korumalı ve yay duvar eğimlenemez.
+ab-model-wall-profile-invalid = "{ $name }" duvarının profili kullanılamıyor: her halka en az üç nokta içermeli ve kenarları kesişmemeli, dış hat duvarın dikdörtgeni içinde, boşluklar dış hat içinde kalmalı.
+ab-model-wall-profile-inserts = Profil, "{ $name }" duvarının { $count } kapı veya pencere boşluğunu duvarın dışında bırakır: { $inserts }.
+ab-model-wall-shape-combination = "{ $name }" duvarında { $first } ile { $second } birleştirilemez.
+ab-model-wall-band-invalid = "{ $name }" duvarının bir bandı duvara uymuyor: aralığı duvarın içinde kalmalı, genişliği ve derinliği sıfırdan büyük olmalı.
+ab-model-wall-stack-invalid = "{ $name }" katmanlı duvar tipi oluşturulamıyor: { $reason ->
+    [count] iki ile on altı arasında bölümü olmalı.
+    [variable] tam olarak bir bölümün yüksekliği değişken olmalı.
+    [kind] her bölüm, kendisi katmanlı olmayan temel bir duvar tipi olmalı.
+    [thickness] her bölümün toplam kalınlığı aynı olmalı.
+    *[other] bir bölüm kullanılamıyor.
+}
 ab-model-ceiling-malformed = "{ $name }" tavanının kullanılabilir bir sınırı yok: her halkanın izin verilen aralıkta en az üç noktası olmalı ve kenarları okunabilmeli.
 ab-model-ceiling-boundary = "{ $name }" tavanının sınırı kullanılamıyor: bir halka kendini kesiyor ya da değiyor, bir kenar bir milimetreden kısa veya alan aralık dışında. Yeniden çizin.
 ab-model-ceiling-edge-unsupported = "{ $name }" tavanının bir kenarı "{ $wall }" duvarını izliyor ama uçlarının ötesine geçiyor: duvar artık tavanı orada sınırlamıyor.

@@ -399,10 +399,17 @@ impl PlanSource<'_> {
             return self.curtain_object(&curtain);
         }
         let pieces = cleanup::wall_pieces(self.snapshot, object)?.ok()?;
-        let materials = cleanup::layer_materials(self.snapshot, object);
+        let stacks: Vec<Vec<String>> = (0..crate::cleanup::stack_ranges_of(self.snapshot, object)
+            .len()
+            .max(1))
+            .map(|k| cleanup::layer_materials_in(self.snapshot, object, k))
+            .collect();
         let mut out = SourceObject::new(Category::Wall.key(), styles(self.scale, self.tone));
         for piece in pieces {
-            let material = materials.get(piece.layer).map_or("", String::as_str);
+            let material = stacks
+                .get(piece.segment)
+                .and_then(|m| m.get(piece.layer))
+                .map_or("", String::as_str);
             let core = piece.class == cleanup::PieceClass::Core;
             let function = match piece.class {
                 cleanup::PieceClass::Finish => Function::Finish,
@@ -515,6 +522,8 @@ impl PlanSource<'_> {
         let host = spatial::get(self.snapshot, object.header.owner?)?;
         let wall = Wall::of(self.snapshot, &host)?;
         let item = Insert::of(self.snapshot, object)?;
+        // An arc wall's opening is drawn on its tangent frame.
+        let (wall, item) = crate::insert::on_arc(&wall, &item);
         let level = host
             .header
             .owner

@@ -140,7 +140,7 @@ thickness) turns into the end or the reveal: each becomes an L whose foot covers
 middle of the core when both sides wrap), nested outward in, and the core stops short of the end by the total of the
 feet, so the length of the wall and the clear opening do not change. The plan lines and the solids show it.
 
-Known limits: walls have no base attachment or curves, and the only inserts are the doors and windows below; a node of three or more walls without a
+Known limits: walls have no base attachment, and the only inserts are the doors and windows below; a node of three or more walls without a
 straight run (a Y) leaves a small notch at its center; two collinear walls of different layer stacks
 meet square and show the difference in their lines; at a node of walls of different thickness the
 closed star can leave slivers; layer cleanup applies only at ends with the style `auto`; styles other than `auto` apply only at a
@@ -150,6 +150,61 @@ baseline stays; a center line has no side), and `archbuilder.wall.delete`
 deletes walls (the named ones, else the selected ones) in one transaction, so one undo restores
 them; `archbuilder.object.delete`, the Delete key, deletes the selected walls, else the selected
 storey.
+
+#### Wall shapes
+
+A wall record carries optional fields, all appended in schema 1.6, so a document from before them
+opens unchanged and reads every field as absent (a straight, vertical wall with its rectangle and
+no bands). Only authored numbers are stored; the facets, solids, joins and openings derive.
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `bulge` | The tangent of a quarter of the baseline's sweep from the start to the end, positive counter-clockwise | At most 10 in size; 0 or absent is a straight wall. The faces are concentric arcs: the radius of the nearer face must stay at least 5 cm, else the wall is refused. `distance` of a door or window and the wall's length are measured along the arc |
+| `lean_exterior`, `lean_interior` | The lean of each face from the vertical, positive when the top moves toward the left (exterior) side | At most 60 degrees; equal values are a slant, different values a taper; the thickness at the top must stay at least 10 mm. The layers lean in proportion between the faces |
+| `profile` | The sketched elevation: points of distance along the baseline and height above the base, each with its loop; the first loop is the outline, the others are openings | At most 256 points; simple polygons; the outline inside the wall's rectangle; openings inside the outline and apart. Absent restores the rectangle |
+| `bands` | A list of bands: face, horizontal or vertical, position from the base (start) or the top (end), width and signed depth | At most 32; depth 1 mm to 2 m (negative for a recess); the range lies within the wall |
+
+The commands are `archbuilder.wall.set_arc` (a bulge, or a point the arc passes through, or 0),
+`archbuilder.wall.set_lean`, `archbuilder.wall.set_profile` and `archbuilder.wall.set_bands`;
+`archbuilder.wall.create` takes `bulge` or `through`, and `archbuilder.wall.create_arc` is the tool
+that asks for a third point. Each is one transaction and one undo step; the model's rules refuse
+a shape that makes no solid (`ab.model.wall_shape_invalid`), shapes that cannot be combined
+(`ab.model.wall_shape_combination`), a profile that leaves a door or window outside it
+(`ab.model.wall_profile_inserts`, naming them) and a band that does not fit.
+
+- **Arc walls.** A wall on an arc is derived as straight facets on the chords of its baseline, flat
+  within 2 mm, which join each other by miters and join other walls like straight walls: layers,
+  cleanup, plan lines, rooms (which are bounded by the facets) and picking use them; the facets of one
+  layer are united into one polygon. The wall's own solid keeps the arcs. A door or window in an arc
+  wall is made on the tangent of the baseline at its center, so its opening is chord-faceted: the
+  deviation over the width of an opening is the sagitta of the arc over it. Moving, rotating,
+  mirroring, copying, flipping and moving an end keep the arc. Limits: the edit commands align,
+  offset, trim, extend, split and merge (and the arrays of walls) are for straight walls and refuse an
+  arc wall naming it; a wall ending on the baseline of an arc wall in a T is not joined (ends meeting
+  at their end points are); a floor edge cannot follow the face of an arc wall (it is reported); a
+  curtain wall is not embedded in an arc wall.
+- **Leaning walls.** Each layer polygon at the base moves sideways with height by the lean of its
+  position across the wall, so every side is planar. The joined ends keep their vertical cut at the
+  base and lean with the faces. A leaning wall has no arc, no profile and no bands, and keeps its
+  own top where it would follow a roof.
+- **Profile.** The profile is extruded across each layer; its ends stay square, so a wall with a
+  profile has no join cleanup, and is not cut by slabs or a roof. Doors and windows must lie in
+  its material.
+- **Bands.** A projecting band is united with the layer it stands on, a recessed one is cut from the
+  layers it meets; both stop at doors and windows. A band does not continue around a corner, and
+  bands apply to a straight, vertical wall without a profile.
+
+A wall type has one more optional field in schema 1.6, `stack`: records of a wall type (a reference
+that blocks deleting the type) and a height, 0 for the one variable segment. The type's own layers
+are those of the variable segment, so the instance's thickness, core and joins are those of one wall.
+`archbuilder.wall.stack_type` makes such a type and refuses fewer than two or more than sixteen
+segments, not exactly one variable one, a curtain or stacked segment, and segments of different total
+thickness (`ab.model.wall_stack_invalid`, with the reason). The layers of each segment come from its
+type: the layout of a storey is derived once for each segment of its tallest stack, and a band of
+heights uses the layout of its segment.
+
+Wall bands are per wall instance. The IFC body of a shaped wall is the faceted solid of its
+layers, as for every wall; see the IFC table in the interoperability document.
 
 #### The door and window of the first slice
 

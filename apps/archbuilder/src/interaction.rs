@@ -2039,12 +2039,14 @@ impl WallInteraction {
         if !copying {
             for wall in archbuilder_commands::modify::preview(snapshot, objects, &xf) {
                 out.push(ProductOverlay::Path {
-                    points: wall
-                        .plain_footprint()
-                        .iter()
-                        .chain(std::iter::once(&wall.plain_footprint()[0]))
-                        .map(|p| at3(*p))
-                        .collect(),
+                    points: {
+                        let outline = wall.plain_outline();
+                        outline
+                            .iter()
+                            .chain(outline.first())
+                            .map(|p| at3(*p))
+                            .collect()
+                    },
                     dashed: true,
                 });
             }
@@ -2055,7 +2057,7 @@ impl WallInteraction {
             };
             if let Some(wall) = archbuilder_model::wall::Wall::from_values(&object.values) {
                 if copying {
-                    out.push(path(&wall.plain_footprint()));
+                    out.push(path(&wall.plain_outline()));
                 }
             } else if let Some(boundary) =
                 archbuilder_model::floor::Floor::from_values(&object.values)
@@ -2272,6 +2274,11 @@ impl WallInteraction {
             self.inserts.stop();
             self.hover = None;
             return self.with_tool(cx, |tool, env, run| tool.begin(env, run));
+        }
+        if command == archbuilder_commands::wall::WALL_CREATE_ARC && intent.params.is_empty() {
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_tool(cx, |tool, env, run| tool.begin_arc(env, run));
         }
         if command == archbuilder_commands::curtain::CURTAIN_WALL && intent.params.is_empty() {
             self.inserts.stop();
@@ -3252,6 +3259,8 @@ impl WallInteraction {
                     .unwrap_or(location),
                 start_join: archbuilder_model::wall::JoinStyle::Auto,
                 end_join: archbuilder_model::wall::JoinStyle::Auto,
+                bulge: 0.0,
+                lean: [0.0; 2],
             };
             let (low, high) = wall.extent();
             let (nx, ny) = (-(end[1] - start[1]) / length, (end[0] - start[0]) / length);

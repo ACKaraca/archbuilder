@@ -94,6 +94,7 @@ pub mod validate;
 pub mod variable;
 pub mod view;
 pub mod wall;
+pub mod wall_shape;
 
 use arc_base::Result;
 use arc_doc::TypeRegistry;

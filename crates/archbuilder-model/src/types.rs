@@ -481,6 +481,19 @@ pub mod wall {
     /// The authored per-cell panel overrides of a curtain wall: a list of records (see
     /// [`crate::curtain::cell_override`]).
     pub const CELL_OVERRIDES: usize = 19;
+    /// The bulge of the baseline (see [`crate::wall::Wall::bulge`]): 0 or absent for a straight
+    /// wall; appended in schema 1.6.
+    pub const BULGE: usize = 20;
+    /// The lean of the exterior face from the vertical, in radians; appended in schema 1.6.
+    pub const LEAN_EXTERIOR: usize = 21;
+    /// The lean of the interior face from the vertical, in radians; appended in schema 1.6.
+    pub const LEAN_INTERIOR: usize = 22;
+    /// The sketched elevation profile: a list of records (see [`crate::wall::profile_point`]);
+    /// appended in schema 1.6.
+    pub const PROFILE: usize = 23;
+    /// The bands of the wall: a list of records (see [`crate::wall::band_record`]); appended in
+    /// schema 1.6.
+    pub const BANDS: usize = 24;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -1633,6 +1646,15 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .since_minor(4),
         crate::curtain::grid_edits_field(5),
         crate::curtain::cell_overrides_field(5),
+        FieldDecl::new("bulge", ValueType::F64)
+            .optional()
+            .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE)))
+            .in_aspect("geometry")
+            .since_minor(6),
+        lean_field("lean_exterior"),
+        lean_field("lean_interior"),
+        crate::wall::profile_field(),
+        crate::wall::bands_field(),
     ];
     let floor = vec![
         name_field("identity"),
@@ -2017,6 +2039,15 @@ fn optional_length(name: &str, range: (f64, f64)) -> FieldDecl {
         .optional()
         .with_bound(real(range))
         .in_aspect("geometry")
+}
+
+/// An optional lean angle of a wall face, appended in schema 1.6.
+fn lean_field(name: &str) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Quantity(Dimension::ANGLE))
+        .optional()
+        .with_bound(real((-crate::wall::MAX_LEAN, crate::wall::MAX_LEAN)))
+        .in_aspect("geometry")
+        .since_minor(6)
 }
 
 fn angle_field(name: &str) -> FieldDecl {
@@ -3212,6 +3243,11 @@ mod tests {
                     ("top_attach", wall::TOP_ATTACH),
                     ("grid_edits", wall::GRID_EDITS),
                     ("cell_overrides", wall::CELL_OVERRIDES),
+                    ("bulge", wall::BULGE),
+                    ("lean_exterior", wall::LEAN_EXTERIOR),
+                    ("lean_interior", wall::LEAN_INTERIOR),
+                    ("profile", wall::PROFILE),
+                    ("bands", wall::BANDS),
                 ],
             ),
             (
@@ -3250,6 +3286,7 @@ mod tests {
                     ("priority", crate::curtain::slot::PRIORITY),
                     ("vertical_angle", crate::curtain::slot::VERTICAL_ANGLE),
                     ("horizontal_angle", crate::curtain::slot::HORIZONTAL_ANGLE),
+                    ("stack", crate::element_type::STACK),
                 ],
             ),
             (
