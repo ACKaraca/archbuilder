@@ -635,8 +635,28 @@ stairs. Roof types are as floor types (layers from the top down); a new project 
 generic 300 mm roof type and timber rafters with insulation under tiles, and a document without
 roof types gets the same two when its first roof is made.
 
+The eave cut. A roof type decides how the eave end of the slab is cut on every sloped edge of
+every roof of that type; the setting is the type's, so changing it re-derives all of those roofs
+in one undo step, and a gable edge keeps its vertical plane. It is measured in the vertical section
+square to the eave edge, from the slab's top corner on the outline (the line the overhang
+reaches); no cut reaches outside the outline, and the overhang, the base height and the underside
+that walls attach to do not change. `plumb` is a vertical end face from the underside up to the top
+(the form of every roof before the setting existed). `square` is an end face square to the slope
+through the top corner, which pulls the underside back from the outline by the thickness times the
+sine of the slope. `two_cut_plumb` is a vertical face of the `fascia_depth`, measured down from the
+top corner, and then a level soffit back to the underside; `two_cut_square` is a face square to the
+slope whose length along it is the `fascia_depth`, and then a level soffit. A fascia depth at least
+as long as the whole end face leaves no soffit and the cut equals the single form. All layers of
+the type share the cut faces: the layer boundaries are parallel to the slope, so each layer ends at
+the same cut plane and keeps its thickness square to the slope. Where two neighboring sloped edges
+meet at a corner the cut planes meet in a miter, and the soffits of two-cut ends must end at one
+height there (equal overhang, slope and fascia depth on both edges); otherwise the roof is refused
+with `ab.model.roof_cut_conflict`, naming the point, rather than given a step. The viewport, the
+volumes and the IFC body (`IfcFacetedBrep`) all follow the cut. Roofs by extrusion keep the
+square end of their profile; the setting does not reach them.
+
 The `.archb` addition is backward compatible: the record types `archbuilder.roof` and
-`archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
+`archbuilder.roof_type` (whose optional `rafter_cut` and `fascia_depth` are schema 1.1), the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
 project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
 
 In the application the Roof tool (Architecture tab, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
@@ -1200,6 +1220,7 @@ instance's own.
 |---|---|---|
 | Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding`; `wrap_ends`, `wrap_inserts` (`none`, `exterior`, `interior` or `both`: the wrapping of finish layers at free ends and at the openings of doors and windows; schema 1.1, absent in older files, read as `none`) | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
 | Floor type | `name`, `layers` from the top down, `core_start`, `core_end` | As a wall type |
+| Roof type | The fields of a floor type, then the optional `rafter_cut` (`plumb`, `square`, `two_cut_plumb` or `two_cut_square`) and `fascia_depth` (schema 1.1; absent in older files and in types that never set them: a plumb cut) | As a wall type; `fascia_depth` 10 mm to 2 m, used by the two-cut forms; see the eave cut below |
 | Door type, window type | `name`, `width`, `height`, `frame_width`, `frame_depth`, `operation`, `sill` (the default sill height of new instances) | The ranges of an insert; the frame leaves an opening; the operation suits the kind |
 
 A new project starts with three wall types (a generic 200 mm type, an exterior masonry cavity type
@@ -1211,7 +1232,7 @@ formatted in the interface language from the commands' message catalog when the 
 and are user data afterwards.
 
 Commands, one transaction and one undo step each: `archbuilder.type.set` changes a type's name,
-layers, core, flags, size, operation or default sill, and in the same transaction writes the new
+layers, core, flags, size, operation, default sill or, for a roof type, `rafter_cut` and `fascia_depth`, and in the same transaction writes the new
 copies on every instance, so walls rethicken around their location lines, joins re-derive, floors
 that follow wall faces move, openings are checked against the new walls (a change that would break
 one is refused, naming it) and rooms re-derive; `archbuilder.type.duplicate` copies a type under the

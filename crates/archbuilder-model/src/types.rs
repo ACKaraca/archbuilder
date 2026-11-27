@@ -886,6 +886,18 @@ pub mod ceiling_type {
     pub const GRID_ANGLE: usize = 7;
 }
 
+/// Field positions of `archbuilder.roof_type` after the layers and the core. Both are optional
+/// and appended in schema 1.1: a type without them cuts its eaves plumb.
+pub mod roof_type {
+    /// How the eave end of the slab is cut ([`crate::roof::RafterCut`] code).
+    pub const RAFTER_CUT: usize = 4;
+    /// The depth of the fascia face of a two-cut eave, in meters.
+    pub const FASCIA_DEPTH: usize = 5;
+}
+
+/// The range of the fascia depth of a roof type, in meters.
+pub const FASCIA_DEPTH_RANGE: (f64, f64) = (0.01, 2.0);
+
 /// The default height of a ceiling's underside above its level, in meters.
 pub const DEFAULT_CEILING_HEIGHT: f64 = 2.6;
 /// The range of a wall opening's rise, in meters.
@@ -1379,7 +1391,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (ROOF_EXTRUSION, roof_extrusion_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
-        (ROOF_TYPE, crate::element_type::floor_type_fields()),
+        (ROOF_TYPE, crate::element_type::roof_type_fields()),
         (STAIR, stair_fields()),
         (RAILING, railing_fields()),
         (RAILING_TYPE, railing_type_fields()),

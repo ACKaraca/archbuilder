@@ -388,6 +388,12 @@ pub mod codes {
         category: Category::FailedOperation,
         message_id: "ab-model-roof-degenerate",
     };
+    /// Two neighboring eaves of a roof cannot both be cut level at their own heights.
+    pub const ROOF_CUT_CONFLICT: ErrorCode = ErrorCode {
+        code: "ab.model.roof_cut_conflict",
+        category: Category::Conflict,
+        message_id: "ab-model-roof-cut-conflict",
+    };
     /// A wall attached to a roof or floor cannot follow its underside and keeps its own top: a warning.
     pub const WALL_ATTACH_FAILED: ErrorCode = ErrorCode {
         code: "ab.model.wall_attach_failed",

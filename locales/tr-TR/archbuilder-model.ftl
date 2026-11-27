@@ -50,6 +50,7 @@ ab-model-roof-no-slope = "{ $name }" çatısının hiçbir kenarı eğim tanıml
 ab-model-roof-collinear-slopes = "{ $name }" çatısının iki komşu kenarı ({ $x }, { $y }) yakınında aynı doğru üzerinde ve eğimleri farklı. Aynı eğimi verin veya aradaki noktayı kaldırın.
 ab-model-roof-unclosed = "{ $name }" çatısı ({ $x }, { $y }) yakınında kesintisiz bir yüzeyle örtülemiyor: o bölüm yalnızca eğimsiz kenarlarla çevrili veya eğimsiz bir kenar içe dönük bir köşeye ulaşıyor. O kenara eğim verin.
 ab-model-roof-degenerate = "{ $name }" çatısının yüzeyi ({ $x }, { $y }) yakınında güvenilir biçimde hesaplanamadı. Oradaki çok kısa veya neredeyse paralel kenarları kaldırın.
+ab-model-roof-cut-conflict = "{ $name }" çatısının saçak kesimi ({ $x }, { $y }) yakınında basamak bırakıyor: çift kesimli uçları olan komşu saçaklar aynı yükseklikte bitmelidir. Aynı çıkma ve eğimi verin ya da çekül veya dik kesim kullanın.
 ab-model-wall-attach-failed = "{ $name }" duvarı "{ $target }" altını izleyemiyor: bir bölümü onun dışında kalıyor veya alt yüzey duvarın tabanına iniyor. Bu değişene kadar kendi üst kotunu korur.
 ab-model-wall-attach-target = "{ $name }" duvarının üstü yalnızca binasındaki bir çatıya veya döşemeye bağlanabilir.
 ab-model-ceiling-malformed = "{ $name }" tavanının kullanılabilir bir sınırı yok: her halkanın izin verilen aralıkta en az üç noktası olmalı ve kenarları okunabilmeli.
