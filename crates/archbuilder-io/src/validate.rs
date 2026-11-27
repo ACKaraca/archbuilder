@@ -8,15 +8,18 @@
 //! - no two rooted entities of the file share a `GlobalId`;
 //! - the products of the file (walls, slabs, roofs, coverings, doors, windows, spaces, openings,
 //!   stairs and their flights, ramps and their flights, railings, curtain walls, plates, members
-//!   and grids) number as many as the elements and grids written.
+//!   and grids) number as many as the elements and grids written;
+//! - when the build has the schema tables of the file's schema, every rule of the conformance
+//!   check of the reader (levels 1 to 3) holds: each failed rule is a failed item. Without the
+//!   tables nothing is added and the caller is told that conformance was not checked.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use arc_base::Limits;
 use arc_base::id::Identifier;
+use arc_base::{Cancel, Limits};
 use arc_io_common::loss::{Argument, LossItem, LossReport, Reason};
 use arc_io_ifc::write::{ElementKind, global_id};
-use arc_io_ifc::{Parameter, ReadOptions, WriteModel, read};
+use arc_io_ifc::{Finding, Parameter, ReadOptions, WriteModel, read};
 
 use crate::error::reasons;
 
@@ -37,6 +40,8 @@ fn is_product(entity: &str) -> bool {
         "IFCCURTAINWALL",
         "IFCPLATE",
         "IFCMEMBER",
+        "IFCTRANSPORTELEMENT",
+        "IFCPIPESEGMENT",
     ]
     .iter()
     .any(|p| entity.starts_with(p) && !entity.ends_with("TYPE"))
@@ -55,6 +60,7 @@ fn is_rooted(entity: &str) -> bool {
                 | "IFCBUILDING"
                 | "IFCBUILDINGSTOREY"
                 | "IFCOPENINGELEMENT"
+                | "IFCGROUP"
                 | "IFCPROPERTYSET"
                 | "IFCELEMENTQUANTITY"
         )
@@ -78,14 +84,42 @@ fn item(reason: Reason, kind: &str, id: Option<u128>, count: u64) -> LossItem {
     }
 }
 
-/// Reads `bytes` back and adds a failed item to `report` for each problem; returns whether the
-/// export is valid.
+/// What the self-validation established.
+pub(crate) struct Validation {
+    /// Whether every check that ran passed.
+    pub valid: bool,
+    /// The schema the conformance check ran against; `None` when it did not run (no tables in
+    /// the build, or a limit stopped it), which is not a pass.
+    pub conformance: Option<&'static str>,
+}
+
+/// The failed item of one finding of the conformance check.
+fn conformance_item(finding: &Finding) -> LossItem {
+    let mut out = item(reasons::VALIDATION_CONFORMANCE, &finding.entity, None, 1);
+    let text = |s: &str| Argument::Text(s.to_owned());
+    out.arguments
+        .insert("rule".to_owned(), text(finding.rule.code));
+    out.arguments
+        .insert("entity".to_owned(), text(&finding.entity));
+    out.arguments.insert(
+        "instance".to_owned(),
+        Argument::Int(i64::try_from(finding.instance).unwrap_or(i64::MAX)),
+    );
+    out.arguments.insert(
+        "attribute".to_owned(),
+        text(finding.attribute.as_deref().unwrap_or_default()),
+    );
+    out
+}
+
+/// Reads `bytes` back and adds a failed item to `report` for each problem.
 pub(crate) fn validate(
     bytes: &[u8],
     model: &WriteModel,
-    limits: Limits,
+    (limits, cancel): (Limits, &Cancel),
     report: &mut LossReport,
-) -> bool {
+) -> Validation {
+    let mut conformance = None;
     let mut found: Vec<LossItem> = Vec::new();
     match read(bytes, &mut ReadOptions::with_limits(limits)) {
         Err(_) => found.push(item(reasons::VALIDATION_UNREADABLE, "IFC", None, 1)),
@@ -119,6 +153,7 @@ pub(crate) fn validate(
                 .chain(model.storeys.iter().map(|s| (&s.id, "IFCBUILDINGSTOREY")))
                 .chain(model.elements.iter().map(|e| (&e.id, kind_of(e.kind))))
                 .chain(model.grids.iter().map(|g| (&g.id, "IFCGRID")))
+                .chain(model.groups.iter().map(|g| (&g.id, "IFCGROUP")))
                 .chain(model.types.iter().map(|t| (&t.id, "IFCTYPEOBJECT")));
             for (id, kind) in expected {
                 if !seen.contains(&global_id(*id)) {
@@ -131,6 +166,14 @@ pub(crate) fn validate(
                     .arguments
                     .insert("name".to_owned(), Argument::Text(id.clone()));
                 found.push(duplicate);
+            }
+            // Conformance needs the schema tables, which a build may not have: then it is not
+            // checked, and nothing is reported for it.
+            if let Ok(checked) = file.conformance(&limits, cancel)
+                && checked.schema.is_some()
+            {
+                conformance = checked.schema;
+                found.extend(checked.findings.iter().map(conformance_item));
             }
             let exported = model.elements.len() + model.grids.len();
             if products != exported {
@@ -150,7 +193,7 @@ pub(crate) fn validate(
     let valid = found.is_empty();
     report.summary.failed += found.len() as u64;
     report.items.extend(found);
-    valid
+    Validation { valid, conformance }
 }
 
 fn kind_of(kind: ElementKind) -> &'static str {
@@ -171,6 +214,8 @@ fn kind_of(kind: ElementKind) -> &'static str {
         ElementKind::CurtainWall => "IFCCURTAINWALL",
         ElementKind::Plate => "IFCPLATE",
         ElementKind::Member => "IFCMEMBER",
+        ElementKind::TransportElement => "IFCTRANSPORTELEMENT",
+        ElementKind::PipeSegment => "IFCPIPESEGMENT",
     }
 }
 
@@ -198,7 +243,7 @@ mod tests {
         let written = write(model, &WriteOptions::default()).unwrap();
         let mut report = written.report;
         let _ = bytes;
-        let ok = validate(bytes, model, Limits::DEFAULT, &mut report);
+        let ok = validate(bytes, model, (Limits::DEFAULT, &Cancel::new()), &mut report).valid;
         (ok, report)
     }
 

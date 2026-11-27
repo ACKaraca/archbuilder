@@ -754,7 +754,7 @@ fn grids_of_one_direction_are_reported_and_not_padded() {
 }
 
 #[test]
-fn a_grid_of_several_segments_is_reported_not_shortened() {
+fn a_grid_of_several_segments_is_written_as_a_polyline() {
     let doc = Doc::new();
     doc.run(
         "archbuilder.grid.create",
@@ -769,24 +769,34 @@ fn a_grid_of_several_segments_is_reported_not_shortened() {
         json!({"start": [-1.0, 6.0], "end": [9.0, 6.0], "label": "2"}),
     );
     let (exported, file) = doc.export("grid_multi_segment");
-    let reported: Vec<_> = exported
-        .report
-        .items
-        .iter()
-        .filter(|i| i.reason == "ab.io.ifc.grid_multi_segment")
-        .collect();
-    assert_eq!(reported.len(), 1);
-    // The other lines still make a grid; the bent line is not among its axes.
+    assert!(
+        !exported
+            .report
+            .items
+            .iter()
+            .any(|i| i.reason.contains("grid_multi_segment")),
+        "{:#?}",
+        exported.report.items
+    );
     let axes: Vec<String> = file
         .instances_of("IFCGRIDAXIS")
         .map(|a| text(&a.records[0].parameters[0]).to_owned())
         .collect();
-    assert_eq!(axes.len(), 2);
-    assert!(!axes.contains(&"1".to_owned()));
+    assert_eq!(axes.len(), 3);
+    assert!(axes.contains(&"1".to_owned()));
+    // The bent axis is a polyline of its three points.
+    let bent = file
+        .instances_of("IFCPOLYLINE")
+        .filter(|p| match &p.records[0].parameters[0] {
+            Parameter::List(points) => points.len() == 3,
+            _ => false,
+        })
+        .count();
+    assert_eq!(bent, 1);
 }
 
 #[test]
-fn planes_and_selection_sets_are_reported_with_their_own_kinds() {
+fn planes_are_reported_and_a_selection_set_is_a_group() {
     let doc = Doc::new();
     doc.run(
         "archbuilder.reference_plane.create",
@@ -822,14 +832,15 @@ fn planes_and_selection_sets_are_reported_with_their_own_kinds() {
                 "ab.io.ifc.datum_not_written".to_owned(),
                 "IFCANNOTATION".to_owned()
             ),
-            (
-                "ab.io.ifc.selection_set_not_written".to_owned(),
-                "IFCGROUP".to_owned()
-            ),
         ]
     );
+    // The set is an IfcGroup assigned its wall, with nothing left out.
+    let groups: Vec<_> = file.instances_of("IFCGROUP").collect();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(text(&groups[0].records[0].parameters[2]), "Walls");
+    assert_eq!(file.instances_of("IFCRELASSIGNSTOGROUP").count(), 1);
     assert!(
-        exported
+        !exported
             .report
             .items
             .iter()

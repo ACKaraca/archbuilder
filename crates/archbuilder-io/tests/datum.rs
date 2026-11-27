@@ -79,7 +79,7 @@ fn a_grid_of_one_direction_and_the_planes_are_reported_and_not_written() {
 }
 
 #[test]
-fn a_georeferenced_project_names_the_reference_in_the_loss_report() {
+fn a_georeferenced_project_is_written_as_a_map_conversion() {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
         Arc::new(Evaluators::new()),
@@ -115,5 +115,12 @@ fn a_georeferenced_project_names_the_reference_in_the_loss_report() {
         "archbuilder.coordinates.set",
         json!({"crs": "EPSG:3067", "eastings": 500000.0, "northings": 6800000.0}),
     );
-    assert_eq!(codes(&document), ["ab.io.ifc.georeference_not_written"]);
+    assert!(codes(&document).is_empty());
+    let out = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+    let text = String::from_utf8_lossy(&out.bytes);
+    assert!(text.contains("IFCPROJECTEDCRS('EPSG:3067'"), "{text}");
+    assert!(text.contains("IFCMAPCONVERSION("), "no map conversion");
+    assert!(text.contains("500000."), "eastings missing");
+    // True north of 10 degrees turns the model's x axis in the map and the context's north.
+    assert!(text.contains(",0.9848077530122081,-0.17364817766693014,$)"), "x axis");
 }

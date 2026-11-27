@@ -12,6 +12,7 @@ use arc_geom::Polyhedron;
 use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::dormer::PartKind;
+use archbuilder_model::elevator::CAR_HEIGHT;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{DORMER, ELEVATOR, LEVEL, ROOF, ROOF_EDGE, STOREY, WALL};
 
@@ -45,9 +46,6 @@ const CAR: Color = Color {
     b: 0.62,
     a: 1.0,
 };
-
-/// The height of the car drawn in the viewport, in meters.
-const CAR_HEIGHT: f64 = 2.4;
 
 fn add(extraction: &mut Extraction, solid: &Polyhedron, color: Color) -> Result<()> {
     let b = solid.bounding_box();

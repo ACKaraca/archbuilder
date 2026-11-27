@@ -1,16 +1,17 @@
 //! The grids of a building as one `IfcGrid`: every grid line is an `IfcGridAxis` tagged with its
-//! label, a straight line as a polyline of two points and an arc as a trimmed circle. The grid is
+//! label, a straight line as a polyline of two points, an arc as a trimmed circle, a line of
+//! several straight segments as a polyline and one with arcs as a composite curve. The grid is
 //! contained in the lowest storey, its axes in the storey's plane.
 //!
 //! `IfcGrid` needs both a U and a V family of axes. The lines are split by direction: the first
 //! straight line starts the U family, a straight line within 45 degrees of it (as lines, not as
-//! rays) belongs to it, the others and every arc are V axes; a grid of one family only has no
+//! rays) belongs to it, the others, every arc and every line of several segments are V axes; a grid of one family only has no
 //! valid `IfcGrid` and is reported, never padded.
 
 use arc_base::id::Identifier;
 use arc_base::math::Point2;
 use arc_io_ifc::WriteModel;
-use arc_io_ifc::write::{AxisCurve, Grid, GridAxis, derived_id, role};
+use arc_io_ifc::write::{AxisCurve, AxisSegment, Grid, GridAxis, derived_id, role};
 use archbuilder_model::datum;
 use archbuilder_model::types::GRID;
 
@@ -23,14 +24,14 @@ const BUILDING_GRID: u32 = role::CALLER_FIRST + 4;
 /// Two straight lines closer than this in direction, in radians, are parallel.
 const PARALLEL: f64 = 1.0e-6;
 
-/// The axis curve of a grid line; `None` for a line without length.
-fn curve(grid: &datum::Grid) -> Option<(AxisCurve, bool)> {
-    let (s, e) = (grid.start, grid.end);
-    let chord = grid.length();
+/// The axis curve of the segment from `s` to `e` with `bulge` and whether it runs along that
+/// curve; `None` for a segment without length.
+fn segment(s: [f64; 2], e: [f64; 2], bulge: f64) -> Option<(AxisCurve, bool)> {
+    let chord = (e[0] - s[0]).hypot(e[1] - s[1]);
     if chord < 1.0e-6 {
         return None;
     }
-    if grid.bulge.abs() < 1.0e-9 {
+    if bulge.abs() < 1.0e-9 {
         let line = AxisCurve::Line {
             start: Point2::new(s[0], s[1]),
             end: Point2::new(e[0], e[1]),
@@ -39,7 +40,7 @@ fn curve(grid: &datum::Grid) -> Option<(AxisCurve, bool)> {
     }
     // The center lies on the left of the chord by `chord / 4 * (1 / b - b)` (a positive bulge is
     // counterclockwise); the sweep is `4 atan b`.
-    let b = grid.bulge;
+    let b = bulge;
     let (dx, dy) = ((e[0] - s[0]) / chord, (e[1] - s[1]) / chord);
     let offset = chord / 4.0 * (1.0 / b - b);
     let center = [
@@ -58,6 +59,57 @@ fn curve(grid: &datum::Grid) -> Option<(AxisCurve, bool)> {
         end_angle: start_angle + sweep,
     };
     Some((arc, b > 0.0))
+}
+
+/// The axis curve of a grid line and whether it runs along that curve; `None` for a line
+/// without length. One segment is a line or an arc; several are a polyline when all are straight
+/// and else a composite curve of lines and arcs.
+fn curve(grid: &datum::Grid) -> Option<(AxisCurve, bool)> {
+    if grid.via.is_empty() {
+        return segment(grid.start, grid.end, grid.bulge);
+    }
+    let points = grid.points();
+    let bulges: Vec<f64> = grid
+        .via
+        .iter()
+        .map(|(_, b)| *b)
+        .chain([grid.bulge])
+        .collect();
+    let mut pieces = Vec::new();
+    for (w, bulge) in points.windows(2).zip(bulges) {
+        if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+            // A segment without length is dropped; the neighbors meet at its point.
+            if let Some(piece) = segment(*a, *b, bulge) {
+                pieces.push(piece);
+            }
+        }
+    }
+    if pieces
+        .iter()
+        .all(|(c, _)| matches!(c, AxisCurve::Line { .. }))
+    {
+        let mut line: Vec<Point2> = Vec::new();
+        for (c, _) in &pieces {
+            if let AxisCurve::Line { start, end } = c {
+                if line.is_empty() {
+                    line.push(*start);
+                }
+                line.push(*end);
+            }
+        }
+        return (line.len() >= 2).then_some((AxisCurve::Polyline(line), true));
+    }
+    let segments = pieces
+        .into_iter()
+        .map(|(c, same)| {
+            if same {
+                AxisSegment::new(c)
+            } else {
+                AxisSegment::reversed(c)
+            }
+        })
+        .collect();
+    Some((AxisCurve::Composite(segments), true))
 }
 
 impl Mapper<'_> {
@@ -88,15 +140,10 @@ impl Mapper<'_> {
                 self.lose(reasons::NOT_EXPORTED, "IFCGRID", &object);
                 continue;
             };
-            // shortcut: the pinned writer's axis curve is one line or one arc; a grid of several
-            // segments is reported until the writer takes polylines and composite curves.
-            if !grid.via.is_empty() {
-                self.lose(reasons::GRID_MULTI_SEGMENT, "IFCGRIDAXIS", &object);
-                continue;
-            }
+            let straight_line = matches!(curve, AxisCurve::Line { .. });
             let mut axis = GridAxis::new(&grid.label, curve);
             axis.same_sense = same_sense;
-            if matches!(curve, AxisCurve::Line { .. }) {
+            if straight_line {
                 let angle = (grid.end[1] - grid.start[1]).atan2(grid.end[0] - grid.start[0]);
                 straight.push((angle, axis));
             } else {

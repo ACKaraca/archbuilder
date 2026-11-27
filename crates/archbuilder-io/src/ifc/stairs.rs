@@ -7,23 +7,23 @@
 //! identifier of a part is derived from the identifier of its stair or ramp.
 //!
 //! The standard property sets of these elements (`Pset_StairCommon`, `Pset_StairFlightCommon`,
-//! `Pset_RampCommon`, `Pset_RampFlightCommon`, `Pset_RailingCommon`) hold counts, positive
-//! lengths, plane angles and identifiers only, value types the pinned writer cannot write, so no
-//! standard property set is written for them: the counts and dimensions of a stair flight are
-//! attributes of the `IfcStairFlight`, the rest is in the body.
+//! `Pset_RampCommon`, `Pset_RampFlightCommon`, `Pset_RailingCommon`) hold the counts, lengths and
+//! plane angles the model knows, with the measure types of the IFC4 templates; the counts and
+//! dimensions of a stair flight are also attributes of the `IfcStairFlight`.
 
 use arc_base::ObjectId;
 use arc_base::id::Identifier;
 use arc_doc::Object;
 use arc_io_ifc::write::{
-    Element, ElementKind, FlightDimensions, Quantity, QuantitySet, QuantityValue, derived_id, role,
+    Element, ElementKind, FlightDimensions, Measure, Quantity, QuantitySet, QuantityValue,
+    derived_id, role,
 };
 use archbuilder_model::floor::signed_area;
 use archbuilder_model::railing::Derived as Railing;
 use archbuilder_model::ramp::{self, Part};
 use archbuilder_model::stair::{self, Layout, Shape};
 
-use super::{Mapper, WORLD, brep, name_of};
+use super::{Mapper, WORLD, brep, name_of, psets};
 use crate::error::reasons;
 
 /// The role of the flights of a stair or ramp in [`derived_id`]; the index is the run's.
@@ -109,6 +109,30 @@ impl Mapper<'_> {
             }
             .to_owned(),
         );
+        if let Ok(layout) = &placed.layout {
+            // The last riser of a run meets the landing or the floor above: a tread less.
+            let treads: usize = layout.runs.iter().map(|r| r.risers.saturating_sub(1)).sum();
+            psets::attach(
+                &mut element,
+                "Pset_StairCommon",
+                vec![
+                    psets::count("NumberOfRiser", layout.risers),
+                    psets::count("NumberOfTreads", treads),
+                    psets::measure("RiserHeight", Measure::PositiveLength, layout.riser),
+                    psets::measure("TreadLength", Measure::PositiveLength, layout.stair.tread),
+                    psets::measure(
+                        "WaistThickness",
+                        Measure::PositiveLength,
+                        layout.stair.waist,
+                    ),
+                    psets::measure(
+                        "RequiredHeadroom",
+                        Measure::PositiveLength,
+                        stair::headroom_of(&object.values),
+                    ),
+                ],
+            );
+        }
         self.elements.push(element);
         self.exported += 1;
         let Ok(layout) = &placed.layout else {
@@ -124,6 +148,16 @@ impl Mapper<'_> {
             );
             flight.predefined_type = Some("STRAIGHT".to_owned());
             flight.host = Some(id);
+            psets::attach(
+                &mut flight,
+                "Pset_StairFlightCommon",
+                vec![
+                    psets::count("NumberOfRiser", run.risers),
+                    psets::count("NumberOfTreads", run.risers.saturating_sub(1)),
+                    psets::measure("RiserHeight", Measure::PositiveLength, layout.riser),
+                    psets::measure("TreadLength", Measure::PositiveLength, layout.stair.tread),
+                ],
+            );
             // The last riser meets the landing or the floor above, so a run has one tread less
             // than it has risers.
             flight.flight = Some(FlightDimensions::new(
@@ -171,6 +205,15 @@ impl Mapper<'_> {
             );
             rail.predefined_type = Some("GUARDRAIL".to_owned());
             rail.host = Some(id);
+            psets::attach(
+                &mut rail,
+                "Pset_RailingCommon",
+                vec![psets::measure(
+                    "Height",
+                    Measure::PositiveLength,
+                    archbuilder_model::railing::DEFAULT_HEIGHT,
+                )],
+            );
             rail.quantity_sets.push(QuantitySet::new(
                 "Qto_RailingBaseQuantities",
                 vec![length(path_length(&path))],
@@ -197,6 +240,18 @@ impl Mapper<'_> {
         let name = name_of(object);
         let mut element = Element::new(id, ElementKind::Ramp, &name, storey.as_u128());
         element.predefined_type = ramp_type(&placed.ramp);
+        if let Ok(layout) = &placed.layout {
+            // The largest slope of the ramp's type, as an angle.
+            psets::attach(
+                &mut element,
+                "Pset_RampCommon",
+                vec![psets::measure(
+                    "RequiredSlope",
+                    Measure::PlaneAngle,
+                    layout.max_slope.atan(),
+                )],
+            );
+        }
         self.elements.push(element);
         self.exported += 1;
         let Ok(layout) = &placed.layout else {
@@ -227,6 +282,24 @@ impl Mapper<'_> {
                     // A ramp by sketch has a boundary of any shape.
                     flight.predefined_type = (!sketch).then(|| "STRAIGHT".to_owned());
                     flight.host = Some(id);
+                    psets::attach(
+                        &mut flight,
+                        "Pset_RampFlightCommon",
+                        vec![
+                            layout.slopes().get(k).and_then(|s| {
+                                psets::measure("Slope", Measure::PlaneAngle, s.atan())
+                            }),
+                            (!sketch)
+                                .then(|| {
+                                    psets::measure(
+                                        "ClearWidth",
+                                        Measure::PositiveLength,
+                                        layout.ramp.width,
+                                    )
+                                })
+                                .flatten(),
+                        ],
+                    );
                     self.part(flight, Ok(solid), object, level, |v| {
                         let mut quantities = vec![length(long)];
                         quantities.extend(
@@ -283,6 +356,15 @@ impl Mapper<'_> {
                 "BALUSTRADE"
             }
             .to_owned(),
+        );
+        psets::attach(
+            &mut element,
+            "Pset_RailingCommon",
+            vec![psets::measure(
+                "Height",
+                Measure::PositiveLength,
+                derived.kind.height,
+            )],
         );
         element.quantity_sets.push(QuantitySet::new(
             "Qto_RailingBaseQuantities",
