@@ -386,6 +386,7 @@ fn a_view_an_undo_removes_while_it_is_shown_gives_the_3d_view_and_camera_back() 
 /// `ARCHBUILDER_SCENE=/tmp/house.archb cargo test -p archbuilder --test planview -- --ignored`.
 #[test]
 #[ignore = "builds a scene for manual checks"]
+#[allow(clippy::too_many_lines, reason = "one scene, step by step")]
 fn builds_the_two_storey_house() {
     let Ok(path) = std::env::var("ARCHBUILDER_SCENE") else {
         return;
