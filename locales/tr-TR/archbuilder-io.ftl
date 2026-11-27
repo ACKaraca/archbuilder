@@ -49,4 +49,6 @@ ab-io-loss-mesh-object = Gövdesi olmayan { $count } nesne dosyada yok: odalar, 
 ab-io-loss-mesh-body-failed = "{ $name }" öğesinin dosyada ağı yok: katısı türetilemedi.
 ab-io-loss-mesh-curves = { $count } öğenin eğri kenar ve yüzeyleri üçgen olarak yazıldı.
 ab-io-loss-mesh-unit = Dosya birimini kaydetmez: koordinatları dışa aktarımın yapıldığı birimde okuyun.
-ab-io-loss-family-not-written = Bir aile örneği IFC dosyasında yok: aile örneklerinin eşlemesi henüz yazılmadı. Burada listelenir, vekil öğe olarak dışa aktarılmaz.
+ab-io-loss-family-not-written = Bir aile örneği IFC dosyasında yok: yazıcının IFC varlığı için henüz bir öğe türü yok. Varlıkla birlikte burada listelenir, vekil öğe olarak dışa aktarılmaz.
+ab-io-loss-family-type-sets-on-occurrence = Bir aile tipinin özellik kümeleri, IFC yazıcısında tiplerde özellik kümesi olmadığından örneklerine yazılır.
+ab-io-loss-family-parameter-as-text = IFC'nin değer türü olmayan parametreler (aile tipi) metin olarak yazılır.

@@ -33,6 +33,7 @@ use crate::error::{codes, reasons};
 
 mod curtain;
 mod datum;
+mod family;
 mod project;
 mod psets;
 mod stairs;
@@ -245,17 +246,13 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.elevator(&lift, storey, level);
         }
-        // A family instance is named in the loss report until its mapping is written: never a
-        // silent proxy.
+        // Family instances: the entity of the category or of the family's own assignment; an
+        // entity the writer cannot write is named in the loss report, never a silent proxy.
         for component in
             spatial::children(self.snapshot, archbuilder_model::types::COMPONENT, storey)
         {
             self.cancel.check()?;
-            self.lose(
-                reasons::FAMILY_NOT_WRITTEN,
-                "IFCBUILDINGELEMENTPROXY",
-                &component,
-            );
+            self.component(&component, storey, level);
         }
         Ok(())
     }

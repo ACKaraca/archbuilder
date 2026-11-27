@@ -17,8 +17,10 @@ use archbuilder_model::spatial;
 use archbuilder_model::types::{COMPONENT, FAMILY, FAMILY_TYPE, STOREY};
 use serde_json::json;
 
-#[test]
-fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
+fn place_family(
+    definition: archbuilder_model::family::Definition,
+    type_name: &'static str,
+) -> Document {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
         Arc::new(Evaluators::new()),
@@ -45,7 +47,7 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
     let project = spatial::project(&snapshot).unwrap().id;
     let storey = spatial::objects(&snapshot, STOREY)[0].id;
     let published = publish(
-        &table(),
+        &definition,
         None,
         Version {
             major: 1,
@@ -74,7 +76,7 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
                 FAMILY_TYPE,
                 ty,
                 header(project),
-                FamilyType::record("1400x800", family, &std::collections::BTreeMap::new()),
+                FamilyType::record(type_name, family, &std::collections::BTreeMap::new()),
             )?;
             let c = Component {
                 id: comp,
@@ -91,6 +93,12 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
         })
         .wait()
         .unwrap();
+    document
+}
+
+#[test]
+fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
+    let document = place_family(table(), "1400x800");
     let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
     assert!(export.valid);
     let text = String::from_utf8_lossy(&export.bytes);
@@ -115,4 +123,39 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
     .unwrap();
     assert_eq!(mesh.elements, 1);
     assert!(mesh.triangles > 0);
+}
+
+#[test]
+fn a_door_family_is_an_ifc_door_with_type_properties_and_stable_ids() {
+    let document = place_family(archbuilder_model::family::fixtures::door(), "0900x2100");
+    let options = ExportOptions::default();
+    let a = export_ifc(&document.snapshot(), &options).unwrap();
+    let b = export_ifc(&document.snapshot(), &options).unwrap();
+    assert!(a.valid, "{:?}", a.report.items);
+    assert_eq!(
+        a.bytes, b.bytes,
+        "GlobalIds and bytes are the same on every export"
+    );
+    let text = String::from_utf8_lossy(&a.bytes);
+    for needle in [
+        "IFCDOOR(",
+        "IFCDOORTYPE(",
+        "ArchBuilder_Type",
+        "ArchBuilder_Instance",
+        "ArchBuilder_Family",
+        "Pset_DoorCommon",
+        "IFCFACETEDBREP",
+    ] {
+        assert!(text.contains(needle), "{needle}");
+    }
+    assert!(!text.contains("IFCBUILDINGELEMENTPROXY"));
+    assert!(
+        !a.report
+            .items
+            .iter()
+            .any(|i| i.reason == "ab.io.ifc.family_not_written")
+    );
+    if let Ok(dir) = std::env::var("AB_IFC_OUT") {
+        std::fs::write(std::path::Path::new(&dir).join("door.ifc"), &a.bytes).unwrap();
+    }
 }
