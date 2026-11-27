@@ -1215,6 +1215,28 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         ));
         mapper.storey(entry.storey.id, elevation)?;
     }
+    // The writer has no IfcGrid yet and a proxy would hide the loss: datums are reported.
+    for (key, kind, reason) in [
+        (
+            archbuilder_model::types::GRID,
+            "IFCGRID",
+            reasons::GRID_NOT_WRITTEN,
+        ),
+        (
+            archbuilder_model::types::REFERENCE_PLANE,
+            "IFCGRIDAXIS",
+            reasons::DATUM_NOT_WRITTEN,
+        ),
+        (
+            archbuilder_model::types::WORK_PLANE,
+            "IFCGRIDAXIS",
+            reasons::DATUM_NOT_WRITTEN,
+        ),
+    ] {
+        for datum in spatial::objects(snapshot, key) {
+            mapper.lose(reason, kind, &datum);
+        }
+    }
     model.elements = std::mem::take(&mut mapper.elements);
     model.types = element_types(snapshot);
     let write_options = WriteOptions {

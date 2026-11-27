@@ -73,3 +73,5 @@ ab-model-ramp-malformed = "{ $name }" rampası oluşturulamıyor: genişlik, uzu
 ab-model-ramp-slope = "{ $name }" rampasının eğimi % { $slope }; tipinin en büyük eğimi olan % { $max } değerini aşıyor. Rampayı uzatın ya da tipi değiştirin.
 ab-model-railing-malformed = "{ $name }" korkuluğu oluşturulamıyor: yolu iki farklı nokta gerektirir ve bağlı olduğu elemanın durması gerekir.
 ab-model-railing-gap = "{ $name }" korkuluğunda baluster araları { $gap } mm; { $max } mm sınırını aşıyor. Daha küçük baluster aralığı kullanın.
+ab-model-datum-degenerate = "{ $name }" datumunun kullanılabilir bir çizgisi ya da düzlemi yok: akslar ve referans düzlemleri en az bir milimetre uzunlukta olmalı, çalışma düzlemi için datumu ya da aynı doğru üzerinde olmayan üç nokta gerekir.
+ab-model-datum-label-duplicate = "{ $name }" etiketini binadaki { $count } aks kullanıyor. Birini yeniden adlandırın.

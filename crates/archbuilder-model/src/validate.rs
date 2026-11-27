@@ -43,6 +43,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         SITE => Some(&[PROJECT]),
         BUILDING => Some(&[SITE]),
         STOREY | LEVEL => Some(&[BUILDING]),
+        k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
         types::SELECTION_SET => Some(&[PROJECT]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
@@ -101,11 +102,15 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == types::PLAN_VIEW {
         out.extend(crate::view::problem(object));
     }
+    if types::is_datum(key) && crate::datum::is_degenerate(candidate, key, object) {
+        out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));
+    }
     out.extend(type_problem(candidate, key, object));
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT
         && key != ROOM
+        && key != types::GRID
         && objects(candidate, key)
             .iter()
             .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
@@ -823,6 +828,24 @@ fn check_walls_of_levels(
     }
 }
 
+/// The grid labels used twice, when a grid changed.
+fn label_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let changed = touched.iter().any(|(id, c)| {
+        *c != Change::Deleted && type_of(candidate, *id).as_deref() == Some(types::GRID)
+    });
+    if !changed {
+        return Vec::new();
+    }
+    crate::datum::duplicate_labels(candidate)
+        .into_iter()
+        .map(|(label, found)| {
+            Error::new(codes::DATUM_LABEL_DUPLICATE)
+                .with_arg("name", label)
+                .with_arg("count", found.len().to_string())
+        })
+        .collect()
+}
+
 /// The findings that are not errors: walls on top of each other, a stair's stride or uncut
 /// shaft opening, an open corner (the ends of two walls close together and not
 /// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
@@ -870,6 +893,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             out.extend(attach_problem(candidate, &wall));
         }
     }
+    out.extend(label_warnings(candidate, touched));
     for storey in storeys {
         out.extend(room_findings(candidate, storey));
         if touched.iter().any(|(id, c)| {
@@ -1102,6 +1126,12 @@ fn pin_free(key: &str) -> &'static [usize] {
         ],
         WALL_OPENING => &[types::wall_opening::NAME, types::wall_opening::PINNED],
         SHAFT => &[types::shaft::NAME, types::shaft::PINNED],
+        types::GRID => &[types::grid::NAME, types::grid::PINNED],
+        types::REFERENCE_PLANE => &[
+            types::reference_plane::NAME,
+            types::reference_plane::STRENGTH,
+            types::reference_plane::PINNED,
+        ],
         VERTICAL_OPENING => &[
             types::vertical_opening::NAME,
             types::vertical_opening::PINNED,
@@ -1167,11 +1197,13 @@ pub enum WarningKind {
     Type,
     /// A ceiling edge that follows a wall that no longer bounds it, or an opening outside its host.
     Ceiling,
+    /// A grid label used twice in a building.
+    Datum,
 }
 
 impl WarningKind {
     /// Every kind, in the order the panel lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Stair,
         Self::Room,
         Self::Wall,
@@ -1179,6 +1211,7 @@ impl WarningKind {
         Self::Ceiling,
         Self::Insert,
         Self::Type,
+        Self::Datum,
     ];
 
     /// The kind of a finding, by its code.
@@ -1197,6 +1230,8 @@ impl WarningKind {
             Self::Ceiling
         } else if code == codes::INSERT_MEETS_WALL.code {
             Self::Insert
+        } else if code.starts_with("ab.model.datum") {
+            Self::Datum
         } else if code.starts_with("ab.model.type") {
             Self::Type
         } else {
@@ -1297,6 +1332,12 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
     }
     for error in ceiling_range_findings(snapshot) {
         let found = ids(&error);
+        push(Severity::Warning, error, found);
+    }
+    for (label, found) in crate::datum::duplicate_labels(snapshot) {
+        let error = Error::new(codes::DATUM_LABEL_DUPLICATE)
+            .with_arg("name", label)
+            .with_arg("count", found.len().to_string());
         push(Severity::Warning, error, found);
     }
     for key in [WALL, FLOOR, DOOR, WINDOW, ROOF, CEILING] {

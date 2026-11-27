@@ -331,6 +331,7 @@ fn delete_set(
             roof_count += 1;
         } else if !kind.as_deref().is_some_and(|k| {
             archbuilder_model::types::is_storey_element(k)
+                || archbuilder_model::types::is_datum(k)
                 || k == archbuilder_model::types::VERTICAL_OPENING
         }) {
             expect(ctx.snapshot(), *id, FLOOR)?;
@@ -594,6 +595,7 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
             // The storey's own elements other than walls, which nothing else depends on.
             spatial::type_of(ctx.snapshot(), *id).is_some_and(|k| {
                 (k != WALL && archbuilder_model::types::is_storey_element(&k))
+                    || archbuilder_model::types::is_datum(&k)
                     || k == archbuilder_model::types::VERTICAL_OPENING
             })
         })

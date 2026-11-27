@@ -73,3 +73,5 @@ ab-model-ramp-malformed = The ramp "{ $name }" cannot be built: a width, length,
 ab-model-ramp-slope = The ramp "{ $name }" has a slope of { $slope } %, over the largest of its type, { $max } %. Lengthen the run or change the type.
 ab-model-railing-malformed = The railing "{ $name }" cannot be built: its path needs two different points, and a host must still exist.
 ab-model-railing-gap = The railing "{ $name }" has an opening of { $gap } mm between balusters, over { $max } mm. Use a smaller baluster spacing.
+ab-model-datum-degenerate = The datum "{ $name }" has no usable line or plane: a grid or reference plane must be at least a millimeter long and a work plane needs its datum or three points that are not on one line.
+ab-model-datum-label-duplicate = The label "{ $name }" is used by { $count } grids of the building. Rename one of them.

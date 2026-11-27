@@ -133,8 +133,22 @@ impl Picker {
         let mut stack = archbuilder_model::pick::stack(snapshot, &rooms, at, aperture, ray);
         stack.retain(|id| shown(*id));
         if let Some(hits) = &self.view_hits {
-            // What the drawing shows under the pointer, in the order of the list.
+            // What the drawing shows under the pointer, in the order of the list; datum lines
+            // are overlays, not in the drawing, and stay.
+            let datums: Vec<ObjectId> = stack
+                .iter()
+                .copied()
+                .filter(|id| {
+                    archbuilder_model::spatial::type_of(snapshot, *id)
+                        .is_some_and(|k| archbuilder_model::types::is_datum(&k))
+                })
+                .collect();
             stack = hits.filter(stack);
+            for d in datums {
+                if !stack.contains(&d) {
+                    stack.push(d);
+                }
+            }
             stack.retain(|id| shown(*id));
         }
         self.under = Some(Under {

@@ -304,6 +304,8 @@ impl WallInteraction {
             self.modify.current().map(|r| r.command)
         } else if self.rooms.running() {
             Some(ROOM_PLACE)
+        } else if self.datums.running() {
+            self.datums.command()
         } else if self.stairs.running() {
             Some(self.stairs.command())
         } else if self.floors.running() {
@@ -496,7 +498,7 @@ impl WallInteraction {
 
     /// The snap input of an event, with the grid and the switch of the habits.
     pub(super) fn snap_input<'a>(
-        &self,
+        &'a self,
         pointer: [f64; 2],
         event: &PointerEvent,
         ends: &'a [[f64; 2]],
@@ -508,6 +510,8 @@ impl WallInteraction {
         input.centers = centers;
         input.grid = self.habits.grid;
         input.object_snaps = self.habits.snap_on;
+        input.datums = &self.datum_snap.0;
+        input.datum_points = &self.datum_snap.1;
         input
     }
 

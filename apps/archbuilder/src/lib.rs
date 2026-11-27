@@ -41,9 +41,12 @@ use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 pub mod ceiling_view;
 pub mod chrome;
 pub mod clipboard;
+pub mod datum_tool;
+pub mod datum_view;
 pub mod direct;
 pub mod extract_ceiling;
 pub mod extract_circulation;
+pub mod extract_datum;
 pub mod extract_floor;
 pub mod extract_floor_edge;
 pub mod extract_insert;
@@ -210,6 +213,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_ceiling::dependents(snapshot, changes));
         out.extend(extract_floor_edge::dependents(snapshot, changes));
         out.extend(extract_roof_extrusion::dependents(snapshot, changes));
+        out.extend(extract_datum::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
@@ -390,6 +394,33 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_ceiling::extract_shaft(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.grid".into(),
+        types: vec![archbuilder_model::types::GRID.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_grid(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.reference_plane".into(),
+        types: vec![archbuilder_model::types::REFERENCE_PLANE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_reference_plane(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.work_plane".into(),
+        types: vec![archbuilder_model::types::WORK_PLANE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_work_plane(snapshot, object, cancel)
             })
         }),
     })?;
@@ -592,6 +623,14 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                     out.extend(ceiling_view::overlays(&snapshot, language));
                     out.extend(opening_view::overlays(&snapshot));
                 }
+                let level = planned
+                    .then(|| room_view::shared().active())
+                    .flatten()
+                    .and_then(|s| archbuilder_model::spatial::get(&snapshot, s))
+                    .map(|s| archbuilder_model::spatial::storey_elevation(&snapshot, &s));
+                out.extend(datum_view::overlays(&snapshot, level, &|id| {
+                    room_view::shared().is_hidden(id)
+                }));
                 out.extend(pin_marks(&snapshot));
             }
             out

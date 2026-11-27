@@ -189,6 +189,8 @@ pub(crate) struct Set {
     pub(crate) shafts: Vec<ObjectId>,
     /// The vertical openings, and those of the floors, roofs and ceilings in the set.
     pub(crate) cuts: Vec<ObjectId>,
+    /// The grids and reference planes.
+    pub(crate) datums: Vec<ObjectId>,
 }
 
 impl Set {
@@ -204,6 +206,7 @@ impl Set {
             + self.ceilings.len()
             + self.shafts.len()
             + self.cuts.len()
+            + self.datums.len()
     }
 }
 
@@ -256,6 +259,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::CEILING) => set.ceilings.push(id),
             Some(types::SHAFT) => set.shafts.push(id),
             Some(types::VERTICAL_OPENING) => set.cuts.push(id),
+            Some(types::GRID | types::REFERENCE_PLANE) => set.datums.push(id),
             Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -955,6 +959,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         archbuilder_model::floor::VERTICAL_SLOTS,
         xf,
     )?;
+    crate::datum::move_datums(ctx, &snapshot, &set.datums, xf)?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -1191,6 +1196,7 @@ pub(crate) fn copy_set(
         &|host| hosts.get(&host).copied(),
         target,
     )?);
+    created.extend(crate::datum::copy_datums(ctx, &snapshot, &set.datums, xf)?);
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
     Ok(Modified {

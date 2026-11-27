@@ -418,6 +418,18 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-ceiling-range-element",
     };
+    /// A grid or reference plane is shorter than a millimeter, or a work plane has no plane.
+    pub const DATUM_DEGENERATE: ErrorCode = ErrorCode {
+        code: "ab.model.datum_degenerate",
+        category: Category::InvalidInput,
+        message_id: "ab-model-datum-degenerate",
+    };
+    /// Several grids of a building have the same label (a warning).
+    pub const DATUM_LABEL_DUPLICATE: ErrorCode = ErrorCode {
+        code: "ab.model.datum_label_duplicate",
+        category: Category::Conflict,
+        message_id: "ab-model-datum-label-duplicate",
+    };
     /// A plan view's range is out of order: view depth, bottom, cut and top must rise.
     pub const VIEW_RANGE: ErrorCode = ErrorCode {
         code: "ab.model.view_range",

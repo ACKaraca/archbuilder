@@ -26,3 +26,5 @@ ab-io-loss-floor-edge-as-covering = IFC4'te döşeme kenarı için bir eleman yo
 ab-io-loss-floor-edge-orphan = Bir döşeme kenarı, döşemesinde artık bulunmayan kenarları adlandırıyor: bu kenarlar dosyada yok.
 ab-io-loss-railing-not-written = Bir korkuluk IFC dosyasında yok: korkuluklar henüz yazılamıyor.
 ab-io-loss-ramp-not-written = Bir rampa IFC dosyasında yok: rampalar ve rampa kolları henüz yazılamıyor. Üstteki döşemede açtığı boşluk dosyada var.
+ab-io-loss-grid-not-written = Bir aks IFC dosyasında yok: aks çizgileri ve eksenleri henüz yazılamıyor, yerine başka bir varlık koymak kaybı gizlerdi.
+ab-io-loss-datum-not-written = Bir referans düzlemi ya da çalışma düzlemi IFC dosyasında yok: IFC karşılığı olmayan bir çizim yardımcısı.

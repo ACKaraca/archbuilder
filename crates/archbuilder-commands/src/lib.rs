@@ -23,6 +23,7 @@
 pub mod ceiling;
 pub mod circulation;
 pub mod clip;
+pub mod datum;
 pub mod edit;
 pub mod element_type;
 pub mod error;
@@ -101,6 +102,7 @@ pub fn registry() -> Result<Registry> {
     roof_extrusion::register(&mut registry)?;
     ceiling::register(&mut registry)?;
     opening::register(&mut registry)?;
+    datum::register(&mut registry)?;
     element_type::register(&mut registry)?;
     view::register(&mut registry)?;
     selection::register(&mut registry)?;

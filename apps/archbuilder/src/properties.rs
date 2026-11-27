@@ -786,6 +786,90 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "strong",
+        Message {
+            message_id: "ab-strength-strong",
+        },
+    ),
+    (
+        "weak",
+        Message {
+            message_id: "ab-strength-weak",
+        },
+    ),
+    (
+        "none",
+        Message {
+            message_id: "ab-strength-none",
+        },
+    ),
+    (
+        "points",
+        Message {
+            message_id: "ab-source-points",
+        },
+    ),
+    (
+        "grid",
+        Message {
+            message_id: "ab-source-grid",
+        },
+    ),
+    (
+        "reference_plane",
+        Message {
+            message_id: "ab-source-reference-plane",
+        },
+    ),
+    (
+        "bulge",
+        Message {
+            message_id: "ab-prop-bulge",
+        },
+    ),
+    (
+        "head_start",
+        Message {
+            message_id: "ab-prop-head-start",
+        },
+    ),
+    (
+        "head_end",
+        Message {
+            message_id: "ab-prop-head-end",
+        },
+    ),
+    (
+        "strength",
+        Message {
+            message_id: "ab-prop-strength",
+        },
+    ),
+    (
+        "bounded",
+        Message {
+            message_id: "ab-prop-bounded",
+        },
+    ),
+    (
+        "source",
+        Message {
+            message_id: "ab-prop-source",
+        },
+    ),
+    (
+        "active",
+        Message {
+            message_id: "ab-prop-active",
+        },
+    ),
+    (
+        "shown",
+        Message {
+            message_id: "ab-prop-shown",
+        },
+    ),
+    (
         "room_state",
         Message {
             message_id: "ab-prop-room-state",
@@ -1161,6 +1245,24 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-roof-extrusion",
         },
     ),
+    (
+        types::GRID,
+        Message {
+            message_id: "ab-kind-grid",
+        },
+    ),
+    (
+        types::REFERENCE_PLANE,
+        Message {
+            message_id: "ab-kind-reference-plane",
+        },
+    ),
+    (
+        types::WORK_PLANE,
+        Message {
+            message_id: "ab-kind-work-plane",
+        },
+    ),
 ];
 
 /// The heading of a selection of several kinds of object.
@@ -1445,6 +1547,24 @@ fn shown(
             fields.push(text_field("view_hidden"));
             values.push(Some(Value::String(hidden.to_string())));
             read_only.push("view_hidden".to_owned());
+        }
+        // A grid's extent levels are set by `archbuilder.datum.set_extent`; a work plane shows
+        // where it comes from and whether it is active and shown.
+        types::GRID | types::WORK_PLANE => {
+            let hidden: &[usize] = if key == types::GRID {
+                &[types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL]
+            } else {
+                &[types::work_plane::TARGET, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            };
+            for at in hidden.iter().rev() {
+                if *at < fields.len() && *at < values.len() {
+                    fields.remove(*at);
+                    values.remove(*at);
+                }
+            }
+            if key == types::WORK_PLANE {
+                read_only.push("source".to_owned());
+            }
         }
         STOREY => {
             let level = spatial::level_of(snapshot, object);

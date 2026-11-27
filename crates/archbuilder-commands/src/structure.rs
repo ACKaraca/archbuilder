@@ -408,7 +408,7 @@ fn new_project(ctx: &mut Context<'_>, p: NewProject) -> Result<ProjectCreated> {
 }
 
 /// The building a command works in: the given one, the one the selection is in, or the first.
-fn building_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
+pub(crate) fn building_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
     let snapshot = ctx.snapshot();
     if let Some(IdParam(id)) = given {
         return expect(snapshot, id, BUILDING).map(|_| id);

@@ -26,3 +26,5 @@ ab-io-loss-floor-edge-as-covering = IFC4 has no element for the edge of a slab: 
 ab-io-loss-floor-edge-orphan = A floor edge names edges that its floor no longer has: those edges are not in the file.
 ab-io-loss-railing-not-written = A railing is not in the IFC file: railings cannot be written yet.
 ab-io-loss-ramp-not-written = A ramp is not in the IFC file: ramps and ramp flights cannot be written yet. The opening it cuts in the floor above is in the file.
+ab-io-loss-grid-not-written = A grid is not in the IFC file: grid lines and their axes cannot be written yet, and a stand-in entity would hide the loss.
+ab-io-loss-datum-not-written = A reference plane or work plane is not in the IFC file: it is a drawing aid with no IFC entity.

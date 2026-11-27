@@ -97,6 +97,10 @@ pub struct Input<'a> {
     pub grid: f64,
     /// Whether the pointer snaps to points and guide lines; off leaves directions and the grid.
     pub object_snaps: bool,
+    /// The segments of the grid lines and snapping reference planes ([`archbuilder_model::datum`]).
+    pub datums: &'a [[P; 2]],
+    /// The ends and crossings of those lines, which attract like end points.
+    pub datum_points: &'a [P],
 }
 
 impl<'a> Input<'a> {
@@ -118,6 +122,8 @@ impl<'a> Input<'a> {
             centers: &[],
             grid: GRID,
             object_snaps: true,
+            datums: &[],
+            datum_points: &[],
         }
     }
 }
@@ -302,6 +308,16 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
     if let Some((_, end)) = near {
         return Some(made(end, Kind::Endpoint));
     }
+    // 1a. A grid end or the crossing of two grid lines or reference planes.
+    let crossing = input
+        .datum_points
+        .iter()
+        .map(|e| ((e[0] - p[0]).hypot(e[1] - p[1]), *e))
+        .filter(|(d, _)| on && *d <= reach)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((_, at)) = crossing {
+        return Some(made(at, Kind::Intersection));
+    }
     // 1b. The nearest of a baseline's midpoint, a room's center and the foot of the perpendicular
     // from the segment's start.
     if on {
@@ -393,7 +409,7 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
                 offer(at, vec![*a, *b], Kind::Intersection);
             }
         }
-        for wall in input.walls.iter().filter(|_| on) {
+        for wall in input.walls.iter().chain(input.datums).filter(|_| on) {
             let seg = [wall[0], wall[1]];
             let d = [seg[1][0] - seg[0][0], seg[1][1] - seg[0][1]];
             let len = d[0].hypot(d[1]);
@@ -426,6 +442,7 @@ pub fn snap(input: &Input<'_>) -> Option<Snapped> {
     let on_wall = input
         .walls
         .iter()
+        .chain(input.datums)
         .filter(|_| on)
         .filter_map(|w| nearest_on(w, p))
         .filter(|(d, _)| *d <= reach)
@@ -488,6 +505,23 @@ mod tests {
 
     fn at(pointer: P, ends: &[P], walls: &[[P; 2]], from: Option<P>) -> Snapped {
         snap(&Input::new(pointer, Some(PPU), ends, walls, from)).unwrap()
+    }
+
+    #[test]
+    fn grid_crossings_win_then_grid_lines_are_found_nearest() {
+        let lines = [[[0.0, 0.0], [10.0, 0.0]], [[5.0, -5.0], [5.0, 5.0]]];
+        let crossings = [[5.0, 0.0]];
+        let mut input = Input::new([5.2, 0.1], Some(PPU), &[], &[], None);
+        input.datums = &lines;
+        input.datum_points = &crossings;
+        let s = snap(&input).unwrap();
+        assert_eq!((s.point, s.kind), ([5.0, 0.0], Kind::Intersection));
+        // Beside the line, not at a crossing: the nearest point of the line.
+        let mut input = Input::new([2.0, 0.2], Some(PPU), &[], &[], None);
+        input.datums = &lines;
+        input.datum_points = &crossings;
+        let s = snap(&input).unwrap();
+        assert_eq!((s.point, s.kind), ([2.0, 0.0], Kind::Nearest));
     }
 
     #[test]
