@@ -126,6 +126,17 @@ pub fn command_tabs() -> Vec<CommandTab> {
                         ),
                         icon_button(
                             Message {
+                                message_id: "ab-tool-curtain-wall",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-curtain-wall-hint",
+                            }),
+                            archbuilder_commands::curtain::CURTAIN_WALL,
+                            "curtain-wall",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
                                 message_id: "ab-tool-door",
                             },
                             Some(Message {
@@ -1073,6 +1084,7 @@ pub fn icons() -> Vec<(String, String)> {
         "undo",
         "redo",
         "wall",
+        "curtain-wall",
         "door",
         "window",
         "floor",

@@ -979,3 +979,71 @@ fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
         }
     }
 }
+
+/// A curtain wall is never written as a wall or a proxy: its wall, panels and mullions are named
+/// in the loss report with their counts, and a curtain wall inside a basic wall is a void of it.
+#[test]
+fn a_curtain_wall_is_reported_and_its_embedding_is_a_void_of_the_host() {
+    let house = House::new();
+    let ty = House::id(&house.run("archbuilder.curtain.type", json!({"name": "CW"}))["type"]);
+    let host = House::id(
+        &house.run(
+            "archbuilder.wall.create",
+            json!({"start": [20.0, 0.0], "end": [28.0, 0.0], "height": 3.0}),
+        )["wall"],
+    );
+    let curtain = House::id(
+        &house.run(
+            "archbuilder.wall.create",
+            json!({"start": [22.0, 0.0], "end": [25.0, 0.0], "height": 2.0, "type": ty.to_string()}),
+        )["wall"],
+    );
+    let snapshot = house.snapshot();
+    let d = archbuilder_model::curtain::Derived::of(
+        &snapshot,
+        &spatial::get(&snapshot, curtain).unwrap(),
+    )
+    .unwrap();
+    let (panels, mullions) = d.counts();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let kinds: BTreeMap<String, i64> = exported
+        .report
+        .items
+        .iter()
+        .filter(|i| i.reason == "ab.io.ifc.curtain_not_written")
+        .map(|i| {
+            assert_eq!(i.object_id, Some(curtain.to_string()));
+            let count = match i.arguments.get("count") {
+                Some(arc_io_common::loss::Argument::Int(n)) => *n,
+                other => panic!("{other:?}"),
+            };
+            (i.record_kind.clone().unwrap(), count)
+        })
+        .collect();
+    assert_eq!(kinds["IFCCURTAINWALL"], 1);
+    assert_eq!(kinds["IFCPLATE"], i64::try_from(panels).unwrap());
+    assert_eq!(kinds["IFCMEMBER"], i64::try_from(mullions).unwrap());
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let ids: Vec<String> = file
+        .instances()
+        .iter()
+        .filter(|i| i.records[0].type_name == "IFCOPENINGELEMENT")
+        .map(|i| gid(&file, i.name))
+        .collect();
+    assert!(ids.contains(&global_id(derived_id(
+        curtain.as_u128(),
+        role::INSERT_OPENING,
+        0
+    ))));
+    assert!(host != curtain);
+    // Neither the wall nor the type is written as a wall.
+    assert!(
+        !file
+            .instances()
+            .iter()
+            .any(|i| i.records[0].type_name == "IFCWALL"
+                && gid(&file, i.name) == global_id(curtain.as_u128()))
+    );
+}

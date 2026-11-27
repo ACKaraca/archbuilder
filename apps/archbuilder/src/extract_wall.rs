@@ -19,6 +19,7 @@ use arc_doc::{Object, Snapshot};
 use arc_gpu::{Extraction, MeshInstance, MeshItem, RenderItem};
 use arc_mesh::TriMesh;
 use archbuilder_model::cleanup::PieceClass;
+use archbuilder_model::element_type::TypeKind;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STOREY, WALL, WALL_OPENING, WINDOW};
 use archbuilder_model::wall::Wall;
@@ -46,6 +47,19 @@ pub const OTHER_COLOR: Color = Color {
     b: 0.46,
     a: 1.0,
 };
+
+/// The color of a solid of a curtain wall (linear RGB).
+fn curtain_color(class: archbuilder_model::curtain::Class) -> Color {
+    use archbuilder_model::curtain::Class;
+    let (r, g, b) = match class {
+        Class::Glass => (0.45, 0.68, 0.80),
+        Class::Solid => (0.70, 0.70, 0.68),
+        Class::Mullion | Class::Frame => (0.28, 0.30, 0.33),
+        Class::Leaf => (0.60, 0.50, 0.38),
+        Class::Handle => (0.80, 0.80, 0.82),
+    };
+    Color { r, g, b, a: 1.0 }
+}
 
 /// The storey of each wall extracted, so that the deletion of a wall, which the snapshot no longer
 /// holds, still names the storey whose other walls join differently now.
@@ -94,6 +108,20 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
     }
     let origin = Point3::new(wall.start[0], wall.start[1], elevation + wall.base_offset);
     let mut extraction = Extraction::default();
+    // A curtain wall is its panels and mullions, not a wall body.
+    if let Some(curtain) = archbuilder_model::curtain::Derived::of(snapshot, object) {
+        for piece in curtain.solids()? {
+            let mesh =
+                TriMesh::from_polyhedron(&piece.solid, &Tolerance::DEFAULT, &Limits::DEFAULT)?;
+            let geometry = extraction.add_geometry(mesh, origin);
+            extraction.items.push(RenderItem::Mesh(MeshItem {
+                geometry,
+                origin,
+                instances: vec![MeshInstance::new(curtain_color(piece.class))],
+            }));
+        }
+        return Ok(extraction);
+    }
     // The layers, cleaned at the joins, the openings and the slabs; the plain solid of the wall
     // when they cannot be made.
     let pieces = archbuilder_model::cleanup::wall_pieces(snapshot, object)
@@ -150,7 +178,20 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             .collect()
     };
     let touched: BTreeSet<ObjectId> = [LEVEL, STOREY].into_iter().flat_map(live).collect();
-    let changed_walls = live(WALL);
+    let mut changed_walls = live(WALL);
+    // A wall type that changed: its curtain walls regenerate their grids.
+    let retyped = live(archbuilder_model::types::WALL_TYPE);
+    if !retyped.is_empty() {
+        changed_walls.extend(
+            spatial::objects(snapshot, WALL)
+                .into_iter()
+                .filter(|w| {
+                    archbuilder_model::element_type::type_id(TypeKind::Wall, &w.values)
+                        .is_some_and(|t| retyped.contains(&t))
+                })
+                .map(|w| w.id),
+        );
+    }
     let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW, WALL_OPENING]
         .into_iter()
         .flat_map(live)

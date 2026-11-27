@@ -672,6 +672,18 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "curtain_panels",
+        Message {
+            message_id: "ab-prop-curtain-panels",
+        },
+    ),
+    (
+        "curtain_mullions",
+        Message {
+            message_id: "ab-prop-curtain-mullions",
+        },
+    ),
+    (
         "department",
         Message {
             message_id: "ab-prop-department",
@@ -1282,6 +1294,25 @@ fn shown(
             fields.push(text_field("wall_volume"));
             values.push(volume);
             read_only.push("wall_volume".to_owned());
+            // A curtain wall: the derived panels and mullions, which schedules and the export
+            // read the same way.
+            if let Some(curtain) = archbuilder_model::curtain::Derived::of(snapshot, object) {
+                let (panels, mullions) = curtain.counts();
+                let area: f64 = curtain.panels.iter().map(|p| p.area()).sum();
+                let length: f64 = curtain.mullions.iter().map(|m| m.length()).sum();
+                let orphans =
+                    curtain.layout.orphans.edits.len() + curtain.layout.orphans.overrides.len();
+                let mut panel_text = format!("{panels} / {area:.2} m²");
+                if orphans > 0 {
+                    panel_text.push_str(&format!(" ({orphans} orphaned)"));
+                }
+                fields.push(text_field("curtain_panels"));
+                values.push(Some(Value::String(panel_text)));
+                read_only.push("curtain_panels".to_owned());
+                fields.push(text_field("curtain_mullions"));
+                values.push(Some(Value::String(format!("{mullions} / {length:.2} m"))));
+                read_only.push("curtain_mullions".to_owned());
+            }
             // The top level is a choice below; editing the height disconnects the top.
             // A constrained wall shows the height its level gives.
             if let Some(wall) = archbuilder_model::wall::Wall::of(snapshot, object)

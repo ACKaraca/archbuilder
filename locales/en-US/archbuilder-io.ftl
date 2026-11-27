@@ -18,3 +18,4 @@ ab-io-command-import-shortcuts-description = Reads a typed command shortcut tabl
 ab-io-loss-stair-not-written = A stair is not in the IFC file: stairs, flights and railings cannot be written yet. The shaft opening it cuts in the floor above is in the file.
 ab-io-loss-arc-faceted = An arc edge or an arched top is written as straight chords within two millimeters: IFC bodies here are faceted.
 ab-io-loss-cut-not-applied = A shaft or vertical opening could not be cut out of the body of the element it passes through: the body is written whole and the opening is in the file as a void of the element.
+ab-io-loss-curtain-not-written = A curtain wall is not in the IFC file: curtain walls, plates and members cannot be written yet, so the wall, its { $count } panels or mullions of this kind are left out. A basic wall that holds it still has its opening.

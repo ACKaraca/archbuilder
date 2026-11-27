@@ -25,6 +25,9 @@ use crate::structure::{ensure_valid, expect};
 
 /// The identifier of the command that makes or edits a curtain wall type.
 pub const CURTAIN_TYPE: &str = "archbuilder.curtain.type";
+/// The identifier of the command that places a curtain wall: `archbuilder.wall.create` with the
+/// first curtain wall type (a standard one is made when the document has none).
+pub const CURTAIN_WALL: &str = "archbuilder.curtain.wall";
 /// The identifier of the command that adds a grid line.
 pub const CURTAIN_GRID_ADD: &str = "archbuilder.curtain.grid_add";
 /// The identifier of the command that removes a grid line or a segment of one.
@@ -335,6 +338,38 @@ fn span(
     }
 }
 
+/// The first curtain wall type of the document, in name order.
+#[must_use]
+pub fn first_type(snapshot: &arc_doc::Snapshot) -> Option<arc_base::ObjectId> {
+    archbuilder_model::element_type::of_kind(
+        snapshot,
+        archbuilder_model::element_type::TypeKind::Wall,
+    )
+    .into_iter()
+    .find(|t| CurtainType::from_values(&t.values).is_some())
+    .map(|t| t.id)
+}
+
+fn curtain_wall(
+    ctx: &mut Context<'_>,
+    mut p: crate::wall::CreateWall,
+) -> Result<crate::wall::WallCreated> {
+    if p.wall_type.as_deref().is_none_or(|t| t.trim().is_empty()) {
+        let id = match first_type(ctx.snapshot()) {
+            Some(id) => id,
+            None => create_curtain_type(ctx, &CurtainType::standard(), None)?,
+        };
+        p.wall_type = Some(id.to_string());
+    }
+    let made = crate::wall::create_wall(ctx, p)?;
+    let id = made.wall.0;
+    let snapshot = ctx.txn()?.snapshot().clone();
+    if !archbuilder_model::curtain::is_curtain(&snapshot, &expect(&snapshot, id, WALL)?) {
+        return Err(Error::new(model::CURTAIN_NOT_CURTAIN).with_arg("name", id.to_string()));
+    }
+    Ok(made)
+}
+
 /// Parameters of `archbuilder.curtain.grid_add`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -553,13 +588,17 @@ fn panel_set(ctx: &mut Context<'_>, p: PanelSet) -> Result<CurtainChanged> {
     })
 }
 
-fn spec<P, R, F>(id: &str, label: &'static str, description: &'static str, run: F) -> CommandSpec
+struct Msg {
+    message_id: &'static str,
+}
+
+fn spec<P, R, F>(id: &str, label: Msg, description: Msg, run: F) -> CommandSpec
 where
     P: serde::de::DeserializeOwned + JsonSchema,
     R: Serialize + JsonSchema,
     F: Fn(&mut Context<'_>, P) -> Result<R> + Send + Sync + 'static,
 {
-    CommandSpec::new(id, label, description, run)
+    CommandSpec::new(id, label.message_id, description.message_id, run)
 }
 
 /// Registers the commands of this module.
@@ -570,32 +609,62 @@ pub fn register(registry: &mut Registry) -> Result<()> {
     for s in [
         spec(
             CURTAIN_TYPE,
-            "ab-cmd-curtain-type-label",
-            "ab-cmd-curtain-type-description",
+            Msg {
+                message_id: "ab-cmd-curtain-type-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-type-description",
+            },
             curtain_type,
         ),
         spec(
+            CURTAIN_WALL,
+            Msg {
+                message_id: "ab-cmd-curtain-wall-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-wall-description",
+            },
+            curtain_wall,
+        ),
+        spec(
             CURTAIN_GRID_ADD,
-            "ab-cmd-curtain-grid-add-label",
-            "ab-cmd-curtain-grid-add-description",
+            Msg {
+                message_id: "ab-cmd-curtain-grid-add-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-grid-add-description",
+            },
             grid_add,
         ),
         spec(
             CURTAIN_GRID_REMOVE,
-            "ab-cmd-curtain-grid-remove-label",
-            "ab-cmd-curtain-grid-remove-description",
+            Msg {
+                message_id: "ab-cmd-curtain-grid-remove-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-grid-remove-description",
+            },
             grid_remove,
         ),
         spec(
             CURTAIN_GRID_MOVE,
-            "ab-cmd-curtain-grid-move-label",
-            "ab-cmd-curtain-grid-move-description",
+            Msg {
+                message_id: "ab-cmd-curtain-grid-move-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-grid-move-description",
+            },
             grid_move,
         ),
         spec(
             CURTAIN_PANEL,
-            "ab-cmd-curtain-panel-label",
-            "ab-cmd-curtain-panel-description",
+            Msg {
+                message_id: "ab-cmd-curtain-panel-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-panel-description",
+            },
             panel_set,
         ),
     ] {

@@ -38,6 +38,8 @@ use crate::wall::Wall;
 
 /// The most interior lines of one direction a grid has.
 pub const MAX_LINES: usize = 150;
+/// [`MAX_LINES`] as a signed number.
+const MAX_LINES_I: i64 = 150;
 /// The most grid edits one wall holds.
 pub const MAX_EDITS: usize = 1_000;
 /// The most panel overrides one wall holds.
@@ -268,11 +270,11 @@ impl GridRule {
                     Justify::Center => ("c", extent / 2.0 + self.offset, 1.0),
                 };
                 let negative = if self.justify == Justify::Center {
-                    -(MAX_LINES as i64)
+                    -MAX_LINES_I
                 } else {
                     0
                 };
-                for k in negative..=(MAX_LINES as i64) {
+                for k in negative..=MAX_LINES_I {
                     let p = origin + sign * self.value * k as f64;
                     if inside(p) {
                         out.push((format!("{prefix}{k}"), p));
@@ -512,7 +514,7 @@ pub fn type_fields() -> Vec<FieldDecl> {
                 format!("{prefix}_rule"),
                 RuleKind::ALL.iter().map(|k| (k.name(), k.code())).collect(),
             ),
-            FieldDecl::new(&format!("{prefix}_value"), ValueType::F64)
+            FieldDecl::new(format!("{prefix}_value"), ValueType::F64)
                 .optional()
                 .with_bound(Bound::Real {
                     min: 0.0,
@@ -1028,6 +1030,7 @@ fn find(parent: &mut [usize], mut x: usize) -> usize {
 
 /// The cells of the grid: each grid cell, merged with the neighbor across an absent segment. A
 /// merged group that is not a rectangle is not merged.
+#[allow(clippy::needless_range_loop, reason = "grid indices address both axes")]
 fn cells(vertical: &[Line], horizontal: &[Line]) -> Vec<Cell> {
     let (nc, nr) = (vertical.len() - 1, horizontal.len() - 1);
     let at = |c: usize, r: usize| r * nc + c;

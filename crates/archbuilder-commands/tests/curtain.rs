@@ -7,7 +7,7 @@ use std::sync::Arc;
 use arc_base::ObjectId;
 use arc_command::{Invocation, Invoker, Outcome, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
-use arc_doc::{Document, DocumentConfig, FieldPath, Snapshot};
+use arc_doc::{Document, DocumentConfig, Snapshot};
 use archbuilder_model::curtain::Derived;
 use archbuilder_model::element_type::{self as et, TypeKind};
 use archbuilder_model::spatial;
@@ -151,9 +151,6 @@ fn grid_edits_are_authored_data_and_undoable() {
         )
         .unwrap_err();
     assert_eq!(e.code(), "ab.model.curtain_unknown");
-    for expected in [8, 8, 6] {
-        let _ = expected;
-    }
     env.document.undo().wait().unwrap();
     assert_eq!(derived(&env, wall).panels.len(), 8);
     env.document.undo().wait().unwrap();

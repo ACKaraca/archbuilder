@@ -562,3 +562,7 @@ ab-tool-shortcuts-import = Import keys
 ab-tool-export-ifc = Export IFC
 ab-status-storey = Storey: { $name }
 ab-status-selected = { $count } selected
+ab-tool-curtain-wall = Curtain wall
+ab-tool-curtain-wall-hint = Draw curtain walls: a grid of glazed panels and mullions on the selected storey, with the first curtain wall type
+ab-prop-curtain-panels = Panels (count / area)
+ab-prop-curtain-mullions = Mullions (count / length)

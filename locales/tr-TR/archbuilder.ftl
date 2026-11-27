@@ -537,3 +537,7 @@ ab-tool-shortcuts-import = Kısayolları al
 ab-tool-export-ifc = IFC ver
 ab-status-storey = Kat: { $name }
 ab-status-selected = { $count } seçili
+ab-tool-curtain-wall = Perde duvar
+ab-tool-curtain-wall-hint = Seçili katta, ilk perde duvar tipiyle camlı panel ve doğramalardan oluşan ızgaralı perde duvar çiz
+ab-prop-curtain-panels = Paneller (adet / alan)
+ab-prop-curtain-mullions = Doğramalar (adet / uzunluk)
