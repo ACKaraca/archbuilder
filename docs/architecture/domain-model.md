@@ -44,6 +44,7 @@ All physical elements share: `id`, `category`, `type_id` (where applicable), `st
 | `CurtainWall` | Location curve, constraints, grid rule overrides, manual grid lines, cell map (cell key to panel type) | Type `CurtainWallType`; owns `CurtainGridLine`, `Mullion`, `CurtainPanel` |
 | `Floor`, `Ceiling` | Boundary profile, level, offset, slope, shape points, pattern origin | Types `FloorType`, `CeilingType`; host inserts and edges |
 | `Roof` | Footprint or extrusion profile, per-edge slope, pitch, overhang, courtyard flags, base level | Type `RoofType`; owns `Dormer` children; hosts edges and inserts |
+| `ForeignElement` | Source class, predefined type, object type, tag, source schema, mesh (project coordinates, meters) | Made only by an import; owned by a storey; carries no parameters; its source data is a foreign data row of the object; exported as its source class |
 | `Dormer` | Host roof, placement, dimensions, owned wall IDs, owned opening ID | Reconciles its children |
 | `EdgeElement` | Kind, profile, host edge references | Hosted by floor or roof edges |
 | `Insert` | Family type, host, host-local position, height, hand, facing | Hosted by a wall, floor, ceiling, roof or face |

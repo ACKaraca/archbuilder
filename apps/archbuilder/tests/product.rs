@@ -220,7 +220,7 @@ fn the_file_menu_has_export_ifc_after_save_as() {
             }
         ]
     );
-    // The shortcut table comes back through File > Import.
+    // File > Import reads an IFC file; the shortcut table comes back through it too.
     let MenuItem::Submenu {
         label,
         items: import,
@@ -231,9 +231,14 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(label, "ab-menu-import");
     assert_eq!(
         import,
-        &[MenuItem::Command {
-            command: "archbuilder.shortcuts.import".into()
-        }]
+        &[
+            MenuItem::Command {
+                command: "archbuilder.file.import_ifc".into()
+            },
+            MenuItem::Command {
+                command: "archbuilder.shortcuts.import".into()
+            }
+        ]
     );
     let owner = LockOwner {
         user: "t".into(),

@@ -1292,15 +1292,26 @@ pub fn command_tabs() -> Vec<CommandTab> {
                     Message {
                         message_id: "ab-group-ifc",
                     },
-                    vec![icon_button(
-                        Message {
-                            message_id: "ab-tool-export-ifc",
-                        },
-                        None,
-                        archbuilder_io::command::EXPORT_IFC,
-                        "export-ifc",
-                        ButtonSize::Large,
-                    )],
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-import-ifc",
+                            },
+                            None,
+                            archbuilder_io::import::IMPORT_IFC,
+                            "import-ifc",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-export-ifc",
+                            },
+                            None,
+                            archbuilder_io::command::EXPORT_IFC,
+                            "export-ifc",
+                            ButtonSize::Large,
+                        ),
+                    ],
                 ),
                 group(
                     Message {
@@ -1761,6 +1772,7 @@ pub fn icons() -> Vec<(String, String)> {
         "properties",
         "outliner",
         "export-ifc",
+        "import-ifc",
         "project-info",
         "units",
         "purge",

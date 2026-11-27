@@ -51,6 +51,7 @@ pub mod extract_component;
 pub mod extract_datum;
 pub mod extract_floor;
 pub mod extract_floor_edge;
+pub mod extract_foreign;
 pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_model_view;
@@ -152,6 +153,23 @@ const TRANSFER_STANDARDS_TITLE: Message = Message {
 const EXPORT_IFC_TITLE: Message = Message {
     message_id: "ab-export-ifc-title",
 };
+
+const IMPORT_IFC_TITLE: Message = Message {
+    message_id: "ab-import-ifc-title",
+};
+
+/// The open dialog of File > Import > IFC.
+fn import_ifc_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: IMPORT_IFC_TITLE.message_id.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-import-ifc-filter".into(),
+            extensions: vec!["ifc".into(), "ifczip".into()],
+        }],
+        default_name: None,
+    }
+}
 
 /// The save dialog of File > Export > IFC.
 fn export_ifc_dialog() -> PathDialog {
@@ -303,6 +321,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     register_settings(&mut builder)?;
     // File > Export > IFC asks for the file in a save dialog that starts with the document's name.
     builder.path_dialog(archbuilder_io::command::EXPORT_IFC, export_ifc_dialog());
+    builder.path_dialog(archbuilder_io::import::IMPORT_IFC, import_ifc_dialog());
     builder.path_dialog(archbuilder_io::command::EXPORT_MESH, export_mesh_dialog());
     // The shortcut table goes to and comes from a small JSON file.
     builder.path_dialog(
@@ -567,6 +586,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.foreign_element".into(),
+        types: vec![archbuilder_model::types::FOREIGN_ELEMENT.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_foreign::extract_foreign(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.component".into(),
         types: vec![archbuilder_model::types::COMPONENT.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -647,9 +675,13 @@ fn menu() -> Result<Menu> {
             at + 1,
             MenuItem::Submenu {
                 label: MENU_IMPORT.message_id.into(),
-                items: vec![MenuItem::Command {
-                    command: archbuilder_io::command::IMPORT_SHORTCUTS.into(),
-                }],
+                items: [
+                    archbuilder_io::import::IMPORT_IFC,
+                    archbuilder_io::command::IMPORT_SHORTCUTS,
+                ]
+                .into_iter()
+                .map(|c| MenuItem::Command { command: c.into() })
+                .collect(),
             },
         );
     }

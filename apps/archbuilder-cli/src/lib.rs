@@ -19,7 +19,8 @@
 //! formula and value (derived), and `parameters`: the project parameters (`parameters`) and the
 //! value of each element and type with its source and formula (`values`, derived).
 //! `family check` and `family publish` read and write `.archbfam` packages ([`family`]).
-//! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
+//! `import-ifc <file.archb> <in.ifc>` reads an IFC file into a document ([`import`]) and prints the
+//! loss report. `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`. `export-mesh <file.archb> <out.obj|stl|gltf|glb> [options]` writes
 //! the elements as a mesh ([`export::run_mesh`]) and prints the loss report.
@@ -36,6 +37,7 @@ pub mod check;
 pub mod export;
 pub mod family;
 pub mod floors;
+pub mod import;
 pub mod rooms;
 pub mod stairs;
 pub mod walls;
@@ -99,6 +101,9 @@ where
     if args.first().and_then(|a| a.to_str()) == Some("export-ifc") {
         return export::run(&args[1..], product, stdout, stderr);
     }
+    if args.first().and_then(|a| a.to_str()) == Some("import-ifc") {
+        return import::run(&args[1..], product, &setup, stdin, stdout, stderr);
+    }
     if args.first().and_then(|a| a.to_str()) == Some("export-mesh") {
         return export::run_mesh(&args[1..], product, stdout, stderr);
     }
@@ -111,6 +116,10 @@ where
             stdin,
             stdout,
             &mut stderr,
+        );
+        let _ = writeln!(
+            stderr,
+            "  import-ifc <file.archb> <in.ifc>   read an IFC file into the document (created when missing); prints the result and the loss report"
         );
         let _ = writeln!(
             stderr,

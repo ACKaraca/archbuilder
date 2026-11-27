@@ -151,6 +151,8 @@ ab-notice-ifc-loss = { $count ->
    *[other] The loss report lists { $count } items that are missing from the file or only approximated.
 }
 ab-export-ifc-title = Export IFC
+ab-import-ifc-title = Import IFC
+ab-import-ifc-filter = IFC files (*.ifc, *.ifczip)
 ab-export-ifc-filter = IFC files (*.ifc)
 ab-export-mesh-title = Export mesh
 ab-export-mesh-filter-obj = Wavefront OBJ with materials (*.obj)
@@ -652,6 +654,7 @@ ab-tool-attach-top = Attach top
 ab-tool-detach-top = Detach top
 ab-tool-shortcuts-export = Export keys
 ab-tool-shortcuts-import = Import keys
+ab-tool-import-ifc = Import IFC
 ab-tool-export-ifc = Export IFC
 ab-status-storey = Storey: { $name }
 ab-status-selected = { $count } selected

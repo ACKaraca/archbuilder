@@ -118,6 +118,7 @@ pub(crate) fn validate(
     model: &WriteModel,
     (limits, cancel): (Limits, &Cancel),
     report: &mut LossReport,
+    foreign: &BTreeSet<String>,
 ) -> Validation {
     let mut conformance = None;
     let mut found: Vec<LossItem> = Vec::new();
@@ -130,10 +131,13 @@ pub(crate) fn validate(
             let mut products = 0usize;
             for instance in file.instances() {
                 for record in &instance.records {
-                    if is_product(&record.type_name) {
+                    // A foreign element of an import is written under its source class.
+                    let is_foreign = matches!(record.parameters.first(),
+                        Some(Parameter::Text(id)) if foreign.contains(id));
+                    if is_product(&record.type_name) && !is_foreign {
                         products += 1;
                     }
-                    if !is_rooted(&record.type_name) {
+                    if !is_rooted(&record.type_name) && !is_foreign {
                         continue;
                     }
                     if let Some(Parameter::Text(id)) = record.parameters.first()
@@ -175,7 +179,8 @@ pub(crate) fn validate(
                 conformance = checked.schema;
                 found.extend(checked.findings.iter().map(conformance_item));
             }
-            let exported = model.elements.len() + model.grids.len();
+            let exported =
+                model.elements.len() - foreign.len().min(model.elements.len()) + model.grids.len();
             if products != exported {
                 let mut count = item(reasons::VALIDATION_COUNT, "IFC", None, 1);
                 count.arguments.insert(
@@ -243,7 +248,14 @@ mod tests {
         let written = write(model, &WriteOptions::default()).unwrap();
         let mut report = written.report;
         let _ = bytes;
-        let ok = validate(bytes, model, (Limits::DEFAULT, &Cancel::new()), &mut report).valid;
+        let ok = validate(
+            bytes,
+            model,
+            (Limits::DEFAULT, &Cancel::new()),
+            &mut report,
+            &BTreeSet::new(),
+        )
+        .valid;
         (ok, report)
     }
 

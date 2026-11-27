@@ -34,6 +34,19 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-io-mesh-format-unknown",
     };
+    /// The file given to the import is not an IFC file the reader can read.
+    pub const IMPORT_UNREADABLE: ErrorCode = ErrorCode {
+        code: "ab.io.import_unreadable",
+        category: Category::InvalidInput,
+        message_id: "ab-io-import-unreadable",
+    };
+    /// The build has no schema tables for the schema of the file: the import cannot read its
+    /// objects.
+    pub const IMPORT_TABLES_MISSING: ErrorCode = ErrorCode {
+        code: "ab.io.import_tables_missing",
+        category: Category::Unsupported,
+        message_id: "ab-io-import-tables-missing",
+    };
     /// The mesh export of the selection was asked for with nothing selected.
     pub const MESH_SELECTION_EMPTY: ErrorCode = ErrorCode {
         code: "ab.io.mesh_selection_empty",
@@ -149,15 +162,6 @@ pub mod reasons {
         outcome: Outcome::Dropped,
         severity: Severity::Warning,
         message_id: "ab-io-loss-roof-edge-orphan",
-    };
-    /// The project information could not be added to the IFC file: the file is not the shape the
-    /// writer produces, so the project's long name, phase, addresses, actors and building
-    /// properties are left out.
-    pub const PROJECT_INFO_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.project_info_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-project-info-not-written",
     };
     /// The issue date of the project: IFC4 has no attribute for it, so it is left out.
     pub const ISSUE_DATE_NOT_WRITTEN: Reason = Reason {
@@ -293,4 +297,170 @@ pub mod reasons {
         severity: Severity::Info,
         message_id: "ab-io-loss-mesh-unit",
     };
+
+    /// A product without a native counterpart, kept as a foreign element with its class, data and mesh.
+    pub const IMPORT_PRESERVED: Reason = Reason {
+        code: "ab.io.ifc.import_preserved",
+        outcome: Outcome::Preserved,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-preserved",
+    };
+
+    /// A foreign element whose geometry the file did not give or the reader did not evaluate.
+    pub const IMPORT_NO_GEOMETRY: Reason = Reason {
+        code: "ab.io.ifc.import_no_geometry",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-no-geometry",
+    };
+
+    /// A product whose body is not the shape its native kind has, kept as a foreign element.
+    pub const IMPORT_SHAPE_NOT_RECOGNIZED: Reason = Reason {
+        code: "ab.io.ifc.import_shape_not_recognized",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-shape-not-recognized",
+    };
+
+    /// A flat roof slab made a floor, because a roof of the model has sloped edges.
+    pub const IMPORT_ROOF_AS_FLOOR: Reason = Reason {
+        code: "ab.io.ifc.import_roof_as_floor",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-roof-as-floor",
+    };
+
+    /// The layers of an element do not add up to its body; the type has one layer of the body's thickness.
+    pub const IMPORT_LAYERS_MISMATCH: Reason = Reason {
+        code: "ab.io.ifc.import_layers_mismatch",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-layers-mismatch",
+    };
+
+    /// The swing side of a door or window is not derived from the file.
+    pub const IMPORT_SWING_ASSUMED: Reason = Reason {
+        code: "ab.io.ifc.import_swing_assumed",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-swing-assumed",
+    };
+
+    /// A door or window whose wall was not mapped, kept as a foreign element.
+    pub const IMPORT_INSERT_UNHOSTED: Reason = Reason {
+        code: "ab.io.ifc.import_insert_unhosted",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-insert-unhosted",
+    };
+
+    /// An opening element without a filling; the wall keeps no opening.
+    pub const IMPORT_OPENING_UNFILLED: Reason = Reason {
+        code: "ab.io.ifc.import_opening_unfilled",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-opening-unfilled",
+    };
+
+    /// A product that is not an element and has no native counterpart.
+    pub const IMPORT_NOT_CARRIED: Reason = Reason {
+        code: "ab.io.ifc.import_not_carried",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-not-carried",
+    };
+
+    /// A type object that no product uses.
+    pub const IMPORT_TYPE_UNUSED: Reason = Reason {
+        code: "ab.io.ifc.import_type_unused",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-type-unused",
+    };
+
+    /// The reference latitude and longitude of a site.
+    pub const IMPORT_SITE_DATA: Reason = Reason {
+        code: "ab.io.ifc.import_site_data",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-site-data",
+    };
+
+    /// A part of an aggregate imported as an element of its own.
+    pub const IMPORT_AGGREGATION_FLATTENED: Reason = Reason {
+        code: "ab.io.ifc.import_aggregation_flattened",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-aggregation-flattened",
+    };
+
+    /// A product with no storey of its own, placed in the lowest storey of its building.
+    pub const IMPORT_STOREY_ASSUMED: Reason = Reason {
+        code: "ab.io.ifc.import_storey_assumed",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-storey-assumed",
+    };
+    /// A building beyond the first of the file, merged into the document's building.
+    pub const IMPORT_BUILDING_MERGED: Reason = Reason {
+        code: "ab.io.ifc.import_building_merged",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-building-merged",
+    };
+    /// The body of a door or window is the model's own frame and leaf, not the source's.
+    pub const IMPORT_INSERT_REGENERATED: Reason = Reason {
+        code: "ab.io.ifc.import_insert_regenerated",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-insert-regenerated",
+    };
+    /// A grid of the file: the model's grid lines are separate objects and the export writes one
+    /// grid for the building, so the `GlobalId` of the file's grid is not kept.
+    pub const IMPORT_GRID_IDENTITY: Reason = Reason {
+        code: "ab.io.ifc.import_grid_identity",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-grid-identity",
+    };
+    /// A product the document already has, matched by its identifier and not imported again.
+    pub const IMPORT_MATCHED: Reason = Reason {
+        code: "ab.io.ifc.import_matched",
+        outcome: Outcome::Preserved,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-import-matched",
+    };
+
+    /// An imported room that no loop of walls encloses, written as a space without a body.
+    pub const ROOM_BODY_MISSING: Reason = Reason {
+        code: "ab.io.ifc.room_body_missing",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-room-body-missing",
+    };
+    /// A property of an imported object the writer has no value for (a list, bounded or table value).
+    pub const FOREIGN_PROPERTY_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.foreign_property_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-foreign-property-not-written",
+    };
+
+    /// A property of an imported object written with a type the writer has instead of its source type.
+    pub const FOREIGN_PROPERTY_RETYPED: Reason = Reason {
+        code: "ab.io.ifc.foreign_property_retyped",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-foreign-property-retyped",
+    };
+
+    /// A foreign element whose class the output schema does not have, written as a building element proxy.
+    pub const FOREIGN_CLASS_CHANGED: Reason = Reason {
+        code: "ab.io.ifc.foreign_class_changed",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-foreign-class-changed",
+    };
 }
+
+pub use arc_io_common::loss::Reason;

@@ -598,6 +598,7 @@ pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()
     }
     let walls: usize = types::STOREY_ELEMENTS
         .iter()
+        .chain(&[types::FOREIGN_ELEMENT])
         .map(|k| spatial::children(ctx.snapshot(), k, id).len())
         .sum();
     if walls > 0 {
