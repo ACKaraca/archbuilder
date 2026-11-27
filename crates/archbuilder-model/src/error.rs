@@ -541,4 +541,49 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-view-range",
     };
+    /// A formula identifier is not an ASCII identifier, or is `true`, `false`, a function or a
+    /// unit.
+    pub const PARAM_IDENTIFIER_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.param_identifier_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-identifier-invalid",
+    };
+    /// Another parameter or document variable has the formula identifier.
+    pub const PARAM_IDENTIFIER_TAKEN: ErrorCode = ErrorCode {
+        code: "ab.model.param_identifier_taken",
+        category: Category::Conflict,
+        message_id: "ab-model-param-identifier-taken",
+    };
+    /// A value does not fit its data type: a literal of another kind, a formula where only
+    /// literals are allowed, an integer that is not whole.
+    pub const PARAM_VALUE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.param_value_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-value-invalid",
+    };
+    /// Formulas read each other in a cycle; the argument `cycle` names it.
+    pub const PARAM_CYCLE: ErrorCode = ErrorCode {
+        code: "ab.model.param_cycle",
+        category: Category::Conflict,
+        message_id: "ab-model-param-cycle",
+    };
+    /// A parameter value breaks its rule (a refusal for a reject rule, a warning otherwise).
+    pub const PARAM_RULE: ErrorCode = ErrorCode {
+        code: "ab.model.param_rule",
+        category: Category::Conflict,
+        message_id: "ab-model-param-rule",
+    };
+    /// A document would hold more document variables or project parameters than the limit.
+    pub const PARAM_TOO_MANY: ErrorCode = ErrorCode {
+        code: "ab.model.param_too_many",
+        category: Category::LimitExceeded,
+        message_id: "ab-model-param-too-many",
+    };
+    /// A parameter is bound to something that is not a category of physical elements, or a
+    /// value is set on an object the parameter is not bound to in that scope.
+    pub const PARAM_CATEGORY: ErrorCode = ErrorCode {
+        code: "ab.model.param_category",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-category",
+    };
 }

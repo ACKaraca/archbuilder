@@ -27,6 +27,9 @@ arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b
 arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
 arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
 arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+# The expression engine of parameters, document variables and families (ADR 0009); only
+# archbuilder-model depends on it.
+arc-solve = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
 
 # Formats the names of the default element types from the message catalogs.
 fluent-bundle = { version = "0.16.0", default-features = false }

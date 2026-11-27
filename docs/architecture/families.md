@@ -63,12 +63,12 @@ values and numbering formats. One implementation in `arc-solve` serves all of th
 | Aspect | Rule |
 |---|---|
 | Values | Typed quantities with units, numbers, integers, booleans, text, dates, references to family types |
-| Operators | `+ - * / ^`, comparison, `and`, `or`, `not`, conditional `if(condition, a, b)` |
-| Functions | Rounding (`round`, `roundup`, `rounddown` with optional increment), `abs`, `sqrt`, `min`, `max`, trigonometric and inverse trigonometric, `exp`, `ln`, `log`, `pi`, text `concat`, `format` with unit and precision, `lookup(table, column, keys..., fallback)`, `count` and `sum` over nested arrays |
+| Operators | `+ - * / ^`, comparisons that do not chain, `&&`, `||`, `!`, conditional `if(condition, a, b)` evaluating only the chosen branch; `,` or `;` between arguments |
+| Functions | Version 1, exactly: `abs`, `min`, `max`, `sqrt`, `pow`; `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`; `round`, `floor`, `ceil`, each with an optional increment; `if`; `len`, `sum`, `first`, `last`, `concat`, `format`; and `lookup(table, column, key, ..., fallback)` over a family's embedded tables. A call of any other function is refused at its name. The set has a version recorded in every definition and document ([ADR 0009](../adr/0009-parameters-expressions-and-family-documents.md)) |
 | Units | Literals carry units (`900 mm`, `15 deg`); every operation is dimensionally checked; dimensionless results of trigonometric arguments require angles |
-| References | Parameters of the same family or its host (for nested associations), document variables, and in schedules the fields of the row |
+| References | Formula identifiers (ASCII, unique among the names a formula can see) of parameters of the same family or its host (for nested associations), document variables, and in schedules the fields of the row; renaming an identifier rewrites every formula that uses it |
 | Excluded | Loops, recursion, user-defined functions, assignments, file, network, clock or random access |
-| Limits | Maximum nesting depth and maximum evaluation steps per expression and per family evaluation; exceeding a limit is an evaluation error, not a hang (values settled by OQ-01) |
+| Limits | Per formula: 2,048 bytes of text and of every text value, depth 32, 1,000 list items and call arguments, 10,000 steps, 65,536 bytes of created values; 1,000 parameters per family definition and 1,000 variables per document; per family instance 1,000,000 steps, nesting depth 8 and 10,000 placed children; exceeding a limit is an evaluation error, not a hang |
 | Cycles | The parameter dependency graph must be acyclic; a cycle is rejected when the expression is entered |
 | Errors | Errors carry the parameter, the sub-expression span and the reason; a family instance with an evaluation error keeps its last valid geometry and raises a warning |
 

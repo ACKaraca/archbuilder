@@ -63,6 +63,7 @@ pub mod dormer;
 pub mod element_type;
 pub mod elevator;
 pub mod error;
+pub mod expr;
 pub mod floor;
 pub mod floor_edge;
 pub mod headroom;

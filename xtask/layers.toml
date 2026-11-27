@@ -29,6 +29,7 @@ third_party = [
   "arc-io-common",
   "arc-io-ifc",
   "arc-mesh",
+  "arc-solve",
   "arc-ui",
   "arc-view",
   "fluent-bundle",
