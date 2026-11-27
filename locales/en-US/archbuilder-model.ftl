@@ -84,3 +84,4 @@ ab-model-curtain-insert = The curtain wall "{ $name }" hosts a door, window or o
 ab-model-curtain-cell-shape = The removed grid segments of the curtain wall "{ $name }" leave a cell that is not a rectangle. Remove the whole segment between two cells.
 ab-model-curtain-not-curtain = "{ $name }" is not a curtain wall.
 ab-model-curtain-unknown = "{ $name }" is not a grid line, cell or type of this curtain wall.
+ab-model-project-info-invalid = The project information "{ $field }" is not valid. Write an issue date as YYYY-MM-DD and a year of construction with four digits.

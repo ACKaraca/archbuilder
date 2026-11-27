@@ -17,7 +17,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -178,10 +178,7 @@ fn create_stair(ctx: &mut Context<'_>, p: CreateStair) -> Result<StairCreated> {
             }
             d[1].atan2(d[0])
         }
-        (None, Some(QuantityParam::Text(t))) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        (None, Some(param)) => ctx.quantity(param, Dimension::ANGLE)?.value(),
+        (None, Some(param)) => crate::angle(ctx, param)?,
         (None, None) => 0.0,
     };
     if !direction.is_finite() {
@@ -353,7 +350,7 @@ impl StairPrompts {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
         let turkish = language.starts_with("tr");
-        let unit = spatial::length_unit(state.snapshot);
+        let unit = spatial::unit_settings(state.snapshot);
         let text = |m: f64| length_text(m, unit, decimal_separator(&language));
         let number = |key: &str| preset.get(key).and_then(Json::as_f64);
         let mut scan = Scan {

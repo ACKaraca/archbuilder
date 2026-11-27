@@ -233,7 +233,7 @@ pub(crate) fn next_roof_name(snapshot: &Snapshot, storey: ObjectId, language: &s
 
 /// The refusal of a slope outside the range, the range written in the project's slope unit.
 pub(crate) fn slope_invalid(snapshot: &Snapshot) -> Error {
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| slope_unit(&p.values));
+    let unit = spatial::unit_settings(snapshot);
     let (low, high) = model::SLOPE_RANGE;
     Error::new(codes::SLOPE_INVALID)
         .with_arg("low", slope_text(low, unit, '.'))
@@ -1062,9 +1062,8 @@ impl RoofPrompts {
             .unwrap_or_default();
         let turkish = language.starts_with("tr");
         let separator = decimal_separator(&language);
-        let unit = spatial::length_unit(state.snapshot);
-        let slopes = spatial::project(state.snapshot)
-            .map_or_else(Default::default, |p| slope_unit(&p.values));
+        let unit = spatial::unit_settings(state.snapshot);
+        let slopes = spatial::unit_settings(state.snapshot);
         let number = |key: &str| preset.get(key).and_then(Json::as_f64);
         let mut scan = Scan {
             sketch: preset.get("mode").and_then(Json::as_str) == Some("sketch"),

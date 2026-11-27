@@ -175,6 +175,14 @@ pub fn lowest_storey(snapshot: &Snapshot) -> Option<Arc<Object>> {
         .map(|s| s.storey)
 }
 
+/// The display units of the project (AB-DATUM-004); the defaults without a project.
+#[must_use]
+pub fn unit_settings(snapshot: &Snapshot) -> crate::units::UnitSettings {
+    project(snapshot).map_or_else(Default::default, |p| {
+        crate::units::UnitSettings::of(&p.values)
+    })
+}
+
 /// The length unit of the project; meters without one.
 #[must_use]
 pub fn length_unit(snapshot: &Snapshot) -> LengthUnit {

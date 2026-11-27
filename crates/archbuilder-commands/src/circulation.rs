@@ -655,10 +655,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
             }
             d[1].atan2(d[0])
         }
-        (None, Some(QuantityParam::Text(t))) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        (None, Some(param)) => ctx.quantity(param, Dimension::ANGLE)?.value(),
+        (None, Some(param)) => crate::angle(ctx, param)?,
         (None, None) => 0.0,
     };
     let length = match (meters(ctx, p.length.as_ref())?, p.to) {

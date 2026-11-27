@@ -5,7 +5,7 @@
 //! intent for `archbuilder.property.set`.
 
 use arc_app::shell::{Action, Panel, PanelContext};
-use arc_base::{Dimension, DisplayUnits};
+use arc_base::Dimension;
 use arc_doc::schema::FieldDecl;
 use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
@@ -17,6 +17,7 @@ use archbuilder_model::types::{
     self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY,
     WALL, WINDOW, level, storey,
 };
+use archbuilder_model::units::UnitKind;
 use archbuilder_model::view::PlanView;
 
 /// A message of the application.
@@ -375,6 +376,204 @@ const LABELS: &[(&str, Message)] = &[
         "slope_unit",
         Message {
             message_id: "ab-prop-slope-unit",
+        },
+    ),
+    (
+        "area_unit",
+        Message {
+            message_id: "ab-prop-area-unit",
+        },
+    ),
+    (
+        "volume_unit",
+        Message {
+            message_id: "ab-prop-volume-unit",
+        },
+    ),
+    (
+        "angle_unit",
+        Message {
+            message_id: "ab-prop-angle-unit",
+        },
+    ),
+    (
+        "length_precision",
+        Message {
+            message_id: "ab-prop-length-precision",
+        },
+    ),
+    (
+        "area_precision",
+        Message {
+            message_id: "ab-prop-area-precision",
+        },
+    ),
+    (
+        "volume_precision",
+        Message {
+            message_id: "ab-prop-volume-precision",
+        },
+    ),
+    (
+        "angle_precision",
+        Message {
+            message_id: "ab-prop-angle-precision",
+        },
+    ),
+    (
+        "slope_precision",
+        Message {
+            message_id: "ab-prop-slope-precision",
+        },
+    ),
+    (
+        "length_rounding",
+        Message {
+            message_id: "ab-prop-length-rounding",
+        },
+    ),
+    (
+        "area_rounding",
+        Message {
+            message_id: "ab-prop-area-rounding",
+        },
+    ),
+    (
+        "volume_rounding",
+        Message {
+            message_id: "ab-prop-volume-rounding",
+        },
+    ),
+    (
+        "angle_rounding",
+        Message {
+            message_id: "ab-prop-angle-rounding",
+        },
+    ),
+    (
+        "slope_rounding",
+        Message {
+            message_id: "ab-prop-slope-rounding",
+        },
+    ),
+    (
+        "square_meter",
+        Message {
+            message_id: "ab-unit-square-meter",
+        },
+    ),
+    (
+        "square_centimeter",
+        Message {
+            message_id: "ab-unit-square-centimeter",
+        },
+    ),
+    (
+        "square_millimeter",
+        Message {
+            message_id: "ab-unit-square-millimeter",
+        },
+    ),
+    (
+        "square_foot",
+        Message {
+            message_id: "ab-unit-square-foot",
+        },
+    ),
+    (
+        "cubic_meter",
+        Message {
+            message_id: "ab-unit-cubic-meter",
+        },
+    ),
+    (
+        "liter",
+        Message {
+            message_id: "ab-unit-liter",
+        },
+    ),
+    (
+        "cubic_foot",
+        Message {
+            message_id: "ab-unit-cubic-foot",
+        },
+    ),
+    (
+        "cubic_yard",
+        Message {
+            message_id: "ab-unit-cubic-yard",
+        },
+    ),
+    (
+        "degree",
+        Message {
+            message_id: "ab-unit-degree",
+        },
+    ),
+    (
+        "radian",
+        Message {
+            message_id: "ab-unit-radian",
+        },
+    ),
+    (
+        "gradian",
+        Message {
+            message_id: "ab-unit-gradian",
+        },
+    ),
+    (
+        "status",
+        Message {
+            message_id: "ab-prop-status",
+        },
+    ),
+    (
+        "issue_date",
+        Message {
+            message_id: "ab-prop-issue-date",
+        },
+    ),
+    (
+        "author",
+        Message {
+            message_id: "ab-prop-author",
+        },
+    ),
+    (
+        "organization",
+        Message {
+            message_id: "ab-prop-organization",
+        },
+    ),
+    (
+        "description",
+        Message {
+            message_id: "ab-prop-description",
+        },
+    ),
+    (
+        "long_name",
+        Message {
+            message_id: "ab-prop-long-name",
+        },
+    ),
+    (
+        "occupancy_type",
+        Message {
+            message_id: "ab-prop-occupancy-type",
+        },
+    ),
+    (
+        "year_of_construction",
+        Message {
+            message_id: "ab-prop-year-of-construction",
+        },
+    ),
+    (
+        "construction_method",
+        Message {
+            message_id: "ab-prop-construction-method",
         },
     ),
     (
@@ -1624,6 +1823,7 @@ fn shown(
     label: &dyn Fn(&str) -> String,
 ) -> Option<Shown> {
     let decl = snapshot.registry().get(key)?;
+    let us = spatial::unit_settings(snapshot);
     let mut fields = decl.schema.fields.clone();
     let mut values = object.values.clone();
     let mut read_only = Vec::new();
@@ -1758,7 +1958,7 @@ fn shown(
             // The layers of the storey are derived on the extraction workers after an edit: until
             // they are, the volume shows as pending rather than holding the frame up.
             let volume = match archbuilder_model::cleanup::wall_net_volume_ready(snapshot, object) {
-                Some(v) => v.map(|v| Value::String(format!("{v:.3} m³"))),
+                Some(v) => v.map(|v| Value::String(us.volume_text(v, '.'))),
                 None => Some(Value::String(PENDING.to_owned())),
             };
             fields.push(text_field("wall_volume"));
@@ -1772,7 +1972,7 @@ fn shown(
                 let length: f64 = curtain.mullions.iter().map(|m| m.length()).sum();
                 let orphans =
                     curtain.layout.orphans.edits.len() + curtain.layout.orphans.overrides.len();
-                let mut panel_text = format!("{panels} / {area:.2} m²");
+                let mut panel_text = format!("{panels} / {}", us.area_text(area, '.'));
                 if orphans > 0 {
                     panel_text.push_str(&format!(" ({orphans} orphaned)"));
                 }
@@ -1780,7 +1980,10 @@ fn shown(
                 values.push(Some(Value::String(panel_text)));
                 read_only.push("curtain_panels".to_owned());
                 fields.push(text_field("curtain_mullions"));
-                values.push(Some(Value::String(format!("{mullions} / {length:.2} m"))));
+                values.push(Some(Value::String(format!(
+                    "{mullions} / {}",
+                    us.length_text(length, '.')
+                ))));
                 read_only.push("curtain_mullions".to_owned());
             }
             // The top level is a choice below; editing the height disconnects the top.
@@ -1864,9 +2067,7 @@ fn shown(
             );
             let slope = derived.as_ref().and_then(|d| {
                 d.arrow.map(|a| {
-                    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-                        archbuilder_model::units::slope_unit(&p.values)
-                    });
+                    let unit = spatial::unit_settings(snapshot);
                     archbuilder_model::units::slope_text(
                         a.gradient(d.floor.top_offset).atan(),
                         unit,
@@ -1879,11 +2080,11 @@ fn shown(
                 ("floor_slope", slope),
                 (
                     "floor_area",
-                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                    derived.as_ref().map(|d| us.area_text(d.area(), '.')),
                 ),
                 (
                     "floor_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
                 (
                     "floor_walls",
@@ -1961,11 +2162,11 @@ fn shown(
             }
             // The room's solid: under the lowest ceiling, roof or slab above it.
             let shape = shape_ready.flatten();
-            let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, unit: &str| {
+            let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, kind| {
                 entry
                     .as_ref()
                     .and_then(f)
-                    .map(|v| Value::String(format!("{v:.3} {unit}")))
+                    .map(|v| Value::String(us.text(kind, v, '.')))
             };
             for (name, value) in [
                 (
@@ -1973,30 +2174,32 @@ fn shown(
                     entry
                         .as_ref()
                         .and_then(|e| shape.as_ref().map(|s| s.area).or_else(|| e.area()))
-                        .map(|a| Value::String(format!("{a:.3} m²"))),
+                        .map(|a| Value::String(us.area_text(a, '.'))),
                 ),
                 (
                     "room_perimeter",
-                    derived(archbuilder_model::room::Entry::perimeter, "m"),
+                    derived(archbuilder_model::room::Entry::perimeter, UnitKind::Length),
                 ),
                 (
                     "room_volume",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m³", s.volume)))
-                        .or_else(|| derived(archbuilder_model::room::Entry::volume, "m³")),
+                        .map(|s| Value::String(us.volume_text(s.volume, '.')))
+                        .or_else(|| {
+                            derived(archbuilder_model::room::Entry::volume, UnitKind::Volume)
+                        }),
                 ),
                 (
                     "room_height",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m", s.height))),
+                        .map(|s| Value::String(us.length_text(s.height, '.'))),
                 ),
                 (
                     "room_unbounded",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m", s.unbounded))),
+                        .map(|s| Value::String(us.length_text(s.unbounded, '.'))),
                 ),
                 (
                     "room_bounded_by",
@@ -2077,7 +2280,7 @@ fn shown(
             let layout = placed.as_ref().and_then(|p| p.layout.as_ref().ok());
             let direction = placed
                 .as_ref()
-                .map(|p| format!("{:.1}°", p.stair.direction.to_degrees()));
+                .map(|p| us.angle_text(p.stair.direction, '.'));
             let order = [
                 st::NAME,
                 st::SHAPE,
@@ -2104,7 +2307,7 @@ fn shown(
             let runs = layout.map(|l| {
                 l.runs
                     .iter()
-                    .map(|r| format!("{:.3} m", r.length))
+                    .map(|r| us.length_text(r.length, '.'))
                     .collect::<Vec<_>>()
                     .join(" + ")
             });
@@ -2117,18 +2320,18 @@ fn shown(
                 ),
                 ("stair_direction", direction),
                 ("stair_risers", layout.map(|l| l.risers.to_string())),
-                ("stair_riser", layout.map(|l| format!("{:.5} m", l.riser))),
+                ("stair_riser", layout.map(|l| us.length_text(l.riser, '.'))),
                 ("stair_runs", runs),
                 (
                     "stair_stride",
                     layout.map(|l| {
                         let warn = if l.stride_ok() { "" } else { " ⚠" };
-                        format!("{:.3} m{warn}", l.stride())
+                        format!("{}{warn}", us.length_text(l.stride(), '.'))
                     }),
                 ),
                 (
                     "stair_volume",
-                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                    layout.map(|l| us.volume_text(l.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2172,10 +2375,10 @@ fn shown(
                         format!("{:.1} %{warn}", l.slope() * 100.0)
                     }),
                 ),
-                ("ramp_rise", layout.map(|l| format!("{:.3} m", l.height))),
+                ("ramp_rise", layout.map(|l| us.length_text(l.height, '.'))),
                 (
                     "ramp_volume",
-                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                    layout.map(|l| us.volume_text(l.volume(), '.')),
                 ),
                 ("ramp_type_name", kind),
             ] {
@@ -2212,7 +2415,7 @@ fn shown(
                 ("railing_continues", name_of(rl::CONTINUES_TO)),
                 (
                     "railing_length",
-                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                    derived.as_ref().map(|d| us.length_text(d.length(), '.')),
                 ),
                 (
                     "railing_posts",
@@ -2285,9 +2488,7 @@ fn shown(
             let slope =
                 archbuilder_model::ceiling::Ceiling::from_values(&object.values).and_then(|c| {
                     c.arrow.map(|a| {
-                        let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-                            archbuilder_model::units::slope_unit(&p.values)
-                        });
+                        let unit = spatial::unit_settings(snapshot);
                         archbuilder_model::units::slope_text(
                             a.gradient(c.height()).atan(),
                             unit,
@@ -2300,11 +2501,11 @@ fn shown(
                 ("ceiling_slope", slope),
                 (
                     "ceiling_area",
-                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                    derived.as_ref().map(|d| us.area_text(d.area(), '.')),
                 ),
                 (
                     "ceiling_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2373,13 +2574,17 @@ fn shown(
             for (name, value) in [
                 (
                     "shaft_span",
-                    span.as_ref()
-                        .map(|s| format!("{:.3} m – {:.3} m", s.z.0, s.z.1)),
+                    span.as_ref().map(|s| {
+                        format!(
+                            "{} – {}",
+                            us.length_text(s.z.0, '.'),
+                            us.length_text(s.z.1, '.')
+                        )
+                    }),
                 ),
                 (
                     "shaft_area",
-                    span.as_ref()
-                        .map(|s| format!("{:.3} m²", s.boundary.area())),
+                    span.as_ref().map(|s| us.area_text(s.boundary.area(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2399,7 +2604,7 @@ fn shown(
                 archbuilder_model::floor::VERTICAL_SLOTS,
             )
             .and_then(|f| f.boundary_in(snapshot))
-            .map(|b| format!("{:.3} m²", b.area()));
+            .map(|b| us.area_text(b.area(), '.'));
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
@@ -2424,11 +2629,11 @@ fn shown(
                     "extrusion_area",
                     derived
                         .as_ref()
-                        .map(|d| format!("{:.3} m²", d.surface_area())),
+                        .map(|d| us.area_text(d.surface_area(), '.')),
                 ),
                 (
                     "extrusion_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2451,11 +2656,11 @@ fn shown(
                 ("edge_floor", host),
                 (
                     "edge_length",
-                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                    derived.as_ref().map(|d| us.length_text(d.length(), '.')),
                 ),
                 (
                     "edge_volume",
-                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2532,10 +2737,8 @@ fn roof_rows(
     let derived = archbuilder_model::roof::Derived::of(snapshot, object).ok();
     let roof = archbuilder_model::roof::Roof::from_values(&object.values);
     let kept = archbuilder_model::roof::Roof::kept_slopes(&object.values);
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-        archbuilder_model::units::slope_unit(&p.values)
-    });
-    let text = |a: f64| archbuilder_model::units::slope_text(a, unit, '.');
+    let us = spatial::unit_settings(snapshot);
+    let text = |a: f64| us.slope_text(a, '.');
     let (decls, vals) = (fields.clone(), values.clone());
     let order = [rf::NAME, rf::THICKNESS, rf::BASE_OFFSET, rf::OVERHANG];
     *fields = order
@@ -2609,13 +2812,13 @@ fn roof_rows(
             "roof_area",
             derived
                 .as_ref()
-                .map(|d| format!("{:.3} m²", d.surface.plan_area())),
+                .map(|d| us.area_text(d.surface.plan_area(), '.')),
         ),
         (
             "roof_top",
             derived
                 .as_ref()
-                .map(|d| format!("{:.3} m", d.surface.top())),
+                .map(|d| us.length_text(d.surface.top(), '.')),
         ),
         ("roof_attached", Some(attached.to_string())),
         (
@@ -2802,10 +3005,7 @@ impl Panel for PropertiesPanel {
                 return;
             }
         };
-        let mut units = DisplayUnits::new();
-        if let Some(format) = spatial::length_unit(&snapshot).format() {
-            units.set(format);
-        }
+        let units = spatial::unit_settings(&snapshot).display_units();
         let localize = cx.localize;
         let label = |name: &str| label_text(localize, name);
         let context = GridContext {

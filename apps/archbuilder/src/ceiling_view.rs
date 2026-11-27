@@ -11,7 +11,7 @@ use arc_doc::Snapshot;
 use arc_ui::{OverlayColor, ProductOverlay};
 use archbuilder_model::spatial;
 use archbuilder_model::types::CEILING;
-use archbuilder_model::units::{decimal_separator, slope_text, slope_unit};
+use archbuilder_model::units::{decimal_separator, slope_text};
 
 use crate::room_view::{anchor_for_center, label_size};
 
@@ -40,7 +40,7 @@ pub fn overlays(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
     let (Some(storey), Some(frame)) = (view.active(), view.view()) else {
         return Vec::new();
     };
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| slope_unit(&p.values));
+    let unit = spatial::unit_settings(snapshot);
     let separator = decimal_separator(language);
     let mut out = Vec::new();
     for object in spatial::children(snapshot, CEILING, storey)

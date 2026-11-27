@@ -40,7 +40,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, Point, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -1364,13 +1364,9 @@ fn paste_objects(ctx: &mut Context<'_>, p: Paste, into_storey: bool) -> Result<M
 }
 
 fn rotate_objects(ctx: &mut Context<'_>, p: Rotate) -> Result<Modified> {
-    // A bare text number is degrees; a JSON number is radians; a text with a unit says its own.
-    let angle = match &p.angle {
-        QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        other => ctx.quantity(other, Dimension::ANGLE)?.value(),
-    };
+    // A bare text number is in the project's angle unit (degrees by default); a JSON number is
+    // radians; a text with a unit says its own.
+    let angle = crate::angle(ctx, &p.angle)?;
     run(
         ctx,
         p.objects,

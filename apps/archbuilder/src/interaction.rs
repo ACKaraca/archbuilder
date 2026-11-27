@@ -604,7 +604,7 @@ pub struct WallInteraction {
     /// The pixels per meter of the last pointer event, which sizes the handles.
     ppu: f64,
     /// The project's length unit and the language's decimal separator, for the live labels.
-    label_units: (archbuilder_model::units::LengthUnit, char),
+    label_units: (archbuilder_model::units::UnitSettings, char),
     /// Tab, the context menu, the clipboard, shortcuts, hide and isolate (see [`habits`]).
     habits: habits::Habits,
     /// Match type while it runs: the source once picked.
@@ -674,7 +674,7 @@ impl WallInteraction {
             ppu: 0.0,
             near_cube: false,
             right_xy: [1.0, 0.0],
-            label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
+            label_units: (archbuilder_model::units::UnitSettings::default(), '.'),
             habits: habits::Habits::default(),
             matching: None,
             attaching: None,
@@ -685,20 +685,24 @@ impl WallInteraction {
     }
 
     /// The shell's session (it carries the interface language, `app.language`) with the project's
-    /// length unit and degrees as the context units of typed numbers.
+    /// length, area, volume and angle units as the context units of typed numbers.
     fn session(cx: &InteractionContext<'_>) -> Session {
         let mut session = cx.session().clone();
         if session.setting(LANGUAGE_SETTING).is_none() {
             let _ = session.set_setting(LANGUAGE_SETTING, serde_json::Value::from(cx.language()));
         }
         if let Ok(document) = cx.document() {
-            let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
-            session.units = unit
-                .unit()
-                .copied()
-                .into_iter()
-                .chain(arc_base::Unit::by_name("degree").ok().copied())
-                .collect();
+            let unit = archbuilder_model::spatial::unit_settings(&document.snapshot());
+            session.units = [
+                archbuilder_model::units::UnitKind::Length,
+                archbuilder_model::units::UnitKind::Area,
+                archbuilder_model::units::UnitKind::Volume,
+                archbuilder_model::units::UnitKind::Angle,
+            ]
+            .into_iter()
+            .filter_map(|kind| unit.unit_name(kind))
+            .filter_map(|name| arc_base::Unit::by_name(name).ok().copied())
+            .collect();
         }
         session
     }
@@ -1297,7 +1301,7 @@ impl Interaction for WallInteraction {
         let right = cx.camera().right();
         self.right_xy = [right.x, right.y];
         if let Ok(document) = cx.document() {
-            let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
+            let unit = archbuilder_model::spatial::unit_settings(&document.snapshot());
             self.label_units = (unit, cx.decimal_separator());
         }
         if self.wake > 0 {
@@ -1887,7 +1891,7 @@ impl WallInteraction {
         let Some(unit) = cx
             .document()
             .ok()
-            .map(|d| archbuilder_model::spatial::length_unit(&d.snapshot()))
+            .map(|d| archbuilder_model::spatial::unit_settings(&d.snapshot()))
         else {
             return;
         };
@@ -2082,7 +2086,7 @@ impl WallInteraction {
             return;
         };
         let snapshot = document.snapshot();
-        let unit = archbuilder_model::spatial::length_unit(&snapshot);
+        let unit = archbuilder_model::spatial::unit_settings(&snapshot);
         let frame = Self::direct_frame(cx, self.ppu);
         self.direct_overlays = self.direct.overlays(
             &snapshot,
@@ -2140,7 +2144,7 @@ impl WallInteraction {
             shift: event.modifiers.shift,
             ctrl: event.modifiers.ctrl,
             free: event.modifiers.alt || !self.habits.snap_on,
-            unit: archbuilder_model::spatial::length_unit(&snapshot),
+            unit: archbuilder_model::spatial::unit_settings(&snapshot),
             separator: cx.decimal_separator(),
             plan: candidates.as_deref(),
         };
@@ -2425,7 +2429,7 @@ impl WallInteraction {
         cx: &InteractionContext<'_>,
         value: &serde_json::Value,
     ) -> Option<String> {
-        let unit = archbuilder_model::spatial::length_unit(&cx.document().ok()?.snapshot());
+        let unit = archbuilder_model::spatial::unit_settings(&cx.document().ok()?.snapshot());
         let separator = cx.decimal_separator();
         let triple = |v: &serde_json::Value| -> Option<String> {
             let parts: Vec<String> = v
@@ -2967,8 +2971,9 @@ impl WallInteraction {
                         z,
                     ),
                     text: format!(
-                        "{}  {degrees:.1}\u{b0}",
-                        archbuilder_model::units::length_text(length, unit, separator)
+                        "{}  {}",
+                        unit.length_text(length, separator),
+                        unit.angle_text(degrees.to_radians(), separator)
                     ),
                 });
             }
@@ -2976,7 +2981,10 @@ impl WallInteraction {
         let ([x, y], degrees) = self.angle?;
         Some(ProductOverlay::Label {
             at: Point3::new(x, y, z),
-            text: format!("{degrees}\u{b0}"),
+            text: self
+                .label_units
+                .0
+                .angle_text(f64::from(degrees).to_radians(), self.label_units.1),
         })
     }
 

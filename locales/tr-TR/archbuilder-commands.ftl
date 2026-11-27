@@ -496,3 +496,7 @@ ab-cmd-coordinates-query-description = Bir noktayı iç, proje, ölçüm ve hari
 ab-prompt-coordinates-point = Koordinatlar: bir nokta seçin.
 ab-cmd-coordinates-recenter-label = Modeli Merkezle
 ab-cmd-coordinates-recenter-description = Tüm modeli proje başlangıç noktası ve ölçüm noktasıyla birlikte, ölçüm noktası iç orijine gelecek biçimde taşır. Her öğenin harita koordinatları aynı kalır.
+ab-cmd-project-set-units-label = Görüntüleme Birimleri
+ab-cmd-project-set-units-description = Uzunluk, alan, hacim, açı ve eğimin görüntüleme birimini, ondalık basamağını ve yuvarlama adımını belirler. Saklanan değerler SI birimlerinde kalır; yalnızca değerlerin gösterimi ve yazılan sayının okunuşu değişir. Değer verilmezse projeyi seçer; özellikleri aynı alanları listeler.
+ab-cmd-project-set-info-label = Proje Bilgisi
+ab-cmd-project-set-info-description = Proje bilgisini belirler: ad, numara, işveren, adres, durum, yayın tarihi, yazar, kuruluş, açıklama, uzun ad ile yapının kullanım türü, yapım yılı ve yapım yöntemi. Boş metin alanı temizler. IFC dışa aktarımı bu değerleri yazar. Değer verilmezse projeyi seçer; özellikleri aynı alanları listeler.

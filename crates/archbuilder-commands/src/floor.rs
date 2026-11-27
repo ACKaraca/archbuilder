@@ -811,7 +811,7 @@ impl FloorPrompts {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
         let turkish = language.starts_with("tr");
-        let unit = spatial::length_unit(state.snapshot);
+        let unit = spatial::unit_settings(state.snapshot);
         let text = |m| length_text(m, unit, decimal_separator(&language));
         let number = |key: &str| preset.get(key).and_then(Json::as_f64);
         let mut scan = Scan {

@@ -1506,10 +1506,7 @@ fn radial_array(ctx: &mut Context<'_>, p: RadialArray) -> Result<Edited> {
     let full = std::f64::consts::TAU;
     let angle = match &p.angle {
         None => full,
-        Some(QuantityParam::Text(t)) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(360.0).to_radians()
-        }
-        Some(other) => ctx.quantity(other, Dimension::ANGLE)?.value(),
+        Some(other) => crate::angle(ctx, other)?,
     };
     if !angle.is_finite() || angle == 0.0 || angle.abs() > full + Tolerance::DEFAULT.angular {
         return Err(invalid());

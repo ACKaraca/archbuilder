@@ -84,3 +84,4 @@ ab-model-curtain-insert = "{ $name }" perde duvarı bir kapı, pencere ya da bo�
 ab-model-curtain-cell-shape = "{ $name }" perde duvarında kaldırılan ızgara parçaları dikdörtgen olmayan bir göz bırakıyor. İki göz arasındaki parçanın tamamını kaldırın.
 ab-model-curtain-not-curtain = "{ $name }" bir perde duvar değil.
 ab-model-curtain-unknown = "{ $name }" bu perde duvarın bir ızgara çizgisi, gözü ya da tipi değil.
+ab-model-project-info-invalid = Proje bilgisi "{ $field }" geçerli değil. Yayın tarihini YYYY-AA-GG biçiminde, yapım yılını dört haneli yazın.

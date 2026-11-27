@@ -497,3 +497,7 @@ ab-cmd-coordinates-query-description = Reports a point in internal, project, sur
 ab-prompt-coordinates-point = Coordinates: pick a point.
 ab-cmd-coordinates-recenter-label = Recenter Model
 ab-cmd-coordinates-recenter-description = Moves the whole model, with the project base point and the survey point, so that the survey point lies on the internal origin. Map coordinates of every element stay the same.
+ab-cmd-project-set-units-label = Display Units
+ab-cmd-project-set-units-description = Sets the display unit, the decimals and the rounding step of lengths, areas, volumes, angles and slopes. Stored values stay in SI units; only how values are shown and how a typed number is read changes. Without values it selects the project, whose properties list the same fields.
+ab-cmd-project-set-info-label = Project Information
+ab-cmd-project-set-info-description = Sets the project information: name, number, client, address, status, issue date, author, organization, description, long name, and the occupancy type, year and method of construction of the building. An empty text clears a field. The IFC export writes these values. Without values it selects the project, whose properties list the same fields.
