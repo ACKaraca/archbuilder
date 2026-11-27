@@ -14,7 +14,7 @@ The spatial structure (project, site, building, storey, level) exists as code, w
 application and a headless CLI on one pinned `arc-core`. Built so far: walls (create, delete, flip,
 layer-cleaned joins, wrapping, `snap.rs`), doors and windows hosted by walls, floors
 (walls or sketch, holes, arcs, boundary sketch editing; edges follow wall faces), rooms
-(derived from walls around a point, warnings), stairs (straight, L, U; floor openings, railings), `archbuilder.modify.*` (move, copy, rotate, mirror, align, offset, trim, arrays), wall split and merge, pin, a warnings panel, direct manipulation (drag, handles, temporary dimensions), everyday habits (Tab, context menu, clipboard, typed shortcuts, hide and isolate),
+(derived from walls around a point, warnings), stairs (straight, L, U; floor openings, railings), railings by path with types, extensions and continuous rails, ramps with slope check and railings, `archbuilder.modify.*` (move, copy, rotate, mirror, align, offset, trim, arrays), wall split and merge, pin, a warnings panel, direct manipulation (drag, handles, temporary dimensions), everyday habits (Tab, context menu, clipboard, typed shortcuts, hide and isolate),
 Delete, `archbuilder.property.set`, project browser, property grid, `inspect` lists, IFC4 export (rooms
 as spaces), element types (layered wall and floor types, door and window types; type editor,
 create similar, match type), roofs with wall attach, ceilings, wall, shaft and vertical openings, room solids, plan views (`arc-view`). The window has command tabs with an icon set, a contextual Selection tab, a project browser and properties column and a status line. Families and other views are still specifications.

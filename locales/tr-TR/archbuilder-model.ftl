@@ -61,3 +61,9 @@ ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğin
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
 
 ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.
+
+ab-model-ramp-no-top = "{ $name }" rampasının tabanının üstünde varacağı bir seviye ve bir yükseklik farkı yok. Üste bir kat ekleyin, bir üst seviye seçin ya da yükseklik farkı verin.
+ab-model-ramp-malformed = "{ $name }" rampası oluşturulamıyor: genişlik, uzunluk, sahanlık ya da kalınlık geçerli değil.
+ab-model-ramp-slope = "{ $name }" rampasının eğimi % { $slope }; tipinin en büyük eğimi olan % { $max } değerini aşıyor. Rampayı uzatın ya da tipi değiştirin.
+ab-model-railing-malformed = "{ $name }" korkuluğu oluşturulamıyor: yolu iki farklı nokta gerektirir ve bağlı olduğu elemanın durması gerekir.
+ab-model-railing-gap = "{ $name }" korkuluğunda baluster araları { $gap } mm; { $max } mm sınırını aşıyor. Daha küçük baluster aralığı kullanın.

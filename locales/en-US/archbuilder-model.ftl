@@ -61,3 +61,9 @@ ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the hei
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.
 
 ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.
+
+ab-model-ramp-no-top = The ramp "{ $name }" has no level above its base to arrive at and no rise. Add a storey above, choose a top level or give a rise.
+ab-model-ramp-malformed = The ramp "{ $name }" cannot be built: a width, length, landing or thickness is not valid.
+ab-model-ramp-slope = The ramp "{ $name }" has a slope of { $slope } %, over the largest of its type, { $max } %. Lengthen the run or change the type.
+ab-model-railing-malformed = The railing "{ $name }" cannot be built: its path needs two different points, and a host must still exist.
+ab-model-railing-gap = The railing "{ $name }" has an opening of { $gap } mm between balusters, over { $max } mm. Use a smaller baluster spacing.

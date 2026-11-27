@@ -19,6 +19,7 @@
 //! No function in this crate panics.
 
 pub mod ceiling;
+pub mod circulation;
 pub mod clip;
 pub mod edit;
 pub mod element_type;
@@ -68,6 +69,7 @@ pub fn registry() -> Result<Registry> {
     edit::register(&mut registry)?;
     room::register(&mut registry)?;
     stair::register(&mut registry)?;
+    circulation::register(&mut registry)?;
     roof::register(&mut registry)?;
     ceiling::register(&mut registry)?;
     opening::register(&mut registry)?;

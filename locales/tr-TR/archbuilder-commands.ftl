@@ -403,3 +403,17 @@ ab-cmd-view-defaults-label = Varsayılan Plan Görünümlerini Oluştur
 ab-cmd-view-defaults-description = Plan görünümü olmayan her kata varsayılan görünümünü verir.
 ab-cmd-view-set-label = Görünüm Ayarını Değiştir
 ab-cmd-view-set-description = Bir plan görünümünün tek bir ayarını değiştirir; görünümü olmayan bir kat için önce görünümünü oluşturur.
+
+ab-cmd-railing-create-label = Korkuluk
+ab-cmd-railing-create-description = Çizgi ve yaylardan oluşan bir yol boyunca ya da bir merdiven veya rampaya bağlı olarak, onu izleyen bir korkuluk oluşturur. Tip yüksekliği, tutamağı, balusterleri ve dikmeleri verir; uç uzantıları ve sürekli tutamak korkulukta ayarlanır.
+ab-cmd-railing-type-define-label = Korkuluk Tipi
+ab-cmd-railing-type-define-description = Bir korkuluk tipi oluşturur ya da adı verileni düzenler: yükseklik, tutamak ve baluster profilleri, baluster aralığı, dikme boyutu, korkuluk yüksekliği ve köşe birleşimi.
+ab-cmd-ramp-create-label = Rampa
+ab-cmd-ramp-create-description = Eğimli kolun ayağından ve ucundan düz bir rampa oluşturur; sahanlıklar, genişlik, kalınlık ve biçim verilebilir. Eğim yükseklik farkından ve uzunluktan çıkar; tipinin en büyük eğimini aşması bir uyarıdır. Seçilen yanlara korkuluk yapılır; üstteki kata varan rampa o döşemede boşluk açar.
+ab-cmd-ramp-type-define-label = Rampa Tipi
+ab-cmd-ramp-type-define-description = Bir rampa tipi oluşturur ya da adı verileni düzenler: en büyük eğim ve kalınlık.
+ab-prompt-railing-first = Korkuluk: yolun ilk noktasını belirtin.
+ab-prompt-railing-next = Korkuluk ({ $count } nokta): sonraki noktayı belirtin ya da bitirmek için Enter'a basın.
+ab-keyword-railing-done = Bitir
+ab-prompt-ramp-start = Rampa: eğimli kolun ayağını belirtin.
+ab-prompt-ramp-end = Rampa: eğimli kolun ucunu belirtin.

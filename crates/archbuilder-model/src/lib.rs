@@ -66,6 +66,8 @@ pub mod names;
 pub mod opening;
 pub mod pick;
 pub mod plan;
+pub mod railing;
+pub mod ramp;
 pub mod roof;
 pub mod room;
 pub mod sketch;
@@ -176,6 +178,46 @@ pub mod defaults {
             format!("Merdiven {n}")
         } else {
             format!("Stair {n}")
+        }
+    }
+
+    /// The name of the railing numbered `n` on a storey in `language`: `Railing 3`, `Korkuluk 3`.
+    #[must_use]
+    pub fn railing(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Korkuluk {n}")
+        } else {
+            format!("Railing {n}")
+        }
+    }
+
+    /// The name of the ramp numbered `n` on a storey in `language`: `Ramp 3`, `Rampa 3`.
+    #[must_use]
+    pub fn ramp(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Rampa {n}")
+        } else {
+            format!("Ramp {n}")
+        }
+    }
+
+    /// The name of the default railing type in `language`.
+    #[must_use]
+    pub fn railing_type(language: &str) -> &'static str {
+        if turkish(language) {
+            "Korkuluk 900"
+        } else {
+            "Railing 900"
+        }
+    }
+
+    /// The name of the default ramp type in `language`.
+    #[must_use]
+    pub fn ramp_type(language: &str) -> &'static str {
+        if turkish(language) {
+            "Rampa 1:12"
+        } else {
+            "Ramp 1:12"
         }
     }
 

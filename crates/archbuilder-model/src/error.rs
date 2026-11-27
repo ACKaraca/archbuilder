@@ -201,6 +201,36 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-stair-overlap",
     };
+    /// A ramp or railing finding (see the message `ab-model-ramp-no-top`).
+    pub const RAMP_NO_TOP: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_no_top",
+        category: Category::Conflict,
+        message_id: "ab-model-ramp-no-top",
+    };
+    /// A ramp or railing finding (see the message `ab-model-ramp-malformed`).
+    pub const RAMP_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-ramp-slope`).
+    pub const RAMP_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-slope",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-malformed`).
+    pub const RAILING_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.railing_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-gap`).
+    pub const RAILING_GAP: ErrorCode = ErrorCode {
+        code: "ab.model.railing_gap",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-gap",
+    };
     /// A type has no layers or more than [`crate::element_type::MAX_LAYERS`].
     pub const TYPE_LAYER_COUNT: ErrorCode = ErrorCode {
         code: "ab.model.type_layer_count",

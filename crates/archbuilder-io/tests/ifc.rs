@@ -783,6 +783,76 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     near(body, (60.0 - 4.0 - 4.53 * 1.1) * 0.2);
 }
 
+/// A ramp and its railings are named in the loss report (the pinned writer has no ramp or railing
+/// entities), never written as proxies; the opening the ramp cuts in the slab above is written.
+#[test]
+fn a_ramp_and_its_railings_are_reported_and_its_opening_is_a_hole_of_the_slab_above() {
+    let house = House::new();
+    let made = house.run(
+        "archbuilder.ramp.create",
+        json!({"start": [6.5, 0.5], "to": [6.5, 5.5]}),
+    );
+    let ramp = House::id(&made["ramp"]);
+    let free = house.run(
+        "archbuilder.railing.create",
+        json!({"points": [[1.0, 1.0], [2.0, 1.0]]}),
+    );
+    let free = House::id(&free["railing"]);
+    let snapshot = house.snapshot();
+    let upper = spatial::objects(&snapshot, FLOOR)
+        .into_iter()
+        .find(|f| Derived::of(&snapshot, f).is_some_and(|d| d.top > 1.0))
+        .unwrap();
+    // The outer loop, the sketched hole and the ramp's opening (5.05 x 1.3).
+    let derived = Derived::of(&snapshot, &upper).unwrap();
+    assert_eq!(derived.boundary.loops.len(), 3);
+    near(derived.area(), 60.0 - 4.0 - 5.05 * 1.3);
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let mut kinds: Vec<(String, String)> = exported
+        .report
+        .items
+        .iter()
+        .map(|i| (i.reason.clone(), i.record_kind.clone().unwrap_or_default()))
+        .collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        [
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.ramp_not_written".to_owned(),
+                "IFCRAMP".to_owned()
+            ),
+        ]
+    );
+    assert!(
+        exported
+            .report
+            .items
+            .iter()
+            .any(|i| i.object_id == Some(ramp.to_string()))
+    );
+    assert!(
+        exported
+            .report
+            .items
+            .iter()
+            .any(|i| i.object_id == Some(free.to_string()))
+    );
+    assert_eq!(exported.elements, 15);
+}
+
 /// A hip roof over the upper walls, with those walls attached to it: an `IfcRoof` of the roof
 /// type whose body is the slab, and walls whose bodies are their clipped solids.
 #[test]

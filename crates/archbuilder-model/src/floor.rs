@@ -1191,6 +1191,7 @@ impl Derived {
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
         let mut openings = crate::stair::openings_of_floor(snapshot, object);
+        openings.extend(crate::ramp::openings_of_floor(snapshot, object));
         let top = level + floor.top_offset;
         // Shafts and vertical openings that pass through the slab's body cut it like a stair.
         openings.extend(crate::opening::cuts(

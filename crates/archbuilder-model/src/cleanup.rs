@@ -381,6 +381,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
     }
     for key in [
         crate::types::STAIR,
+        crate::types::RAMP,
         crate::types::LEVEL,
         crate::types::STOREY,
         FLOOR,

@@ -183,6 +183,14 @@ impl Mapper<'_> {
         for stair in spatial::children(self.snapshot, archbuilder_model::types::STAIR, storey) {
             self.lose(reasons::STAIR_NOT_WRITTEN, "IFCSTAIR", &stair);
         }
+        // Likewise ramps and railings: named in the loss report until the foundation's writer has
+        // ramp, ramp flight and railing entities.
+        for ramp in spatial::children(self.snapshot, archbuilder_model::types::RAMP, storey) {
+            self.lose(reasons::RAMP_NOT_WRITTEN, "IFCRAMP", &ramp);
+        }
+        for railing in spatial::children(self.snapshot, archbuilder_model::types::RAILING, storey) {
+            self.lose(reasons::RAILING_NOT_WRITTEN, "IFCRAILING", &railing);
+        }
         Ok(())
     }
 

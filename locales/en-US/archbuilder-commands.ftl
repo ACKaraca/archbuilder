@@ -404,3 +404,17 @@ ab-cmd-view-defaults-label = Make Default Plan Views
 ab-cmd-view-defaults-description = Gives every storey without a plan view its default view.
 ab-cmd-view-set-label = Change View Setting
 ab-cmd-view-set-description = Sets one setting of a plan view; for a storey without a view, makes its view first.
+
+ab-cmd-railing-create-label = Railing
+ab-cmd-railing-create-description = Creates a railing from a sketched path of lines and arcs, or hosted on a stair or ramp so that it follows its host. The type gives the height, top rail, balusters and posts; extensions at the ends and a continuing rail are set on the railing.
+ab-cmd-railing-type-define-label = Railing Type
+ab-cmd-railing-type-define-description = Creates a railing type, or edits the one named: height, top rail and baluster profiles, baluster spacing, post size, handrail height and corner join.
+ab-cmd-ramp-create-label = Ramp
+ab-cmd-ramp-create-description = Creates a straight ramp from a foot and the end of its run, with landings, a width, a thickness and a form. The slope follows from the rise and the length; a slope over the largest of its type is a warning. Railings are made on the chosen sides, and a ramp that arrives at the level above cuts an opening in its floor.
+ab-cmd-ramp-type-define-label = Ramp Type
+ab-cmd-ramp-type-define-description = Creates a ramp type, or edits the one named: the largest slope and the thickness.
+ab-prompt-railing-first = Railing: specify the first point of the path.
+ab-prompt-railing-next = Railing ({ $count } points): specify the next point, or press Enter to finish.
+ab-keyword-railing-done = Done
+ab-prompt-ramp-start = Ramp: specify the foot of the sloped run.
+ab-prompt-ramp-end = Ramp: specify the end of the sloped run.

@@ -917,6 +917,40 @@ pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> 
                     );
                 }
             }
+            (types::RAILING | types::RAMP, "railing_type" | "ramp_type" | "continues_to") => {
+                // An identifier or a name; empty clears the reference.
+                let text = p
+                    .value
+                    .as_str()
+                    .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                    .trim();
+                let target_key = match p.field.as_str() {
+                    "railing_type" => types::RAILING_TYPE,
+                    "ramp_type" => types::RAMP_TYPE,
+                    _ => types::RAILING,
+                };
+                let target = if text.is_empty() {
+                    None
+                } else {
+                    Some(
+                        spatial::objects(snapshot, target_key)
+                            .into_iter()
+                            .find(|o| {
+                                o.id.to_string() == text
+                                    || types::text(&o.values, 0)
+                                        .is_some_and(|n| names::same(n, text))
+                            })
+                            .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                            .id,
+                    )
+                };
+                ctx.txn()?.modify(
+                    id,
+                    FieldPath::new(p.field.as_str()),
+                    target.map(Value::Reference),
+                )?;
+                ensure_valid(ctx)?;
+            }
             (types::CEILING, "ceiling_slope") => {
                 let text = p
                     .value
