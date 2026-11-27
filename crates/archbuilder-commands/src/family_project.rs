@@ -1233,7 +1233,7 @@ impl FamilyInsertPrompts {
                 .map(str::to_owned),
             wall: state
                 .preset
-                .get("wall")
+                .get("host")
                 .and_then(serde_json::Value::as_str)
                 .and_then(|s| s.parse().ok()),
             flip_hand: flag("flip_hand").unwrap_or(false),

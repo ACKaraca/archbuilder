@@ -226,7 +226,9 @@ impl InsertTool {
             preset.insert("type".into(), Value::from(t.as_str()));
         }
         if let Some(wall) = state.wall {
-            preset.insert("wall".into(), Value::from(wall.to_string()));
+            // A hosted family instance names its host as `host`.
+            let key = if state.family.is_some() { "host" } else { "wall" };
+            preset.insert(key.into(), Value::from(wall.to_string()));
         }
         for (key, value) in [
             ("width", state.width),
@@ -283,7 +285,8 @@ impl InsertTool {
             Ok(Submitted::Ran(outcome))
                 if outcome.command == DOOR_PLACE
                     || outcome.command == WINDOW_PLACE
-                    || outcome.command == archbuilder_commands::insert::OPENING_PLACE =>
+                    || outcome.command == archbuilder_commands::insert::OPENING_PLACE
+                    || outcome.command == archbuilder_commands::family_project::FAMILY_INSERT_PLACE =>
             {
                 self.placed(&outcome.value);
                 self.next(env, run)
