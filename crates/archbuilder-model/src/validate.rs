@@ -49,7 +49,9 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
         types::FLOOR_EDGE => Some(&[FLOOR]),
-        k if types::TYPE_KEYS.contains(&k) => Some(&[PROJECT]),
+        k if types::TYPE_KEYS.contains(&k) || k == types::RAILING_TYPE || k == types::RAMP_TYPE => {
+            Some(&[PROJECT])
+        }
         _ => None,
     }
 }
@@ -89,6 +91,12 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
+    }
+    if key == types::RAMP {
+        out.extend(ramp_problem(candidate, object));
+    }
+    if key == types::RAILING {
+        out.extend(railing_problem(candidate, object));
     }
     if key == types::PLAN_VIEW {
         out.extend(crate::view::problem(object));
@@ -150,6 +158,73 @@ fn check_instances_of_types(
             }
         }
     }
+}
+
+/// Why a ramp has no layout: no level above its base and no rise, or a record that cannot be read.
+#[must_use]
+pub fn ramp_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    use crate::ramp::{Placed, Refusal};
+    let name = display_name(object);
+    let Some(placed) = Placed::of(candidate, object) else {
+        return Some(Error::new(codes::RAMP_MALFORMED).with_arg("name", name));
+    };
+    match placed.layout {
+        Ok(_) => None,
+        Err(Refusal::NoTop) => Some(Error::new(codes::RAMP_NO_TOP).with_arg("name", name)),
+        Err(Refusal::Malformed) => Some(Error::new(codes::RAMP_MALFORMED).with_arg("name", name)),
+    }
+}
+
+/// Why a railing has no derived form: a path with fewer than two points, coincident points, or a
+/// host that is gone.
+#[must_use]
+pub fn railing_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    crate::railing::Derived::of(candidate, object)
+        .err()
+        .map(|_| Error::new(codes::RAILING_MALFORMED).with_arg("name", display_name(object)))
+}
+
+/// The warnings of a ramp (a slope over the type's largest) and of a railing (a clear opening
+/// wider than [`crate::railing::CLEAR_GAP_LIMIT`]). Each carries the element's identifier as the
+/// detail `object`.
+#[must_use]
+pub fn circulation_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
+    let name = display_name(object);
+    let mut out = Vec::new();
+    match type_of(candidate, object.id).as_deref() {
+        Some(types::RAMP) => {
+            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout)
+                && layout.exceeds()
+            {
+                out.push(
+                    Error::new(codes::RAMP_SLOPE)
+                        .with_arg("name", name)
+                        .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
+                        .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
+                        .with_arg(OBJECT, object.id.to_string()),
+                );
+            }
+        }
+        Some(types::RAILING) => {
+            if let Ok(d) = crate::railing::Derived::of(candidate, object) {
+                let gap = d.widest_gap();
+                if gap > crate::railing::CLEAR_GAP_LIMIT + 1.0e-9 {
+                    out.push(
+                        Error::new(codes::RAILING_GAP)
+                            .with_arg("name", name)
+                            .with_arg("gap", format!("{:.0}", gap * 1000.0))
+                            .with_arg(
+                                "max",
+                                format!("{:.0}", crate::railing::CLEAR_GAP_LIMIT * 1000.0),
+                            )
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// Why a stair has no layout: no level above its base, a riser count out of bounds, or a record
@@ -773,6 +848,11 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         {
             out.extend(stair_warnings(candidate, &object));
         }
+        if *change != Change::Deleted
+            && let Some(object) = get(candidate, *id)
+        {
+            out.extend(circulation_warnings(candidate, &object));
+        }
     }
     // Walls attached to a roof or floor that changed, wherever they stand.
     let targets: Vec<ObjectId> = touched
@@ -1032,6 +1112,8 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::roof_extrusion::THICKNESS,
             types::roof_extrusion::PINNED,
         ],
+        types::RAILING => &[types::railing::NAME, types::railing::PINNED],
+        types::RAMP => &[types::ramp::NAME, types::ramp::PINNED],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
 }
@@ -1102,7 +1184,10 @@ impl WarningKind {
     /// The kind of a finding, by its code.
     fn of(error: &Error) -> Self {
         let code = error.code();
-        if code.starts_with("ab.model.stair") {
+        if code.starts_with("ab.model.stair")
+            || code.starts_with("ab.model.ramp")
+            || code.starts_with("ab.model.railing")
+        {
             Self::Stair
         } else if code.starts_with("ab.model.room") {
             Self::Room
@@ -1172,6 +1257,18 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
     for stair in objects(snapshot, STAIR) {
         if let Some(error) = stair_problem(snapshot, &stair) {
             push(Severity::Error, error, vec![stair.id]);
+        }
+    }
+    for key in [types::RAMP, types::RAILING] {
+        for object in objects(snapshot, key) {
+            let problem = if key == types::RAMP {
+                ramp_problem(snapshot, &object)
+            } else {
+                railing_problem(snapshot, &object)
+            };
+            if let Some(error) = problem {
+                push(Severity::Error, error, vec![object.id]);
+            }
         }
     }
     // A pair of stairs that overlap is one problem, though each stair reports it.

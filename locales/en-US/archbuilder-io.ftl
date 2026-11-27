@@ -24,3 +24,5 @@ ab-io-validation-duplicate-id = Two entities of the IFC file have the same globa
 ab-io-validation-count = The IFC file holds { $found } elements but the export counted { $expected }, so the file is incomplete.
 ab-io-loss-floor-edge-as-covering = IFC4 has no element for the edge of a slab: a floor edge is written as a covering of the type molding with its swept body.
 ab-io-loss-floor-edge-orphan = A floor edge names edges that its floor no longer has: those edges are not in the file.
+ab-io-loss-railing-not-written = A railing is not in the IFC file: railings cannot be written yet.
+ab-io-loss-ramp-not-written = A ramp is not in the IFC file: ramps and ramp flights cannot be written yet. The opening it cuts in the floor above is in the file.

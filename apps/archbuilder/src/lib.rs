@@ -43,6 +43,7 @@ pub mod chrome;
 pub mod clipboard;
 pub mod direct;
 pub mod extract_ceiling;
+pub mod extract_circulation;
 pub mod extract_floor;
 pub mod extract_floor_edge;
 pub mod extract_insert;
@@ -204,6 +205,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         let mut out = extract_wall::dependents(snapshot, changes);
         out.extend(extract_floor::dependents(snapshot, changes));
         out.extend(extract_stair::dependents(snapshot, changes));
+        out.extend(extract_circulation::dependents(snapshot, changes));
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
         out.extend(extract_floor_edge::dependents(snapshot, changes));
@@ -325,6 +327,24 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_stair::extract_stair(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.ramp".into(),
+        types: vec![archbuilder_model::types::RAMP.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_circulation::extract_ramp(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.railing".into(),
+        types: vec![archbuilder_model::types::RAILING.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_circulation::extract_railing(snapshot, object, cancel)
             })
         }),
     })?;

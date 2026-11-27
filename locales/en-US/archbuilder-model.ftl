@@ -67,3 +67,9 @@ ab-model-floor-edge-orphan = The edge element "{ $name }" names { $count } edge(
 ab-model-roof-extrusion-profile = The profile of the roof "{ $name }" needs at least two points, no segment of no length and every point within range.
 ab-model-roof-extrusion-section = The thickness of the roof "{ $name }" is too large for the bends of its profile: its section would cross itself. Give it a smaller thickness or a gentler profile.
 ab-model-roof-extrusion-span = The extrusion of the roof "{ $name }" must run between 10 mm and 500 m.
+
+ab-model-ramp-no-top = The ramp "{ $name }" has no level above its base to arrive at and no rise. Add a storey above, choose a top level or give a rise.
+ab-model-ramp-malformed = The ramp "{ $name }" cannot be built: a width, length, landing or thickness is not valid.
+ab-model-ramp-slope = The ramp "{ $name }" has a slope of { $slope } %, over the largest of its type, { $max } %. Lengthen the run or change the type.
+ab-model-railing-malformed = The railing "{ $name }" cannot be built: its path needs two different points, and a host must still exist.
+ab-model-railing-gap = The railing "{ $name }" has an opening of { $gap } mm between balusters, over { $max } mm. Use a smaller baluster spacing.

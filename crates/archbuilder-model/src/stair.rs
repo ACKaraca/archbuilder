@@ -557,6 +557,12 @@ impl Layout {
         })
     }
 
+    /// Turns the railing of each side (left, right) on or off; the railings of the hosted
+    /// railing records are read with both on.
+    pub fn set_railings(&mut self, on: [bool; 2]) {
+        self.stair.railings = on;
+    }
+
     /// The stride `2R + T`.
     #[must_use]
     pub fn stride(&self) -> f64 {

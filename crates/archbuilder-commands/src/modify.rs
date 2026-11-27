@@ -175,6 +175,10 @@ pub(crate) struct Set {
     pub(crate) rooms: Vec<ObjectId>,
     /// The stairs (their start and direction move).
     pub(crate) stairs: Vec<ObjectId>,
+    /// The ramps (their foot and direction move).
+    pub(crate) ramps: Vec<ObjectId>,
+    /// The railings by path (the points move); a hosted railing goes with its host.
+    pub(crate) railings: Vec<ObjectId>,
     /// The roofs (their sketched footprint points move).
     pub(crate) roofs: Vec<ObjectId>,
     /// The doors, windows and wall openings whose wall is not in the set.
@@ -193,6 +197,8 @@ impl Set {
             + self.floors.len()
             + self.rooms.len()
             + self.stairs.len()
+            + self.ramps.len()
+            + self.railings.len()
             + self.roofs.len()
             + self.inserts.len()
             + self.ceilings.len()
@@ -235,6 +241,17 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(FLOOR) => set.floors.push(id),
             Some(types::ROOM) => set.rooms.push(id),
             Some(types::STAIR) => set.stairs.push(id),
+            Some(types::RAMP) => set.ramps.push(id),
+            Some(types::RAILING) => {
+                // A hosted railing follows its host and is not moved by itself.
+                let hosted = spatial::get(snapshot, id).is_some_and(|o| {
+                    archbuilder_model::railing::Railing::from_values(&o.values)
+                        .is_none_or(|r| r.host.is_some())
+                });
+                if !hosted {
+                    set.railings.push(id);
+                }
+            }
             Some(types::ROOF) => set.roofs.push(id),
             Some(types::CEILING) => set.ceilings.push(id),
             Some(types::SHAFT) => set.shafts.push(id),
@@ -921,6 +938,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         set_length(ctx, *id, "y", at[1])?;
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
+    crate::circulation::move_circulation(ctx, &snapshot, &set.ramps, &set.railings, xf)?;
     dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
     dissociated += crate::ceiling::move_ceilings(ctx, &snapshot, &set.ceilings, xf, &walls)?;
     crate::opening::move_cuts(
@@ -1125,6 +1143,14 @@ pub(crate) fn copy_set(
         let name = crate::stair::next_stair_name(&seen, s, &tongue);
         created.push(create(ctx, types::STAIR, storey, moved.values(&name))?);
     }
+    created.extend(crate::circulation::copy_circulation(
+        ctx,
+        &snapshot,
+        (&set.ramps, &set.railings),
+        xf,
+        target,
+        &tongue,
+    )?);
     let (roofs, lost) = crate::roof::copy_roofs(
         ctx,
         &snapshot,

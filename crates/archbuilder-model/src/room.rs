@@ -1040,6 +1040,7 @@ fn shape_deps(snapshot: &Snapshot, entry: &Entry) -> Option<(Arc<Object>, crate:
         types::SHAFT,
         types::VERTICAL_OPENING,
         types::STAIR,
+        types::RAMP,
     ] {
         deps.extend(spatial::objects(snapshot, key));
     }

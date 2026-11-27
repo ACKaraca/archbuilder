@@ -56,6 +56,18 @@ pub const ROOM: &str = "archbuilder.room";
 /// A stair on a storey: runs and landings from the storey's level up to the level above.
 pub const STAIR: &str = "archbuilder.stair";
 
+/// A railing by path on a storey: a sketched path (lines and arcs, with heights) or a side of a
+/// stair or ramp it is hosted on; a type, extensions at its ends and a continuation.
+pub const RAILING: &str = "archbuilder.railing";
+/// A railing type: height, top rail and baluster profiles and spacing, posts, corner join; owned
+/// by the project.
+pub const RAILING_TYPE: &str = "archbuilder.railing_type";
+/// A straight ramp on a storey: a run with landings from the storey's level up to the level above
+/// (or a rise); hosts railings.
+pub const RAMP: &str = "archbuilder.ramp";
+/// A ramp type: the largest slope and the default thickness; owned by the project.
+pub const RAMP_TYPE: &str = "archbuilder.ramp_type";
+
 /// A roof by footprint on a storey: edges with slopes and overhangs, a base offset and a type.
 pub const ROOF: &str = "archbuilder.roof";
 
@@ -108,6 +120,8 @@ pub const ELEMENTS: [&str; 13] = [
     FLOOR,
     ROOM,
     STAIR,
+    RAILING,
+    RAMP,
     ROOF,
     CEILING,
     WALL_OPENING,
@@ -118,11 +132,13 @@ pub const ELEMENTS: [&str; 13] = [
 ];
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 8] = [
+pub const STOREY_ELEMENTS: [&str; 10] = [
     WALL,
     FLOOR,
     ROOM,
     STAIR,
+    RAILING,
+    RAMP,
     ROOF,
     CEILING,
     SHAFT,
@@ -145,7 +161,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 26] = [
+pub const KEYS: [&str; 30] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -172,6 +188,10 @@ pub const KEYS: [&str; 26] = [
     SELECTION_SET,
     FLOOR_EDGE,
     ROOF_EXTRUSION,
+    RAILING,
+    RAILING_TYPE,
+    RAMP,
+    RAMP_TYPE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -740,6 +760,100 @@ pub mod stair {
     pub const PINNED: usize = 13;
 }
 
+/// The field positions of a railing record.
+pub mod railing {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The sketched path: points with a height and the bulge of the arc to the next point.
+    pub const PATH: usize = 1;
+    /// The railing type.
+    pub const RAILING_TYPE: usize = 2;
+    /// The stair or ramp the railing is hosted on; the path is derived from it.
+    pub const HOST: usize = 3;
+    /// The side of the host, and the side of the path the wall is on for a return.
+    pub const SIDE: usize = 4;
+    /// The extension at the start of the rail.
+    pub const START_EXTENSION: usize = 5;
+    /// The extension at the end of the rail.
+    pub const END_EXTENSION: usize = 6;
+    /// The horizontal length of an extension.
+    pub const EXTENSION_LENGTH: usize = 7;
+    /// The railing whose start the top rail continues to.
+    pub const CONTINUES_TO: usize = 8;
+    /// Whether the railing is pinned.
+    pub const PINNED: usize = 9;
+}
+
+/// The field positions of a railing type record.
+pub mod railing_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The height of the top rail above the walking surface.
+    pub const HEIGHT: usize = 1;
+    /// The profile of the top rail.
+    pub const RAIL_PROFILE: usize = 2;
+    /// The width of the top rail.
+    pub const RAIL_WIDTH: usize = 3;
+    /// The depth (height) of the top rail's section.
+    pub const RAIL_DEPTH: usize = 4;
+    /// The height of a handrail; 0 for none.
+    pub const HANDRAIL_HEIGHT: usize = 5;
+    /// The profile of the balusters.
+    pub const BALUSTER_PROFILE: usize = 6;
+    /// The size of a baluster.
+    pub const BALUSTER_SIZE: usize = 7;
+    /// The largest distance between the axes of two balusters, along the path.
+    pub const BALUSTER_SPACING: usize = 8;
+    /// The size of a post.
+    pub const POST_SIZE: usize = 9;
+    /// How the top rail turns at a corner.
+    pub const CORNER: usize = 10;
+    /// The radius of a filleted corner.
+    pub const FILLET_RADIUS: usize = 11;
+}
+
+/// The field positions of a ramp record.
+pub mod ramp {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x of the foot.
+    pub const X: usize = 1;
+    /// The y of the foot.
+    pub const Y: usize = 2;
+    /// The direction up the ramp, an angle from the x axis.
+    pub const DIRECTION: usize = 3;
+    /// The width.
+    pub const WIDTH: usize = 4;
+    /// The horizontal length of the sloped run.
+    pub const LENGTH: usize = 5;
+    /// The flat landing at the foot.
+    pub const LANDING_START: usize = 6;
+    /// The flat landing at the top.
+    pub const LANDING_END: usize = 7;
+    /// The thickness.
+    pub const THICKNESS: usize = 8;
+    /// The form: a thick slab or a solid down to the floor construction.
+    pub const FORM: usize = 9;
+    /// The rise, when it is not the height to the level above.
+    pub const RISE: usize = 10;
+    /// The level the ramp arrives at; the level above its storey when absent.
+    pub const TOP_LEVEL: usize = 11;
+    /// The ramp type.
+    pub const RAMP_TYPE: usize = 12;
+    /// Whether the ramp is pinned.
+    pub const PINNED: usize = 13;
+}
+
+/// The field positions of a ramp type record.
+pub mod ramp_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The largest slope (rise over run) of a run.
+    pub const MAX_SLOPE: usize = 1;
+    /// The thickness of a ramp made with the type.
+    pub const THICKNESS: usize = 2;
+}
+
 /// The range of a stair's width, in meters.
 pub const STAIR_WIDTH_RANGE: (f64, f64) = (0.5, 10.0);
 /// The range of a stair's tread depth, in meters.
@@ -973,6 +1087,10 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (ROOF, roof_fields()),
         (ROOF_TYPE, crate::element_type::floor_type_fields()),
         (STAIR, stair_fields()),
+        (RAILING, railing_fields()),
+        (RAILING_TYPE, railing_type_fields()),
+        (RAMP, ramp_fields()),
+        (RAMP_TYPE, ramp_type_fields()),
         (ROOM, room_fields()),
         (FLOOR, floor),
         (DOOR, insert_fields(DOOR_TYPE)),
@@ -1301,6 +1419,209 @@ fn stair_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn coded_field<const N: usize>(
+    name: &str,
+    variants: [(&'static str, u32); N],
+    default: u32,
+) -> FieldDecl {
+    FieldDecl::new(
+        name,
+        ValueType::Enum(
+            variants
+                .into_iter()
+                .map(|(n, c)| EnumVariant::new(n, c))
+                .collect(),
+        ),
+    )
+    .with_default(Value::Enum(default))
+    .in_aspect("geometry")
+}
+
+fn railing_fields() -> Vec<FieldDecl> {
+    use crate::railing::{DEFAULT_EXTENSION, EXTENSION_RANGE, Extension, MAX_POINTS, Side};
+    let host = {
+        let mut spec = reference_to(STAIR);
+        spec.targets = [STAIR, RAMP]
+            .iter()
+            .filter_map(|k| TypeKey::new(*k).ok())
+            .collect();
+        // A railing hosted on a stair or ramp goes with it.
+        spec.rule.on_delete = OnDelete::Cascade;
+        spec.rule.cardinality = Cardinality::Optional;
+        spec
+    };
+    let next = {
+        let mut spec = reference_to(RAILING);
+        spec.rule.on_delete = OnDelete::Clear;
+        spec.rule.cardinality = Cardinality::Optional;
+        spec
+    };
+    let extension = |name: &str| {
+        coded_field(
+            name,
+            [
+                (Extension::None.name(), Extension::None.code()),
+                (Extension::Horizontal.name(), Extension::Horizontal.code()),
+                (Extension::ReturnWall.name(), Extension::ReturnWall.code()),
+                (Extension::ReturnFloor.name(), Extension::ReturnFloor.code()),
+            ],
+            Extension::None.code(),
+        )
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "path",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+                length_field("z", Some(real(BASE_OFFSET_RANGE))),
+                FieldDecl::new("bulge", ValueType::F64)
+                    .with_default(Value::F64(0.0))
+                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_POINTS as u64,
+        })
+        .optional()
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "railing_type",
+            ValueType::Reference({
+                let mut spec = reference_to(RAILING_TYPE);
+                spec.rule.cardinality = Cardinality::Optional;
+                spec
+            }),
+        )
+        .optional()
+        .in_aspect("identity"),
+        FieldDecl::new("host", ValueType::Reference(host))
+            .optional()
+            .in_aspect("geometry"),
+        coded_field(
+            "side",
+            [
+                (Side::Left.name(), Side::Left.code()),
+                (Side::Right.name(), Side::Right.code()),
+            ],
+            Side::Left.code(),
+        ),
+        extension("start_extension"),
+        extension("end_extension"),
+        length_field("extension_length", Some(real(EXTENSION_RANGE)))
+            .with_default(length(DEFAULT_EXTENSION)),
+        FieldDecl::new("continues_to", ValueType::Reference(next))
+            .optional()
+            .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn railing_type_fields() -> Vec<FieldDecl> {
+    use crate::railing::{
+        Corner, DEFAULT_BALUSTER_SIZE, DEFAULT_BALUSTER_SPACING, DEFAULT_HEIGHT, DEFAULT_POST_SIZE,
+        DEFAULT_RAIL_DEPTH, DEFAULT_RAIL_WIDTH, HEIGHT_LIMITS, Profile, SECTION_RANGE,
+        SPACING_RANGE,
+    };
+    let profile = |name: &str| {
+        coded_field(
+            name,
+            [
+                (Profile::Square.name(), Profile::Square.code()),
+                (Profile::Round.name(), Profile::Round.code()),
+            ],
+            Profile::Square.code(),
+        )
+    };
+    vec![
+        name_field("identity"),
+        length_field("height", Some(real(HEIGHT_LIMITS))).with_default(length(DEFAULT_HEIGHT)),
+        profile("rail_profile"),
+        length_field("rail_width", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_RAIL_WIDTH)),
+        length_field("rail_depth", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_RAIL_DEPTH)),
+        length_field("handrail_height", Some(real((0.0, HEIGHT_LIMITS.1)))),
+        profile("baluster_profile"),
+        length_field("baluster_size", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_BALUSTER_SIZE)),
+        length_field("baluster_spacing", Some(real(SPACING_RANGE)))
+            .with_default(length(DEFAULT_BALUSTER_SPACING)),
+        length_field("post_size", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_POST_SIZE)),
+        coded_field(
+            "corner",
+            [
+                (Corner::Miter.name(), Corner::Miter.code()),
+                (Corner::Fillet.name(), Corner::Fillet.code()),
+            ],
+            Corner::Miter.code(),
+        ),
+        length_field("fillet_radius", Some(real((0.0, 5.0)))).with_default(length(0.15)),
+    ]
+}
+
+fn ramp_fields() -> Vec<FieldDecl> {
+    use crate::ramp::{
+        DEFAULT_LENGTH, DEFAULT_THICKNESS, DEFAULT_WIDTH, Form, LANDING_RANGE, LENGTH_RANGE,
+        RISE_LIMITS, THICKNESS_RANGE as RAMP_THICKNESS, WIDTH_RANGE,
+    };
+    vec![
+        name_field("identity"),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("direction", ValueType::Quantity(Dimension::ANGLE))
+            .with_default(Value::Quantity(Quantity::new(0.0, Dimension::ANGLE)))
+            .with_bound(real((-1000.0, 1000.0)))
+            .in_aspect("geometry"),
+        length_field("width", Some(real(WIDTH_RANGE))).with_default(length(DEFAULT_WIDTH)),
+        length_field("length", Some(real(LENGTH_RANGE))).with_default(length(DEFAULT_LENGTH)),
+        length_field("landing_start", Some(real(LANDING_RANGE))),
+        length_field("landing_end", Some(real(LANDING_RANGE))),
+        length_field("thickness", Some(real(RAMP_THICKNESS)))
+            .with_default(length(DEFAULT_THICKNESS)),
+        coded_field(
+            "form",
+            [
+                (Form::Slab.name(), Form::Slab.code()),
+                (Form::Solid.name(), Form::Solid.code()),
+            ],
+            Form::Slab.code(),
+        ),
+        optional_length("rise", RISE_LIMITS),
+        FieldDecl::new("top_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+        FieldDecl::new(
+            "ramp_type",
+            ValueType::Reference({
+                let mut spec = reference_to(RAMP_TYPE);
+                spec.rule.cardinality = Cardinality::Optional;
+                spec
+            }),
+        )
+        .optional()
+        .in_aspect("identity"),
+        pinned_field(0),
+    ]
+}
+
+fn ramp_type_fields() -> Vec<FieldDecl> {
+    use crate::ramp::{
+        DEFAULT_MAX_SLOPE, DEFAULT_THICKNESS, SLOPE_RANGE, THICKNESS_RANGE as RAMP_THICKNESS,
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new("max_slope", ValueType::F64)
+            .with_default(Value::F64(DEFAULT_MAX_SLOPE))
+            .with_bound(real(SLOPE_RANGE))
+            .in_aspect("geometry"),
+        length_field("thickness", Some(real(RAMP_THICKNESS)))
+            .with_default(length(DEFAULT_THICKNESS)),
+    ]
+}
+
 /// The roof or floor a wall's top attaches to: cleared when it is deleted (the delete commands
 /// report the walls they detach).
 fn attach_target() -> ReferenceSpec {
@@ -1397,6 +1718,8 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         FLOOR => floor::PINNED,
         ROOM => room::PINNED,
         STAIR => stair::PINNED,
+        RAILING => railing::PINNED,
+        RAMP => ramp::PINNED,
         ROOF => roof::PINNED,
         CEILING => ceiling::PINNED,
         WALL_OPENING => wall_opening::PINNED,

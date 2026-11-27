@@ -24,3 +24,5 @@ ab-io-validation-duplicate-id = IFC dosyasındaki iki varlığın genel tanımla
 ab-io-validation-count = IFC dosyasında { $found } öğe var ancak dışa aktarım { $expected } öğe saymıştı; dosya eksiktir.
 ab-io-loss-floor-edge-as-covering = IFC4'te döşeme kenarı için bir eleman yok: döşeme kenarı, süpürülmüş gövdesiyle pervaz türünde bir kaplama olarak yazıldı.
 ab-io-loss-floor-edge-orphan = Bir döşeme kenarı, döşemesinde artık bulunmayan kenarları adlandırıyor: bu kenarlar dosyada yok.
+ab-io-loss-railing-not-written = Bir korkuluk IFC dosyasında yok: korkuluklar henüz yazılamıyor.
+ab-io-loss-ramp-not-written = Bir rampa IFC dosyasında yok: rampalar ve rampa kolları henüz yazılamıyor. Üstteki döşemede açtığı boşluk dosyada var.

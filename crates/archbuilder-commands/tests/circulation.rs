@@ -1,0 +1,435 @@
+//! Railings by path and their types, rail extensions and continuous rails, and ramps: creation,
+//! hosting, slope warnings, the opening in the floor above, the modify commands, delete, undo and
+//! redo.
+
+#![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
+
+use std::sync::Arc;
+
+use arc_base::ObjectId;
+use arc_command::{Invocation, Invoker, Outcome, Permission, Session, Surface};
+use arc_doc::graph::Evaluators;
+use arc_doc::{Document, DocumentConfig, Snapshot};
+use archbuilder_model::railing::Derived;
+use archbuilder_model::ramp::Placed;
+use archbuilder_model::spatial;
+use archbuilder_model::types::{RAILING, RAILING_TYPE, RAMP, STOREY, text};
+use serde_json::{Value as Json, json};
+
+struct Env {
+    document: Document,
+    session: Session,
+    registry: arc_command::Registry,
+}
+
+impl Env {
+    fn new() -> Self {
+        let config = DocumentConfig {
+            workers: 0,
+            ..DocumentConfig::default()
+        };
+        let document = Document::open(
+            Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
+            Arc::new(Evaluators::new()),
+            config,
+        )
+        .unwrap();
+        archbuilder_commands::install(&document);
+        let env = Self {
+            document,
+            session: Session::new(Surface::Ui, [Permission::Read, Permission::Edit]),
+            registry: archbuilder_commands::registry().unwrap(),
+        };
+        env.run("archbuilder.project.new", json!({})).unwrap();
+        env
+    }
+
+    fn run(&self, command: &str, params: Json) -> arc_base::Result<Outcome> {
+        let invocation = Invocation {
+            seed: 7,
+            ..Invocation::new(command, params)
+        };
+        Invoker::new(&self.registry).invoke(&self.document, &self.session, invocation)
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        self.document.snapshot()
+    }
+
+    fn storey(&self, name: &str) -> ObjectId {
+        spatial::objects(&self.snapshot(), STOREY)
+            .iter()
+            .find(|s| text(&s.values, 0) == Some(name))
+            .unwrap()
+            .id
+    }
+
+    /// The 10 x 6 house on the ground floor and a slab over it on Floor 1.
+    fn house(&self) -> ObjectId {
+        let c = [[0.0, 0.0], [0.0, 6.0], [10.0, 6.0], [10.0, 0.0]];
+        for k in 0..4 {
+            self.run(
+                "archbuilder.wall.create",
+                json!({"start": c[k], "end": c[(k + 1) % 4]}),
+            )
+            .unwrap();
+        }
+        let floor = self
+            .run(
+                "archbuilder.floor.create",
+                json!({"storey": self.storey("Floor 1").to_string(),
+                       "points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
+            )
+            .unwrap();
+        floor.value["floor"].as_str().unwrap().parse().unwrap()
+    }
+
+    fn ramp(&self, params: Json) -> arc_base::Result<Outcome> {
+        self.run("archbuilder.ramp.create", params)
+    }
+
+    fn railing(&self, id: ObjectId) -> Derived {
+        let snapshot = self.snapshot();
+        Derived::of(&snapshot, &spatial::get(&snapshot, id).unwrap()).unwrap()
+    }
+
+    fn floor_area(&self, id: ObjectId) -> f64 {
+        let snapshot = self.snapshot();
+        archbuilder_model::floor::Derived::of(&snapshot, &spatial::get(&snapshot, id).unwrap())
+            .unwrap()
+            .area()
+    }
+}
+
+fn id_at(outcome: &Outcome, key: &str) -> ObjectId {
+    outcome.value[key].as_str().unwrap().parse().unwrap()
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+fn count(env: &Env, key: &str) -> usize {
+    spatial::objects(&env.snapshot(), key).len()
+}
+
+#[test]
+fn a_railing_by_path_gets_the_default_type_posts_balusters_and_one_undo_step() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [3.0, 0.0, 0.0], [3.0, 2.0, 0.0]], "arcs": [[1, 0.0]]}),
+        )
+        .unwrap();
+    let id = id_at(&made, "railing");
+    assert_eq!(made.value["posts"], 3);
+    assert!(close(made.value["length"].as_f64().unwrap(), 5.0));
+    // 3 m / 0.12 -> 25 parts (24 balusters), 2 m / 0.12 -> 17 parts (16).
+    assert_eq!(made.value["balusters"], 40);
+    assert_eq!(
+        count(&env, RAILING_TYPE),
+        1,
+        "the default type is made once"
+    );
+    let d = env.railing(id);
+    assert!(close(d.kind.height, 0.9));
+    assert_eq!(d.rail[0][2], 0.9);
+    // A second railing reuses the type.
+    env.run(
+        "archbuilder.railing.create",
+        json!({"points": [[0.0, 3.0], [1.0, 3.0]]}),
+    )
+    .unwrap();
+    assert_eq!(count(&env, RAILING_TYPE), 1);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env, RAILING), 1);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env, RAILING), 0);
+    assert_eq!(count(&env, RAILING_TYPE), 0);
+    env.document.redo().wait().unwrap();
+    assert_eq!(count(&env, RAILING), 1);
+}
+
+#[test]
+fn an_arc_path_and_a_bad_path_are_handled() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [2.0, 0.0]], "arcs": [[0, 1.0]]}),
+        )
+        .unwrap();
+    // A half circle of diameter 2 m: pi meters.
+    let length = made.value["length"].as_f64().unwrap();
+    assert!((length - std::f64::consts::PI).abs() < 0.02, "{length}");
+    assert!(
+        env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0]]})
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [0.0, 0.0]]})
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [1.0, 0.0]], "start_extension": "bogus"})
+        )
+        .is_err()
+    );
+    assert_eq!(count(&env, RAILING), 1);
+}
+
+#[test]
+fn a_railing_type_sets_height_profiles_and_spacing_and_wider_spacing_warns() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.railing_type.define",
+            json!({"name": "Wide", "height": 1.1, "rail_profile": "round",
+                   "baluster_spacing": 0.3, "handrail_height": 0.7, "corner": "fillet"}),
+        )
+        .unwrap();
+    let kind = made.value["type"].as_str().unwrap().to_owned();
+    let r = env
+        .run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0]], "railing_type": "Wide"}),
+        )
+        .unwrap();
+    let id = id_at(&r, "railing");
+    let d = env.railing(id);
+    assert!(close(d.kind.height, 1.1) && !d.handrail.is_empty());
+    assert!(d.widest_gap() > 0.1);
+    let snapshot = env.snapshot();
+    let object = spatial::get(&snapshot, id).unwrap();
+    let warnings = archbuilder_model::validate::circulation_warnings(&snapshot, &object);
+    assert_eq!(warnings[0].code(), "ab.model.railing_gap");
+    // Editing the type through its name changes every railing that uses it.
+    env.run(
+        "archbuilder.railing_type.define",
+        json!({"type": kind, "baluster_spacing": 0.1}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let object = spatial::get(&snapshot, id).unwrap();
+    assert!(archbuilder_model::validate::circulation_warnings(&snapshot, &object).is_empty());
+    // A type that is in use cannot be deleted by itself, and the property grid reassigns it.
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [id.to_string()], "field": "railing_type", "value": ""}),
+    )
+    .unwrap();
+    assert!(
+        close(env.railing(id).kind.height, 0.9),
+        "no type: the default values"
+    );
+}
+
+#[test]
+fn extensions_and_a_continuing_rail_are_authored_and_derived() {
+    let env = Env::new();
+    let a = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [2.0, 0.0]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let plain = env.railing(a).rail.len();
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [a.to_string()], "field": "end_extension", "value": "return_wall"}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [a.to_string()], "field": "start_extension", "value": "horizontal"}),
+    )
+    .unwrap();
+    let d = env.railing(a);
+    assert_eq!(d.rail.len(), plain + 3);
+    assert_eq!(d.rail[0], [-0.3, 0.0, 0.9]);
+    assert_eq!(d.rail[d.rail.len() - 1], [2.3, 0.1, 0.9]);
+    // A second railing, and the first continues to it: one rail across the gap, no end extension.
+    let b = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[2.5, 0.0], [2.5, 2.0]], "name": "Second"}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [a.to_string()], "field": "continues_to", "value": "Second"}),
+    )
+    .unwrap();
+    let d = env.railing(a);
+    assert_eq!(d.rail.last(), Some(&[2.5, 0.0, 0.9]));
+    assert_eq!(
+        d.rail.len(),
+        plain + 2,
+        "start extension and the continuation"
+    );
+    // The railing cannot continue to itself; deleting the target clears the link.
+    assert!(
+        env.run(
+            "archbuilder.property.set",
+            json!({"objects": [a.to_string()], "field": "continues_to", "value": a.to_string()}),
+        )
+        .is_err()
+    );
+    let invocation = Invocation {
+        seed: 7,
+        selection: vec![b],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert_eq!(env.railing(a).rail.len(), plain + 3);
+}
+
+#[test]
+fn a_ramp_warns_over_its_slope_cuts_the_floor_above_and_gets_hosted_railings() {
+    let env = Env::new();
+    let floor = env.house();
+    // 3 m up over 6 m: 50 %, far over 1 in 12.
+    let made = env
+        .ramp(json!({"start": [1.0, 1.0], "to": [7.0, 1.0], "landing_end": 1}))
+        .unwrap();
+    let ramp = id_at(&made, "ramp");
+    assert!(close(made.value["slope"].as_f64().unwrap(), 0.5));
+    assert_eq!(made.value["slope_exceeded"], true);
+    assert_eq!(made.value["railings"].as_array().unwrap().len(), 2);
+    assert_eq!(count(&env, RAILING), 2);
+    let snapshot = env.snapshot();
+    let object = spatial::get(&snapshot, ramp).unwrap();
+    let w = archbuilder_model::validate::circulation_warnings(&snapshot, &object);
+    assert_eq!(w[0].code(), "ab.model.ramp_slope");
+    assert!(
+        archbuilder_model::validate::register(&snapshot)
+            .iter()
+            .any(|w| w.error.code() == "ab.model.ramp_slope")
+    );
+    // The opening covers the run (6 m x 1.3 m) and the arrival edge stays.
+    let cut = 60.0 - env.floor_area(floor);
+    assert!((cut - 6.05 * 1.3).abs() < 1e-6, "{cut}");
+    let placed = Placed::of(&snapshot, &object).unwrap();
+    let layout = placed.layout.unwrap();
+    assert!(layout.solid(placed.base).unwrap().volume() > 1.0);
+    // Both railings follow the ramp: their rail ends 3 m up, 0.9 above the landing.
+    for r in spatial::objects(&snapshot, RAILING) {
+        let d = Derived::of(&snapshot, &r).unwrap();
+        assert!(close(d.rail.last().unwrap()[2], 3.9));
+        assert_eq!(
+            d.posts().len(),
+            3,
+            "the ends and the foot of the top landing"
+        );
+    }
+    // Undo is one step for the ramp, its railings, its type and the opening.
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env, RAMP) + count(&env, RAILING), 0);
+    assert!(close(env.floor_area(floor), 60.0));
+    env.document.redo().wait().unwrap();
+    assert_eq!(count(&env, RAILING), 2);
+}
+
+#[test]
+fn a_gentle_ramp_has_no_warning_and_a_rise_keeps_the_floor_whole() {
+    let env = Env::new();
+    let floor = env.house();
+    let made = env
+        .ramp(json!({"start": [1.0, 1.0], "to": [7.0, 1.0], "rise": 0.5,
+                     "railings": ["left"], "form": "solid"}))
+        .unwrap();
+    assert_eq!(made.value["slope_exceeded"], false);
+    assert_eq!(made.value["railings"].as_array().unwrap().len(), 1);
+    assert!(close(env.floor_area(floor), 60.0));
+    // A type with a smaller largest slope makes the same ramp a warning.
+    env.run(
+        "archbuilder.ramp_type.define",
+        json!({"name": "Strict", "max_slope": 0.05}),
+    )
+    .unwrap();
+    let strict = env
+        .ramp(json!({"start": [1.0, 4.0], "to": [7.0, 4.0], "rise": 0.5, "ramp_type": "Strict"}))
+        .unwrap();
+    assert_eq!(strict.value["slope_exceeded"], true);
+    assert!(
+        env.ramp(json!({"start": [1.0, 4.0], "to": [1.0, 4.0]}))
+            .is_err()
+    );
+}
+
+#[test]
+fn ramps_and_hosted_railings_move_copy_and_delete_together() {
+    let env = Env::new();
+    env.house();
+    let made = env
+        .ramp(json!({"start": [1.0, 1.0], "to": [7.0, 1.0], "rise": 0.4}))
+        .unwrap();
+    let ramp = id_at(&made, "ramp");
+    let path_before = {
+        let snapshot = env.snapshot();
+        let r = spatial::objects(&snapshot, RAILING).remove(0);
+        Derived::of(&snapshot, &r).unwrap().rail[0]
+    };
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [ramp.to_string()], "displacement": [0.0, 2.0]}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let moved = Derived::of(&snapshot, &spatial::objects(&snapshot, RAILING).remove(0)).unwrap();
+    assert!(
+        close(moved.rail[0][1] - path_before[1], 2.0),
+        "the hosted railing follows"
+    );
+    let copied = env
+        .run(
+            "archbuilder.modify.copy",
+            json!({"objects": [ramp.to_string()], "displacement": [0.0, 1.5]}),
+        )
+        .unwrap();
+    assert_eq!(copied.value["created"].as_array().unwrap().len(), 3);
+    assert_eq!((count(&env, RAMP), count(&env, RAILING)), (2, 4));
+    // A railing by path moves by itself.
+    let free = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [1.0, 0.0]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    env.run(
+        "archbuilder.modify.rotate",
+        json!({"objects": [free.to_string()], "base": [0.0, 0.0], "angle": "90"}),
+    )
+    .unwrap();
+    let d = env.railing(free);
+    assert!(close(d.rail[1][0], 0.0) && close(d.rail[1][1], 1.0));
+    // Deleting a ramp takes its railings with it, and undo brings them back.
+    let invocation = Invocation {
+        seed: 7,
+        selection: vec![ramp],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert_eq!((count(&env, RAMP), count(&env, RAILING)), (1, 3));
+    env.document.undo().wait().unwrap();
+    assert_eq!((count(&env, RAMP), count(&env, RAILING)), (2, 5));
+}

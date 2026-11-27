@@ -229,7 +229,7 @@ fn mm(meters: f64) -> FluentValue<'static> {
 }
 
 /// The project a document's types belong to.
-fn project(snapshot: &Snapshot) -> Result<ObjectId> {
+pub(crate) fn project(snapshot: &Snapshot) -> Result<ObjectId> {
     spatial::objects(snapshot, types::PROJECT)
         .first()
         .map(|p| p.id)

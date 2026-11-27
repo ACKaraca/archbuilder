@@ -136,6 +136,33 @@ pub fn stack(
         .collect();
     stairs.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(stairs.into_iter().map(|(_, id)| id));
+    // Ramps like stairs; railings by their line.
+    let mut circulation: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::RAMP)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let p = crate::ramp::Placed::of(snapshot, o)?;
+            let outline = crate::floor::Boundary {
+                loops: vec![p.outline()],
+                ..crate::floor::Boundary::default()
+            };
+            outline.contains(at).then_some((-p.base, o.id))
+        })
+        .collect();
+    circulation.extend(
+        spatial::objects(snapshot, crate::types::RAILING)
+            .iter()
+            .take(MAX_PER_KIND)
+            .filter_map(|o| {
+                let d = crate::railing::Derived::of(snapshot, o).ok()?;
+                let line = d.plan_line();
+                line.windows(2)
+                    .any(|w| segment_distance(w[0], w[1], at) <= aperture)
+                    .then_some((-d.base, o.id))
+            }),
+    );
+    circulation.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(circulation.into_iter().map(|(_, id)| id));
     // Shafts and vertical openings: the cuts come before the room around them.
     let mut cuts: Vec<(f64, ObjectId)> = Vec::new();
     for s in crate::opening::shafts(snapshot) {
@@ -270,6 +297,7 @@ fn host_top(snapshot: &Snapshot, host: &std::sync::Arc<arc_doc::Object>) -> f64 
 
 /// The closed outlines that mark `id` for the hover: the loops of its plan shape as 3D points.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of element")]
 pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f64; 3]>> {
     let Some(object) = spatial::get(snapshot, id) else {
         return Vec::new();
@@ -327,6 +355,12 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             .unwrap_or_default(),
         Some(crate::types::STAIR) => crate::stair::Placed::of(snapshot, &object)
             .map(|p| vec![close(&p.outline(), p.base)])
+            .unwrap_or_default(),
+        Some(crate::types::RAMP) => crate::ramp::Placed::of(snapshot, &object)
+            .map(|p| vec![close(&p.outline(), p.base)])
+            .unwrap_or_default(),
+        Some(crate::types::RAILING) => crate::railing::Derived::of(snapshot, &object)
+            .map(|d| vec![close(&d.plan_line(), d.base)])
             .unwrap_or_default(),
         Some(LEVEL) => {
             let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);

@@ -1,5 +1,6 @@
-//! The stair tool: the prompts of `archbuilder.stair.create` behind the viewport and the command
-//! line, without any windowing. A click gives the start, a second click the direction of the
+//! The stair tool: the prompts of `archbuilder.stair.create` (and, with the same machinery, those
+//! of the railing and ramp commands) behind the viewport and the command line, without any
+//! windowing. A click gives the start, a second click the direction of the
 //! first run; the keywords change the shape, the turn, the width and the tread. The stair is
 //! created in one step and the tool asks for the next one, until Escape or Enter. A refusal (no
 //! level above the storey, too few risers) is kept as the pending error and the tool keeps
@@ -20,6 +21,8 @@ use crate::wall_tool::{Env, Runner, storey_for};
 #[derive(Debug, Default)]
 pub struct StairTool {
     line: CommandLine,
+    /// The command whose prompts the tool runs.
+    command: &'static str,
     storey: Option<(ObjectId, f64)>,
     error: Option<Error>,
     /// The shape, turn, width and tread of the last stair made, which the next one starts with.
@@ -79,11 +82,23 @@ impl StairTool {
         previewed(&session.preview(env_snapshot, Some(&pointer))?)
     }
 
-    /// Starts the tool on the storey of the selection (else the lowest).
+    /// The command the tool runs, while it runs.
+    #[must_use]
+    pub fn command(&self) -> &'static str {
+        if self.command.is_empty() {
+            STAIR_CREATE
+        } else {
+            self.command
+        }
+    }
+
+    /// Starts the tool for `command` (the stair, railing or ramp command) on the storey of the
+    /// selection (else the lowest).
     ///
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
-    pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+    pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, command: &'static str) -> Result<()> {
+        self.command = command;
         self.line.cancel();
         let storey = storey_for(&env.document.snapshot(), env.selection)
             .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_BUILDING))?;
@@ -96,11 +111,15 @@ impl StairTool {
         let Some((storey, _)) = self.storey else {
             return Ok(());
         };
-        let mut preset = self.last.clone();
+        let mut preset = if self.command == STAIR_CREATE {
+            self.last.clone()
+        } else {
+            Map::new()
+        };
         preset.insert("storey".into(), Value::from(storey.to_string()));
         let localized = BTreeMap::new();
         let step = LineStep::Start {
-            command: STAIR_CREATE,
+            command: self.command,
             preset,
         };
         let result = self.line.drive(&target(env, &localized), step, run);

@@ -232,17 +232,41 @@ pub fn command_tabs() -> Vec<CommandTab> {
                     Message {
                         message_id: "ab-group-circulation",
                     },
-                    vec![icon_button(
-                        Message {
-                            message_id: "ab-tool-stair",
-                        },
-                        Some(Message {
-                            message_id: "ab-tool-stair-hint",
-                        }),
-                        STAIR_CREATE,
-                        "stair",
-                        ButtonSize::Large,
-                    )],
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-stair",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-stair-hint",
+                            }),
+                            STAIR_CREATE,
+                            "stair",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-railing",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-railing-hint",
+                            }),
+                            archbuilder_commands::circulation::RAILING_CREATE,
+                            "railing",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-ramp",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-ramp-hint",
+                            }),
+                            archbuilder_commands::circulation::RAMP_CREATE,
+                            "ramp",
+                            ButtonSize::Small,
+                        ),
+                    ],
                 ),
                 group(
                     Message {
@@ -1082,6 +1106,8 @@ pub fn icons() -> Vec<(String, String)> {
         "opening-shaft",
         "opening-vertical",
         "stair",
+        "railing",
+        "ramp",
         "room",
         "room-all",
         "storey-add",
