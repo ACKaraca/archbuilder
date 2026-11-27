@@ -276,6 +276,12 @@ pub mod wall {
     /// The roof or floor the top is attached to; appended in schema 1.4. While it is set the
     /// top follows that element's underside and the top level and height wait unchanged.
     pub const TOP_ATTACH: usize = 17;
+    /// The authored grid-line edits of a curtain wall: a list of records (see
+    /// [`crate::curtain::grid_edit`]).
+    pub const GRID_EDITS: usize = 18;
+    /// The authored per-cell panel overrides of a curtain wall: a list of records (see
+    /// [`crate::curtain::cell_override`]).
+    pub const CELL_OVERRIDES: usize = 19;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -832,6 +838,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .optional()
             .in_aspect("geometry")
             .since_minor(4),
+        crate::curtain::grid_edits_field(5),
+        crate::curtain::cell_overrides_field(5),
     ];
     let floor = vec![
         name_field("identity"),
@@ -872,6 +880,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         match key {
             WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
                 decl.validators.push(crate::element_type::layer_findings);
+                if key == WALL_TYPE {
+                    decl.validators.push(crate::curtain::type_findings);
+                }
             }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
             _ => {}

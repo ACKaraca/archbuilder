@@ -52,6 +52,9 @@ struct Msg {
 const GENERIC_WALL: Msg = Msg {
     message_id: "ab-type-wall-generic",
 };
+const CURTAIN_WALL: Msg = Msg {
+    message_id: "ab-type-wall-curtain",
+};
 const CAVITY_WALL: Msg = Msg {
     message_id: "ab-type-wall-cavity",
 };
@@ -540,10 +543,93 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
     }
 }
 
+/// Whether `t` is a curtain wall type, which no plain wall takes by default.
+fn is_curtain_type(kind: TypeKind, t: &Object) -> bool {
+    kind == TypeKind::Wall
+        && archbuilder_model::curtain::CurtainType::from_values(&t.values).is_some()
+}
+
+/// Makes a curtain wall type from `ty`, named `name` (else the interface language's default,
+/// made unique): one layer as thick as the deepest mullion.
+///
+/// # Errors
+/// The errors of the transaction and `ab.model.curtain_*` for a type that breaks the rules.
+pub(crate) fn create_curtain_type(
+    ctx: &mut Context<'_>,
+    ty: &archbuilder_model::curtain::CurtainType,
+    name: Option<&str>,
+) -> Result<ObjectId> {
+    if let Some(problem) = ty.problems().into_iter().next() {
+        return Err(problem);
+    }
+    let n = Names::new(&language(ctx));
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wanted = name
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map_or_else(|| n.text(&CURTAIN_WALL, &[]), str::to_owned);
+    let name = free_name(&snapshot, TypeKind::Wall, &wanted, &n);
+    let base = WallType {
+        layers: Layers::single(&ty.material, ty.depth()),
+        exposure: Exposure::Exterior,
+        load_bearing: false,
+        room_bounding: true,
+        wrap_ends: Wrap::None,
+        wrap_inserts: Wrap::None,
+    };
+    let mut values = et::wall_type_values(&name, &base);
+    values.extend(ty.values());
+    create_type(ctx, TypeKind::Wall, values)
+}
+
+/// Replaces the curtain part of the wall type `id` with `ty` and the layers with one as thick as
+/// the deepest mullion, then moves every instance with the type; returns how many changed.
+///
+/// # Errors
+/// The errors of the transaction and `ab.model.curtain_*` for a type that breaks the rules.
+pub(crate) fn set_curtain_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    ty: &archbuilder_model::curtain::CurtainType,
+    name: Option<&str>,
+) -> Result<usize> {
+    use archbuilder_model::curtain::slot;
+    if let Some(problem) = ty.problems().into_iter().next() {
+        return Err(problem);
+    }
+    let layers = Layers::single(&ty.material, ty.depth());
+    let [start, end] = layers.core_values();
+    let mut fields: Vec<(String, Option<Value>)> = vec![
+        ("layers".to_owned(), Some(layers.list_value())),
+        ("core_start".to_owned(), Some(start)),
+        ("core_end".to_owned(), Some(end)),
+    ];
+    if let Some(name) = name.map(str::trim).filter(|t| !t.is_empty()) {
+        fields.push(("name".to_owned(), Some(Value::String(name.to_owned()))));
+    }
+    let names: Vec<String> = ctx
+        .snapshot()
+        .registry()
+        .get(TypeKind::Wall.key())
+        .map(|d| d.schema.fields.iter().map(|f| f.name.to_string()).collect())
+        .unwrap_or_default();
+    for (k, value) in ty.values().into_iter().enumerate() {
+        if let Some(field) = names.get(slot::CURTAIN + k) {
+            fields.push((field.clone(), value));
+        }
+    }
+    let txn = ctx.txn()?;
+    for (field, value) in fields {
+        txn.modify(id, FieldPath::new(&field), value)?;
+    }
+    propagate(ctx, TypeKind::Wall, id)
+}
+
 /// The first type of `kind` (in the order of [`et::of_kind`]) whose values match `wanted`.
 fn find(snapshot: &Snapshot, kind: TypeKind, wanted: &[(usize, Value)]) -> Option<ObjectId> {
     et::of_kind(snapshot, kind)
         .into_iter()
+        .filter(|t| !is_curtain_type(kind, t))
         .find(|t| {
             let copies = et::copies(kind, &t.values);
             wanted.iter().all(|(at, value)| {
@@ -560,8 +646,12 @@ fn find(snapshot: &Snapshot, kind: TypeKind, wanted: &[(usize, Value)]) -> Optio
 /// [`generic`] values, else the first in name order.
 #[must_use]
 pub fn default_of(snapshot: &Snapshot, kind: TypeKind) -> Option<ObjectId> {
-    find(snapshot, kind, &generic(kind))
-        .or_else(|| et::of_kind(snapshot, kind).first().map(|t| t.id))
+    find(snapshot, kind, &generic(kind)).or_else(|| {
+        et::of_kind(snapshot, kind)
+            .iter()
+            .find(|t| !is_curtain_type(kind, t))
+            .map(|t| t.id)
+    })
 }
 
 /// The wall or floor type a new instance gets: the one `given` names (else the default), unless
@@ -1130,7 +1220,7 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
 
 /// Writes the values the type `id` decides on each of its instances that differ; returns how
 /// many changed.
-fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> Result<usize> {
+pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> Result<usize> {
     let snapshot = ctx.txn()?.snapshot().clone();
     let Some(found) = spatial::get(&snapshot, id) else {
         return Ok(0);

@@ -189,10 +189,10 @@ impl StoreyLayers {
             .filter(|p| p.wall == at)
             .cloned()
             .collect();
-        let gaps: Vec<(f64, f64)> = insert::hosted(snapshot, *id)
+        let gaps: Vec<(f64, f64)> = insert::openings_of(snapshot, *id)
             .into_iter()
-            .filter(|(_, i)| i.sill <= z && z < i.top())
-            .map(|(_, i)| i.extent())
+            .filter(|i| i.sill <= z && z < i.top())
+            .map(|i| i.extent())
             .collect();
         let free = self.layout.free.get(at).copied().unwrap_or([true; 2]);
         let key = FinishedKey {
@@ -653,12 +653,12 @@ fn pieces_in(
     let layers = storey_layers(snapshot, storey);
     let at = layers.index(object.id)?;
     let inserts = if openings {
-        insert::hosted(snapshot, object.id)
+        insert::openings_of(snapshot, object.id)
     } else {
         Vec::new()
     };
     let mut marks: Vec<f64> = vec![0.0, height];
-    for (_, i) in &inserts {
+    for i in &inserts {
         marks.extend([i.sill.clamp(0.0, height), i.top().clamp(0.0, height)]);
     }
     marks.sort_by(f64::total_cmp);

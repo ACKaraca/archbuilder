@@ -231,6 +231,61 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-type-total",
     };
+    /// A curtain type has a grid rule that cannot lay lines out.
+    pub const CURTAIN_RULE: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_rule",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-rule",
+    };
+    /// A curtain type's system panel is a door or window.
+    pub const CURTAIN_PANEL: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_panel",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-panel",
+    };
+    /// A curtain type has a mullion or panel without a usable size.
+    pub const CURTAIN_MULLION: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_mullion",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-mullion",
+    };
+    /// A curtain wall holds more edits or overrides than allowed.
+    pub const CURTAIN_LIMIT: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_limit",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-limit",
+    };
+    /// A door, window or opening is hosted by a curtain wall.
+    pub const CURTAIN_INSERT: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_insert",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-insert",
+    };
+    /// Removed grid segments leave a cell that is not a rectangle.
+    pub const CURTAIN_CELL_SHAPE: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_cell_shape",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-cell-shape",
+    };
+    /// A curtain wall with grid edits or panel overrides cannot be split or merged: they belong
+    /// to its own grid.
+    pub const CURTAIN_EDITED: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_edited",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-edited",
+    };
+    /// The wall is not a curtain wall.
+    pub const CURTAIN_NOT_CURTAIN: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_not_curtain",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-not-curtain",
+    };
+    /// A grid line, cell or type a curtain command names does not exist.
+    pub const CURTAIN_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_unknown",
+        category: Category::NotFound,
+        message_id: "ab-model-curtain-unknown",
+    };
     /// A value an instance takes from its type differs from the type.
     pub const TYPE_MISMATCH: ErrorCode = ErrorCode {
         code: "ab.model.type_mismatch",

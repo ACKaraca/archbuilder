@@ -20,6 +20,7 @@
 
 pub mod ceiling;
 pub mod clip;
+pub mod curtain;
 pub mod edit;
 pub mod element_type;
 pub mod error;
@@ -72,6 +73,7 @@ pub fn registry() -> Result<Registry> {
     ceiling::register(&mut registry)?;
     opening::register(&mut registry)?;
     element_type::register(&mut registry)?;
+    curtain::register(&mut registry)?;
     view::register(&mut registry)?;
     Ok(registry)
 }

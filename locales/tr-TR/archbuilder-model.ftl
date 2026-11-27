@@ -61,3 +61,12 @@ ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğin
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
 
 ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.
+ab-model-curtain-rule = Bir perde duvar tipinin ızgara kuralı çizgi yerleştiremiyor: değer pozitif bir sayı olmalı, sabit sayı en çok 150 olabilir.
+ab-model-curtain-panel = Perde duvar tipinin sistem paneli camlı, dolu ya da boştur. Kapı veya pencereyi gözün paneli olarak o göze verin.
+ab-model-curtain-mullion = Bir perde duvar tipinde boyutu kullanılamaz bir doğrama ya da panel var: genişlik ve derinlik pozitif ve sınırlar içinde olmalı.
+ab-model-curtain-limit = "{ $name }" perde duvarı, bir duvarın taşıyabileceğinden fazla ızgara düzenlemesi ya da panel seçimi tutuyor.
+ab-model-curtain-insert = "{ $name }" perde duvarı bir kapı, pencere ya da boşluk barındırıyor. Bunun yerine duvarın bir gözüne kapı veya pencere paneli verin.
+ab-model-curtain-cell-shape = "{ $name }" perde duvarında kaldırılan ızgara parçaları dikdörtgen olmayan bir göz bırakıyor. İki göz arasındaki parçanın tamamını kaldırın.
+ab-model-curtain-not-curtain = "{ $name }" bir perde duvar değil.
+ab-model-curtain-unknown = "{ $name }" bu perde duvarın bir ızgara çizgisi, gözü ya da tipi değil.
+ab-model-curtain-edited = "{ $name }" perde duvarının kendi ızgarasına ait düzenlemeleri ya da panel seçimleri var; bölünemez veya birleştirilemez. Önce onları temizleyin.

@@ -810,6 +810,7 @@ pub fn wall_type_fields() -> Vec<FieldDecl> {
         wrap_field("wrap_ends"),
         wrap_field("wrap_inserts"),
     ]);
+    fields.extend(crate::curtain::type_fields());
     fields
 }
 

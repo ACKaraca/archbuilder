@@ -82,6 +82,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
     }
+    if key == WALL {
+        out.extend(crate::curtain::problems(candidate, object));
+    }
     if key == DOOR || key == WINDOW || key == WALL_OPENING {
         out.extend(crate::insert::problems(candidate, object));
     }
@@ -255,6 +258,13 @@ pub fn overlap_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
     let walls = crate::floor::storey_walls(candidate, storey);
     crate::floor::overlapping_walls(&walls)
         .into_iter()
+        .filter(|(a, b)| {
+            let (Some(x), Some(y)) = (get(candidate, *a), get(candidate, *b)) else {
+                return true;
+            };
+            !(crate::curtain::is_embedded_in(candidate, &x, &y)
+                || crate::curtain::is_embedded_in(candidate, &y, &x))
+        })
         .map(|(a, b)| {
             let name = |id| {
                 get(candidate, id)

@@ -61,3 +61,12 @@ ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the hei
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.
 
 ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.
+ab-model-curtain-rule = A curtain wall type has a grid rule that cannot lay out lines: the value must be a positive number, and a fixed number at most 150.
+ab-model-curtain-panel = The system panel of a curtain wall type is glazed, solid or empty. Give a cell a door or a window as a panel of that cell.
+ab-model-curtain-mullion = A curtain wall type has a mullion or panel without a usable size: the width and depth must be positive and within bounds.
+ab-model-curtain-limit = The curtain wall "{ $name }" holds more grid edits or panel overrides than a wall can.
+ab-model-curtain-insert = The curtain wall "{ $name }" hosts a door, window or opening. Give a cell of the wall a door or window panel instead.
+ab-model-curtain-cell-shape = The removed grid segments of the curtain wall "{ $name }" leave a cell that is not a rectangle. Remove the whole segment between two cells.
+ab-model-curtain-not-curtain = "{ $name }" is not a curtain wall.
+ab-model-curtain-unknown = "{ $name }" is not a grid line, cell or type of this curtain wall.
+ab-model-curtain-edited = The curtain wall "{ $name }" has grid edits or panel overrides that belong to its own grid, so it cannot be split or merged. Clear them first.
