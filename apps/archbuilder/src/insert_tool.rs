@@ -73,6 +73,9 @@ pub struct State {
     /// The type picked in the type selector when the chain last looked; a new pick replaces
     /// `insert_type` and the size and sill carried so far.
     pub picked: Option<String>,
+    /// The family type of a hosted family instance: the chain places instances of it
+    /// (`archbuilder.family_insert.place`) instead of doors and windows.
+    pub family: Option<String>,
 }
 
 /// The state of the insert tool of one tab.
@@ -156,6 +159,25 @@ impl InsertTool {
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, kind: Kind) -> Result<()> {
+        self.start_chain(env, run, kind, None)
+    }
+
+    /// Starts the chain that places hosted instances of the family type `family` (an identifier
+    /// or a name) in the walls the pointer picks.
+    ///
+    /// # Errors
+    /// The errors of the command line.
+    pub fn begin_family(&mut self, env: &Env<'_>, run: Runner<'_>, family: String) -> Result<()> {
+        self.start_chain(env, run, Kind::Door, Some(family))
+    }
+
+    fn start_chain(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        kind: Kind,
+        family: Option<String>,
+    ) -> Result<()> {
         self.line.cancel();
         self.state = None;
         let (storey, elevation, wall) = context(&env.document.snapshot(), env.selection)
@@ -172,8 +194,9 @@ impl InsertTool {
             flip_hand: false,
             flip_facing: false,
             placed: 0,
-            insert_type: None,
+            insert_type: family.clone(),
             picked: None,
+            family,
         });
         self.next(env, run)
     }
@@ -189,7 +212,7 @@ impl InsertTool {
             Kind::Window => TypeKind::Window,
         };
         // A bare opening has no type: the selector's pick is not its own.
-        let picked = (state.kind != Kind::Opening)
+        let picked = (state.kind != Kind::Opening && state.family.is_none())
             .then(|| crate::tool_type::current_param(&snapshot, kind))
             .flatten();
         if picked != state.picked || (state.insert_type.is_none() && state.kind != Kind::Opening) {
@@ -225,7 +248,10 @@ impl InsertTool {
         }
         let localized = BTreeMap::new();
         let step = LineStep::Start {
-            command: command(state.kind),
+            command: match state.family {
+                Some(_) => archbuilder_commands::family_project::FAMILY_INSERT_PLACE,
+                None => command(state.kind),
+            },
             preset,
         };
         self.line.drive(&target(env, &localized), step, run)
@@ -286,7 +312,9 @@ impl InsertTool {
         state.height = number("height");
         state.sill = number("sill");
         state.rise = number("rise");
-        state.insert_type = value.get("type").and_then(Value::as_str).map(str::to_owned);
+        if state.family.is_none() {
+            state.insert_type = value.get("type").and_then(Value::as_str).map(str::to_owned);
+        }
         // A click carries the options the person set; the flags it placed with followed the pointer.
         (state.flip_hand, state.flip_facing) = self
             .pending

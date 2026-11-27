@@ -606,3 +606,4 @@ ab-cmd-family-insert-place-label = Konaklı bileşen
 ab-cmd-family-insert-place-description = Bir aile türünün örneğini bir ev sahibi öğeye yerleştirir; ana öğeyi kesen bir aile onu keser.
 
 ab-prompt-family-insert-type = Aile türü
+ab-prompt-family-insert-point = Ana duvar: bir duvara tıklayın, sonra üzerindeki mesafeyi girin (kanat yönü ve yüzü tuşlarla çevrilir)

@@ -7,9 +7,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use arc_base::{Dimension, Error, ObjectId, Result};
-use arc_command::prompt::{Accept, PointDims, PromptSequence, PromptStep};
+use arc_command::prompt::{
+    Accept, KeywordOption, PointDims, Prompt, PromptInput, PromptMachine, PromptSequence,
+    PromptState, PromptStep, Step as Next,
+};
 use arc_command::{
     CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
 };
@@ -30,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::codes;
 use crate::parameter::{json_of, stored_input};
-use crate::structure::{create, ensure_valid, expect};
+use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect};
 
 /// A message of the catalog, named by identifier.
 struct MessageId {
@@ -870,6 +874,19 @@ fn resolve_type(snapshot: &Snapshot, text: &str) -> Result<FamilyType> {
     }
 }
 
+/// Whether the family type `text` (an identifier or a name) is hosted by walls: its instances go
+/// into a wall with `archbuilder.family_insert.place`, not into the storey with
+/// `archbuilder.component.place`.
+#[must_use]
+pub fn hosted_by_walls(snapshot: &Snapshot, text: &str) -> bool {
+    resolve_type(snapshot, text)
+        .ok()
+        .and_then(|t| spatial::get(snapshot, t.family))
+        .and_then(|o| Loaded::of(&o))
+        .and_then(|f| f.definition().ok())
+        .is_some_and(|d| loaded::host_keys(&d).contains(&types::WALL))
+}
+
 fn instance_values(
     ctx: &Context<'_>,
     def: &Definition,
@@ -1185,18 +1202,128 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             .message_id,
             place_insert,
         )
-        .with_prompts(
-            PromptSequence::new().step(PromptStep::new(
+        .with_prompt(Arc::new(FamilyInsertPrompts)),
+    )?;
+    Ok(())
+}
+
+/// The prompts of `archbuilder.family_insert.place`, as the door's: the family type (preset, else
+/// asked), the host wall (preset, picked, or the wall the pointer is on) and the distance along it.
+/// The flip keywords toggle the hand and the facing, and they carry to the next prompt.
+#[derive(Debug)]
+struct FamilyInsertPrompts;
+
+/// The answers of the prompts so far: the family type, the host wall, the flips.
+struct Asked {
+    family: Option<String>,
+    wall: Option<ObjectId>,
+    flip_hand: bool,
+    flip_facing: bool,
+}
+
+impl FamilyInsertPrompts {
+    /// What the answers and the preset give so far.
+    fn asked(state: &PromptState<'_>) -> Asked {
+        let flag = |key: &str| state.preset.get(key).and_then(serde_json::Value::as_bool);
+        let mut asked = Asked {
+            family: state
+                .preset
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            wall: state
+                .preset
+                .get("wall")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse().ok()),
+            flip_hand: flag("flip_hand").unwrap_or(false),
+            flip_facing: flag("flip_facing").unwrap_or(false),
+        };
+        for answer in state.answers {
+            match &answer.input {
+                PromptInput::Text(text) => asked.family = Some(text.clone()),
+                PromptInput::Pick(id) => asked.wall = Some(*id),
+                PromptInput::Keyword(k) if k == "flip_hand" => asked.flip_hand = !asked.flip_hand,
+                PromptInput::Keyword(k) if k == "flip_facing" => {
+                    asked.flip_facing = !asked.flip_facing;
+                }
+                _ => {}
+            }
+        }
+        asked
+    }
+}
+
+impl PromptMachine for FamilyInsertPrompts {
+    fn next(&self, state: &PromptState<'_>) -> Result<Next> {
+        let asked = Self::asked(state);
+        let Some(family) = asked.family.clone() else {
+            return Ok(Next::Ask(Prompt::new(
                 "type",
                 MessageId {
                     message_id: "ab-prompt-family-insert-type",
                 }
                 .message_id,
                 text(600),
-            )),
-        ),
-    )?;
-    Ok(())
+            )));
+        };
+        // The distance is the answer that completes the command.
+        let distance = state.answers.iter().rev().find_map(|a| match a.input {
+            PromptInput::Distance(d) => Some(d),
+            _ => None,
+        });
+        if let (Some(distance), Some(wall)) = (distance, asked.wall) {
+            let mut params = serde_json::Map::new();
+            params.insert("type".to_owned(), family.into());
+            params.insert("host".to_owned(), wall.to_string().into());
+            params.insert("distance".to_owned(), distance.into());
+            params.insert("flip_hand".to_owned(), asked.flip_hand.into());
+            params.insert("flip_facing".to_owned(), asked.flip_facing.into());
+            return Ok(Next::Done(params));
+        }
+        let turkish = state
+            .setting(LANGUAGE_SETTING)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .is_some_and(|l| l.starts_with("tr"));
+        let mut arg =
+            Prompt::new(
+                format!("point-{}", state.answers.len()),
+                "ab-prompt-family-insert-point",
+                Accept::Distance {
+                    min: Some(0.0),
+                    max: Some(types::DISTANCE_RANGE.1),
+                },
+            )
+            .or(Accept::Pick {
+                types: vec![types::WALL.to_owned()],
+            })
+            .or(Accept::keywords(vec![
+                KeywordOption::new("flip_hand", "ab-keyword-insert-hand")
+                    .with_shortcut(if turkish { 'k' } else { 'f' }),
+                KeywordOption::new("flip_facing", "ab-keyword-insert-facing").with_shortcut('a'),
+            ]));
+        arg = arg
+            .with_arg("hand", if asked.flip_hand { "right" } else { "left" })
+            .with_arg(
+                "facing",
+                if asked.flip_facing {
+                    "interior"
+                } else {
+                    "exterior"
+                },
+            );
+        Ok(Next::Ask(arg))
+    }
+
+    fn check(&self, state: &PromptState<'_>, prompt: &Prompt, input: &PromptInput) -> Result<()> {
+        if matches!(input, PromptInput::Distance(_))
+            && prompt.key.starts_with("point")
+            && Self::asked(state).wall.is_none()
+        {
+            return Err(Error::new(codes::NO_WALL_SELECTED));
+        }
+        Ok(())
+    }
 }
 
 /// The record values of `moved` laid over those of `object`, so that fields the component struct

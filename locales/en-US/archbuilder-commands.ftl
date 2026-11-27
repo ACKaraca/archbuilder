@@ -607,3 +607,4 @@ ab-cmd-family-insert-place-label = Hosted component
 ab-cmd-family-insert-place-description = Places an instance of a family type in a host element; a family that cuts its host cuts it.
 
 ab-prompt-family-insert-type = Family type
+ab-prompt-family-insert-point = Host wall: click a wall, then the distance along it (flip hand and facing with the keys)
