@@ -471,6 +471,8 @@ ab-cmd-curtain-grid-move-label = Move Grid Line
 ab-cmd-curtain-grid-move-description = Moves a grid line of a curtain wall, or pins it where it is so that it stays when the grid rule changes.
 ab-cmd-curtain-panel-label = Set Panel
 ab-cmd-curtain-panel-description = Gives one cell of a curtain wall a glazed, solid or empty panel, or a door or window, or clears the choice.
+ab-cmd-curtain-schedule-label = Curtain Wall Schedule
+ab-cmd-curtain-schedule-description = Lists the panels (key, kind, type, size, area, whether overridden) and the mullions (key, role, profile, size, length) of one or every curtain wall, for schedules and exports; derived, never stored.
 ab-cmd-curtain-wall-label = Curtain Wall
 ab-cmd-curtain-wall-description = Places a curtain wall on a storey from a baseline of two points, with the first curtain wall type of the document unless a type is given.
 

@@ -8,12 +8,14 @@
 //! on positions; an override whose cell an edit dissolved is dropped in the same transaction.
 
 use arc_base::{Dimension, Error, Result};
-use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
+use arc_command::{
+    CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
+};
 use arc_doc::FieldPath;
 use archbuilder_model::curtain::{
     Carried, CellOverride, CurtainType, Derived, Direction, EditKind, GridEdit, Justify, Layout,
-    MAX_EDITS, MAX_OVERRIDES, MullionSpec, PanelKind, Placement, Priority, Profile, RuleKind,
-    Source, carry,
+    MAX_EDITS, MAX_OVERRIDES, Mullion, MullionRole, MullionSpec, PanelInfo, PanelKind, Placement,
+    Priority, Profile, RuleKind, Source, carry,
 };
 use archbuilder_model::error::codes as model;
 use archbuilder_model::spatial;
@@ -603,6 +605,184 @@ fn panel_set(ctx: &mut Context<'_>, p: PanelSet) -> Result<CurtainChanged> {
     })
 }
 
+// ----- the schedule of panels and mullions ------------------------------------------------------
+
+/// The identifier of the command that lists the panels and mullions of curtain walls.
+pub const CURTAIN_SCHEDULE: &str = "archbuilder.curtain.schedule";
+
+/// One panel row of a schedule.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelRow {
+    /// The cell key; stable across regeneration.
+    pub key: String,
+    /// `glazed`, `solid`, `empty`, `door` or `window`.
+    pub kind: String,
+    /// The name of the door or window type of a door or window panel.
+    #[serde(rename = "type")]
+    pub type_name: Option<String>,
+    /// The material of the type's panel.
+    pub material: String,
+    /// The thickness of a glazed or solid panel, in meters.
+    pub thickness: f64,
+    /// The clear width in meters (of the bounding box for a panel of a turned grid).
+    pub width: f64,
+    /// The clear height in meters (of the bounding box for a panel of a turned grid).
+    pub height: f64,
+    /// The clear area in square meters.
+    pub area: f64,
+    /// Whether the cell has a panel override.
+    pub overridden: bool,
+    /// Whether the cell is cut by a turned grid, so that it is not a rectangle.
+    pub turned: bool,
+}
+
+/// One mullion row of a schedule.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MullionRow {
+    /// The mullion key; stable across regeneration.
+    pub key: String,
+    /// `interior`, `border` or `corner`.
+    pub role: String,
+    /// Whether it stands upright (otherwise it runs along the baseline).
+    pub vertical: bool,
+    /// `rectangular` or `circular`.
+    pub profile: String,
+    /// The width across the grid line, or the diameter, in meters.
+    pub width: f64,
+    /// The depth across the wall, in meters.
+    pub depth: f64,
+    /// The length along its axis, in meters.
+    pub length: f64,
+}
+
+/// The panels and mullions of one curtain wall.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WallSchedule {
+    /// The wall.
+    pub id: String,
+    /// The wall's name.
+    pub name: String,
+    /// The name of the curtain wall type.
+    #[serde(rename = "type")]
+    pub type_name: String,
+    /// The panels, in the order of the cells.
+    pub panels: Vec<PanelRow>,
+    /// The mullions.
+    pub mullions: Vec<MullionRow>,
+    /// The total clear area of the panels that are not empty, in square meters.
+    pub panel_area: f64,
+    /// The total length of the mullions, in meters.
+    pub mullion_length: f64,
+}
+
+/// The schedule rows of the curtain walls of `snapshot`, or of the one wall `only`, in the order
+/// of the walls' names. Derived from the document, never stored.
+#[must_use]
+pub fn schedule(
+    snapshot: &arc_doc::Snapshot,
+    only: Option<arc_base::ObjectId>,
+) -> Vec<WallSchedule> {
+    let mut walls: Vec<_> = spatial::objects(snapshot, WALL)
+        .into_iter()
+        .filter(|w| only.is_none_or(|id| w.id == id))
+        .filter_map(|w| Some((w.clone(), Derived::of(snapshot, &w)?)))
+        .collect();
+    walls.sort_by(|a, b| {
+        let name = |o: &arc_doc::Object| types::text(&o.values, 0).unwrap_or_default().to_owned();
+        name(&a.0).cmp(&name(&b.0)).then(a.0.id.cmp(&b.0.id))
+    });
+    walls
+        .into_iter()
+        .map(|(object, d)| {
+            let panels: Vec<PanelRow> = d
+                .panels
+                .iter()
+                .map(|p| PanelRow {
+                    key: p.key.clone(),
+                    kind: p.kind.name().to_owned(),
+                    type_name: p.type_ref.as_ref().map(|(_, name)| name.clone()),
+                    material: d.ty.material.clone(),
+                    thickness: d.ty.panel_thickness,
+                    width: p.width(),
+                    height: p.height(),
+                    area: p.area(),
+                    overridden: p.overridden,
+                    turned: p.outline.is_some(),
+                })
+                .collect();
+            let mullions: Vec<MullionRow> = d
+                .mullions
+                .iter()
+                .map(|m| MullionRow {
+                    key: m.key.clone(),
+                    role: match m.role {
+                        MullionRole::Interior => "interior",
+                        MullionRole::Border => "border",
+                        MullionRole::Corner => "corner",
+                    }
+                    .to_owned(),
+                    vertical: m.vertical,
+                    profile: m.spec.profile.name().to_owned(),
+                    width: m.spec.width,
+                    depth: m.spec.depth,
+                    length: m.length(),
+                })
+                .collect();
+            WallSchedule {
+                id: object.id.to_string(),
+                name: types::text(&object.values, 0)
+                    .unwrap_or_default()
+                    .to_owned(),
+                type_name: archbuilder_model::element_type::type_of(
+                    snapshot,
+                    archbuilder_model::element_type::TypeKind::Wall,
+                    &object.values,
+                )
+                .map(|t| archbuilder_model::element_type::name(&t).to_owned())
+                .unwrap_or_default(),
+                panel_area: d
+                    .panels
+                    .iter()
+                    .filter(|p| p.kind != PanelKind::Empty)
+                    .map(PanelInfo::area)
+                    .sum(),
+                mullion_length: d.mullions.iter().map(Mullion::length).sum(),
+                panels,
+                mullions,
+            }
+        })
+        .collect()
+}
+
+/// Parameters of `archbuilder.curtain.schedule`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleParams {
+    /// One curtain wall; every curtain wall of the document when absent.
+    #[serde(default)]
+    pub wall: Option<IdParam>,
+}
+
+/// What `archbuilder.curtain.schedule` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScheduleRows {
+    /// The curtain walls with their rows.
+    pub walls: Vec<WallSchedule>,
+}
+
+fn curtain_schedule(ctx: &mut Context<'_>, p: ScheduleParams) -> Result<ScheduleRows> {
+    let only = p.wall.map(|IdParam(id)| id);
+    if let Some(id) = only {
+        let object = expect(ctx.snapshot(), id, WALL)?;
+        if !archbuilder_model::curtain::is_curtain(ctx.snapshot(), &object) {
+            return Err(Error::new(model::CURTAIN_NOT_CURTAIN).with_arg("name", id.to_string()));
+        }
+    }
+    Ok(ScheduleRows {
+        walls: schedule(ctx.snapshot(), only),
+    })
+}
+
 /// A curtain wall read for a split or merge: its name, what it holds and its size.
 struct Part {
     name: String,
@@ -765,6 +945,20 @@ where
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
+    registry.register(
+        spec(
+            CURTAIN_SCHEDULE,
+            Msg {
+                message_id: "ab-cmd-curtain-schedule-label",
+            },
+            Msg {
+                message_id: "ab-cmd-curtain-schedule-description",
+            },
+            curtain_schedule,
+        )
+        .with_undo(UndoBehavior::NotUndoable)
+        .with_permissions([Permission::Read]),
+    )?;
     for s in [
         spec(
             CURTAIN_TYPE,

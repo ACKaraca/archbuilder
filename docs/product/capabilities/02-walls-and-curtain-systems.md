@@ -87,3 +87,10 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
 - **Pin (AB-DATUM-022).** A pinned curtain wall still takes grid edits and panel overrides: they
   divide and fill the wall but never move or reshape it, like the finishes of a pinned room.
   Moving, splitting, merging or deleting it is refused, naming the wall.
+- **Schedule rows (AB-WALL-027).** `archbuilder.curtain.schedule` (read-only, not an undo step)
+  lists, for one curtain wall or all of them, a row per panel (cell key, kind, door or window type
+  name, material, thickness, clear width, height and area, whether overridden, whether the cell
+  is cut by a turned grid) and per mullion (key, role, upright or not, profile, width, depth,
+  length along its axis), with the wall's total panel area and mullion length. The rows are
+  derived from the wall, and `archbuilder-cli inspect` prints the same rows. A schedule view
+  built on them follows the keys, which stay the same when the grid regenerates.

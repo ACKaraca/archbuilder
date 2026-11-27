@@ -592,3 +592,55 @@ fn a_pinned_curtain_wall_takes_grid_edits_and_panel_overrides_but_cannot_move_or
     env.document.undo().wait().unwrap();
     assert!(!derived(&env, wall).panels[0].overridden);
 }
+
+#[test]
+fn the_schedule_command_lists_panels_and_mullions_and_changes_nothing() {
+    let (env, ty, wall) = setup();
+    let plain = env.wall([0.0, 5.0], [3.0, 5.0], json!({}));
+    let cell = derived(&env, wall).layout.cells[0].key.clone();
+    env.run(
+        "archbuilder.curtain.panel",
+        json!({"wall": wall, "cell": cell, "panel": "solid"}),
+    )
+    .unwrap();
+    let rows = env
+        .run("archbuilder.curtain.schedule", json!({}))
+        .unwrap()
+        .value;
+    let one = &rows["walls"][0];
+    assert_eq!(one["id"], wall.to_string());
+    let panels = one["panels"].as_array().unwrap();
+    assert_eq!(panels.len(), 6);
+    assert_eq!(panels[0]["key"], cell);
+    assert_eq!(panels[0]["kind"], "solid");
+    assert_eq!(panels[0]["overridden"], true);
+    assert_eq!(panels[1]["kind"], "glazed");
+    // Each row equals what the derived wall says, and the totals are the sums of the rows.
+    let d = derived(&env, wall);
+    let area: f64 = panels.iter().map(|p| p["area"].as_f64().unwrap()).sum();
+    assert!((area - d.panels.iter().map(|p| p.area()).sum::<f64>()).abs() < 1e-9);
+    assert!((one["panel_area"].as_f64().unwrap() - area).abs() < 1e-9);
+    let mullions = one["mullions"].as_array().unwrap();
+    assert_eq!(mullions.len(), d.mullions.len());
+    let length: f64 = mullions.iter().map(|m| m["length"].as_f64().unwrap()).sum();
+    assert!((one["mullion_length"].as_f64().unwrap() - length).abs() < 1e-9);
+    assert!(mullions.iter().all(|m| m["profile"] == "rectangular"));
+    // The cell keys stay when the grid regenerates, so a schedule can follow its rows.
+    env.run(
+        "archbuilder.curtain.type",
+        json!({"type": ty.to_string(), "vertical": {"value": 1.2}}),
+    )
+    .unwrap();
+    let again = env
+        .run("archbuilder.curtain.schedule", json!({"wall": wall}))
+        .unwrap()
+        .value;
+    assert_eq!(again["walls"][0]["panels"][0]["key"], cell);
+    // A wall that is not a curtain wall is refused; reading the schedule is not an undo step.
+    let e = env
+        .run("archbuilder.curtain.schedule", json!({"wall": plain}))
+        .unwrap_err();
+    assert_eq!(e.code(), "ab.model.curtain_not_curtain");
+    env.document.undo().wait().unwrap();
+    assert_eq!(derived(&env, wall).layout.vertical[1].at, 1.0);
+}

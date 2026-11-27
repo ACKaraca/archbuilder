@@ -470,6 +470,8 @@ ab-cmd-curtain-grid-move-label = Izgara Çizgisini Taşı
 ab-cmd-curtain-grid-move-description = Perde duvarın bir ızgara çizgisini taşır ya da olduğu yere sabitler; ızgara kuralı değişse de yerinde kalır.
 ab-cmd-curtain-panel-label = Panel Ata
 ab-cmd-curtain-panel-description = Perde duvarın bir gözüne camlı, dolu ya da boş panel ya da kapı veya pencere verir; seçimi temizler.
+ab-cmd-curtain-schedule-label = Perde Duvar Çizelgesi
+ab-cmd-curtain-schedule-description = Bir ya da tüm perde duvarların panellerini (anahtar, tür, tip, boyut, alan, değiştirilmiş mi) ve doğramalarını (anahtar, rol, profil, boyut, uzunluk) çizelge ve çıktılar için listeler; türetilir, saklanmaz.
 ab-cmd-curtain-wall-label = Perde Duvar
 ab-cmd-curtain-wall-description = Bir kata iki noktalı bir eksen çizgisinden perde duvar yerleştirir; tip verilmedikçe belgedeki ilk perde duvar tipini kullanır.
 
