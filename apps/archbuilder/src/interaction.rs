@@ -73,11 +73,12 @@ fn mixed(state: u64) -> u64 {
 }
 
 /// The commands whose button starts their prompts once, on the stair tool's machinery.
-const PROMPTED: [&str; 4] = [
+const PROMPTED: [&str; 5] = [
     FLOOR_SET_SLOPE,
     ROOF_EXTRUSION_CREATE,
     SET_CREATE,
     SET_SELECT,
+    archbuilder_commands::coordinates::COORDINATES_QUERY,
 ];
 
 /// The report of `archbuilder.model.statistics` as one line: the elements by kind, then the
@@ -141,6 +142,14 @@ const MODIFY_UNJOINED: Message = Message {
 /// What a modify command says of a door or window that now opens into another wall.
 const MODIFY_MEETS: Message = Message {
     message_id: "ab-notice-modify-meets",
+};
+
+/// The readout of a coordinate query, and its map part.
+const COORDINATES_READOUT: Message = Message {
+    message_id: "ab-notice-coordinates",
+};
+const COORDINATES_MAP: Message = Message {
+    message_id: "ab-notice-coordinates-map",
 };
 
 /// The point a click picked, echoed in the history.
@@ -317,7 +326,8 @@ fn plan_candidates(
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
     // In a plan view the tools work on the view's storey.
-    let found = crate::plan_state::current_in(tab, &snapshot)
+    let planned = crate::plan_state::current_in(tab, &snapshot);
+    let found = planned
         .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
         .or_else(|| storey_for(&snapshot, selection));
     // The command tabs and the status bar learn the selection and the storey from here.
@@ -333,6 +343,20 @@ pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Opti
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
     rooms.set_selection(selection);
+    // In a 3D view the active work plane of the storey's building is where points land (a plan
+    // view looks straight down and keeps the storey's plane).
+    let active = planned.is_none().then(|| {
+        spatial::get(&snapshot, storey)
+            .and_then(|s| s.header.owner)
+            .and_then(|b| archbuilder_model::datum::active(&snapshot, b))
+            .and_then(|(_, plane)| plane)
+    });
+    if let Some(Some(p)) = active {
+        return Some(WorkPlane {
+            origin: Point3::new(p.origin[0], p.origin[1], p.origin[2]),
+            normal: Vector3::new(p.normal[0], p.normal[1], p.normal[2]),
+        });
+    }
     Some(WorkPlane {
         origin: Point3::new(0.0, 0.0, elevation),
         normal: Vector3::z(),
@@ -827,15 +851,26 @@ impl WallInteraction {
         // The members a selection set command chose become the tab's selection, which the shell
         // applies only for commands it runs itself.
         let mut chosen: Option<Vec<arc_base::ObjectId>> = None;
+        let mut read: Option<serde_json::Value> = None;
         let result = step(&mut self.stairs, &env, &mut |invocation| {
             let outcome = cx.invoke(invocation)?;
             if outcome.command == SET_SELECT {
                 chosen.clone_from(&outcome.selection);
             }
+            if outcome.command == archbuilder_commands::coordinates::COORDINATES_QUERY {
+                read = Some(outcome.value.clone());
+            }
             Ok(outcome)
         });
         if let Some(ids) = chosen {
             cx.ask(habits::select_intent(&ids, "replace"));
+        }
+        if let Some(value) = read {
+            self.say_outcome(
+                cx,
+                archbuilder_commands::coordinates::COORDINATES_QUERY,
+                &value,
+            );
         }
         result
     }
@@ -2384,6 +2419,54 @@ impl WallInteraction {
         })
     }
 
+    /// The readout of a coordinate query as one line, in the project's length unit.
+    fn coordinates_text(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        value: &serde_json::Value,
+    ) -> Option<String> {
+        let unit = archbuilder_model::spatial::length_unit(&cx.document().ok()?.snapshot());
+        let separator = cx.decimal_separator();
+        let triple = |v: &serde_json::Value| -> Option<String> {
+            let parts: Vec<String> = v
+                .as_array()?
+                .iter()
+                .map(|n| {
+                    n.as_f64()
+                        .map(|m| archbuilder_model::units::length_text(m, unit, separator))
+                })
+                .collect::<Option<_>>()?;
+            Some(parts.join("; "))
+        };
+        let l = self.localizer(cx.language())?;
+        let map = value
+            .get("map")
+            .and_then(&triple)
+            .map_or_else(String::new, |m| {
+                let crs = value
+                    .get("crs")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                l.format(
+                    COORDINATES_MAP.message_id,
+                    &[("map", m.into()), ("crs", crs.to_owned().into())],
+                )
+                .text
+            });
+        Some(
+            l.format(
+                COORDINATES_READOUT.message_id,
+                &[
+                    ("internal", triple(value.get("internal")?)?.into()),
+                    ("project", triple(value.get("project")?)?.into()),
+                    ("survey", triple(value.get("survey")?)?.into()),
+                    ("map", map.into()),
+                ],
+            )
+            .text,
+        )
+    }
+
     /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
     fn say_outcome(
         &mut self,
@@ -2391,6 +2474,11 @@ impl WallInteraction {
         command: &str,
         value: &serde_json::Value,
     ) {
+        if command == archbuilder_commands::coordinates::COORDINATES_QUERY
+            && let Some(text) = self.coordinates_text(cx, value)
+        {
+            self.push_notice(text);
+        }
         if command == STATISTICS
             && let Some(localizer) = self.localizer(cx.language())
         {

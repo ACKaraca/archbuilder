@@ -41,11 +41,17 @@ pub const ROOF_EXTRUSION_EDIT: &str = "archbuilder.roof_extrusion.edit";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRoofExtrusion {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
-    /// Two points `[x, y]` of the plane, in meters: its origin and a point along its axis.
-    pub plane: [[f64; 2]; 2],
+    /// Two points `[x, y]` of the plane, in meters: its origin and a point along its axis;
+    /// optional when `work_plane` gives the plane.
+    #[serde(default)]
+    pub plane: Option<[[f64; 2]; 2]>,
     /// The open profile: points `[u, z]` in meters, in order.
     pub profile: Vec<[f64; 2]>,
     /// The start of the extrusion: its distance from the plane along the plane's normal.
@@ -147,7 +153,14 @@ fn create_roof(ctx: &mut Context<'_>, p: CreateRoofExtrusion) -> Result<RoofExtr
     let storey = crate::wall::storey_for(ctx, p.storey)?.id;
     crate::element_type::ensure_roof_types(ctx)?;
     let roof_type = crate::wall::choose_type(ctx, TypeKind::Roof, p.roof_type.as_deref())?;
-    let angle = direction(&p.plane)?;
+    // On a work plane the roof's plane is the work plane's, and follows it.
+    let plane = match p.work_plane {
+        Some(IdParam(wp)) => crate::datum::vertical_work_plane(ctx, wp)?,
+        None => p
+            .plane
+            .ok_or_else(|| Error::new(arc_command::error::codes::PARAMS_INVALID))?,
+    };
+    let angle = direction(&plane)?;
     profile_ok(&p.profile)?;
     let start = p
         .start
@@ -172,11 +185,12 @@ fn create_roof(ctx: &mut Context<'_>, p: CreateRoofExtrusion) -> Result<RoofExtr
             Some(types::angle(angle)),
             None,
             None,
-            Some(types::length(p.plane[0][0])),
-            Some(types::length(p.plane[0][1])),
+            Some(types::length(plane[0][0])),
+            Some(types::length(plane[0][1])),
             Some(archbuilder_model::roof_extrusion::RoofExtrusion::profile_value(&p.profile)),
         ],
     )?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     crate::element_type::assign(ctx, id, TypeKind::Roof, roof_type)?;
     ensure_valid(ctx)?;
     ctx.set_selection_after(vec![id]);
@@ -225,6 +239,10 @@ fn edit_roof(ctx: &mut Context<'_>, p: EditRoofExtrusion) -> Result<RoofExtrusio
             archbuilder_model::roof_extrusion::RoofExtrusion::profile_value(&profile),
         )?;
     }
+    // A plane of its own: the roof no longer follows a work plane.
+    if plane.is_some() {
+        ctx.txn()?.modify(id, FieldPath::new("work_plane"), None)?;
+    }
     ensure_valid(ctx)?;
     ctx.set_selection_after(vec![id]);
     made(ctx, id)
@@ -238,9 +256,15 @@ struct Msg {
 /// The field values `values` of a roof by extrusion moved by `xf`: the plane's origin and axis
 /// follow. A reflection turns the plane's normal around, so the start and end change sign (and
 /// places); the profile, measured along the axis and up, stays as it is.
-pub(crate) fn moved_values(values: &mut [Option<arc_doc::Value>], xf: &Xform) -> Result<()> {
-    let roof =
-        RoofExtrusion::from_values(values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+pub(crate) fn moved_values(
+    values: &mut [Option<arc_doc::Value>],
+    xf: &Xform,
+    snapshot: &Snapshot,
+) -> Result<()> {
+    // Where the roof stands now: on its work plane when it follows one.
+    let roof = RoofExtrusion::from_values(values)
+        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+        .on_work_plane(snapshot, values);
     let (s, c) = roof.direction.sin_cos();
     let origin = xf.point(roof.origin);
     let ahead = xf.point([roof.origin[0] + c, roof.origin[1] + s]);
@@ -250,6 +274,10 @@ pub(crate) fn moved_values(values: &mut [Option<arc_doc::Value>], xf: &Xform) ->
     } else {
         (roof.start, roof.end)
     };
+    // Moved by hand, the roof leaves the work plane it was sketched on.
+    if let Some(slot) = values.get_mut(types::roof_extrusion::WORK_PLANE) {
+        *slot = None;
+    }
     for (at, value) in [
         (types::roof_extrusion::X, types::length(origin[0])),
         (types::roof_extrusion::Y, types::length(origin[1])),
@@ -274,7 +302,7 @@ pub(crate) fn move_roofs(
     for id in ids {
         let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
         let mut values = object.values.clone();
-        moved_values(&mut values, xf)?;
+        moved_values(&mut values, xf, snapshot)?;
         let txn = ctx.txn()?;
         for (field, at) in [
             ("x", types::roof_extrusion::X),
@@ -282,6 +310,7 @@ pub(crate) fn move_roofs(
             ("direction", types::roof_extrusion::DIRECTION),
             ("start", types::roof_extrusion::START),
             ("end", types::roof_extrusion::END),
+            ("work_plane", types::roof_extrusion::WORK_PLANE),
         ] {
             txn.modify(
                 *id,
@@ -308,7 +337,7 @@ pub(crate) fn copy_roofs(
         let storey = target
             .or(owner)
             .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-        moved_values(&mut values, xf)?;
+        moved_values(&mut values, xf, ctx.txn()?.snapshot())?;
         let name = next_name(ctx.txn()?.snapshot(), storey, &tongue);
         if let Some(slot) = values.get_mut(types::roof_extrusion::NAME) {
             *slot = Some(named(&name));

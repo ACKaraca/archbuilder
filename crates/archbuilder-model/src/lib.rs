@@ -56,6 +56,7 @@ macro_rules! coded {
 
 pub mod ceiling;
 pub mod cleanup;
+pub mod coordinates;
 pub mod curtain;
 pub mod datum;
 pub mod element_type;

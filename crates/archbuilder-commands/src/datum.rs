@@ -34,6 +34,9 @@ pub const WORK_PLANE_SHOW: &str = "archbuilder.work_plane.show";
 /// The identifier of the datum extent command.
 pub const DATUM_SET_EXTENT: &str = "archbuilder.datum.set_extent";
 
+/// The identifier of the per-view extent command.
+pub const DATUM_SET_VIEW_EXTENT: &str = "archbuilder.datum.set_view_extent";
+
 /// The most grids one extent command works on.
 const MAX_OBJECTS: usize = 5_000;
 
@@ -50,6 +53,21 @@ pub struct CreateGrid {
     /// A wall whose baseline the grid takes: a grid drawn from an existing curve.
     #[serde(default)]
     pub from_wall: Option<IdParam>,
+    /// Walls that follow one another, end to start within a millimeter, in order: the grid runs
+    /// along their baselines as one multi-segment line.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub from_walls: Option<Vec<IdParam>>,
+    /// The points `[x, y]` of a multi-segment grid, in meters: the first is the start, the last
+    /// the end, the others vertices; at least two.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub points: Option<Vec<[f64; 2]>>,
+    /// The bulge of each segment of `points` (one fewer than the points; 0 is straight); the
+    /// last segment takes `bulge` when this is absent.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub bulges: Option<Vec<f64>>,
     /// The bulge of an arc grid: the tangent of a quarter of its included angle; straight when
     /// absent or 0.
     #[serde(default)]
@@ -119,9 +137,19 @@ pub struct ReferencePlaneCreated {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetWorkPlane {
-    /// `level`, `grid`, `reference_plane` or `points`; else what `target` or the selection is.
+    /// `level`, `grid`, `reference_plane`, `points` or `face`; else what `target`, `element` or
+    /// the selection is.
     #[serde(default)]
     pub source: Option<String>,
+    /// The wall, floor or ceiling whose face is the plane; else a selected one when nothing else
+    /// is named.
+    #[serde(default)]
+    pub element: Option<IdParam>,
+    /// The face of `element`: `exterior` or `interior` of a wall, `top` or `bottom` of a floor or
+    /// ceiling; the wall's exterior, the floor's top and the ceiling's underside when absent.
+    #[serde(default)]
+    #[schemars(length(max = 32))]
+    pub face: Option<String>,
     /// The level, grid or reference plane (identifier or name); else the selected one.
     #[serde(default)]
     #[schemars(length(max = 256))]
@@ -191,6 +219,177 @@ pub struct ExtentSet {
     pub objects: usize,
 }
 
+/// Parameters of `archbuilder.datum.set_view_extent`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetViewExtent {
+    /// The grids; else the selected ones.
+    #[serde(default)]
+    pub objects: Option<Vec<IdParam>>,
+    /// The plan views (or storeys, for their first view) that take the change: the view that was
+    /// adjusted and every parallel view the change is propagated to, all in one transaction.
+    #[serde(default)]
+    #[schemars(length(max = 5000))]
+    pub views: Vec<IdParam>,
+    /// A view whose overrides of the grids the target views take over (a view without one clears
+    /// theirs), instead of the values below.
+    #[serde(default)]
+    pub from_view: Option<IdParam>,
+    /// How far the start is pulled in along the line, in meters; negative pushes it out.
+    #[serde(default)]
+    pub start_inset: Option<f64>,
+    /// How far the end is pulled in along the line, in meters; negative pushes it out.
+    #[serde(default)]
+    pub end_inset: Option<f64>,
+    /// Whether the start shows its head in these views.
+    #[serde(default)]
+    pub head_start: Option<bool>,
+    /// Whether the end shows its head in these views.
+    #[serde(default)]
+    pub head_end: Option<bool>,
+    /// Drops the overrides of the grids in these views: they show the grid's own extent again.
+    #[serde(default)]
+    pub reset: Option<bool>,
+}
+
+/// What `archbuilder.datum.set_view_extent` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ViewExtentSet {
+    /// The views changed.
+    pub views: usize,
+    /// The grids whose display changed in them.
+    pub grids: usize,
+}
+
+fn set_view_extent(ctx: &mut Context<'_>, p: SetViewExtent) -> Result<ViewExtentSet> {
+    use archbuilder_model::view::{self as plan, DatumView, PlanView};
+    let ids: Vec<ObjectId> = match p.objects {
+        Some(list) if list.len() > MAX_OBJECTS => {
+            return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+        }
+        Some(list) => list.into_iter().map(|IdParam(id)| id).collect(),
+        None => ctx.selection().iter().copied().take(MAX_OBJECTS).collect(),
+    };
+    let snapshot = ctx.snapshot().clone();
+    let grids: Vec<ObjectId> = ids
+        .into_iter()
+        .filter(|id| spatial::type_of(&snapshot, *id).as_deref() == Some(GRID))
+        .collect();
+    if grids.is_empty() || p.views.is_empty() {
+        return Err(Error::new(codes::NOTHING_SELECTED));
+    }
+    let inset_ok = |v: Option<f64>| {
+        v.is_none_or(|v| v.is_finite() && v >= plan::INSET_RANGE.0 && v <= plan::INSET_RANGE.1)
+    };
+    if !inset_ok(p.start_inset) || !inset_ok(p.end_inset) {
+        return Err(Error::new(codes::VALUE_INVALID));
+    }
+    let reset = p.reset.unwrap_or(false);
+    let given = p.start_inset.is_some()
+        || p.end_inset.is_some()
+        || p.head_start.is_some()
+        || p.head_end.is_some();
+    if !reset && p.from_view.is_none() && !given {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    let settings_of = |ctx: &mut Context<'_>, id: ObjectId| -> Result<(ObjectId, PlanView)> {
+        let view = crate::view::real_view(ctx, id)?;
+        let object = expect(ctx.snapshot(), view, archbuilder_model::types::PLAN_VIEW)?;
+        let settings = PlanView::from_values(&object.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        Ok((view, settings))
+    };
+    let source = match p.from_view {
+        Some(IdParam(id)) => Some(settings_of(ctx, id)?.1),
+        None => None,
+    };
+    let mut done: Vec<ObjectId> = Vec::new();
+    for IdParam(id) in &p.views {
+        let (view, mut settings) = settings_of(ctx, *id)?;
+        if done.contains(&view) {
+            continue;
+        }
+        for grid in &grids {
+            let mut entry = settings
+                .datum_views
+                .iter()
+                .find(|d| d.datum == *grid)
+                .copied()
+                .unwrap_or_else(|| DatumView::new(*grid));
+            if reset {
+                entry = DatumView::new(*grid);
+            } else if let Some(from) = &source {
+                entry = from
+                    .datum_views
+                    .iter()
+                    .find(|d| d.datum == *grid)
+                    .copied()
+                    .unwrap_or_else(|| DatumView::new(*grid));
+            } else {
+                entry.start_inset = p.start_inset.or(entry.start_inset);
+                entry.end_inset = p.end_inset.or(entry.end_inset);
+                entry.head_start = p.head_start.or(entry.head_start);
+                entry.head_end = p.head_end.or(entry.head_end);
+            }
+            settings.datum_views.retain(|d| d.datum != *grid);
+            if !entry.is_empty() {
+                settings.datum_views.push(entry);
+            }
+        }
+        ctx.txn()?.modify(
+            view,
+            FieldPath::new("datum_views"),
+            plan::datum_views_value(&settings.datum_views),
+        )?;
+        done.push(view);
+    }
+    ensure_valid(ctx)?;
+    Ok(ViewExtentSet {
+        views: done.len(),
+        grids: grids.len(),
+    })
+}
+
+/// Stores on the element `id` the work plane `plane` it was sketched on (nothing when `None`): the
+/// plane must be one of the building the element's storey belongs to.
+pub(crate) fn store_work_plane(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    plane: Option<IdParam>,
+) -> Result<()> {
+    let Some(IdParam(plane)) = plane else {
+        return Ok(());
+    };
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wp = expect(&snapshot, plane, WORK_PLANE)?;
+    let building = spatial::get(&snapshot, id)
+        .and_then(|e| e.header.owner)
+        .and_then(|s| spatial::get(&snapshot, s))
+        .and_then(|s| s.header.owner);
+    if building.is_none() || wp.header.owner != building {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    ctx.txn()?.modify(
+        id,
+        FieldPath::new("work_plane"),
+        Some(Value::Reference(plane)),
+    )
+}
+
+/// The line `[origin, origin + axis]` in plan of the vertical work plane `plane`.
+pub(crate) fn vertical_work_plane(ctx: &Context<'_>, plane: ObjectId) -> Result<[[f64; 2]; 2]> {
+    let snapshot = ctx.snapshot();
+    let wp = expect(snapshot, plane, WORK_PLANE)?;
+    match datum::resolve(snapshot, &wp) {
+        Some(p) if p.normal[2].abs() < 1.0e-9 => Ok([
+            [p.origin[0], p.origin[1]],
+            [p.origin[0] + p.u[0], p.origin[1] + p.u[1]],
+        ]),
+        Some(_) => Err(Error::new(codes::KIND_MISMATCH)),
+        None => Err(Error::new(codes::NO_WORK_PLANE)),
+    }
+}
+
 fn level_named(snapshot: &Snapshot, building: ObjectId, text: &str) -> Result<ObjectId> {
     spatial::levels(snapshot, building)
         .iter()
@@ -219,26 +418,97 @@ fn point_ok(p: [f64; 2]) -> bool {
     p.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi)
 }
 
-fn create_grid(ctx: &mut Context<'_>, p: CreateGrid) -> Result<GridCreated> {
-    let building = building_for(ctx, p.building)?;
-    let snapshot = ctx.snapshot().clone();
-    let (start, end, wall_bulge) = match (p.from_wall, p.start, p.end) {
-        (Some(IdParam(id)), _, _) => {
-            let wall = expect(&snapshot, id, WALL)?;
-            let w = archbuilder_model::wall::Wall::from_values(&wall.values)
-                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-            (w.start, w.end, 0.0)
+/// The control points of the line `p` asks for and the bulge of each of its segments.
+fn grid_line(snapshot: &Snapshot, p: &mut CreateGrid) -> Result<(Vec<[f64; 2]>, Vec<f64>)> {
+    let baseline = |id: ObjectId| -> Result<[[f64; 2]; 2]> {
+        let wall = expect(snapshot, id, WALL)?;
+        archbuilder_model::wall::Wall::from_values(&wall.values)
+            .map(|w| [w.start, w.end])
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+    };
+    // The control points of the line and the bulge of each segment.
+    let (points, mut bulges): (Vec<[f64; 2]>, Option<Vec<f64>>) = match (
+        p.from_walls.take(),
+        p.from_wall,
+        p.points.take(),
+        p.start,
+        p.end,
+    ) {
+        (Some(walls), ..) => {
+            if walls.is_empty() || walls.len() > datum::MAX_PATH {
+                return Err(Error::new(codes::NO_LINE));
+            }
+            let mut points: Vec<[f64; 2]> = Vec::new();
+            for IdParam(id) in walls {
+                let [a, b] = baseline(id)?;
+                let joined = |x: [f64; 2], y: [f64; 2]| (x[0] - y[0]).hypot(x[1] - y[1]) < 1.0e-3;
+                // The first wall runs backwards when the second meets its start.
+                if points.len() == 2
+                    && let Some(first) = points.first().copied()
+                    && (joined(first, a) || joined(first, b))
+                    && !points
+                        .last()
+                        .is_some_and(|l| joined(*l, a) || joined(*l, b))
+                {
+                    points.reverse();
+                }
+                match points.last().copied() {
+                    None => points.extend([a, b]),
+                    Some(last) if joined(last, a) => points.push(b),
+                    Some(last) if joined(last, b) => points.push(a),
+                    Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
+                }
+            }
+            (points, None)
         }
-        (None, Some(a), Some(b)) => (a, b, 0.0),
+        (None, Some(IdParam(id)), ..) => (baseline(id)?.to_vec(), None),
+        (None, None, Some(points), ..) => (points, p.bulges.take()),
+        (None, None, None, Some(a), Some(b)) => (vec![a, b], None),
         _ => return Err(Error::new(codes::NO_LINE)),
     };
-    if !point_ok(start) || !point_ok(end) {
+    if points.len() < 2
+        || points.len() > datum::MAX_PATH + 2
+        || !points.iter().all(|q| point_ok(*q))
+    {
         return Err(Error::new(codes::VALUE_INVALID));
     }
-    let bulge = p.bulge.unwrap_or(wall_bulge);
-    if !bulge.is_finite() || bulge.abs() > archbuilder_model::floor::MAX_BULGE {
+    let segments = points.len() - 1;
+    let bulges = match bulges.take() {
+        Some(list) if list.len() == segments => list,
+        Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
+        None => {
+            let mut list = vec![0.0; segments];
+            if let Some(last) = list.last_mut() {
+                *last = p.bulge.unwrap_or(0.0);
+            }
+            list
+        }
+    };
+    if bulges
+        .iter()
+        .any(|b| !b.is_finite() || b.abs() > archbuilder_model::floor::MAX_BULGE)
+    {
         return Err(Error::new(codes::VALUE_INVALID));
     }
+    Ok((points, bulges))
+}
+
+fn create_grid(ctx: &mut Context<'_>, mut p: CreateGrid) -> Result<GridCreated> {
+    let building = building_for(ctx, p.building)?;
+    let snapshot = ctx.snapshot().clone();
+    let (points, bulges) = grid_line(&snapshot, &mut p)?;
+    let segments = points.len() - 1;
+    let (start, end, bulge) = match (points.first(), points.last(), bulges.last()) {
+        (Some(a), Some(b), Some(k)) => (*a, *b, *k),
+        _ => return Err(Error::new(codes::NO_LINE)),
+    };
+    let via: Vec<([f64; 2], f64)> = points
+        .iter()
+        .skip(1)
+        .take(segments - 1)
+        .zip(&bulges)
+        .map(|(q, k)| (*q, *k))
+        .collect();
     let bottom = optional_level(&snapshot, building, p.bottom_level.as_deref())?;
     let top = optional_level(&snapshot, building, p.top_level.as_deref())?;
     let label = match p.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
@@ -269,6 +539,7 @@ fn create_grid(ctx: &mut Context<'_>, p: CreateGrid) -> Result<GridCreated> {
             reference(bottom),
             reference(top),
             None,
+            datum::path_value(&via),
         ],
     )?;
     ensure_valid(ctx)?;
@@ -351,6 +622,24 @@ fn resolve_target(
     if p.points.is_some() || p.source.as_deref() == Some("points") {
         return Ok((Source::Points, None));
     }
+    let face_kind = |id: ObjectId| {
+        spatial::type_of(snapshot, id).filter(|k| datum::FaceSide::default_of(k).is_some())
+    };
+    if p.element.is_some() || p.source.as_deref() == Some("face") {
+        let id = match &p.element {
+            Some(IdParam(id)) => Some(*id),
+            None => ctx
+                .selection()
+                .iter()
+                .copied()
+                .find(|id| face_kind(*id).is_some()),
+        };
+        let id = id.ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+        return match face_kind(id) {
+            Some(_) => Ok((Source::Face, Some(id))),
+            None => Err(Error::new(codes::KIND_MISMATCH)),
+        };
+    }
     let source_of = |key: &str| match key {
         LEVEL => Some(Source::Level),
         GRID => Some(Source::Grid),
@@ -376,7 +665,22 @@ fn resolve_target(
                 spatial::type_of(snapshot, *id).is_some_and(|k| source_of(&k).is_some())
             }),
         };
+    // Nothing named and no datum selected: a selected wall, floor or ceiling gives its face.
+    let found = found.or_else(|| {
+        p.target
+            .is_none()
+            .then(|| {
+                ctx.selection()
+                    .iter()
+                    .copied()
+                    .find(|id| face_kind(*id).is_some())
+            })
+            .flatten()
+    });
     let id = found.ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+    if face_kind(id).is_some() {
+        return Ok((Source::Face, Some(id)));
+    }
     let source = spatial::type_of(snapshot, id)
         .and_then(|k| source_of(&k))
         .ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
@@ -393,17 +697,44 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
     let (source, target) = resolve_target(ctx, building, &p)?;
     let snapshot = ctx.snapshot().clone();
     let shown = p.shown.unwrap_or(true);
+    // The face of an element the plane lies on.
+    let side = if source == Source::Face {
+        let key = target
+            .and_then(|id| spatial::type_of(&snapshot, id))
+            .ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+        let side = match p.face.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+            Some(text) => datum::FaceSide::ALL
+                .into_iter()
+                .find(|s| s.name() == text)
+                .ok_or_else(|| Error::new(codes::VALUE_INVALID))?,
+            None => {
+                datum::FaceSide::default_of(&key).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            }
+        };
+        if !side.on(&key) {
+            return Err(Error::new(codes::KIND_MISMATCH));
+        }
+        Some(side)
+    } else {
+        None
+    };
     // A plane that follows a datum is reused; three points always make a new one.
     let existing = (source != Source::Points)
         .then(|| {
             spatial::children(&snapshot, WORK_PLANE, building)
                 .into_iter()
                 .find(|o| {
+                    let at = |slot: usize| match o.values.get(slot) {
+                        Some(Some(Value::Reference(t))) => Some(*t),
+                        _ => None,
+                    };
                     Source::of_values(&o.values) == source
-                        && matches!(
-                            o.values.get(types::work_plane::TARGET),
-                            Some(Some(Value::Reference(t))) if Some(*t) == target
-                        )
+                        && if source == Source::Face {
+                            at(types::work_plane::FACE_ELEMENT) == target
+                                && Some(datum::FaceSide::of_values(&o.values)) == side
+                        } else {
+                            at(types::work_plane::TARGET) == target
+                        }
                 })
         })
         .flatten();
@@ -430,7 +761,9 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
         let mut values: Vec<Option<Value>> = vec![
             Some(named(&name)),
             Some(Value::Enum(source.code())),
-            target.map(Value::Reference),
+            target
+                .filter(|_| source != Source::Face)
+                .map(Value::Reference),
         ];
         let points = p.points.unwrap_or([[0.0; 3]; 3]);
         for point in points {
@@ -443,6 +776,12 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
         }
         values.push(Some(Value::Bool(true)));
         values.push(Some(Value::Bool(shown)));
+        values.push(
+            target
+                .filter(|_| source == Source::Face)
+                .map(Value::Reference),
+        );
+        values.push(side.map(|s| Value::Enum(s.code())));
         (create(ctx, WORK_PLANE, Some(building), values)?, name)
     };
     ensure_valid(ctx)?;
@@ -538,6 +877,7 @@ fn two_points(first: Msg, second: Msg) -> PromptSequence {
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
+#[allow(clippy::too_many_lines, reason = "one registration per command")]
 pub fn register(registry: &mut Registry) -> Result<()> {
     let spec = |id, label: Msg, description: Msg| (id, label.message_id, description.message_id);
     let (id, label, description) = spec(
@@ -634,6 +974,21 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         label,
         description,
         |ctx: &mut Context<'_>, p: SetExtent| set_extent(ctx, p),
+    ))?;
+    let (id, label, description) = spec(
+        DATUM_SET_VIEW_EXTENT,
+        Msg {
+            message_id: "ab-cmd-datum-set-view-extent-label",
+        },
+        Msg {
+            message_id: "ab-cmd-datum-set-view-extent-description",
+        },
+    );
+    registry.register(CommandSpec::new(
+        id,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: SetViewExtent| set_view_extent(ctx, p),
     ))
 }
 
@@ -645,7 +1000,21 @@ pub(crate) fn move_datums(
     xf: &archbuilder_model::transform::Xform,
 ) -> Result<()> {
     for id in ids {
-        let (_, start, end, bulge) = line_of(snapshot, *id)?;
+        let (key, start, end, bulge) = line_of(snapshot, *id)?;
+        if key == GRID
+            && let Some(g) =
+                spatial::get(snapshot, *id).and_then(|o| datum::Grid::from_values(&o.values))
+            && !g.via.is_empty()
+        {
+            let sign = if xf.reflects() { -1.0 } else { 1.0 };
+            let via: Vec<([f64; 2], f64)> = g
+                .via
+                .iter()
+                .map(|(q, k)| (xf.point(*q), sign * k))
+                .collect();
+            ctx.txn()?
+                .modify(*id, FieldPath::new("path"), datum::path_value(&via))?;
+        }
         let (a, b) = (xf.point(start), xf.point(end));
         for (field, v) in [
             ("start_x", a[0]),
@@ -733,6 +1102,17 @@ pub(crate) fn copy_datum(
     let name = if key == GRID {
         if let Some(slot) = values.get_mut(types::grid::BULGE) {
             *slot = Some(Value::F64(if xf.reflects() { -bulge } else { bulge }));
+        }
+        if let Some(g) = datum::Grid::from_values(&values) {
+            let sign = if xf.reflects() { -1.0 } else { 1.0 };
+            let via: Vec<([f64; 2], f64)> = g
+                .via
+                .iter()
+                .map(|(q, k)| (xf.point(*q), sign * k))
+                .collect();
+            if let Some(slot) = values.get_mut(types::grid::PATH) {
+                *slot = datum::path_value(&via);
+            }
         }
         let ours = spatial::children(&seen, LEVEL, building);
         for at in [types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL] {

@@ -92,11 +92,24 @@ fn a_grid_is_extracted_in_3d_labeled_in_plan_and_3d_and_picked_near_its_line() {
     );
     // A plan view at the ground floor shows the line, both heads and the label twice;
     // a view at a level above the grid's extent shows nothing.
-    let plan = archbuilder::datum_view::overlays(&s, Some(0.0), &|_| false);
+    let plan = archbuilder::datum_view::overlays(&s, Some(0.0), &[], &|_| false);
     assert_eq!(plan.len(), 1 + 2 * 2);
-    let space = archbuilder::datum_view::overlays(&s, None, &|_| false);
+    let space = archbuilder::datum_view::overlays(&s, None, &[], &|_| false);
     assert_eq!(space.len(), 2 * 2);
-    assert!(archbuilder::datum_view::overlays(&s, Some(0.0), &|_| true).is_empty());
+    assert!(archbuilder::datum_view::overlays(&s, Some(0.0), &[], &|_| true).is_empty());
+    // A view that hides the end head draws one head fewer; only plan views have overrides.
+    let over = [archbuilder_model::view::DatumView {
+        head_end: Some(false),
+        ..archbuilder_model::view::DatumView::new(grid.id)
+    }];
+    assert_eq!(
+        archbuilder::datum_view::overlays(&s, Some(0.0), &over, &|_| false).len(),
+        1 + 2
+    );
+    assert_eq!(
+        archbuilder::datum_view::overlays(&s, None, &over, &|_| false).len(),
+        2 * 2
+    );
     env.run(
         "archbuilder.datum.set_extent",
         json!({"objects": [grid.id.to_string()], "top_level": "Ground Floor"}),
@@ -104,7 +117,7 @@ fn a_grid_is_extracted_in_3d_labeled_in_plan_and_3d_and_picked_near_its_line() {
     .unwrap();
     let s = env.snapshot();
     assert_eq!(
-        archbuilder::datum_view::overlays(&s, Some(6.0), &|_| false).len(),
+        archbuilder::datum_view::overlays(&s, Some(6.0), &[], &|_| false).len(),
         0
     );
     // Picking: within the aperture of the line, nothing farther away.

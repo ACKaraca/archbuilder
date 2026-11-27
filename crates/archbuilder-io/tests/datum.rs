@@ -75,3 +75,43 @@ fn grids_and_planes_are_reported_in_the_loss_report_and_not_written() {
     let text = String::from_utf8_lossy(&exported.bytes);
     assert!(!text.contains("IFCGRID") && !text.contains("IFCBUILDINGELEMENTPROXY"));
 }
+
+#[test]
+fn a_georeferenced_project_names_the_reference_in_the_loss_report() {
+    let document = Document::open(
+        Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
+        Arc::new(Evaluators::new()),
+        DocumentConfig {
+            workers: 0,
+            ..DocumentConfig::default()
+        },
+    )
+    .unwrap();
+    archbuilder_commands::install(&document);
+    let registry = archbuilder_commands::registry().unwrap();
+    run(&document, &registry, "archbuilder.project.new", json!({}));
+    let codes = |document: &Document| -> Vec<String> {
+        export_ifc(&document.snapshot(), &ExportOptions::default())
+            .unwrap()
+            .report
+            .items
+            .iter()
+            .map(|i| i.reason.clone())
+            .collect()
+    };
+    // True north alone is no georeference: nothing is lost.
+    run(
+        &document,
+        &registry,
+        "archbuilder.coordinates.set",
+        json!({"true_north": "10 deg"}),
+    );
+    assert!(codes(&document).is_empty());
+    run(
+        &document,
+        &registry,
+        "archbuilder.coordinates.set",
+        json!({"crs": "EPSG:3067", "eastings": 500000.0, "northings": 6800000.0}),
+    );
+    assert_eq!(codes(&document), ["ab.io.ifc.georeference_not_written"]);
+}

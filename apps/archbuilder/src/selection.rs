@@ -207,7 +207,7 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
             })
             .unwrap_or_default(),
         Some(types::GRID) => archbuilder_model::datum::Grid::from_values(&object.values)
-            .map(|g| vec![g.start, g.end])
+            .map(|g| g.points())
             .unwrap_or_default(),
         Some(types::REFERENCE_PLANE) => {
             archbuilder_model::datum::RefPlane::from_values(&object.values)

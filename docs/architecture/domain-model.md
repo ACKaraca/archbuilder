@@ -23,7 +23,7 @@ recomputes when something changes. It is the schema contract for `archbuilder-mo
 | Type | Key properties | Relationships |
 |---|---|---|
 | `Project` | Information fields, settings, units, boundary rule, template flag | One per document; root of spatial tree |
-| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document |
+| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document; kept as optional fields of the `Project` record (see Location) |
 | `Site` | Name, boundary, terrain references | Child of project |
 | `Building` | Name, elevation, address | Child of site |
 | `Storey` | Name, level reference | Child of building; contains elements |
@@ -1234,14 +1234,54 @@ Three element kinds belong to a building and have no storey: `archbuilder.grid`,
 
 | Kind | Authored fields | Rules |
 |---|---|---|
-| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned` | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
+| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned`, `path` (the vertices between start and end of a multi-segment grid, each with the `bulge` of the segment that arrives at it; `bulge` is that of the last segment) | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
 | Reference plane | name, two points, `strength` (strong, weak, none), `bounded`, `pinned` | A vertical plane. Strong and weak planes are found by snapping; an unbounded plane runs 200 m past its points in plan. Names are unique per building. |
-| Work plane | name, `source` (level, grid, reference plane, points), `target`, three points, `active`, `shown` | At most one is active. A plane that follows a datum is derived from it on every read, so moving the datum moves the plane, and deleting the datum deletes the plane. Three points on a line make no plane and are refused. |
+| Work plane | name, `source` (level, grid, reference plane, points, face), `target`, three points, `active`, `shown`, `face_element` and `face` (`exterior`, `interior`, `top`, `bottom`) | At most one is active. A plane that follows a datum or an element face is derived from it on every read, so moving the datum or the element moves the plane, and deleting it deletes the plane. A wall's faces are vertical planes standing on its base (the exterior is the baseline's left), a floor's or ceiling's top and underside follow its slope; normals point away from the body. Three points on a line make no plane and are refused. |
 
-Commands: `archbuilder.grid.create` (two points, or `from_wall`; `bulge` for an arc; `after` or `label`),
+Commands: `archbuilder.grid.create` (two points, `points` with per-segment `bulges` for a multi-segment line, `from_wall`, or `from_walls` for a chain of walls that meet end to start; `bulge` for an arc; `after` or `label`),
 `archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
-and heads). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
+and heads), and `archbuilder.datum.set_view_extent` (per-view extent and head overrides, below). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
 original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
 reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
-Not built yet: multi-segment grids, per-view extents and their propagation, element-face work planes, and elements that store the
-work plane they were sketched on.
+A plan view stores its own overrides of grids in the optional `datum_views` list (records of a grid, `start_inset`, `end_inset`,
+`head_start`, `head_end`, each optional): an inset pulls that end of the drawn line in along the line (positive) or pushes it out
+along the end segment (negative), and a head flag overrides the grid's own. The grid and every other view keep the model extent, a view
+that pulls a line in past its other end draws nothing, and an override of a deleted grid is dropped. One
+`archbuilder.datum.set_view_extent` call changes the chosen grids in a list of views (an adjusted view and the parallel views it is
+propagated to are all plan views) in one transaction, copies the overrides from a view (`from_view`), or drops them (`reset`). Levels
+have no extent of their own in a plan view; their extent belongs to the elevation views, which do not exist yet.
+Work planes on faces: `archbuilder.work_plane.set` takes an `element` (or a selected wall, floor or ceiling) and a `face`. Floors,
+ceilings, roofs, roofs by extrusion, railings, shafts and vertical openings take an optional `work_plane` when created and store it
+(`work_plane`, cleared when the plane is deleted; the plane must belong to the element's building). A roof by extrusion made on a
+vertical work plane takes the plane's line and follows it: moving the datum moves the roof, moving the roof by hand (or giving it a
+plane of its own) detaches it, and when the plane is deleted it returns to the plane stored at creation. The other sketch-based kinds
+store the plane without following it. In a 3D view the active work plane is where the tools' points land (the wall, floor, railing
+and datum tools draw along it); a plan view keeps the storey's plane.
+
+## Location: origins, north and the geodetic reference
+
+The internal origin is fixed: every stored coordinate is measured from it. The project record holds, as optional fields (a file
+from before loads with every one absent), the **project base point** (`base_x`, `base_y`, `base_z`) and the **survey point**
+(`survey_x`, `survey_y`, `survey_z`), both positions in internal coordinates, the angle `true_north` from project north (the internal
+y axis) to true north, counterclockwise, and the geodetic reference: `crs` (an EPSG code or a WKT text), `eastings`, `northings`
+and `survey_height` of the survey point in that system, `map_scale`, and the `precision_distance`. Absent points are the origin,
+absent north is 0 and absent scale is 1; a project is georeferenced when `crs` and the eastings and northings are all set. Moving a
+point or turning north changes the coordinates reported for a point and never moves an element.
+
+A point reads in four systems: internal, project (minus the base point), survey (minus the survey point) and map. The map position is
+the survey point's eastings and northings plus the offset from the survey point turned by true north and scaled, the height likewise
+(the conversion an IFC map conversion carries). The IFC export does not write the map conversion or the coordinate reference system
+yet: a georeferenced project names them in the loss report. `archbuilder.coordinates.set` changes the fields (without values it
+selects the project, whose properties list them), `archbuilder.coordinates.query` reports a picked point (the Coordinates button of
+the Manage tab; the history shows the readout in the project's length unit) and `archbuilder.coordinates.recenter` translates the
+whole model, with both points, so that the survey point lies on the internal origin: every element keeps its map coordinates, and a
+pinned element refuses the move.
+
+A plan view has an optional `north` (`project_north`, the default, or `true_north`) stored with its settings;
+`Coordinates::view_rotation` derives the turn of the drawing that points true north up. The viewport of the shell does not turn a
+plan yet, so the choice is stored and the property grid edits it, but the drawing stays in project north.
+
+Geometry beyond the precision distance (20 km when the project sets none) from the internal origin, measured in plan at the authored
+points of each element, is one warning of the register (kind Location) that names how many elements and how far the farthest lies;
+it clears when the model is recentered or the distance raised. Imports do not exist yet, so the check runs on whatever the document
+holds.

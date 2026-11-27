@@ -54,6 +54,10 @@ pub const WALL_DETACH_TOP: &str = "archbuilder.wall.detach_top";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRoof {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -415,6 +419,7 @@ fn create_roof(ctx: &mut Context<'_>, p: CreateRoof) -> Result<RoofCreated> {
         ],
     )?;
     crate::element_type::assign(ctx, id, TypeKind::Roof, roof_type)?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let (area, top) = derived_numbers(ctx, id)?;
     ctx.set_selection_after(vec![id]);

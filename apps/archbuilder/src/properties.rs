@@ -378,6 +378,102 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "base_x",
+        Message {
+            message_id: "ab-prop-base-x",
+        },
+    ),
+    (
+        "base_y",
+        Message {
+            message_id: "ab-prop-base-y",
+        },
+    ),
+    (
+        "base_z",
+        Message {
+            message_id: "ab-prop-base-z",
+        },
+    ),
+    (
+        "survey_x",
+        Message {
+            message_id: "ab-prop-survey-x",
+        },
+    ),
+    (
+        "survey_y",
+        Message {
+            message_id: "ab-prop-survey-y",
+        },
+    ),
+    (
+        "survey_z",
+        Message {
+            message_id: "ab-prop-survey-z",
+        },
+    ),
+    (
+        "true_north",
+        Message {
+            message_id: "ab-prop-true-north",
+        },
+    ),
+    (
+        "map_scale",
+        Message {
+            message_id: "ab-prop-map-scale",
+        },
+    ),
+    (
+        "crs",
+        Message {
+            message_id: "ab-prop-crs",
+        },
+    ),
+    (
+        "eastings",
+        Message {
+            message_id: "ab-prop-eastings",
+        },
+    ),
+    (
+        "northings",
+        Message {
+            message_id: "ab-prop-northings",
+        },
+    ),
+    (
+        "survey_height",
+        Message {
+            message_id: "ab-prop-survey-height",
+        },
+    ),
+    (
+        "precision_distance",
+        Message {
+            message_id: "ab-prop-precision-distance",
+        },
+    ),
+    (
+        "north",
+        Message {
+            message_id: "ab-prop-view-north",
+        },
+    ),
+    (
+        "project_north",
+        Message {
+            message_id: "ab-prop-north-project",
+        },
+    ),
+    (
+        "face",
+        Message {
+            message_id: "ab-prop-work-plane-face",
+        },
+    ),
+    (
         "degrees",
         Message {
             message_id: "ab-slope-degrees",
@@ -1535,6 +1631,13 @@ fn shown(
         types::PLAN_VIEW => {
             // The hidden elements are counted, not listed (Show hidden in view of the context
             // menu shows them again); the storey is shown for orientation.
+            // The grid overrides are set by `archbuilder.datum.set_view_extent`.
+            if fields.len() > types::plan_view::DATUM_VIEWS
+                && values.len() > types::plan_view::DATUM_VIEWS
+            {
+                fields.remove(types::plan_view::DATUM_VIEWS);
+                values.remove(types::plan_view::DATUM_VIEWS);
+            }
             if fields.len() > types::plan_view::HIDDEN && values.len() > types::plan_view::HIDDEN {
                 fields.remove(types::plan_view::HIDDEN);
                 values.remove(types::plan_view::HIDDEN);
@@ -1573,9 +1676,26 @@ fn shown(
         // where it comes from and whether it is active and shown.
         types::GRID | types::WORK_PLANE => {
             let hidden: &[usize] = if key == types::GRID {
-                &[types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL]
+                &[
+                    types::grid::BOTTOM_LEVEL,
+                    types::grid::TOP_LEVEL,
+                    types::grid::PATH,
+                ]
             } else {
-                &[types::work_plane::TARGET, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                &[
+                    types::work_plane::TARGET,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    types::work_plane::FACE_ELEMENT,
+                    types::work_plane::FACE,
+                ]
             };
             for at in hidden.iter().rev() {
                 if *at < fields.len() && *at < values.len() {

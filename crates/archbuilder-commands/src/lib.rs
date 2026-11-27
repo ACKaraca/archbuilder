@@ -23,6 +23,7 @@
 pub mod ceiling;
 pub mod circulation;
 pub mod clip;
+pub mod coordinates;
 pub mod curtain;
 pub mod datum;
 pub mod edit;
@@ -104,6 +105,7 @@ pub fn registry() -> Result<Registry> {
     ceiling::register(&mut registry)?;
     opening::register(&mut registry)?;
     datum::register(&mut registry)?;
+    coordinates::register(&mut registry)?;
     element_type::register(&mut registry)?;
     curtain::register(&mut registry)?;
     view::register(&mut registry)?;

@@ -262,6 +262,33 @@ pub mod project {
     pub const TEMPLATE: usize = 5;
     /// How slopes are shown and typed ([`crate::units::SlopeUnit`] code); appended in schema 1.1.
     pub const SLOPE_UNIT: usize = 6;
+    /// The x of the project base point, in internal coordinates, in meters; appended in schema
+    /// 1.2 with the rest of the location fields (see [`crate::coordinates`]), all optional.
+    pub const BASE_X: usize = 7;
+    /// The y of the project base point.
+    pub const BASE_Y: usize = 8;
+    /// The elevation of the project base point.
+    pub const BASE_Z: usize = 9;
+    /// The x of the survey point, in internal coordinates.
+    pub const SURVEY_X: usize = 10;
+    /// The y of the survey point.
+    pub const SURVEY_Y: usize = 11;
+    /// The elevation of the survey point.
+    pub const SURVEY_Z: usize = 12;
+    /// The angle from project north to true north, counterclockwise.
+    pub const TRUE_NORTH: usize = 13;
+    /// The scale factor from model to map lengths; 1 when absent.
+    pub const SCALE: usize = 14;
+    /// The coordinate reference system: an EPSG code (`EPSG:3067`) or a WKT text.
+    pub const CRS: usize = 15;
+    /// The eastings of the survey point in the coordinate reference system, in meters.
+    pub const EASTINGS: usize = 16;
+    /// The northings of the survey point, in meters.
+    pub const NORTHINGS: usize = 17;
+    /// The height of the survey point above the datum of the reference system, in meters.
+    pub const HEIGHT: usize = 18;
+    /// The distance from the internal origin beyond which geometry is reported, in meters.
+    pub const PRECISION_DISTANCE: usize = 19;
 }
 
 /// Field positions of `archbuilder.site`.
@@ -581,6 +608,11 @@ pub mod plan_view {
     pub const BOTTOM: usize = 17;
     /// The view depth relative to the level, in meters: elements down to it draw beyond the cut.
     pub const DEPTH: usize = 18;
+    /// The grids whose extent or heads this view overrides (records, see [`crate::view::DatumView`]);
+    /// appended in schema 1.1.
+    pub const DATUM_VIEWS: usize = 19;
+    /// Which north the view is oriented to ([`crate::view::North`] code); appended in schema 1.2.
+    pub const NORTH: usize = 20;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -604,6 +636,8 @@ pub const VIEW_DEPTH_RANGE: (f64, f64) = (-1000.0, 1000.0);
 pub const VIEW_SCALE_RANGE: (f64, f64) = (1.0, 10_000.0);
 /// The most elements one view hides.
 pub const MAX_HIDDEN: usize = 100_000;
+/// The most datum overrides one view holds.
+pub const MAX_PER_VIEW_DATUMS: usize = 20_000;
 
 /// Field positions of `archbuilder.ceiling`. The first seven are those of a floor, so the
 /// boundary is read and edited by the floor's code.
@@ -712,6 +746,9 @@ pub mod roof_extrusion {
     pub const Y: usize = 8;
     /// The profile: records of `u` (along the plane's axis) and `z` (above the storey's level).
     pub const PROFILE: usize = 9;
+    /// The work plane the roof was sketched on; while it is set and vertical the roof's plane
+    /// follows it. Appended in schema 1.1.
+    pub const WORK_PLANE: usize = 10;
 }
 
 /// Field positions of `archbuilder.floor_edge`.
@@ -752,6 +789,10 @@ pub mod grid {
     pub const TOP_LEVEL: usize = 9;
     /// Whether the grid is pinned.
     pub const PINNED: usize = 10;
+    /// The vertices between the start and the end of a multi-segment grid: records of `x`, `y`
+    /// and the `bulge` of the segment that arrives at the vertex (the grid's own bulge is that of
+    /// the last segment); appended in schema 1.1, absent for a grid of one segment.
+    pub const PATH: usize = 11;
 }
 
 /// Field positions of `archbuilder.reference_plane`.
@@ -788,6 +829,11 @@ pub mod work_plane {
     pub const ACTIVE: usize = 12;
     /// Whether the plane is displayed.
     pub const SHOWN: usize = 13;
+    /// The wall, floor or ceiling a plane from an element face takes its face from; appended in
+    /// schema 1.1.
+    pub const FACE_ELEMENT: usize = 14;
+    /// Which face of that element ([`crate::datum::FaceSide`] code); appended in schema 1.1.
+    pub const FACE: usize = 15;
 }
 
 /// Field positions of `archbuilder.vertical_opening`.
@@ -1049,7 +1095,7 @@ fn declaration(key: &str, fields: Vec<FieldDecl>) -> Result<TypeDecl> {
 /// The registry's errors; none occur for these declarations.
 #[allow(clippy::too_many_lines, reason = "one field list per type")]
 pub fn register(registry: &mut TypeRegistry) -> Result<()> {
-    let project = vec![
+    let mut project = vec![
         name_field("identity"),
         text_field("number", 64),
         text_field("client", NAME_BYTES),
@@ -1073,6 +1119,28 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         .in_aspect("units")
         .since_minor(1),
     ];
+    // The location of the project: where its base point and survey point are, which way north
+    // is and where the survey point is on the map. Optional, so older files load unchanged.
+    let located = |name: &str, range: (f64, f64)| optional_length(name, range).since_minor(2);
+    project.extend([
+        located("base_x", COORDINATE_RANGE),
+        located("base_y", COORDINATE_RANGE),
+        located("base_z", ELEVATION_RANGE),
+        located("survey_x", COORDINATE_RANGE),
+        located("survey_y", COORDINATE_RANGE),
+        located("survey_z", ELEVATION_RANGE),
+        angle_field("true_north").optional().since_minor(2),
+        FieldDecl::new("map_scale", ValueType::F64)
+            .optional()
+            .with_bound(real(crate::coordinates::SCALE_RANGE))
+            .in_aspect("geometry")
+            .since_minor(2),
+        text_field("crs", crate::coordinates::MAX_CRS).since_minor(2),
+        located("eastings", crate::coordinates::MAP_RANGE),
+        located("northings", crate::coordinates::MAP_RANGE),
+        located("survey_height", ELEVATION_RANGE),
+        located("precision_distance", (1.0, COORDINATE_RANGE.1)),
+    ]);
     let site = vec![name_field("identity")];
     let building = vec![
         name_field("identity"),
@@ -1204,6 +1272,11 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (LEVEL, level),
         (WALL, wall),
     ] {
+        let mut fields = fields;
+        if ON_WORK_PLANE.contains(&key) {
+            let field = work_plane_ref(&fields);
+            fields.push(field);
+        }
         let mut decl = declaration(key, fields)?;
         match key {
             WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
@@ -1312,6 +1385,41 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         length_field("depth", Some(real(VIEW_DEPTH_RANGE)))
             .with_default(length(-crate::view::BOTTOM_MARGIN))
             .in_aspect("range"),
+    );
+    let mut grid_ref = reference_to(GRID);
+    grid_ref.rule.on_delete = OnDelete::Clear;
+    grid_ref.rule.cardinality = Cardinality::Optional;
+    fields.push(
+        FieldDecl::new(
+            "datum_views",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("datum", ValueType::Reference(grid_ref)).optional(),
+                optional_length("start_inset", crate::view::INSET_RANGE),
+                optional_length("end_inset", crate::view::INSET_RANGE),
+                FieldDecl::new("head_start", ValueType::Bool).optional(),
+                FieldDecl::new("head_end", ValueType::Bool).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_PER_VIEW_DATUMS as u64,
+        })
+        .optional()
+        .in_aspect("graphics")
+        .since_minor(1),
+    );
+    fields.push(
+        FieldDecl::new(
+            "north",
+            ValueType::Enum(
+                crate::view::North::ALL
+                    .iter()
+                    .map(|n| EnumVariant::new(n.name(), n.code()))
+                    .collect(),
+            ),
+        )
+        .optional()
+        .in_aspect("graphics")
+        .since_minor(2),
     );
     fields
 }
@@ -1490,6 +1598,22 @@ fn grid_fields() -> Vec<FieldDecl> {
         extent_field("bottom_level"),
         extent_field("top_level"),
         pinned_field(0),
+        FieldDecl::new(
+            "path",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+                FieldDecl::new("bulge", ValueType::F64)
+                    .with_default(Value::F64(0.0))
+                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::datum::MAX_PATH as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
     ]
 }
 
@@ -1552,7 +1676,59 @@ fn work_plane_fields() -> Vec<FieldDecl> {
     }
     fields.push(bool_field("active", false).in_aspect("identity"));
     fields.push(bool_field("shown", false));
+    // A plane from an element face goes with the element.
+    let mut element = reference_to(WALL);
+    element.targets = [WALL, FLOOR, CEILING]
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    element.rule.on_delete = OnDelete::Cascade;
+    element.rule.cardinality = Cardinality::Optional;
+    fields.push(
+        FieldDecl::new("face_element", ValueType::Reference(element))
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
+    );
+    fields.push(
+        FieldDecl::new(
+            "face",
+            ValueType::Enum(
+                crate::datum::FaceSide::ALL
+                    .iter()
+                    .map(|s| EnumVariant::new(s.name(), s.code()))
+                    .collect(),
+            ),
+        )
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+    );
     fields
+}
+
+/// The element types whose sketch or plane is made on a work plane, and so store it.
+pub const ON_WORK_PLANE: [&str; 7] = [
+    FLOOR,
+    CEILING,
+    ROOF,
+    ROOF_EXTRUSION,
+    RAILING,
+    SHAFT,
+    VERTICAL_OPENING,
+];
+
+/// The work plane an element was sketched on, appended after the latest field of `fields`: an
+/// optional reference that clears when the plane is deleted, so older files load without one.
+fn work_plane_ref(fields: &[FieldDecl]) -> FieldDecl {
+    let minor = fields.iter().map(|f| f.since_minor).max().unwrap_or(0) + 1;
+    let mut target = reference_to(WORK_PLANE);
+    target.rule.on_delete = OnDelete::Clear;
+    target.rule.cardinality = Cardinality::Optional;
+    FieldDecl::new("work_plane", ValueType::Reference(target))
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(minor)
 }
 
 fn vertical_opening_fields() -> Vec<FieldDecl> {
@@ -2173,6 +2349,19 @@ mod tests {
                     ("length_unit", project::LENGTH_UNIT),
                     ("template", project::TEMPLATE),
                     ("slope_unit", project::SLOPE_UNIT),
+                    ("base_x", project::BASE_X),
+                    ("base_y", project::BASE_Y),
+                    ("base_z", project::BASE_Z),
+                    ("survey_x", project::SURVEY_X),
+                    ("survey_y", project::SURVEY_Y),
+                    ("survey_z", project::SURVEY_Z),
+                    ("true_north", project::TRUE_NORTH),
+                    ("map_scale", project::SCALE),
+                    ("crs", project::CRS),
+                    ("eastings", project::EASTINGS),
+                    ("northings", project::NORTHINGS),
+                    ("survey_height", project::HEIGHT),
+                    ("precision_distance", project::PRECISION_DISTANCE),
                 ],
             ),
             (SITE, &[("name", site::NAME)]),
@@ -2275,7 +2464,16 @@ mod tests {
             for (name, at) in fields {
                 assert_eq!(decl.schema.fields[*at].name, *name, "{key}");
             }
-            assert_eq!(decl.schema.fields.len(), fields.len(), "{key}");
+            // A type whose sketch is made on a work plane ends with the reference to it.
+            let stored = usize::from(ON_WORK_PLANE.iter().any(|k| *k == key));
+            assert_eq!(decl.schema.fields.len(), fields.len() + stored, "{key}");
+            if stored == 1 {
+                assert_eq!(decl.schema.fields[fields.len()].name, "work_plane", "{key}");
+            }
         }
+        assert_eq!(
+            registry.get(ROOF_EXTRUSION).unwrap().schema.fields[roof_extrusion::WORK_PLANE].name,
+            "work_plane"
+        );
     }
 }

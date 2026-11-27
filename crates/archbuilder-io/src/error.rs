@@ -110,6 +110,15 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-grid-not-written",
     };
+    /// The geodetic reference of the project (coordinate system, survey point position, true
+    /// north): the IFC writer of the foundation has no map conversion or projected coordinate
+    /// system entity yet, so it is left out.
+    pub const GEOREFERENCE_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.georeference_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-georeference-not-written",
+    };
     /// A reference plane or work plane: drawing aids with no IFC entity, left out.
     pub const DATUM_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.datum_not_written",
