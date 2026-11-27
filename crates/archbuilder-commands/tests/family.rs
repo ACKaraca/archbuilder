@@ -39,9 +39,14 @@ struct Env {
 
 impl Env {
     fn new(name: &str, project: bool) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("archbuilder-fam7-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        // Unique per instance: `package` opens nested environments with repeated names, and tests
+        // run in parallel, so a name-only path would let one test delete another's directory.
+        static DIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = DIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "archbuilder-fam7-{name}-{}-{unique}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let document = Document::open(
             Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
