@@ -52,6 +52,7 @@ pub mod extract_floor;
 pub mod extract_floor_edge;
 pub mod extract_insert;
 pub mod extract_level;
+pub mod extract_model_view;
 pub mod extract_roof;
 pub mod extract_roof_extrusion;
 pub mod extract_roof_parts;
@@ -478,6 +479,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_view::extract_view(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.model_view".into(),
+        types: vec![archbuilder_model::types::MODEL_VIEW.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_model_view::extract(snapshot, object, cancel)
             })
         }),
     })?;

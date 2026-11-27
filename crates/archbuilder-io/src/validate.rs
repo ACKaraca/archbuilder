@@ -171,6 +171,8 @@ fn kind_of(kind: ElementKind) -> &'static str {
         ElementKind::CurtainWall => "IFCCURTAINWALL",
         ElementKind::Plate => "IFCPLATE",
         ElementKind::Member => "IFCMEMBER",
+        ElementKind::TransportElement => "IFCTRANSPORTELEMENT",
+        ElementKind::PipeSegment => "IFCPIPESEGMENT",
     }
 }
 

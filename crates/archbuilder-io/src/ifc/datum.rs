@@ -94,9 +94,10 @@ impl Mapper<'_> {
                 self.lose(reasons::GRID_MULTI_SEGMENT, "IFCGRIDAXIS", &object);
                 continue;
             }
+            let line = matches!(curve, AxisCurve::Line { .. });
             let mut axis = GridAxis::new(&grid.label, curve);
             axis.same_sense = same_sense;
-            if matches!(curve, AxisCurve::Line { .. }) {
+            if line {
                 let angle = (grid.end[1] - grid.start[1]).atan2(grid.end[0] - grid.start[0]);
                 straight.push((angle, axis));
             } else {

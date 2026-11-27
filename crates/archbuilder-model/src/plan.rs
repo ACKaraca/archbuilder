@@ -35,8 +35,8 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, DOOR, ELEVATOR, FLOOR, LEVEL, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR, STOREY,
-    VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
+    CEILING, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR,
+    STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
 use crate::wall::Wall;
@@ -48,6 +48,8 @@ pub const AREA_KEY: u32 = 0xFFFF_0000;
 /// The sub-key of the first tread line of a stair arriving from below.
 pub const TREAD_KEY: u32 = 1100;
 const CHORD: f64 = 0.01;
+/// The drawing category of the markers of sections and elevations, which no view hides.
+pub const MARKER_CATEGORY: &str = "view_marker";
 const MAX_OBJECTS: usize = 200_000;
 
 /// A temporary display state laid over a view's own settings (the application's hide and
@@ -269,6 +271,18 @@ impl PlanSource<'_> {
             );
         }
         out.extend(self.rising_from_below());
+        // The markers of the building's sections and elevations.
+        if let Some(building) = spatial::get(s, self.storey).and_then(|o| o.header.owner) {
+            out.extend(
+                crate::model_view::markers(s, building)
+                    .iter()
+                    .filter(|v| {
+                        crate::model_view::ModelView::from_values(&v.values)
+                            .is_some_and(|m| m.is_drawing())
+                    })
+                    .map(|o| o.id),
+            );
+        }
         // Shafts of every storey whose span reaches this level.
         out.extend(
             spatial::objects(s, SHAFT)
@@ -759,16 +773,23 @@ impl ViewSource for PlanSource<'_> {
     }
 
     fn object(&self, id: ObjectId, def: &ViewDef) -> Result<Option<SourceObject>> {
-        let Some(object) = spatial::get(self.snapshot, id) else {
-            return Ok(None);
-        };
+        Ok(self
+            .made(id, def)
+            .map(|o| without_own_overhead(o, self.cut)))
+    }
+}
+
+impl PlanSource<'_> {
+    /// What `id` gives the drawing, before the parts of a cut element above the cut are dropped.
+    fn made(&self, id: ObjectId, def: &ViewDef) -> Option<SourceObject> {
+        let object = spatial::get(self.snapshot, id)?;
         let key = spatial::type_of(self.snapshot, id).unwrap_or_default();
         let detail = match def.detail {
             DetailLevel::Coarse => Detail::Coarse,
             DetailLevel::Medium => Detail::Medium,
             _ => Detail::Fine,
         };
-        let made = match key.as_str() {
+        match key.as_str() {
             WALL => self.wall_object(&object, detail),
             FLOOR => self.floor_object(&object),
             ROOF => crate::roof::Derived::of(self.snapshot, &object)
@@ -783,9 +804,60 @@ impl ViewSource for PlanSource<'_> {
             SHAFT | VERTICAL_OPENING => self.opening_object(&object, &key),
             ELEVATOR => self.elevator_object(&object),
             ROOM => self.room_object(id),
+            MODEL_VIEW => self.marker_object(&object),
             _ => None,
+        }
+    }
+
+    /// The marker of a section or elevation in plan: a section's line with a triangle at each end
+    /// pointing the way it looks, an elevation's circle with a triangle pointing at the building.
+    /// Its size is fixed on the sheet.
+    fn marker_object(&self, object: &Object) -> Option<SourceObject> {
+        use crate::model_view::{ModelView, ViewKind};
+        let view = ModelView::from_values(&object.values)?;
+        let (a, b) = view.line?;
+        let look = view.looking();
+        let size = 0.004 * self.scale;
+        let mut out = SourceObject::new(MARKER_CATEGORY, styles(self.scale, self.tone));
+        let triangle = |at: [f64; 2]| {
+            let side = [look[1] * size * 0.6, -look[0] * size * 0.6];
+            let tip = [at[0] + look[0] * size * 1.6, at[1] + look[1] * size * 1.6];
+            vec![
+                [at[0] + side[0], at[1] + side[1]],
+                tip,
+                [at[0] - side[0], at[1] - side[1]],
+            ]
         };
-        Ok(made.map(|o| without_own_overhead(o, self.cut)))
+        let mut symbols: Vec<(Vec<[f64; 2]>, bool)> = Vec::new();
+        match view.kind {
+            ViewKind::Section => {
+                symbols.push((vec![a, b], false));
+                symbols.push((triangle(a), true));
+                symbols.push((triangle(b), true));
+            }
+            _ => {
+                let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                let circle: Vec<[f64; 2]> = (0..24)
+                    .map(|k| {
+                        let t = f64::from(k) * std::f64::consts::TAU / 24.0;
+                        [mid[0] + size * t.cos(), mid[1] + size * t.sin()]
+                    })
+                    .collect();
+                symbols.push((circle, true));
+                symbols.push((triangle(mid), true));
+            }
+        }
+        for (k, (points, closed)) in symbols.into_iter().enumerate() {
+            if let Some(c) = curve(&points, closed) {
+                let key = if k == 0 {
+                    AREA_KEY
+                } else {
+                    1 + u32::try_from(k).unwrap_or(0)
+                };
+                out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, key));
+            }
+        }
+        Some(out)
     }
 }
 
@@ -844,6 +916,7 @@ fn deps(snapshot: &Snapshot, view: &Arc<Object>, pass: Pass) -> Deps {
             SHAFT,
             ELEVATOR,
             VERTICAL_OPENING,
+            MODEL_VIEW,
         ],
     };
     for key in keys {
@@ -1057,6 +1130,186 @@ pub fn underlay(
         return None;
     }
     Some(stored)
+}
+
+// ----- sections and elevations ----------------------------------------------------------------
+
+/// The storey `id` stands on: its owner, or its owner's owner (a door's wall, an opening's floor).
+fn storey_of_element(snapshot: &Snapshot, id: ObjectId) -> Option<ObjectId> {
+    let mut at = spatial::get(snapshot, id)?.header.owner?;
+    for _ in 0..4 {
+        if spatial::type_of(snapshot, at).as_deref() == Some(STOREY) {
+            return Some(at);
+        }
+        at = spatial::get(snapshot, at)?.header.owner?;
+    }
+    None
+}
+
+/// The objects of a building in a vertical drawing: what the plan views of its storeys draw, but
+/// with the solids only (the plan symbols are drawn in plan coordinates and have no place in a
+/// vertical frame), every part of an element (none is dropped above a cut) and no rooms.
+struct VerticalSource<'a> {
+    snapshot: &'a Snapshot,
+    building: ObjectId,
+    scale: f64,
+}
+
+impl VerticalSource<'_> {
+    fn storey_source(&self, storey: ObjectId) -> Option<PlanSource<'_>> {
+        let object = spatial::get(self.snapshot, storey)?;
+        let level = spatial::storey_elevation(self.snapshot, &object);
+        Some(PlanSource {
+            snapshot: self.snapshot,
+            storey,
+            level,
+            level_id: spatial::level_of(self.snapshot, &object).map(|l| l.id),
+            bottom: level - 1.0,
+            cut: level + crate::view::DEFAULT_CUT,
+            top: Some(level + crate::view::DEFAULT_TOP),
+            scale: self.scale,
+            tone: 1.0,
+            pass: Pass::Geometry,
+            rooms: std::cell::OnceCell::new(),
+        })
+    }
+
+    fn ids(&self) -> Vec<ObjectId> {
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for entry in spatial::storeys(self.snapshot, self.building) {
+            let Some(source) = self.storey_source(entry.storey.id) else {
+                continue;
+            };
+            for id in source.ids() {
+                if spatial::type_of(self.snapshot, id).as_deref() != Some(MODEL_VIEW)
+                    && seen.insert(id)
+                {
+                    out.push(id);
+                }
+            }
+        }
+        out.truncate(MAX_OBJECTS);
+        out
+    }
+}
+
+impl ViewSource for VerticalSource<'_> {
+    fn objects(&self, _: &ViewDef) -> Result<Vec<ObjectId>> {
+        Ok(self.ids())
+    }
+
+    fn object(&self, id: ObjectId, def: &ViewDef) -> Result<Option<SourceObject>> {
+        let Some(source) = storey_of_element(self.snapshot, id).and_then(|s| self.storey_source(s))
+        else {
+            return Ok(None);
+        };
+        Ok(source.made(id, def).and_then(|mut o| {
+            o.symbols.clear();
+            (!o.parts.is_empty()).then_some(o)
+        }))
+    }
+}
+
+static VERTICAL: Store<ViewResult> = Mutex::new(Vec::new());
+
+/// The definition of the section or elevation `settings`: its frame, the cut at the line, the far
+/// clip behind it, nothing in front, the crop to the line and the vertical range, and the
+/// visibility of the view.
+fn vertical_definition(
+    settings: &crate::model_view::ModelView,
+    filtered: &[ObjectId],
+) -> Result<ViewDef> {
+    let mut def = ViewDef::plan(PlanRange::new(0.0, -settings.depth, None));
+    def.direction = settings.direction()?;
+    def.scale = settings.scale;
+    def.detail = match settings.detail {
+        Detail::Coarse => DetailLevel::Coarse,
+        Detail::Medium => DetailLevel::Medium,
+        Detail::Fine => DetailLevel::Fine,
+    };
+    if settings.crop {
+        // Without a vertical range the crop is the line's length only.
+        let far = VERTICAL_REACH;
+        def.crop = Some(arc_view::crop_rectangle(
+            arc_base::math::Point2::new(0.0, settings.bottom.unwrap_or(-far)),
+            arc_base::math::Point2::new(settings.width(), settings.top.unwrap_or(far)),
+            &Tolerance::DEFAULT,
+        )?);
+    }
+    for category in Category::ALL {
+        if !settings.shows(category) {
+            def.overrides
+                .by_category
+                .insert(category.key().to_owned(), hide());
+        }
+    }
+    for id in settings.hidden.iter().chain(filtered) {
+        def.overrides.by_object.insert(*id, hide());
+    }
+    Ok(def)
+}
+
+/// How far up and down an uncropped vertical range reaches, in meters.
+const VERTICAL_REACH: f64 = 10_000.0;
+
+/// The drawing of the section or elevation record `view` with the temporary `filter`, in view
+/// coordinates (x along the line from its start, y the elevation): rebuilt only when what it reads
+/// or the filter changed. `None` for a record that is not a section or elevation of a building, or
+/// a cancelled build; a build that fails gives an empty drawing whose diagnostic says why.
+#[must_use]
+pub fn build_vertical(
+    snapshot: &Snapshot,
+    view: &Arc<Object>,
+    filter: &Filter,
+    cancel: &Cancel,
+) -> Option<Arc<ViewResult>> {
+    let settings = crate::model_view::ModelView::from_values(&view.values)
+        .filter(crate::model_view::ModelView::is_drawing)?;
+    let building = view.header.owner?;
+    let source = VerticalSource {
+        snapshot,
+        building,
+        scale: settings.scale,
+    };
+    let key = filter.key();
+    cleanup::keep_only(&VERTICAL, view.id, key);
+    let stored = cached(
+        &VERTICAL,
+        view.id,
+        key,
+        deps(snapshot, view, Pass::Geometry),
+        || {
+            let filtered: Vec<ObjectId> = if filter.is_empty() {
+                Vec::new()
+            } else {
+                source
+                    .ids()
+                    .into_iter()
+                    .filter(|id| !filter.shows(*id))
+                    .collect()
+            };
+            match vertical_definition(&settings, &filtered) {
+                Ok(def) => build_view(&def, &source, &Tolerance::DEFAULT, cancel)
+                    .unwrap_or_else(|error| failed(view.id, error)),
+                Err(error) => failed(view.id, error),
+            }
+        },
+    );
+    if cancel.is_cancelled() {
+        cleanup::forget(&VERTICAL, view.id, key);
+        return None;
+    }
+    Some(stored)
+}
+
+fn failed(view: ObjectId, error: arc_base::Error) -> ViewResult {
+    let mut failed = ViewResult::default();
+    failed.diagnostics.push(arc_view::Diagnostic {
+        object: view,
+        error,
+    });
+    failed
 }
 
 // ----- picking ----------------------------------------------------------------------------------

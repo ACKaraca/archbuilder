@@ -403,6 +403,16 @@ ab-cmd-view-defaults-label = Varsayılan Plan Görünümlerini Oluştur
 ab-cmd-view-defaults-description = Plan görünümü olmayan her kata varsayılan görünümünü verir.
 ab-cmd-view-set-label = Görünüm Ayarını Değiştir
 ab-cmd-view-set-description = Bir plan görünümünün tek bir ayarını değiştirir; görünümü olmayan bir kat için önce görünümünü oluşturur.
+ab-cmd-view-create-3d-label = Yeni 3B Görünüm
+ab-cmd-view-create-3d-description = Kendi kamerası, görsel stili, kesit kutusu ve görünürlüğü olan kayıtlı bir 3B görünüm oluşturur.
+ab-cmd-view-create-section-label = Yeni Kesit
+ab-cmd-view-create-section-description = Plandaki bir çizgi boyunca, yönünün soluna bakan ve uzak kırpma mesafesi olan bir kesit oluşturur.
+ab-cmd-view-create-elevations-label = Yeni Cepheler
+ab-cmd-view-create-elevations-description = Bir binanın, her biri sınırlarının bir yüzüne bakan dört cephesini oluşturur.
+ab-cmd-view-set-camera-label = Kamerayı Görünüme Kaydet
+ab-cmd-view-set-camera-description = Bir 3B görünüme kamera (göz, hedef, izdüşüm, görüş açısı) kaydeder.
+ab-cmd-view-set-section-box-label = Kesit Kutusu
+ab-cmd-view-set-section-box-description = Bir 3B görünümün kesit kutusunu açar veya kapatır ve köşelerini belirler; köşesiz açıldığında modelin sınırlarını alır.
 
 ab-cmd-set-create-label = Seçim Kümesi Oluştur
 ab-cmd-set-create-description = Belgede adlandırılmış bir seçim kümesi kaydeder: verilen öğeler, yoksa seçili öğeler.

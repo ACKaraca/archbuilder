@@ -193,9 +193,14 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     if !other {
         return Vec::new();
     }
+    // The open sections and elevations are drawn from the model too.
     let mut out: Vec<ObjectId> = crate::plan_state::open()
         .into_iter()
-        .filter_map(|id| crate::plan_state::resolve(snapshot, id))
+        .filter_map(|id| {
+            crate::plan_state::resolve(snapshot, id).or_else(|| {
+                archbuilder_model::model_view::is_model_view(snapshot, id).then_some(id)
+            })
+        })
         .collect();
     out.extend(spatial::objects(snapshot, STOREY).iter().map(|s| s.id));
     out

@@ -36,6 +36,10 @@ pub const LEVEL: &str = "archbuilder.level";
 /// The type key of the plan view of a storey.
 pub const PLAN_VIEW: &str = "archbuilder.plan_view";
 
+/// The type key of a model view other than a plan: a saved 3D view, a section or an elevation
+/// (see [`crate::model_view`]).
+pub const MODEL_VIEW: &str = "archbuilder.model_view";
+
 /// The type key of a selection set: a named list of elements, owned by the project.
 pub const SELECTION_SET: &str = "archbuilder.selection_set";
 
@@ -195,7 +199,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 36] = [
+pub const KEYS: [&str; 37] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -232,6 +236,7 @@ pub const KEYS: [&str; 36] = [
     ELEVATOR,
     DORMER,
     ROOF_EDGE,
+    MODEL_VIEW,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -636,6 +641,50 @@ pub mod plan_view {
     pub const SHOW_RAILINGS: usize = 21;
     /// Whether ramps are drawn; appended in schema 1.3.
     pub const SHOW_RAMPS: usize = 22;
+}
+
+/// Field positions of `archbuilder.model_view` (see [`crate::model_view::ModelView`]).
+pub mod model_view {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// What the view shows ([`crate::model_view::ViewKind`] code).
+    pub const KIND: usize = 1;
+    /// The scale denominator.
+    pub const SCALE: usize = 2;
+    /// The detail level.
+    pub const DETAIL: usize = 3;
+    /// The visual style ([`crate::model_view::VisualStyle`] code).
+    pub const STYLE: usize = 4;
+    /// The elements hidden in this view (records with one optional reference each).
+    pub const HIDDEN: usize = 5;
+    /// The first category flag, one per [`crate::view::Category::ALL`] in that order.
+    pub const CATEGORIES: usize = 6;
+    /// Whether the camera is a perspective one.
+    pub const PERSPECTIVE: usize = 17;
+    /// The eye's x; y and z follow.
+    pub const EYE: usize = 18;
+    /// The target's x; y and z follow.
+    pub const TARGET: usize = 21;
+    /// The vertical field of view.
+    pub const FOV: usize = 24;
+    /// Whether the section box crops the view.
+    pub const SECTION_BOX: usize = 25;
+    /// The section box's lowest x; y and z follow.
+    pub const BOX_MIN: usize = 26;
+    /// The section box's highest x; y and z follow.
+    pub const BOX_MAX: usize = 29;
+    /// The x of the start of the line of a section or elevation; y follows.
+    pub const START: usize = 32;
+    /// The x of the end of the line; y follows.
+    pub const END: usize = 34;
+    /// The far clip distance behind the cut.
+    pub const DEPTH: usize = 36;
+    /// Whether the drawing is cropped.
+    pub const CROP: usize = 37;
+    /// The lowest elevation drawn.
+    pub const BOTTOM: usize = 38;
+    /// The highest elevation drawn.
+    pub const TOP: usize = 39;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1365,6 +1414,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
         (SELECTION_SET, selection_set_fields()),
+        (MODEL_VIEW, model_view_fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
         (GRID, grid_fields()),
@@ -1445,6 +1495,122 @@ fn selection_set_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("data"),
     ]
+}
+
+/// The fields of a model view: kind, graphics, the per-view visibility of a plan view, the camera
+/// and section box of a 3D view and the line, far clip and crop of a section or elevation.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one declaration per field, in record order"
+)]
+fn model_view_fields() -> Vec<FieldDecl> {
+    use crate::model_view::{DEPTH_RANGE, FOV_RANGE, ViewKind, VisualStyle};
+    let mut hidden = reference_to(ELEMENTS[0]);
+    hidden.targets = ELEMENTS
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    hidden.rule.on_delete = OnDelete::Clear;
+    hidden.rule.cardinality = Cardinality::Optional;
+    let enumeration = |name: &str, variants: Vec<EnumVariant>, default: u32| {
+        FieldDecl::new(name, ValueType::Enum(variants))
+            .with_default(Value::Enum(default))
+            .in_aspect("graphics")
+    };
+    let flag = |name: &str, on: bool, aspect: &str| {
+        FieldDecl::new(name, ValueType::Bool)
+            .with_default(Value::Bool(on))
+            .in_aspect(aspect)
+    };
+    let coordinate =
+        |name: &str, aspect: &str| optional_length(name, COORDINATE_RANGE).in_aspect(aspect);
+    let mut fields = vec![
+        name_field("identity"),
+        enumeration(
+            "kind",
+            ViewKind::ALL
+                .iter()
+                .map(|k| EnumVariant::new(k.name(), k.code()))
+                .collect(),
+            ViewKind::ThreeD.code(),
+        )
+        .in_aspect("identity"),
+        FieldDecl::new("scale", ValueType::F64)
+            .with_default(Value::F64(crate::view::DEFAULT_SCALE))
+            .with_bound(real(VIEW_SCALE_RANGE))
+            .in_aspect("graphics"),
+        enumeration(
+            "detail",
+            crate::view::Detail::ALL
+                .iter()
+                .map(|d| EnumVariant::new(d.name(), d.code()))
+                .collect(),
+            crate::view::Detail::Medium.code(),
+        ),
+        enumeration(
+            "style",
+            VisualStyle::ALL
+                .iter()
+                .map(|v| EnumVariant::new(v.name(), v.code()))
+                .collect(),
+            VisualStyle::Shaded.code(),
+        ),
+        FieldDecl::new(
+            "hidden",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("object", ValueType::Reference(hidden)).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_HIDDEN as u64,
+        })
+        .optional()
+        .in_aspect("graphics"),
+    ];
+    fields.extend(
+        crate::view::Category::ALL
+            .iter()
+            .map(|c| flag(c.field(), true, "graphics")),
+    );
+    fields.push(
+        FieldDecl::new("perspective", ValueType::Bool)
+            .optional()
+            .in_aspect("camera"),
+    );
+    for name in [
+        "eye_x", "eye_y", "eye_z", "target_x", "target_y", "target_z",
+    ] {
+        fields.push(coordinate(name, "camera"));
+    }
+    fields.push(
+        FieldDecl::new("fov", ValueType::Quantity(Dimension::ANGLE))
+            .optional()
+            .with_bound(real(FOV_RANGE))
+            .in_aspect("camera"),
+    );
+    fields.push(flag("section_box", false, "section_box"));
+    for name in [
+        "box_min_x",
+        "box_min_y",
+        "box_min_z",
+        "box_max_x",
+        "box_max_y",
+        "box_max_z",
+    ] {
+        fields.push(coordinate(name, "section_box"));
+    }
+    for name in ["start_x", "start_y", "end_x", "end_y"] {
+        fields.push(coordinate(name, "geometry"));
+    }
+    fields.push(
+        length_field("depth", Some(real(DEPTH_RANGE)))
+            .with_default(length(crate::model_view::SECTION_DEPTH))
+            .in_aspect("range"),
+    );
+    fields.push(flag("crop", true, "range"));
+    fields.push(optional_length("bottom", ELEVATION_RANGE).in_aspect("range"));
+    fields.push(optional_length("top", ELEVATION_RANGE).in_aspect("range"));
+    fields
 }
 
 /// The fields of a plan view: the range, the scale, the detail level, the underlay, one flag per

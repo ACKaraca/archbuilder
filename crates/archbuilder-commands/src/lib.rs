@@ -34,6 +34,7 @@ pub mod floor;
 pub mod floor_edge;
 pub mod floor_slope;
 pub mod insert;
+pub mod model_view;
 pub mod modify;
 pub mod opening;
 pub mod roof;
@@ -113,6 +114,7 @@ pub fn registry() -> Result<Registry> {
     element_type::register(&mut registry)?;
     curtain::register(&mut registry)?;
     view::register(&mut registry)?;
+    model_view::register(&mut registry)?;
     selection::register(&mut registry)?;
     stats::register(&mut registry)?;
     Ok(registry)

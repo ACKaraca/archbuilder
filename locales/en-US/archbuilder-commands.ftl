@@ -404,6 +404,16 @@ ab-cmd-view-defaults-label = Make Default Plan Views
 ab-cmd-view-defaults-description = Gives every storey without a plan view its default view.
 ab-cmd-view-set-label = Change View Setting
 ab-cmd-view-set-description = Sets one setting of a plan view; for a storey without a view, makes its view first.
+ab-cmd-view-create-3d-label = New 3D View
+ab-cmd-view-create-3d-description = Makes a saved 3D view with its own camera, visual style, section box and visibility.
+ab-cmd-view-create-section-label = New Section
+ab-cmd-view-create-section-description = Makes a section along a line in plan, looking to the left of its direction, with a far clip distance.
+ab-cmd-view-create-elevations-label = New Elevations
+ab-cmd-view-create-elevations-description = Makes the four elevations of a building, one facing each side of its extent.
+ab-cmd-view-set-camera-label = Save Camera to View
+ab-cmd-view-set-camera-description = Stores a camera (eye, target, projection, field of view) in a 3D view.
+ab-cmd-view-set-section-box-label = Section Box
+ab-cmd-view-set-section-box-description = Switches the section box of a 3D view on or off and sets its corners; switched on without corners, it takes the model's extent.
 
 ab-cmd-set-create-label = Create Selection Set
 ab-cmd-set-create-description = Saves a named selection set in the document: the given elements, else the selected ones.

@@ -2,7 +2,8 @@
 //! `archbuilder.view.delete` (the last view of a storey stays), `archbuilder.view.hide_elements`
 //! and `archbuilder.view.show_elements` (the elements hidden in one view), and
 //! `archbuilder.view.ensure_defaults`, which gives a storey without a view its default one, and
-//! `archbuilder.view.set`, which sets one setting of a view.
+//! `archbuilder.view.set`, which sets one setting of a view. Duplicate, rename, delete, hide, show
+//! and set also take the model views of [`crate::model_view`] (3D views, sections, elevations).
 //!
 //! Each is one transaction, so one undo step. Settings such as the cut height, the scale and the
 //! category flags are edited with `archbuilder.property.set` or `archbuilder.view.set`. A storey
@@ -13,8 +14,9 @@
 use arc_base::{Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, Registry};
 use arc_doc::{FieldPath, Value};
+use archbuilder_model::model_view::ModelView;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{PLAN_VIEW, STOREY};
+use archbuilder_model::types::{MODEL_VIEW, PLAN_VIEW, STOREY};
 use archbuilder_model::view::{self, PlanView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,7 +45,7 @@ pub const VIEW_SET: &str = "archbuilder.view.set";
 /// one undo step.
 pub(crate) fn real_view(ctx: &mut Context<'_>, id: ObjectId) -> Result<ObjectId> {
     match spatial::type_of(ctx.snapshot(), id).as_deref() {
-        Some(PLAN_VIEW) => Ok(id),
+        Some(PLAN_VIEW | MODEL_VIEW) => Ok(id),
         Some(STOREY) => {
             if let Some(first) = view::of_storey(ctx.snapshot(), id).first() {
                 return Ok(first.id);
@@ -131,13 +133,16 @@ pub struct DefaultsMade {
 
 fn duplicate(ctx: &mut Context<'_>, p: DuplicateView) -> Result<ViewMade> {
     let source = real_view(ctx, p.view.0)?;
-    let source = expect(ctx.snapshot(), source, PLAN_VIEW)?;
-    let settings =
-        PlanView::from_values(&source.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let model = spatial::type_of(ctx.snapshot(), source).as_deref() == Some(MODEL_VIEW);
+    let key = if model { MODEL_VIEW } else { PLAN_VIEW };
+    let source = expect(ctx.snapshot(), source, key)?;
+    let base = archbuilder_model::types::text(&source.values, 0)
+        .unwrap_or_default()
+        .to_owned();
     let siblings = source
         .header
         .owner
-        .map(|s| view::of_storey(ctx.snapshot(), s))
+        .map(|s| spatial::children(ctx.snapshot(), key, s))
         .unwrap_or_default();
     let taken = |name: &str| {
         siblings.iter().any(|v| {
@@ -148,12 +153,20 @@ fn duplicate(ctx: &mut Context<'_>, p: DuplicateView) -> Result<ViewMade> {
     let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => name.to_owned(),
         None => (2..)
-            .map(|n| format!("{} {n}", settings.name))
+            .map(|n| format!("{base} {n}"))
             .find(|n| !taken(n))
             .unwrap_or_default(),
     };
-    let copy = PlanView { name, ..settings };
-    let id = create(ctx, PLAN_VIEW, source.header.owner, copy.values())?;
+    let values = if model {
+        let settings = ModelView::from_values(&source.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        ModelView { name, ..settings }.values()
+    } else {
+        let settings = PlanView::from_values(&source.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        PlanView { name, ..settings }.values()
+    };
+    let id = create(ctx, key, source.header.owner, values)?;
     ensure_valid(ctx)?;
     ctx.set_selection_after(vec![id]);
     Ok(ViewMade { view: IdParam(id) })
@@ -170,11 +183,18 @@ fn rename(ctx: &mut Context<'_>, p: RenameView) -> Result<()> {
 }
 
 fn delete(ctx: &mut Context<'_>, p: DeleteView) -> Result<()> {
-    let object = expect(ctx.snapshot(), p.view.0, PLAN_VIEW)?;
-    let alone = object
-        .header
-        .owner
-        .is_none_or(|s| view::of_storey(ctx.snapshot(), s).len() <= 1);
+    let model = spatial::type_of(ctx.snapshot(), p.view.0).as_deref() == Some(MODEL_VIEW);
+    let object = expect(
+        ctx.snapshot(),
+        p.view.0,
+        if model { MODEL_VIEW } else { PLAN_VIEW },
+    )?;
+    // Model views may all go; the last plan view of a storey stays.
+    let alone = !model
+        && object
+            .header
+            .owner
+            .is_none_or(|s| view::of_storey(ctx.snapshot(), s).len() <= 1);
     if alone {
         return Err(Error::new(codes::LAST_VIEW));
     }
@@ -191,12 +211,21 @@ fn set_hidden(ctx: &mut Context<'_>, id: ObjectId, hidden: &[ObjectId]) -> Resul
     ensure_valid(ctx)
 }
 
+/// The elements hidden in the plan or model view `id`.
+fn hidden_of(ctx: &Context<'_>, id: ObjectId) -> Result<Vec<ObjectId>> {
+    let object =
+        spatial::get(ctx.snapshot(), id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    match spatial::type_of(ctx.snapshot(), id).as_deref() {
+        Some(PLAN_VIEW) => PlanView::from_values(&object.values).map(|v| v.hidden),
+        Some(MODEL_VIEW) => ModelView::from_values(&object.values).map(|v| v.hidden),
+        _ => None,
+    }
+    .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+}
+
 fn hide(ctx: &mut Context<'_>, p: ViewElements) -> Result<()> {
     let view = real_view(ctx, p.view.0)?;
-    let object = expect(ctx.snapshot(), view, PLAN_VIEW)?;
-    let mut hidden = PlanView::from_values(&object.values)
-        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
-        .hidden;
+    let mut hidden = hidden_of(ctx, view)?;
     for IdParam(id) in p.objects {
         let key =
             spatial::type_of(ctx.snapshot(), id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -240,10 +269,7 @@ fn set(ctx: &mut Context<'_>, p: SetView) -> Result<ViewMade> {
 }
 
 fn show(ctx: &mut Context<'_>, p: ViewElements) -> Result<()> {
-    let object = expect(ctx.snapshot(), p.view.0, PLAN_VIEW)?;
-    let mut hidden = PlanView::from_values(&object.values)
-        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
-        .hidden;
+    let mut hidden = hidden_of(ctx, p.view.0)?;
     if p.objects.is_empty() {
         hidden.clear();
     } else {
