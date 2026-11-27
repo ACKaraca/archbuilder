@@ -147,6 +147,7 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
 /// their chains, grids and reference planes by their ends, doors, windows and wall openings by
 /// their place in their wall. Empty for anything else or an element that has no place.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm for each kind")]
 pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
     use archbuilder_model::types;
     let Some(object) = spatial::get(snapshot, id) else {
@@ -198,6 +199,20 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
             archbuilder_model::floor::VERTICAL_SLOTS,
         )
         .unwrap_or_default(),
+        Some(types::ELEVATOR) => archbuilder_model::elevator::span(snapshot, &object)
+            .map(|s| s.outline)
+            .unwrap_or_default(),
+        Some(types::DORMER) => archbuilder_model::dormer::Dormer::from_values(&object.values)
+            .map(|d| d.opening())
+            .unwrap_or_default(),
+        Some(types::ROOF_EDGE) => archbuilder_model::roof_edge::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.chains
+                    .iter()
+                    .flat_map(|c| c.points.iter().map(|p| [p[0], p[1]]))
+                    .collect()
+            })
+            .unwrap_or_default(),
         Some(types::FLOOR_EDGE) => archbuilder_model::floor_edge::Derived::of(snapshot, &object)
             .map(|d| {
                 d.chains

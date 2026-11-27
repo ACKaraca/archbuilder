@@ -158,7 +158,8 @@ impl Category {
             t::RAMP => Self::Ramp,
             t::RAILING => Self::Railing,
             t::ROOM => Self::Room,
-            t::SHAFT | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
+            t::SHAFT | t::ELEVATOR | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
+            t::DORMER | t::ROOF_EDGE => Self::Roof,
             _ => return None,
         })
     }

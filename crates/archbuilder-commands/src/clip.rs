@@ -172,6 +172,7 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
             | types::RAMP
             | types::GRID
             | types::REFERENCE_PLANE
+            | types::ELEVATOR
             | types::ROOF_EXTRUSION => push(
                 &mut items,
                 *id,
@@ -206,6 +207,19 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     Json::Array(edge.values.iter().map(encode).collect()),
                     types::FLOOR_EDGE,
                 );
+            }
+        }
+        if key == ROOF {
+            for key in [types::DORMER, types::ROOF_EDGE] {
+                for part in spatial::children(snapshot, key, *id) {
+                    push(
+                        &mut items,
+                        part.id,
+                        Some(*id),
+                        Json::Array(part.values.iter().map(encode).collect()),
+                        key,
+                    );
+                }
             }
         }
         // The railings hosted on a stair or ramp go with it.
@@ -491,6 +505,50 @@ pub(crate) fn paste_content(
         hosts.insert(old, new);
         created.push(new);
     }
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::ELEVATOR {
+            continue;
+        }
+        let mut moved = archbuilder_model::elevator::Elevator::from_values(&values)
+            .ok_or_else(invalid)?
+            .moved(&xf);
+        // The levels belong to the storeys of the document the elevator came from.
+        moved.top_level = None;
+        moved.stops.clear();
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::elevator::next_name(&seen, storey, &tongue);
+        created.push(create(
+            ctx,
+            types::ELEVATOR,
+            Some(storey),
+            moved.values(&name),
+        )?);
+    }
+    for (key, _, host, values) in decoded.iter().cloned() {
+        if key != types::DORMER && key != types::ROOF_EDGE {
+            continue;
+        }
+        let Some(host) = host.and_then(|h| hosts.get(&h).copied()) else {
+            continue;
+        };
+        let seen = ctx.txn()?.snapshot().clone();
+        let mut values = values;
+        if key == types::DORMER {
+            let moved = archbuilder_model::dormer::Dormer::from_values(&values)
+                .ok_or_else(invalid)?
+                .moved(&xf);
+            let name = crate::roof_parts::next_dormer_name(&seen, host, &tongue);
+            values = moved.values(&name);
+        } else {
+            let gutter = archbuilder_model::roof_edge::RoofEdge::from_values(&values)
+                .is_some_and(|e| e.role == archbuilder_model::roof_edge::Role::Gutter);
+            let name = crate::roof_parts::next_roof_edge_name(&seen, host, gutter, &tongue);
+            if let Some(slot) = values.get_mut(types::roof_edge::NAME) {
+                *slot = Some(Value::String(name));
+            }
+        }
+        created.push(create(ctx, &key, Some(host), values)?);
+    }
     for (key, _, host, mut values) in decoded.iter().cloned() {
         if key != types::FLOOR_EDGE {
             continue;
@@ -538,13 +596,11 @@ pub(crate) fn paste_content(
         if key != STAIR {
             continue;
         }
-        let mut moved = archbuilder_model::stair::Stair::from_values(&values)
-            .ok_or_else(invalid)?
-            .moved(&xf);
-        moved.top_level = None;
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, storey, &tongue);
-        let new = create(ctx, STAIR, Some(storey), moved.values(&name))?;
+        let moved = archbuilder_model::stair::Stair::moved_values(&values, &name, &xf, true)
+            .ok_or_else(invalid)?;
+        let new = create(ctx, STAIR, Some(storey), moved)?;
         circulation.insert(old, new);
         created.push(new);
     }
@@ -665,7 +721,9 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
         } else if key == STAIR {
             let stair = archbuilder_model::stair::Stair::from_values(&values);
             // The outline at a rise of three meters stands for the stair; the storey sets the rise.
-            if let Some(Ok(layout)) = stair.map(|s| archbuilder_model::stair::Layout::new(&s, 3.0))
+            let lines = archbuilder_model::stair::run_lines(&values);
+            if let Some(Ok(layout)) =
+                stair.map(|s| archbuilder_model::stair::Layout::build(&s, &lines, 3.0))
             {
                 let f = layout.footprint();
                 out.push(f.iter().chain(f.first()).copied().collect());

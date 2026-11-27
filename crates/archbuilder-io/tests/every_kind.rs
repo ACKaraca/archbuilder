@@ -110,9 +110,25 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     );
     r("archbuilder.room.place", json!({"points": [[5.0, 3.0]]}));
     r("archbuilder.ceiling.create", json!({"picks": [[5.0, 3.0]]}));
-    r(
+    let roof = r(
         "archbuilder.roof.create",
         json!({"picks": [[5.0, 3.0]], "slope": 0.5}),
+    );
+    r(
+        "archbuilder.dormer.create",
+        json!({"roof": roof["roof"], "center": [5.0, 1.2], "depth": 0.8}),
+    );
+    r(
+        "archbuilder.roof_edge.create",
+        json!({"roof": roof["roof"], "role": "fascia"}),
+    );
+    r(
+        "archbuilder.roof_edge.create",
+        json!({"roof": roof["roof"], "role": "gutter"}),
+    );
+    r(
+        "archbuilder.elevator.create",
+        json!({"center": [-8.0, 3.0]}),
     );
     r(
         "archbuilder.roof_extrusion.create",
@@ -211,8 +227,32 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         !reasons.iter().any(|r| r.ends_with("_not_written")
             && !matches!(
                 *r,
-                "ab.io.ifc.datum_not_written" | "ab.io.ifc.selection_set_not_written"
+                "ab.io.ifc.datum_not_written"
+                    | "ab.io.ifc.selection_set_not_written"
+                    | "ab.io.ifc.elevator_not_written"
+                    | "ab.io.ifc.gutter_not_written"
             )),
         "{reasons:?}"
+    );
+    for reason in [
+        "ab.io.ifc.elevator_not_written",
+        "ab.io.ifc.gutter_not_written",
+        "ab.io.ifc.dormer_as_parts",
+        "ab.io.ifc.fascia_as_covering",
+    ] {
+        assert!(reasons.contains(&reason), "{reason} not reported");
+    }
+    // A dormer is written as the opening in its roof, walls and a roof; a fascia as a molding.
+    for written in [
+        "Dormer 1 (front)",
+        "Dormer 1 (cheek)",
+        "Dormer 1 (roof)",
+        "Fascia 1",
+    ] {
+        assert!(text.contains(written), "{written} not written");
+    }
+    assert!(
+        !text.contains("Gutter 1"),
+        "a gutter is reported, not written"
     );
 }

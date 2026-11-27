@@ -85,6 +85,15 @@ pub const VERTICAL_OPENING: &str = "archbuilder.vertical_opening";
 pub const ROOF_EXTRUSION: &str = "archbuilder.roof_extrusion";
 /// An edge element: a profile swept along edges of one floor; the floor owns it.
 pub const FLOOR_EDGE: &str = "archbuilder.floor_edge";
+/// An elevator on its base storey: a car in a shaft that passes the floors between its base and
+/// its top level and stops at the levels it serves.
+pub const ELEVATOR: &str = "archbuilder.elevator";
+/// A dormer: a gable or shed dormer on one roof, which cuts the roof and owns its walls and its
+/// small roof as derived geometry; the roof owns the record.
+pub const DORMER: &str = "archbuilder.dormer";
+/// A roof edge element: a fascia or gutter profile swept along sloped edges of one roof; the roof
+/// owns the record.
+pub const ROOF_EDGE: &str = "archbuilder.roof_edge";
 /// A ceiling type: layers, a core, the height above the level and the grid pattern; owned by the
 /// project.
 pub const CEILING_TYPE: &str = "archbuilder.ceiling_type";
@@ -123,7 +132,7 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 17] = [
+pub const ELEMENTS: [&str; 20] = [
     WALL,
     DOOR,
     WINDOW,
@@ -141,6 +150,9 @@ pub const ELEMENTS: [&str; 17] = [
     ROOF_EXTRUSION,
     GRID,
     REFERENCE_PLANE,
+    ELEVATOR,
+    DORMER,
+    ROOF_EDGE,
 ];
 
 /// The datums a building owns directly: they have no storey and span levels.
@@ -153,7 +165,7 @@ pub fn is_datum(key: &str) -> bool {
 }
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 10] = [
+pub const STOREY_ELEMENTS: [&str; 11] = [
     WALL,
     FLOOR,
     ROOM,
@@ -164,6 +176,7 @@ pub const STOREY_ELEMENTS: [&str; 10] = [
     CEILING,
     SHAFT,
     ROOF_EXTRUSION,
+    ELEVATOR,
 ];
 
 /// The elements that host a vertical opening.
@@ -182,7 +195,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 33] = [
+pub const KEYS: [&str; 36] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -216,6 +229,9 @@ pub const KEYS: [&str; 33] = [
     GRID,
     REFERENCE_PLANE,
     WORK_PLANE,
+    ELEVATOR,
+    DORMER,
+    ROOF_EDGE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -904,6 +920,84 @@ pub mod stair {
     pub const TOP_LEVEL: usize = 12;
     /// Whether the stair is pinned.
     pub const PINNED: usize = 13;
+    /// The run lines of a stair by sketch: records of the start and the end of each run line
+    /// `x0`, `y0`, `x1`, `y1`; empty for the stairs of the other shapes.
+    pub const RUNS: usize = 14;
+    /// The least clear height above the treads and landings, a headroom check reports below it;
+    /// the default when absent.
+    pub const HEADROOM: usize = 15;
+}
+
+/// Field positions of `archbuilder.elevator`.
+pub mod elevator {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x of the middle of the car, in meters.
+    pub const X: usize = 1;
+    /// The y of the middle of the car, in meters.
+    pub const Y: usize = 2;
+    /// The direction the doors face, an angle from the x axis.
+    pub const DIRECTION: usize = 3;
+    /// The width of the car across the doors, in meters.
+    pub const CAR_WIDTH: usize = 4;
+    /// The depth of the car away from the doors, in meters.
+    pub const CAR_DEPTH: usize = 5;
+    /// The clearance between the car and the shaft walls on every side, in meters.
+    pub const CLEARANCE: usize = 6;
+    /// The width of the landing doors, in meters.
+    pub const DOOR_WIDTH: usize = 7;
+    /// The depth of the pit below the base level, in meters.
+    pub const PIT: usize = 8;
+    /// The height of the overrun above the top level, in meters.
+    pub const OVERRUN: usize = 9;
+    /// The top level; the level above the base storey when absent.
+    pub const TOP_LEVEL: usize = 10;
+    /// The levels served, a list of records of one level reference; every level from the base
+    /// to the top when empty.
+    pub const STOPS: usize = 11;
+    /// Whether the elevator is pinned.
+    pub const PINNED: usize = 12;
+}
+
+/// Field positions of `archbuilder.dormer`.
+pub mod dormer {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x of the middle of the opening in the roof, in plan.
+    pub const X: usize = 1;
+    /// The y of the middle of the opening in the roof, in plan.
+    pub const Y: usize = 2;
+    /// The direction the front of the dormer faces, an angle from the x axis.
+    pub const DIRECTION: usize = 3;
+    /// The width across the front, in meters.
+    pub const WIDTH: usize = 4;
+    /// The depth from the front into the roof, in meters.
+    pub const DEPTH: usize = 5;
+    /// The pitch of the dormer's own roof.
+    pub const PITCH: usize = 6;
+    /// The style: gable or shed.
+    pub const STYLE: usize = 7;
+    /// The height of the front wall's eave above the roof at the front, in meters.
+    pub const WALL_HEIGHT: usize = 8;
+    /// The thickness of the walls and of the dormer roof, in meters.
+    pub const THICKNESS: usize = 9;
+    /// Whether the dormer is pinned.
+    pub const PINNED: usize = 10;
+}
+
+/// Field positions of `archbuilder.roof_edge`.
+pub mod roof_edge {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// What the element is: fascia or gutter.
+    pub const ROLE: usize = 1;
+    /// The profile: records of `u` (outward from the eave) and `v` (above the roof's underside
+    /// at the eave).
+    pub const PROFILE: usize = 2;
+    /// The edges of the roof, by the number of the edge in the roof's edge list.
+    pub const EDGES: usize = 3;
+    /// Whether the element is pinned.
+    pub const PINNED: usize = 4;
 }
 
 /// The field positions of a railing record.
@@ -1276,6 +1370,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (SHAFT, shaft_fields()),
         (VERTICAL_OPENING, vertical_opening_fields()),
         (FLOOR_EDGE, floor_edge_fields()),
+        (ELEVATOR, elevator_fields()),
+        (DORMER, dormer_fields()),
+        (ROOF_EDGE, roof_edge_fields()),
         (ROOF_EXTRUSION, roof_extrusion_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
@@ -1610,6 +1707,106 @@ fn floor_edge_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn elevator_fields() -> Vec<FieldDecl> {
+    use crate::elevator as e;
+    let stop = {
+        let mut spec = optional_level();
+        spec.rule.on_delete = OnDelete::Clear;
+        spec
+    };
+    vec![
+        name_field("identity"),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        angle_field("direction"),
+        length_field("car_width", Some(real(e::CAR_RANGE))).with_default(length(e::DEFAULT_CAR[0])),
+        length_field("car_depth", Some(real(e::CAR_RANGE))).with_default(length(e::DEFAULT_CAR[1])),
+        length_field("clearance", Some(real(e::CLEARANCE_RANGE)))
+            .with_default(length(e::DEFAULT_CLEARANCE)),
+        length_field("door_width", Some(real(e::CAR_RANGE)))
+            .with_default(length(e::DEFAULT_DOOR_WIDTH)),
+        length_field("pit", Some(real(e::PIT_RANGE))).with_default(length(e::DEFAULT_PIT)),
+        length_field("overrun", Some(real(e::PIT_RANGE))).with_default(length(e::DEFAULT_OVERRUN)),
+        FieldDecl::new("top_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+        FieldDecl::new(
+            "stops",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("level", ValueType::Reference(stop)).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: e::MAX_STOPS as u64,
+        })
+        .optional()
+        .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn dormer_fields() -> Vec<FieldDecl> {
+    use crate::dormer as d;
+    vec![
+        name_field("identity"),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        angle_field("direction"),
+        length_field("width", Some(real(d::SIZE_RANGE))).with_default(length(d::DEFAULT_WIDTH)),
+        length_field("depth", Some(real(d::SIZE_RANGE))).with_default(length(d::DEFAULT_DEPTH)),
+        FieldDecl::new("pitch", ValueType::Quantity(Dimension::ANGLE))
+            .with_default(Value::Quantity(Quantity::new(
+                d::DEFAULT_PITCH,
+                Dimension::ANGLE,
+            )))
+            .with_bound(real(d::PITCH_RANGE))
+            .in_aspect("geometry"),
+        coded_field(
+            "style",
+            [
+                (d::Style::Gable.name(), d::Style::Gable.code()),
+                (d::Style::Shed.name(), d::Style::Shed.code()),
+            ],
+            d::Style::Gable.code(),
+        ),
+        length_field("wall_height", Some(real(d::SIZE_RANGE)))
+            .with_default(length(d::DEFAULT_WALL_HEIGHT)),
+        length_field("thickness", Some(real(d::THICKNESS_RANGE)))
+            .with_default(length(d::DEFAULT_THICKNESS)),
+        pinned_field(0),
+    ]
+}
+
+fn roof_edge_fields() -> Vec<FieldDecl> {
+    use crate::roof_edge as r;
+    let profile = ValueType::Record(vec![
+        length_field("u", Some(real(crate::floor_edge::PROFILE_RANGE))),
+        length_field("v", Some(real(crate::floor_edge::PROFILE_RANGE))),
+    ]);
+    vec![
+        name_field("identity"),
+        coded_field(
+            "role",
+            [
+                (r::Role::Fascia.name(), r::Role::Fascia.code()),
+                (r::Role::Gutter.name(), r::Role::Gutter.code()),
+            ],
+            r::Role::Fascia.code(),
+        ),
+        FieldDecl::new("profile", ValueType::List(Box::new(profile)))
+            .with_bound(Bound::Length {
+                max: crate::floor_edge::MAX_PROFILE as u64,
+            })
+            .in_aspect("geometry"),
+        FieldDecl::new("edges", ValueType::List(Box::new(ValueType::I64)))
+            .with_bound(Bound::Length {
+                max: crate::roof::MAX_EDGES as u64,
+            })
+            .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
 fn bool_field(name: &str, on: bool) -> FieldDecl {
     FieldDecl::new(name, ValueType::Bool)
         .with_default(Value::Bool(on))
@@ -1828,6 +2025,22 @@ fn stair_fields() -> Vec<FieldDecl> {
             .optional()
             .in_aspect("geometry"),
         pinned_field(1),
+        FieldDecl::new(
+            "runs",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x0", Some(real(COORDINATE_RANGE))),
+                length_field("y0", Some(real(COORDINATE_RANGE))),
+                length_field("x1", Some(real(COORDINATE_RANGE))),
+                length_field("y1", Some(real(COORDINATE_RANGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::stair::MAX_RUN_LINES as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(2),
+        optional_length("headroom", (0.5, 10.0)).since_minor(2),
     ]
 }
 
@@ -2183,6 +2396,9 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         SHAFT => shaft::PINNED,
         VERTICAL_OPENING => vertical_opening::PINNED,
         FLOOR_EDGE => floor_edge::PINNED,
+        ELEVATOR => elevator::PINNED,
+        DORMER => dormer::PINNED,
+        ROOF_EDGE => roof_edge::PINNED,
         ROOF_EXTRUSION => roof_extrusion::PINNED,
         GRID => grid::PINNED,
         REFERENCE_PLANE => reference_plane::PINNED,
@@ -2355,7 +2571,7 @@ mod tests {
             ("insert_type", insert::INSERT_TYPE),
             ("pinned", insert::PINNED),
         ];
-        let expect: [(&str, &[(&str, usize)]); 14] = [
+        let expect: [(&str, &[(&str, usize)]); 17] = [
             (
                 ROOF,
                 &[
@@ -2385,6 +2601,52 @@ mod tests {
                     ("railing_right", stair::RAILING_RIGHT),
                     ("top_level", stair::TOP_LEVEL),
                     ("pinned", stair::PINNED),
+                    ("runs", stair::RUNS),
+                    ("headroom", stair::HEADROOM),
+                ],
+            ),
+            (
+                ELEVATOR,
+                &[
+                    ("name", elevator::NAME),
+                    ("x", elevator::X),
+                    ("y", elevator::Y),
+                    ("direction", elevator::DIRECTION),
+                    ("car_width", elevator::CAR_WIDTH),
+                    ("car_depth", elevator::CAR_DEPTH),
+                    ("clearance", elevator::CLEARANCE),
+                    ("door_width", elevator::DOOR_WIDTH),
+                    ("pit", elevator::PIT),
+                    ("overrun", elevator::OVERRUN),
+                    ("top_level", elevator::TOP_LEVEL),
+                    ("stops", elevator::STOPS),
+                    ("pinned", elevator::PINNED),
+                ],
+            ),
+            (
+                DORMER,
+                &[
+                    ("name", dormer::NAME),
+                    ("x", dormer::X),
+                    ("y", dormer::Y),
+                    ("direction", dormer::DIRECTION),
+                    ("width", dormer::WIDTH),
+                    ("depth", dormer::DEPTH),
+                    ("pitch", dormer::PITCH),
+                    ("style", dormer::STYLE),
+                    ("wall_height", dormer::WALL_HEIGHT),
+                    ("thickness", dormer::THICKNESS),
+                    ("pinned", dormer::PINNED),
+                ],
+            ),
+            (
+                ROOF_EDGE,
+                &[
+                    ("name", roof_edge::NAME),
+                    ("role", roof_edge::ROLE),
+                    ("profile", roof_edge::PROFILE),
+                    ("edges", roof_edge::EDGES),
+                    ("pinned", roof_edge::PINNED),
                 ],
             ),
             (

@@ -580,9 +580,10 @@ fn set_join(
 
 /// Deletes the selected walls and inserts; with neither selected, the selected storey.
 /// The elements a floor, roof or ceiling hosts that are deleted by themselves: vertical openings
-/// and floor edges.
+/// floor edges, dormers and roof edge elements.
 fn is_hosted_cut(key: &str) -> bool {
-    key == archbuilder_model::types::VERTICAL_OPENING || key == archbuilder_model::types::FLOOR_EDGE
+    use archbuilder_model::types as t;
+    [t::VERTICAL_OPENING, t::FLOOR_EDGE, t::DORMER, t::ROOF_EDGE].contains(&key)
 }
 
 fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted> {

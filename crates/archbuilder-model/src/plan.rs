@@ -35,8 +35,8 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, DOOR, FLOOR, LEVEL, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR, STOREY, VERTICAL_OPENING,
-    WALL, WALL_OPENING, WINDOW,
+    CEILING, DOOR, ELEVATOR, FLOOR, LEVEL, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR, STOREY,
+    VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
 use crate::wall::Wall;
@@ -276,6 +276,17 @@ impl PlanSource<'_> {
                 .filter(|o| {
                     o.header.owner == Some(self.storey)
                         || crate::opening::shaft_span(s, o)
+                            .is_some_and(|sp| crate::opening::passes_level(sp.z, self.level))
+                })
+                .map(|o| o.id),
+        );
+        // Elevators of every storey whose shaft reaches this level.
+        out.extend(
+            spatial::objects(s, ELEVATOR)
+                .iter()
+                .filter(|o| {
+                    o.header.owner == Some(self.storey)
+                        || crate::elevator::span(s, o)
                             .is_some_and(|sp| crate::opening::passes_level(sp.z, self.level))
                 })
                 .map(|o| o.id),
@@ -684,6 +695,35 @@ impl PlanSource<'_> {
         Some(out)
     }
 
+    /// The plan symbol of an elevator: the shaft, the car with a cross corner to corner, and a
+    /// mark across the landing door on every storey it stops at.
+    fn elevator_object(&self, object: &Object) -> Option<SourceObject> {
+        let d = crate::elevator::derived(self.snapshot, object)?;
+        let own = object.header.owner == Some(self.storey);
+        let class = if own {
+            VisibilityClass::Visible
+        } else {
+            VisibilityClass::Overhead
+        };
+        let mut out = SourceObject::new(Category::Opening.key(), styles(self.scale, self.tone));
+        let shaft = d.elevator.shaft_outline();
+        if let Some(c) = curve(&shaft, true) {
+            out = out.with_symbol(Symbol::new(c, class, AREA_KEY));
+        }
+        let car = d.elevator.car_outline();
+        if let Some(c) = curve(&car, true) {
+            out = out.with_symbol(Symbol::new(c, class, 20));
+        }
+        let mut lines = vec![[car[0], car[2]], [car[1], car[3]]];
+        lines.push(d.elevator.door_line());
+        for (k, l) in lines.into_iter().enumerate() {
+            if let Some(c) = curve(&l, false) {
+                out = out.with_symbol(Symbol::new(c, class, 30 + u32::try_from(k).unwrap_or(0)));
+            }
+        }
+        Some(out)
+    }
+
     fn room_object(&self, id: ObjectId) -> Option<SourceObject> {
         let entry = self
             .rooms
@@ -741,6 +781,7 @@ impl ViewSource for PlanSource<'_> {
             RAMP => self.ramp_object(&object),
             RAILING => self.railing_object(&object),
             SHAFT | VERTICAL_OPENING => self.opening_object(&object, &key),
+            ELEVATOR => self.elevator_object(&object),
             ROOM => self.room_object(id),
             _ => None,
         };
@@ -801,6 +842,7 @@ fn deps(snapshot: &Snapshot, view: &Arc<Object>, pass: Pass) -> Deps {
             RAMP,
             RAILING,
             SHAFT,
+            ELEVATOR,
             VERTICAL_OPENING,
         ],
     };

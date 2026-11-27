@@ -1129,7 +1129,7 @@ fn loop_points(l: &Loop2) -> Option<(Vec<[f64; 2]>, Vec<f64>)> {
 
 /// The union of `loops` as the outer loops of its parts (an enclosed gap is filled); `loops`
 /// as they are when the solid kernel cannot unite them.
-fn merge_loops(loops: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
+pub(crate) fn merge_loops(loops: &[Vec<[f64; 2]>]) -> Vec<Vec<[f64; 2]>> {
     if loops.len() < 2 {
         return loops.to_vec();
     }

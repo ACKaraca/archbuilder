@@ -227,6 +227,16 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.railing(&railing, storey, level);
         }
+        // An elevator is an IfcTransportElement (ELEVATOR), which the writer cannot produce yet:
+        // named in the loss report. Its shaft is written as openings that void what it passes.
+        for lift in spatial::children(self.snapshot, archbuilder_model::types::ELEVATOR, storey) {
+            self.cancel.check()?;
+            self.lose(reasons::ELEVATOR_NOT_WRITTEN, "IFCTRANSPORTELEMENT", &lift);
+            match archbuilder_model::elevator::span(self.snapshot, &lift) {
+                Some(span) => self.shaft_openings(&lift, &span, storey, level),
+                None => self.lose(reasons::NOT_EXPORTED, "IFCTRANSPORTELEMENT", &lift),
+            }
+        }
         Ok(())
     }
 
@@ -749,6 +759,119 @@ impl Mapper<'_> {
             };
             self.opening_element(&cut, host, storey, level, z, &outline, 0);
         }
+        for dormer in spatial::children(self.snapshot, archbuilder_model::types::DORMER, host.id) {
+            self.dormer(&dormer, host, storey, level, z);
+        }
+    }
+
+    /// A dormer: the opening that voids its roof, a wall for each of its front and cheek walls and
+    /// a roof for its own roof (IFC4 has no dormer element).
+    fn dormer(
+        &mut self,
+        object: &Object,
+        host: &Object,
+        storey: ObjectId,
+        level: f64,
+        z: (f64, f64),
+    ) {
+        use archbuilder_model::dormer::{Derived as Built, Dormer, PartKind, Style};
+        let (Some(data), Ok(built)) = (
+            Dormer::from_values(&object.values),
+            Built::of(self.snapshot, object),
+        ) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCROOF", object);
+        };
+        self.opening_element(object, host, storey, level, z, &data.opening(), 0);
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        for (k, (kind, label, ifc)) in [
+            (PartKind::Front, "front", ElementKind::Wall),
+            (PartKind::Cheek, "cheek", ElementKind::Wall),
+            (PartKind::Roof, "roof", ElementKind::Roof),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let solids: Vec<&arc_geom::Polyhedron> = built
+                .parts
+                .iter()
+                .filter(|(part, _)| *part == kind)
+                .map(|(_, s)| s)
+                .collect();
+            let Some(body) = (!solids.is_empty())
+                .then(|| brep(solids, &frame, level))
+                .flatten()
+            else {
+                self.lose(reasons::BODY_NOT_EXPORTED, "IFCROOF", object);
+                continue;
+            };
+            let index = u32::try_from(k).unwrap_or(0);
+            let mut element = Element::new(
+                derived_id(object.id.as_u128(), role::CALLER_FIRST + 1, index),
+                ifc,
+                &format!("{} ({label})", name_of(object)),
+                storey.as_u128(),
+            );
+            if kind == PartKind::Roof {
+                element.predefined_type = Some(
+                    match data.style {
+                        Style::Gable => "GABLE_ROOF",
+                        Style::Shed => "SHED_ROOF",
+                    }
+                    .to_owned(),
+                );
+            }
+            element.body = Some(body);
+            self.elements.push(element);
+            self.exported += 1;
+        }
+        self.lose(reasons::DORMER_AS_PARTS, "IFCROOF", object);
+    }
+
+    /// A roof edge element: a fascia as an `IfcCovering` of the predefined type `MOLDING` with its
+    /// swept body; a gutter belongs to an `IfcPipeSegment` (`GUTTER`), which the writer lacks.
+    fn roof_edge(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        use archbuilder_model::roof_edge::{Derived as Swept, Role};
+        let Some(derived) = Swept::of(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        if !derived.orphans.is_empty() {
+            self.lose(reasons::ROOF_EDGE_ORPHAN, "IFCCOVERING", object);
+        }
+        if derived.element.role == Role::Gutter {
+            return self.lose(reasons::GUTTER_NOT_WRITTEN, "IFCPIPESEGMENT", object);
+        }
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        let Some(body) = derived
+            .solid()
+            .ok()
+            .flatten()
+            .and_then(|s| brep([&s], &frame, level))
+        else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Covering,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("MOLDING".to_owned());
+        element.body = Some(body);
+        let us = derived.element.profile.iter().map(|p| p[0]);
+        let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_CoveringBaseQuantities",
+            vec![Quantity::new("Width", QuantityValue::Length(width))],
+        ));
+        self.lose(reasons::FASCIA_AS_COVERING, "IFCCOVERING", object);
+        self.elements.push(element);
+        self.exported += 1;
     }
 
     /// One `IfcOpeningElement` named after `object`, voiding `host`, over the plan `outline`
@@ -797,6 +920,18 @@ impl Mapper<'_> {
         let Some(span) = archbuilder_model::opening::shaft_span(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object);
         };
+        self.shaft_openings(object, &span, storey, level);
+    }
+
+    /// The openings of a shaft `span` of `object`: one for each floor, roof or ceiling it passes
+    /// through, each voiding its host.
+    fn shaft_openings(
+        &mut self,
+        object: &Object,
+        span: &archbuilder_model::opening::ShaftSpan,
+        storey: ObjectId,
+        level: f64,
+    ) {
         if span.boundary.has_arcs() {
             self.lose(reasons::ARC_FACETED, "IFCOPENINGELEMENT", object);
         }
@@ -915,6 +1050,13 @@ impl Mapper<'_> {
             level,
             (surface.base - surface.drop, surface.top()),
         );
+        for edge in spatial::children(
+            self.snapshot,
+            archbuilder_model::types::ROOF_EDGE,
+            object.id,
+        ) {
+            self.roof_edge(&edge, storey, level);
+        }
     }
 
     /// A roof by extrusion as an `IfcRoof` of the predefined type `FREEFORM`, with its roof type

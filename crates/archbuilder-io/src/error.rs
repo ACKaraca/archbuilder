@@ -88,6 +88,47 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-georeference-not-written",
     };
+    /// An elevator: the writer of the pinned foundation has no transport element entity yet
+    /// (`IfcTransportElement` of the predefined type `ELEVATOR`), so the elevator is left out; the
+    /// openings its shaft cuts in the floors are written.
+    pub const ELEVATOR_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.elevator_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-elevator-not-written",
+    };
+    /// A dormer: IFC4 has no dormer element, so it is written as the opening in its roof, a wall
+    /// for each of its front and cheek walls and a roof for its own small roof.
+    pub const DORMER_AS_PARTS: Reason = Reason {
+        code: "ab.io.ifc.dormer_as_parts",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-dormer-as-parts",
+    };
+    /// A fascia: IFC4 has no fascia, so it is written as a molding covering that carries its
+    /// swept body.
+    pub const FASCIA_AS_COVERING: Reason = Reason {
+        code: "ab.io.ifc.fascia_as_covering",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-fascia-as-covering",
+    };
+    /// A gutter: IFC4 maps it to a pipe segment of the predefined type `GUTTER`, which the writer
+    /// of the pinned foundation does not have yet, so the gutter is left out.
+    pub const GUTTER_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.gutter_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-gutter-not-written",
+    };
+    /// A roof edge element that names edges its roof no longer has or that define no slope: those
+    /// edges are not written.
+    pub const ROOF_EDGE_ORPHAN: Reason = Reason {
+        code: "ab.io.ifc.roof_edge_orphan",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-roof-edge-orphan",
+    };
     /// A reference plane or work plane: a drawing aid with no IFC building element, left out.
     pub const DATUM_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.datum_not_written",

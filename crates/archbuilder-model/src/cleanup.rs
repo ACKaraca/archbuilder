@@ -417,6 +417,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
         FLOOR,
         crate::types::ROOF,
         crate::types::SHAFT,
+        crate::types::ELEVATOR,
     ] {
         deps.extend(spatial::objects(snapshot, key));
     }

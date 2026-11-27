@@ -378,6 +378,80 @@ both runs and the gap). The opening is derived, never stored; overlapping openin
 a new hole; across the slab's edge it is subtracted as a notch; an opening that cannot be cut
 leaves the slab whole with a warning (`ab.model.stair_opening_uncut`). The floor's area, volume,
 solid, picking and IFC body follow; moving or deleting the stair moves or removes the opening.
+
+#### Stairs by sketch and the headroom check
+
+A stair of the shape `sketch` takes its runs from `runs` (schema 1.2, optional): one record per run
+line, the start `x0`, `y0` (the middle of the first riser) and the end `x1`, `y1` (the direction;
+the run's length comes from its risers). The rules are those of the component stairs: the riser
+count is `ceil(height / max_riser)`, at least two per run, shared among the runs in proportion to the
+lengths of the lines; each run keeps the stair's `width`, `tread` and `waist`; between two runs
+the landing is the convex hull of the last riser of one and the first riser of the next (none when
+they meet); solids, rails, plan symbol and the shaft opening (the convex hull of the footprint plus 5 cm on
+every side) are derived the same way and the stair is copied, moved and mirrored with its run
+lines. `archbuilder.stair.create_sketch` takes the lines in `runs`. Boundary lines and riser lines
+that override the generated outline are not modeled yet.
+
+The headroom check (`ab.model.stair_headroom`, a warning) samples the walking surface at the middle
+and near both edges of every tread and at the middle and corners of every landing, and looks
+up at the undersides of the floors (with the shaft openings already cut out of them) and roofs
+of the document; what lies below the walking surface is ignored. It reports the least clear
+height, where it is and the element in the way when that is below the stair's `headroom` (schema 1.2,
+optional; 2 m when absent).
+
+#### The elevator
+
+`archbuilder.elevator` is owned by its base storey. Stored: `x`, `y` (the middle of the car),
+`direction` (where the doors face), `car_width` (across the doors, 1.1 m by default),
+`car_depth` (1.4 m), `clearance` (the shaft wall clearance on every side, 0.15 m), `door_width`
+(0.9 m, at most the shaft's width), `pit` (1.2 m below the base level), `overrun` (1 m above the top level),
+`top_level` (else the highest level of the building) and `stops` (the levels served; else every level
+from the base to the top). Derived (`archbuilder_model::elevator`): the shaft (the car grown by the clearance), a
+landing door on its front side at every stop, and the shaft span, from the base level to the top
+level plus the overrun. The shaft is read like a shaft element: it cuts every floor, roof and
+ceiling its span passes through (the floor it stands on is not cut), so areas, solids, picking and
+the room boundaries follow. The plan symbol is the shaft, the car with its cross, and a mark across
+each landing door. Shaft walls and per-level door types are not generated.
+`archbuilder.elevator.create` makes it; it is moved, copied and deleted like other storey elements.
+
+IFC: an elevator is an `IfcTransportElement` of the predefined type `ELEVATOR` contained in its base
+storey. The pinned writer of `arc-core` has no transport element yet, so the elevator is named in
+the loss report (`ab.io.ifc.elevator_not_written`, kind `IFCTRANSPORTELEMENT`); the openings its
+shaft cuts are written as `IfcOpeningElement`s voiding the floors. Follow-up in `arc-core`: an
+`ElementKind::TransportElement` with the IFC4 `IfcTransportElementTypeEnum`.
+
+#### Dormers
+
+`archbuilder.dormer` is owned by its roof and goes with it. Stored: `x`, `y` (the middle of the opening in
+the roof, in plan), `direction` (where the front faces; down the slope by default), `width` (1.5 m),
+`depth` (2 m), `pitch` (30°), `style` (`gable` or `shed`), `wall_height` (the eave above the roof at the
+front, 1.2 m) and `thickness` (0.15 m). Derived (`archbuilder_model::dormer`): the opening, which the host roof reads
+like a vertical opening, and the front wall (a pentagon under a gable), two cheek walls that stand on the roof and the
+dormer's own roof (two planes, or one for a shed). A dormer whose opening leaves the roof, or whose
+eave lies below the roof at the back, is refused. The roof's dormers move and copy with it. The
+assembly ends at the depth of the opening; where it meets the host further back is not modeled.
+
+IFC: IFC4 has no dormer. The dormer is written as the `IfcOpeningElement` voiding its roof, an
+`IfcWall` for the front wall and one for the cheek walls, and an `IfcRoof` (`GABLE_ROOF` or `SHED_ROOF`)
+for its roof, each with its faceted body, with the loss report entry `ab.io.ifc.dormer_as_parts`.
+
+#### Roof edge elements
+
+`archbuilder.roof_edge` is owned by its roof. Stored: `role` (`fascia` or `gutter`), `profile` (a
+closed loop of `u`, `v`: `u` outward from the eave, `v` up from the underside at the eave) and `edges`
+(numbers in the roof's edge list). Only an edge that defines a slope has an eave; another is an orphan
+(`ab.model.roof_edge_orphan`, a warning), never rebound. The profile is swept along the roof's outline with its
+overhangs by the machinery of floor edges (`floor_edge::sweep`), mitered at the corners, the height of
+each eave read from the roof surface. Defaults: a 25 x 150 mm board for a fascia, a 120 x 100 mm box channel for a
+gutter. Soffits and sweeps along gable edges are not modeled yet.
+
+IFC: a fascia is an `IfcCovering` of the predefined type `MOLDING` with its swept body (IFC4 has no fascia; the
+loss report records the approximation, `ab.io.ifc.fascia_as_covering`). A gutter is an `IfcPipeSegment`
+of the predefined type `GUTTER` in IFC4; the pinned writer has no pipe segment, so it is named in the loss report
+(`ab.io.ifc.gutter_not_written`, kind `IFCPIPESEGMENT`). Follow-up in `arc-core`: an `ElementKind::PipeSegment`.
+
+A glazed roof (a curtain grid on the faces of a roof) is not modeled yet: the grid rules of curtain
+walls work on a wall's baseline and height, not on the planes of a roof.
 Stairs do not bound rooms.
 
 `archbuilder.stair.create` takes `start`, `to` (a point the first run heads toward) or
