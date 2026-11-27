@@ -180,6 +180,21 @@ impl Rig {
             json!({"start": [-5.0, -3.0], "end": [16.0, -3.0]}),
             &[],
         );
+        // A group of the walls of the first room, placed beside it: its instance is an element.
+        let group = self.run(
+            "archbuilder.group.create",
+            json!({"name": "Unit", "ids": [walls[0].clone(), walls[1].clone()]}),
+            &[],
+        )["group"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let storey = self.first(STOREY).to_string();
+        self.run(
+            "archbuilder.group.place",
+            json!({"group": group, "storey": storey, "origin": [30.0, 0.0]}),
+            &[],
+        );
         self.component();
     }
 

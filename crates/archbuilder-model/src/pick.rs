@@ -51,6 +51,13 @@ pub fn stack(
     let mut out: Vec<ObjectId> = Vec::new();
     let ray = ray.unwrap_or(([at[0], at[1], 1.0e4], [0.0, 0.0, -1.0]));
     out.extend(crate::insert::pick(snapshot, ray));
+    // A group instance is picked at its reference point; its elements are picked as walls.
+    for instance in crate::group::instances(snapshot).iter().take(MAX_PER_KIND) {
+        let d = (instance.origin[0] - at[0]).hypot(instance.origin[1] - at[1]);
+        if d <= aperture {
+            out.push(instance.id);
+        }
+    }
     let mut walls: Vec<(f64, f64, ObjectId)> = spatial::objects(snapshot, WALL)
         .iter()
         .take(MAX_PER_KIND)

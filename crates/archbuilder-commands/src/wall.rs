@@ -610,6 +610,24 @@ fn is_hosted_cut(key: &str) -> bool {
 }
 
 fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted> {
+    // Group instances go with the elements they generated, before anything else is considered.
+    let instances: Vec<ObjectId> = ctx
+        .selection()
+        .iter()
+        .copied()
+        .filter(|id| {
+            spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(types::GROUP_INSTANCE)
+        })
+        .collect();
+    if !instances.is_empty() {
+        crate::group::delete_instances(ctx, &instances)?;
+        let others = ctx.selection().iter().any(|id| {
+            spatial::type_of(ctx.snapshot(), *id).is_some_and(|k| k != types::GROUP_INSTANCE)
+        });
+        if !others {
+            return Ok(Deleted::default());
+        }
+    }
     let walls: BTreeSet<ObjectId> = selected_walls(ctx).into_iter().collect();
     let snapshot = ctx.snapshot();
     let inserts: BTreeSet<ObjectId> = ctx

@@ -29,6 +29,32 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-nothing-selected",
     };
+    /// A selection holds an element a group cannot take in (only walls with their openings,
+    /// components and rooms are taken).
+    pub const GROUP_KIND_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_kind_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-group-kind-unsupported",
+    };
+    /// A group definition has instances; they are separated or deleted first.
+    pub const GROUP_IN_USE: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_in_use",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-in-use",
+    };
+    /// A generated element of an instance was changed directly; a regeneration would overwrite it.
+    /// Edit the group instead, or separate the instance.
+    pub const GROUP_EDITED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_edited",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-edited",
+    };
+    /// A storey mapped by a group instance cannot be removed until the instance is separated.
+    pub const GROUP_LEVEL_MAPPED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_level_mapped",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-level-mapped",
+    };
     /// The object has no such field, or the field cannot be edited.
     pub const FIELD_UNKNOWN: ErrorCode = ErrorCode {
         code: "ab.cmd.field_unknown",

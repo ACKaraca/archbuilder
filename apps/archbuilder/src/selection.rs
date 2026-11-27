@@ -157,6 +157,10 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
         Some(WALL) => Wall::from_values(&object.values)
             .map(|w| w.plain_outline())
             .unwrap_or_default(),
+        // An instance is picked and dimensioned at its reference point.
+        Some(types::GROUP_INSTANCE) => archbuilder_model::group::Instance::of(&object)
+            .map(|i| vec![i.origin])
+            .unwrap_or_default(),
         Some(FLOOR) => archbuilder_model::floor::Floor::from_values(&object.values)
             .and_then(|f| f.boundary_in(snapshot))
             .map(|b| b.loops.into_iter().flatten().collect())

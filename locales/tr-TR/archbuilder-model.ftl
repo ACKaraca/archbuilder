@@ -128,3 +128,6 @@ ab-family-family-conflict = "{ $family }" ailesi bu sürümde başka bir sağlam
 ab-family-mapping-required = Güncelleme parametreleri kaldırıyor ya da türlerini değiştiriyor ({ $parameters }); sürdürmek için eşleyin.
 ab-family-version-invalid = { $version } sürümü burada kullanılamaz ({ $reason }).
 ab-family-evaluation-failed = "{ $instance }" aile örneği değerlendirilemiyor ({ $reason }).
+ab-model-group-definition-missing = Grup örneğinin bir grup tanımı yok.
+ab-model-group-levels-unmapped = Grubun her seviyesi aynı binanın bir katına eşlenmelidir.
+ab-model-group-member-unknown = Grup örneği, grubun sahip olmadığı bir öğeyi dışarıda bırakıyor.

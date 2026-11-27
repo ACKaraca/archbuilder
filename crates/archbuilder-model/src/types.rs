@@ -60,6 +60,12 @@ pub const COMPONENT: &str = "archbuilder.component";
 
 /// The type key of a hosted family instance: a family type placed in a host element (a wall).
 pub const FAMILY_INSERT: &str = "archbuilder.family_insert";
+/// A model group definition (AB-PHASE-010): the member records of one repeated unit in
+/// definition-local coordinates, owned by the definition. Contained in the project.
+pub const GROUP: &str = "archbuilder.group";
+/// A placed instance of a group definition (AB-PHASE-010, AB-PHASE-011): its placement, level
+/// mapping, exclusions and exceptions. Its members are generated elements of the storeys.
+pub const GROUP_INSTANCE: &str = "archbuilder.group_instance";
 
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
@@ -154,7 +160,7 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 21] = [
+pub const ELEMENTS: [&str; 22] = [
     COMPONENT,
     WALL,
     DOOR,
@@ -176,6 +182,7 @@ pub const ELEMENTS: [&str; 21] = [
     ELEVATOR,
     DORMER,
     ROOF_EDGE,
+    GROUP_INSTANCE,
 ];
 
 /// The physical elements: the elements that carry project parameter values in their
@@ -213,7 +220,7 @@ pub fn is_datum(key: &str) -> bool {
 }
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 12] = [
+pub const STOREY_ELEMENTS: [&str; 13] = [
     COMPONENT,
     WALL,
     FLOOR,
@@ -226,6 +233,7 @@ pub const STOREY_ELEMENTS: [&str; 12] = [
     SHAFT,
     ROOF_EXTRUSION,
     ELEVATOR,
+    GROUP_INSTANCE,
 ];
 
 /// The elements that host a vertical opening.
@@ -244,7 +252,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 43] = [
+pub const KEYS: [&str; 45] = [
     FAMILY,
     FAMILY_TYPE,
     COMPONENT,
@@ -288,6 +296,8 @@ pub const KEYS: [&str; 43] = [
     VARIABLE,
     PARAMETER,
     MODEL_VIEW,
+    GROUP,
+    GROUP_INSTANCE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -1784,6 +1794,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (FAMILY_TYPE, family_type_fields()),
         (COMPONENT, component_fields()),
         (FAMILY_INSERT, family_insert_fields()),
+        (GROUP, group_fields()),
+        (GROUP_INSTANCE, group_instance_fields()),
         (PARAMETER, crate::parameter::fields()),
         (MODEL_VIEW, model_view_fields()),
         (CEILING, ceiling_fields()),
@@ -1960,6 +1972,141 @@ fn family_insert_fields() -> Vec<FieldDecl> {
         .with_default(Value::Enum(Facing::Exterior.code()))
         .in_aspect("geometry"),
         keyed_values_field("values"),
+    ]
+}
+
+/// The fields of a model group definition.
+pub mod group {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x coordinate of the definition's reference point, in meters.
+    pub const ORIGIN_X: usize = 1;
+    /// The y coordinate of the definition's reference point, in meters.
+    pub const ORIGIN_Y: usize = 2;
+    /// The elevations of the levels the members are on, relative to the first level, ascending.
+    pub const LEVELS: usize = 3;
+    /// The level index of each member, by the member's identifier in decimal text.
+    pub const MEMBER_LEVELS: usize = 4;
+}
+
+/// The fields of a group instance.
+pub mod group_instance {
+    /// The mark.
+    pub const NAME: usize = 0;
+    /// The definition.
+    pub const DEFINITION: usize = 1;
+    /// The x coordinate of the instance's reference point, in meters.
+    pub const ORIGIN_X: usize = 2;
+    /// The y coordinate of the instance's reference point, in meters.
+    pub const ORIGIN_Y: usize = 3;
+    /// The rotation about the vertical axis, in radians.
+    pub const ROTATION: usize = 4;
+    /// Whether the definition is mirrored across its own vertical plane.
+    pub const MIRROR: usize = 5;
+    /// The storey each definition level is mapped to, by the level's index.
+    pub const LEVEL_MAP: usize = 6;
+    /// The definition members this instance leaves out.
+    pub const EXCLUSIONS: usize = 7;
+    /// The text exceptions, by member identifier and kind (`name` or `number`).
+    pub const TEXT_EXCEPTIONS: usize = 8;
+    /// The offset exceptions, by member identifier and axis (`x` or `y`), in meters.
+    pub const OFFSET_EXCEPTIONS: usize = 9;
+    /// The fingerprint of each generated member as it was last generated, by member identifier.
+    pub const CHECKS: usize = 10;
+}
+
+/// The fields of a model group definition: the name, the reference point, the levels and the
+/// level of each member.
+fn group_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("origin_x", Some(real(COORDINATE_RANGE))),
+        length_field("origin_y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new(
+            "levels",
+            ValueType::List(Box::new(ValueType::Quantity(Dimension::LENGTH))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::group::MAX_LEVELS as u64,
+        })
+        .optional()
+        .in_aspect("geometry"),
+        FieldDecl::new("member_levels", ValueType::Map(Box::new(ValueType::I64)))
+            .with_bound(Bound::Length {
+                max: crate::group::MAX_MEMBERS as u64,
+            })
+            .optional()
+            .in_aspect("data"),
+    ]
+}
+
+/// The fields of a group instance: the mark, the definition, the placement, the level mapping,
+/// the exclusions and exceptions, and the fingerprints of the generated members.
+fn group_instance_fields() -> Vec<FieldDecl> {
+    let mut definition = reference_to(GROUP);
+    definition.rule.cardinality = Cardinality::One;
+    let mut storey = reference_to(STOREY);
+    storey.rule.cardinality = Cardinality::Many {
+        max: u32::try_from(crate::group::MAX_LEVELS).unwrap_or(u32::MAX),
+    };
+    let mut member = reference_to(WALL);
+    member.targets = crate::group::MEMBER_KINDS
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    member.rule.on_delete = OnDelete::Clear;
+    member.rule.cardinality = Cardinality::Many {
+        max: u32::try_from(crate::group::MAX_MEMBERS).unwrap_or(u32::MAX),
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new("definition", ValueType::Reference(definition)).in_aspect("identity"),
+        length_field("origin_x", Some(real(COORDINATE_RANGE))),
+        length_field("origin_y", Some(real(COORDINATE_RANGE))),
+        angle_field("rotation"),
+        bool_field("mirror", false),
+        FieldDecl::new(
+            "level_map",
+            ValueType::List(Box::new(ValueType::Reference(storey))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::group::MAX_LEVELS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+        FieldDecl::new(
+            "exclusions",
+            ValueType::List(Box::new(ValueType::Reference(member))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::group::MAX_MEMBERS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+        FieldDecl::new(
+            "text_exceptions",
+            ValueType::Map(Box::new(ValueType::String)),
+        )
+        .with_bound(Bound::Length {
+            max: crate::group::MAX_MEMBERS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+        FieldDecl::new(
+            "offset_exceptions",
+            ValueType::Map(Box::new(ValueType::Quantity(Dimension::LENGTH))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::group::MAX_MEMBERS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+        FieldDecl::new("checks", ValueType::Map(Box::new(ValueType::String)))
+            .with_bound(Bound::Length {
+                max: crate::group::MAX_MEMBERS as u64,
+            })
+            .optional()
+            .in_aspect("data"),
     ]
 }
 

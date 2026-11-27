@@ -260,6 +260,7 @@ impl Mapper<'_> {
     /// The selection sets as `IfcGroup`s of the elements they name that are in the file; the
     /// members that are not are counted in the loss report.
     fn groups(&mut self, model: &mut WriteModel) {
+        self.group_instances(model);
         let written: std::collections::BTreeSet<u128> = model
             .elements
             .iter()
@@ -279,6 +280,44 @@ impl Mapper<'_> {
             model.groups.push(group);
             if left_out > 0 {
                 self.lose_n(reasons::SET_MEMBER_NOT_WRITTEN, "IFCGROUP", &set, left_out);
+            }
+        }
+    }
+
+    /// Each group instance as an `IfcGroup` (`Group instance`) that relates the elements it
+    /// generated: they are written as ordinary elements of their storeys, and the definition's
+    /// own members, which are not part of the building, are not written at all.
+    fn group_instances(&mut self, model: &mut WriteModel) {
+        let written: std::collections::BTreeSet<u128> = model
+            .elements
+            .iter()
+            .map(|e| e.id)
+            .chain(model.grids.iter().map(|g| g.id))
+            .collect();
+        for instance in archbuilder_model::group::instances(self.snapshot) {
+            let members: Vec<archbuilder_model::group::Member> =
+                archbuilder_model::group::members(self.snapshot, instance.definition)
+                    .into_iter()
+                    .filter(|m| !instance.excluded(m.id))
+                    .collect();
+            let generated: Vec<u128> = members
+                .iter()
+                .map(|m| archbuilder_model::group::member_id(instance.id, m.id).as_u128())
+                .filter(|m| written.contains(m))
+                .collect();
+            let left_out = members.len() - generated.len();
+            let mut group = Group::new(instance.id.as_u128(), &instance.name, generated);
+            group.object_type = Some("Group instance".to_owned());
+            model.groups.push(group);
+            if left_out > 0
+                && let Some(object) = spatial::get(self.snapshot, instance.id)
+            {
+                self.lose_n(
+                    reasons::SET_MEMBER_NOT_WRITTEN,
+                    "IFCGROUP",
+                    &object,
+                    left_out,
+                );
             }
         }
     }

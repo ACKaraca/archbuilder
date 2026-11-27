@@ -1627,6 +1627,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::GROUP_INSTANCE,
+        Message {
+            message_id: "ab-kind-group-instance",
+        },
+    ),
+    (
         types::DORMER,
         Message {
             message_id: "ab-kind-dormer",

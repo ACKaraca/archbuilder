@@ -19,6 +19,24 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-name-taken",
     };
+    /// A group instance names a definition that is not one, or the definition is gone.
+    pub const GROUP_DEFINITION_MISSING: ErrorCode = ErrorCode {
+        code: "ab.model.group_definition_missing",
+        category: Category::Conflict,
+        message_id: "ab-model-group-definition-missing",
+    };
+    /// A group instance does not map each level of its definition to a storey of one building.
+    pub const GROUP_LEVELS_UNMAPPED: ErrorCode = ErrorCode {
+        code: "ab.model.group_levels_unmapped",
+        category: Category::Conflict,
+        message_id: "ab-model-group-levels-unmapped",
+    };
+    /// A group instance excludes a member its definition does not have.
+    pub const GROUP_MEMBER_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.model.group_member_unknown",
+        category: Category::Conflict,
+        message_id: "ab-model-group-member-unknown",
+    };
     /// An object is not contained in an object of the kind its type belongs to.
     pub const PARENT_INVALID: ErrorCode = ErrorCode {
         code: "ab.model.parent_invalid",

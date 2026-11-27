@@ -17,6 +17,7 @@ are not restated here.
 | [0007](0007-exchange-identifiers.md) | Exchange identifiers independent of the other application's identifiers | Accepted |
 | [0008](0008-dwg-writing-in-the-first-production-release.md) | DWG writing in the first production release | Accepted |
 | [0009](0009-parameters-expressions-and-family-documents.md) | Parameters, expressions and family documents | Accepted |
+| [0010](0010-model-groups.md) | Model groups: definitions, instances and generated elements | Proposed |
 
 ## Template
 

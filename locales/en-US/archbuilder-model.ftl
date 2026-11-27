@@ -128,3 +128,6 @@ ab-family-family-conflict = The family "{ $family }" is loaded already at this v
 ab-family-mapping-required = The update removes or retypes parameters ({ $parameters }); map them to continue.
 ab-family-version-invalid = The version { $version } is not allowed here ({ $reason }).
 ab-family-evaluation-failed = The family instance "{ $instance }" would not evaluate ({ $reason }).
+ab-model-group-definition-missing = The group instance has no group definition.
+ab-model-group-levels-unmapped = Each level of the group must be mapped to a storey of the same building.
+ab-model-group-member-unknown = The group instance excludes an element the group does not have.

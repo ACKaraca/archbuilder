@@ -1027,6 +1027,57 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-groups",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-create",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-create-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_CREATE,
+                            "group-create",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-place",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-place-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_PLACE,
+                            "group-place",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-edit",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-edit-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_EDIT,
+                            "group-edit",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-separate",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-separate-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_SEPARATE,
+                            "group-separate",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-parameters",
                     },
                     vec![
@@ -1583,6 +1634,7 @@ pub fn quick_access() -> Vec<ToolItem> {
 
 /// The icons of the application, by name: the SVG sources of `apps/archbuilder/icons`.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one entry per icon")]
 pub fn icons() -> Vec<(String, String)> {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -1623,6 +1675,10 @@ pub fn icons() -> Vec<(String, String)> {
         "parameters",
         "component",
         "load-family",
+        "group-create",
+        "group-place",
+        "group-edit",
+        "group-separate",
         "project-location",
         "coordinates",
         "recenter",

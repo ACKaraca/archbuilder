@@ -49,7 +49,8 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         | types::VARIABLE
         | types::PARAMETER
         | types::FAMILY
-        | types::FAMILY_TYPE => Some(&[PROJECT]),
+        | types::FAMILY_TYPE
+        | types::GROUP => Some(&[PROJECT]),
         types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT => Some(&[WALL]),
@@ -83,7 +84,13 @@ fn name_taken(object: &Object) -> Error {
 }
 
 fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut Vec<Error>) {
+    let in_definition = object
+        .header
+        .owner
+        .and_then(|owner| type_of(candidate, owner))
+        .is_some_and(|owner| owner == types::GROUP);
     if let Some(containers) = container_of(key)
+        && !in_definition
         && !object
             .header
             .owner
@@ -114,6 +121,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     }
     if key == types::FAMILY_INSERT {
         out.extend(crate::family::loaded::insert_problems(candidate, object));
+    }
+    if key == types::GROUP_INSTANCE {
+        out.extend(crate::group::instance_problems(candidate, object));
     }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));

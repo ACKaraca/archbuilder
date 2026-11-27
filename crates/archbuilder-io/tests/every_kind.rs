@@ -31,6 +31,10 @@ fn run(document: &Document, registry: &arc_command::Registry, command: &str, par
 }
 
 #[test]
+#[allow(
+    clippy::cognitive_complexity,
+    reason = "one fixture for every kind and its checks"
+)]
 fn a_document_with_every_element_kind_exports_and_validates() {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
@@ -271,6 +275,21 @@ fn a_document_with_every_element_kind_exports_and_validates() {
             .wait()
             .unwrap();
     }
+    // A group of the first wall with its door and window, placed beside the room: its instance is
+    // an element of the document and an IFC group.
+    let group = r(
+        "archbuilder.group.create",
+        json!({"name": "Unit", "ids": [walls[0].clone()]}),
+    );
+    let storey =
+        archbuilder_model::spatial::objects(&document.snapshot(), archbuilder_model::types::STOREY)
+            [0]
+        .id
+        .to_string();
+    r(
+        "archbuilder.group.place",
+        json!({"group": group["group"], "storey": storey, "origin": [40.0, 20.0]}),
+    );
     let s = document.snapshot();
     for key in ELEMENTS
         .iter()
@@ -333,15 +352,16 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     // Conformance is checked only for a schema the build has tables of; IFC4 has none here, so
     // the export must not claim it.
     assert!(out.conformance.is_none() || out.valid);
-    // An elevator is a transport element with its type, a gutter a pipe segment, a selection set a
-    // group with the walls it names.
+    // An elevator is a transport element with its type, a gutter a pipe segment, a selection set and
+    // a group instance each a group with the elements it names.
     assert_eq!(count("IFCTRANSPORTELEMENT"), 1);
     assert_eq!(count("IFCTRANSPORTELEMENTTYPE"), 1);
     assert!(text.contains(".ELEVATOR."));
     assert_eq!(count("IFCPIPESEGMENT"), 1);
     assert!(text.contains(".GUTTER."));
-    assert_eq!(count("IFCGROUP"), 1);
-    assert_eq!(count("IFCRELASSIGNSTOGROUP"), 1);
+    assert_eq!(count("IFCGROUP"), 2);
+    assert_eq!(count("IFCRELASSIGNSTOGROUP"), 2);
+    assert!(text.contains("'Group instance'"));
     // A dormer is written as the opening in its roof, walls and a roof; a fascia as a molding.
     for written in [
         "Dormer 1 (front)",

@@ -67,6 +67,7 @@ pub mod expr;
 pub mod family;
 pub mod floor;
 pub mod floor_edge;
+pub mod group;
 pub mod headroom;
 pub mod insert;
 pub mod join;
@@ -193,6 +194,17 @@ pub mod defaults {
             (Side::West, true) => "Batı Cephesi",
         }
         .to_owned()
+    }
+
+    /// The name of the group definition or instance numbered `n` in `language`: `Group 2`,
+    /// `Grup 2`.
+    #[must_use]
+    pub fn group(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Grup {n}")
+        } else {
+            format!("Group {n}")
+        }
     }
 
     /// The name of the wall numbered `n` on a storey in `language`: `Wall 3`, `Duvar 3`.

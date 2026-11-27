@@ -590,6 +590,12 @@ pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()
         None => storey_in_selection(ctx).ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?,
     };
     let object = expect(ctx.snapshot(), id, STOREY)?;
+    if archbuilder_model::group::instances(ctx.snapshot())
+        .iter()
+        .any(|i| i.level_map.contains(&id))
+    {
+        return Err(Error::new(crate::error::codes::GROUP_LEVEL_MAPPED));
+    }
     let walls: usize = types::STOREY_ELEMENTS
         .iter()
         .map(|k| spatial::children(ctx.snapshot(), k, id).len())

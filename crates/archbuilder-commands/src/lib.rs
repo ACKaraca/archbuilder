@@ -38,6 +38,7 @@ pub mod family_project;
 pub mod floor;
 pub mod floor_edge;
 pub mod floor_slope;
+pub mod group;
 pub mod insert;
 pub mod model_view;
 pub mod modify;
@@ -157,6 +158,7 @@ pub fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
     structure::register(&mut registry)?;
     wall::register(&mut registry)?;
+    group::register(&mut registry)?;
     wall_shape::register(&mut registry)?;
     insert::register(&mut registry)?;
     floor::register(&mut registry)?;

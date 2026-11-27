@@ -73,13 +73,37 @@ fn decode(json: &Json) -> Option<Value> {
     })
 }
 
+/// The ids to copy: the selection, with the generated elements of each group instance in it. A
+/// group instance is copied as its elements, which are ordinary once copied; its own record is
+/// kept in the content for identity and is not pasted as an element.
+fn with_group_elements(snapshot: &Snapshot, selected: &[ObjectId]) -> Vec<ObjectId> {
+    let mut ids: Vec<ObjectId> = Vec::new();
+    for id in selected {
+        ids.push(*id);
+        let instance = spatial::get(snapshot, *id)
+            .filter(|_| spatial::type_of(snapshot, *id).as_deref() == Some(types::GROUP_INSTANCE))
+            .and_then(|o| archbuilder_model::group::Instance::of(&o));
+        let Some(instance) = instance else {
+            continue;
+        };
+        for m in archbuilder_model::group::members(snapshot, instance.definition) {
+            let child = archbuilder_model::group::member_id(instance.id, m.id);
+            if !instance.excluded(m.id) && spatial::get(snapshot, child).is_some() {
+                ids.push(child);
+            }
+        }
+    }
+    ids
+}
+
 /// The content of the clipboard for `ids`: the walls, floors and rooms among them, the doors and
 /// windows their walls host, and the doors and windows of the selection whose wall is also in it.
 ///
 /// # Errors
 /// `ab.cmd.nothing_selected` when none of `ids` can be copied.
 #[allow(clippy::too_many_lines, reason = "one arm for each kind captured")]
-pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
+pub fn capture(snapshot: &Snapshot, selected: &[ObjectId]) -> Result<Json> {
+    let ids = with_group_elements(snapshot, selected);
     let mut items: Vec<Json> = Vec::new();
     let mut walls: Vec<ObjectId> = Vec::new();
     let mut seen: Vec<ObjectId> = Vec::new();
@@ -174,6 +198,7 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
             | types::REFERENCE_PLANE
             | types::ELEVATOR
             | types::COMPONENT
+            | types::GROUP_INSTANCE
             | types::ROOF_EXTRUSION => push(
                 &mut items,
                 *id,
