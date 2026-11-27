@@ -2253,6 +2253,8 @@ mod tests {
                     ("corner_width", crate::curtain::slot::CORNER + 1),
                     ("corner_depth", crate::curtain::slot::CORNER + 2),
                     ("priority", crate::curtain::slot::PRIORITY),
+                    ("vertical_angle", crate::curtain::slot::VERTICAL_ANGLE),
+                    ("horizontal_angle", crate::curtain::slot::HORIZONTAL_ANGLE),
                 ],
             ),
             (

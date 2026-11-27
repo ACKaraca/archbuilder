@@ -56,3 +56,16 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
 | AB-WALL-025 | Curved curtain walls | Places curtain walls on arcs with planar panels between vertical grid lines, reporting chord deviation per panel. | T2 | 2 |
 | AB-WALL-026 | Curtain systems on faces | Applies curtain grids, panels and mullions to arbitrary planar or ruled faces of mass or generic elements with a UV grid, and regenerates when the face changes. | T2 | 3 |
 | AB-WALL-027 | Panel and mullion counts | Exposes per-panel width, height, area and type and per-mullion length to schedules and IFC, with cell keys that stay stable across regeneration. | T1 | 2 |
+
+### Behavior notes: curtain grids
+
+- **Grid angle (AB-WALL-020).** Each grid rule of a curtain type has an angle of at most 60 degrees
+  either way, counter-clockwise in the elevation seen with the start of the baseline on the left.
+  A turned family leans its lines about the middle of the wall; a line's position is where it
+  crosses the middle, and fixed distances and spacings are measured along the baseline (vertical
+  lines) or the height (horizontal lines). Cells and panels of a turned grid are convex polygons
+  cut to the wall, listed with their corners; width and height of such a panel are those of its
+  bounding box and its area is the polygon's. Leaning bars are cut square to their axis. A door or
+  window override needs a rectangular cell: in a turned cell the panel is drawn as a plain one.
+  Added lines lean with their family. The two families must cross at a clear angle; a rule pair
+  that makes them nearly parallel is refused. Older documents carry no angle and stay straight.

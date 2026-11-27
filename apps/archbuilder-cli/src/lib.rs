@@ -220,7 +220,7 @@ fn curtain_walls(args: &[OsString], product: &Product) -> Value {
                         "type": p.type_ref.as_ref().map(|(_, name)| name.clone()),
                         "width": p.width(),
                         "height": p.height(),
-                        "area": p.width() * p.height(),
+                        "area": p.area(),
                         "overridden": p.overridden,
                     })
                 })

@@ -65,9 +65,15 @@ pub struct RuleParam {
     /// `start`, `center` or `end`: where a fixed distance starts counting.
     #[serde(default)]
     pub justify: Option<String>,
-    /// The shift of the origin of a fixed distance.
+    /// The shift of the origin of a fixed distance, or the stretch left free at the justified
+    /// side of an equal division.
     #[serde(default)]
     pub offset: Option<QuantityParam>,
+    /// How far the family of lines is turned, at most 60 degrees either way: a number in radians,
+    /// a text in degrees or with a unit. Counter-clockwise in the elevation seen with the start of
+    /// the baseline on the left.
+    #[serde(default)]
+    pub angle: Option<QuantityParam>,
 }
 
 /// A mullion specification as a command parameter; fields left out keep their value.
@@ -165,6 +171,14 @@ fn apply_rule(
     }
     if let Some(o) = &p.offset {
         rule.offset = meters(ctx, o)?;
+    }
+    if let Some(a) = &p.angle {
+        rule.angle = match a {
+            QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
+                t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
+            }
+            other => ctx.quantity(other, Dimension::ANGLE)?.value(),
+        };
     }
     Ok(())
 }
