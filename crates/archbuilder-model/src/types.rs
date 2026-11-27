@@ -752,6 +752,10 @@ pub mod grid {
     pub const TOP_LEVEL: usize = 9;
     /// Whether the grid is pinned.
     pub const PINNED: usize = 10;
+    /// The vertices between the start and the end of a multi-segment grid: records of `x`, `y`
+    /// and the `bulge` of the segment that arrives at the vertex (the grid's own bulge is that of
+    /// the last segment); appended in schema 1.1, absent for a grid of one segment.
+    pub const PATH: usize = 11;
 }
 
 /// Field positions of `archbuilder.reference_plane`.
@@ -1490,6 +1494,22 @@ fn grid_fields() -> Vec<FieldDecl> {
         extent_field("bottom_level"),
         extent_field("top_level"),
         pinned_field(0),
+        FieldDecl::new(
+            "path",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+                FieldDecl::new("bulge", ValueType::F64)
+                    .with_default(Value::F64(0.0))
+                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::datum::MAX_PATH as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
     ]
 }
 

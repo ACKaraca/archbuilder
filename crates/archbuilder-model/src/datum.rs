@@ -28,6 +28,8 @@ pub const UNBOUNDED_REACH: f64 = 200.0;
 pub const FLAT_CHORD: f64 = 0.01;
 /// The most datums of one kind that are looked at.
 pub const MAX_PER_KIND: usize = 20_000;
+/// The most vertices between the ends of a multi-segment grid.
+pub const MAX_PATH: usize = 1_000;
 /// The most labels one increment searches through for a free one.
 const MAX_SEARCH: usize = 100_000;
 
@@ -108,6 +110,48 @@ pub struct Grid {
     pub bottom: Option<ObjectId>,
     /// The level the extent ends at; the building's highest when absent.
     pub top: Option<ObjectId>,
+    /// The vertices between start and end, each with the bulge of the segment that arrives at it
+    /// (`bulge` is that of the last segment); empty for a grid of one segment.
+    pub via: Vec<(P, f64)>,
+}
+
+/// The vertices of a grid's `path` field, in order; unreadable entries are skipped.
+fn path_at(values: &[Option<Value>]) -> Vec<(P, f64)> {
+    let Some(Some(Value::List(items))) = values.get(grid::PATH) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .take(MAX_PATH)
+        .filter_map(|item| match item {
+            Value::Record(r) => Some((
+                [types::meters(r, 0)?, types::meters(r, 1)?],
+                match r.get(2) {
+                    Some(Some(Value::F64(b))) if b.is_finite() => *b,
+                    _ => 0.0,
+                },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The value of the `path` field for `via`; absent when there is none.
+#[must_use]
+pub fn path_value(via: &[(P, f64)]) -> Option<Value> {
+    (!via.is_empty()).then(|| {
+        Value::List(
+            via.iter()
+                .map(|(p, bulge)| {
+                    Value::Record(vec![
+                        Some(types::length(p[0])),
+                        Some(types::length(p[1])),
+                        Some(Value::F64(*bulge)),
+                    ])
+                })
+                .collect(),
+        )
+    })
 }
 
 impl Grid {
@@ -126,19 +170,43 @@ impl Grid {
             head_end: bool_at(values, grid::HEAD_END, true),
             bottom: reference_at(values, grid::BOTTOM_LEVEL),
             top: reference_at(values, grid::TOP_LEVEL),
+            via: path_at(values),
         })
     }
 
-    /// The straight distance from start to end.
+    /// The control points: start, the vertices between and end.
     #[must_use]
-    pub fn length(&self) -> f64 {
-        (self.end[0] - self.start[0]).hypot(self.end[1] - self.start[1])
+    pub fn points(&self) -> Vec<P> {
+        let mut out = vec![self.start];
+        out.extend(self.via.iter().map(|(p, _)| *p));
+        out.push(self.end);
+        out
     }
 
-    /// The points of the line from start to end, the arc flattened within [`FLAT_CHORD`].
+    /// The length along the control points (chords), so a grid that closes on itself has one.
+    #[must_use]
+    pub fn length(&self) -> f64 {
+        self.points()
+            .windows(2)
+            .map(|w| match (w.first(), w.get(1)) {
+                (Some(a), Some(b)) => (b[0] - a[0]).hypot(b[1] - a[1]),
+                _ => 0.0,
+            })
+            .sum()
+    }
+
+    /// The points of the line from start to end through every vertex, each arc flattened within
+    /// [`FLAT_CHORD`].
     #[must_use]
     pub fn polyline(&self) -> Vec<P> {
-        let mut out = crate::floor::flatten_edge(self.start, self.end, self.bulge, FLAT_CHORD);
+        let points = self.points();
+        let bulges = self.via.iter().map(|(_, b)| *b).chain([self.bulge]);
+        let mut out = Vec::new();
+        for (w, bulge) in points.windows(2).zip(bulges) {
+            if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+                out.extend(crate::floor::flatten_edge(*a, *b, bulge, FLAT_CHORD));
+            }
+        }
         out.push(self.end);
         out
     }

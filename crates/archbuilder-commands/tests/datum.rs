@@ -340,3 +340,102 @@ fn a_work_plane_follows_its_datum_and_only_one_is_active() {
     assert_eq!(spatial::objects(&env.snapshot(), WORK_PLANE).len(), 3);
     assert_eq!(spatial::objects(&env.snapshot(), GRID).len(), 1);
 }
+
+fn grid_of(env: &Env, id: ObjectId) -> datum::Grid {
+    datum::Grid::from_values(&spatial::get(&env.snapshot(), id).unwrap().values).unwrap()
+}
+
+#[test]
+fn a_multi_segment_grid_runs_through_its_vertices_and_follows_modify() {
+    let env = Env::new();
+    // Two straight segments and a last one that is an arc.
+    let made = env
+        .run(
+            "archbuilder.grid.create",
+            json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [4.0, 6.0]],
+                   "bulges": [0.0, 0.0, 0.4]}),
+        )
+        .unwrap();
+    let id: ObjectId = id_of(&made, "grid").parse().unwrap();
+    let g = grid_of(&env, id);
+    assert_eq!(g.via.len(), 2);
+    assert_eq!(g.points().len(), 4);
+    assert!((g.bulge - 0.4).abs() < 1e-12);
+    let line = g.polyline();
+    assert!(line.contains(&[10.0, 0.0]) && line.contains(&[10.0, 6.0]));
+    assert!(line.len() > 4, "the arc is flattened");
+    assert_eq!(line.last(), Some(&[4.0, 6.0]));
+    assert!((g.length() - 22.0).abs() < 1e-9);
+    // Modify moves every vertex; a mirror flips the arc.
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [id.to_string()], "displacement": [1.0, 2.0]}),
+    )
+    .unwrap();
+    assert_eq!(grid_of(&env, id).via[0].0, [11.0, 2.0]);
+    env.run(
+        "archbuilder.modify.mirror",
+        json!({"objects": [id.to_string()], "axis": [[0.0, 0.0], [1.0, 0.0]], "keep": false}),
+    )
+    .unwrap();
+    let mirrored = grid_of(&env, id);
+    assert_eq!(mirrored.via[1].0, [11.0, -8.0]);
+    assert!((mirrored.bulge + 0.4).abs() < 1e-12);
+    // A copy keeps the vertices, moved.
+    let copy = env
+        .run(
+            "archbuilder.modify.copy",
+            json!({"objects": [id.to_string()], "displacement": [0.0, 20.0]}),
+        )
+        .unwrap();
+    let new: ObjectId = copy.value["created"][0].as_str().unwrap().parse().unwrap();
+    assert_eq!(grid_of(&env, new).via.len(), 2);
+    assert_eq!(grid_of(&env, new).via[0].0, [11.0, 18.0]);
+    env.document.undo().wait().unwrap();
+    env.document.undo().wait().unwrap();
+    assert_eq!(grid_of(&env, id).via[0].0, [11.0, 2.0]);
+    // Wrong counts and loose bulges are refused.
+    for bad in [
+        json!({"points": [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]], "bulges": [0.0]}),
+        json!({"points": [[0.0, 0.0]]}),
+        json!({"points": [[0.0, 0.0], [1.0, 0.0]], "bulges": [99.0]}),
+    ] {
+        assert!(env.run("archbuilder.grid.create", bad).is_err());
+    }
+}
+
+#[test]
+fn a_grid_follows_a_chain_of_walls_in_either_order() {
+    let env = Env::new();
+    let storey = env.storeys()[0].to_string();
+    let mut ids = Vec::new();
+    // The second wall is drawn backwards, the first meets it at its start.
+    for (a, b) in [([8.0, 0.0], [0.0, 0.0]), ([8.0, 0.0], [8.0, 5.0])] {
+        let w = env
+            .run(
+                "archbuilder.wall.create",
+                json!({"start": a, "end": b, "storey": storey}),
+            )
+            .unwrap();
+        ids.push(id_of(&w, "wall"));
+    }
+    let made = env
+        .run("archbuilder.grid.create", json!({"from_walls": ids}))
+        .unwrap();
+    let g = grid_of(&env, id_of(&made, "grid").parse().unwrap());
+    assert_eq!(g.points(), vec![[0.0, 0.0], [8.0, 0.0], [8.0, 5.0]]);
+    // Walls that do not meet are refused.
+    let far = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [30.0, 0.0], "end": [40.0, 0.0], "storey": storey}),
+        )
+        .unwrap();
+    assert!(
+        env.run(
+            "archbuilder.grid.create",
+            json!({"from_walls": [ids[0].clone(), id_of(&far, "wall")]})
+        )
+        .is_err()
+    );
+}

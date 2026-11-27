@@ -690,7 +690,7 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
         } else if key == types::GRID
             && let Some(g) = archbuilder_model::datum::Grid::from_values(&values)
         {
-            out.push(vec![g.start, g.end]);
+            out.push(g.points());
         } else if key == types::REFERENCE_PLANE
             && let Some(r) = archbuilder_model::datum::RefPlane::from_values(&values)
         {

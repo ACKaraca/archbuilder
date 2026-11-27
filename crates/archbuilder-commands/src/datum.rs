@@ -50,6 +50,21 @@ pub struct CreateGrid {
     /// A wall whose baseline the grid takes: a grid drawn from an existing curve.
     #[serde(default)]
     pub from_wall: Option<IdParam>,
+    /// Walls that follow one another, end to start within a millimeter, in order: the grid runs
+    /// along their baselines as one multi-segment line.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub from_walls: Option<Vec<IdParam>>,
+    /// The points `[x, y]` of a multi-segment grid, in meters: the first is the start, the last
+    /// the end, the others vertices; at least two.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub points: Option<Vec<[f64; 2]>>,
+    /// The bulge of each segment of `points` (one fewer than the points; 0 is straight); the
+    /// last segment takes `bulge` when this is absent.
+    #[serde(default)]
+    #[schemars(length(max = 1000))]
+    pub bulges: Option<Vec<f64>>,
     /// The bulge of an arc grid: the tangent of a quarter of its included angle; straight when
     /// absent or 0.
     #[serde(default)]
@@ -219,26 +234,86 @@ fn point_ok(p: [f64; 2]) -> bool {
     p.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi)
 }
 
-fn create_grid(ctx: &mut Context<'_>, p: CreateGrid) -> Result<GridCreated> {
+fn create_grid(ctx: &mut Context<'_>, mut p: CreateGrid) -> Result<GridCreated> {
     let building = building_for(ctx, p.building)?;
     let snapshot = ctx.snapshot().clone();
-    let (start, end, wall_bulge) = match (p.from_wall, p.start, p.end) {
-        (Some(IdParam(id)), _, _) => {
-            let wall = expect(&snapshot, id, WALL)?;
-            let w = archbuilder_model::wall::Wall::from_values(&wall.values)
-                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-            (w.start, w.end, 0.0)
+    let baseline = |id: ObjectId| -> Result<[[f64; 2]; 2]> {
+        let wall = expect(&snapshot, id, WALL)?;
+        archbuilder_model::wall::Wall::from_values(&wall.values)
+            .map(|w| [w.start, w.end])
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+    };
+    // The control points of the line and the bulge of each segment.
+    let (points, mut bulges): (Vec<[f64; 2]>, Option<Vec<f64>>) =
+        match (p.from_walls, p.from_wall, p.points, p.start, p.end) {
+            (Some(walls), ..) => {
+                if walls.is_empty() || walls.len() > datum::MAX_PATH {
+                    return Err(Error::new(codes::NO_LINE));
+                }
+                let mut points: Vec<[f64; 2]> = Vec::new();
+                for IdParam(id) in walls {
+                    let [a, b] = baseline(id)?;
+                    let joined =
+                        |x: [f64; 2], y: [f64; 2]| (x[0] - y[0]).hypot(x[1] - y[1]) < 1.0e-3;
+                    // The first wall runs backwards when the second meets its start.
+                    if points.len() == 2
+                        && let Some(first) = points.first().copied()
+                        && (joined(first, a) || joined(first, b))
+                        && !points
+                            .last()
+                            .is_some_and(|l| joined(*l, a) || joined(*l, b))
+                    {
+                        points.reverse();
+                    }
+                    match points.last().copied() {
+                        None => points.extend([a, b]),
+                        Some(last) if joined(last, a) => points.push(b),
+                        Some(last) if joined(last, b) => points.push(a),
+                        Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
+                    }
+                }
+                (points, None)
+            }
+            (None, Some(IdParam(id)), ..) => (baseline(id)?.to_vec(), None),
+            (None, None, Some(points), ..) => (points, p.bulges.take()),
+            (None, None, None, Some(a), Some(b)) => (vec![a, b], None),
+            _ => return Err(Error::new(codes::NO_LINE)),
+        };
+    if points.len() < 2
+        || points.len() > datum::MAX_PATH + 2
+        || !points.iter().all(|q| point_ok(*q))
+    {
+        return Err(Error::new(codes::VALUE_INVALID));
+    }
+    let segments = points.len() - 1;
+    let bulges = match bulges.take() {
+        Some(list) if list.len() == segments => list,
+        Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
+        None => {
+            let mut list = vec![0.0; segments];
+            if let Some(last) = list.last_mut() {
+                *last = p.bulge.unwrap_or(0.0);
+            }
+            list
         }
-        (None, Some(a), Some(b)) => (a, b, 0.0),
+    };
+    if bulges
+        .iter()
+        .any(|b| !b.is_finite() || b.abs() > archbuilder_model::floor::MAX_BULGE)
+    {
+        return Err(Error::new(codes::VALUE_INVALID));
+    }
+    let (start, end, bulge) = match (points.first(), points.last(), bulges.last()) {
+        (Some(a), Some(b), Some(k)) => (*a, *b, *k),
         _ => return Err(Error::new(codes::NO_LINE)),
     };
-    if !point_ok(start) || !point_ok(end) {
-        return Err(Error::new(codes::VALUE_INVALID));
-    }
-    let bulge = p.bulge.unwrap_or(wall_bulge);
-    if !bulge.is_finite() || bulge.abs() > archbuilder_model::floor::MAX_BULGE {
-        return Err(Error::new(codes::VALUE_INVALID));
-    }
+    let via: Vec<([f64; 2], f64)> = points
+        .iter()
+        .skip(1)
+        .take(segments - 1)
+        .zip(&bulges)
+        .map(|(q, k)| (*q, *k))
+        .collect();
     let bottom = optional_level(&snapshot, building, p.bottom_level.as_deref())?;
     let top = optional_level(&snapshot, building, p.top_level.as_deref())?;
     let label = match p.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
@@ -269,6 +344,7 @@ fn create_grid(ctx: &mut Context<'_>, p: CreateGrid) -> Result<GridCreated> {
             reference(bottom),
             reference(top),
             None,
+            datum::path_value(&via),
         ],
     )?;
     ensure_valid(ctx)?;
@@ -645,7 +721,21 @@ pub(crate) fn move_datums(
     xf: &archbuilder_model::transform::Xform,
 ) -> Result<()> {
     for id in ids {
-        let (_, start, end, bulge) = line_of(snapshot, *id)?;
+        let (key, start, end, bulge) = line_of(snapshot, *id)?;
+        if key == GRID
+            && let Some(g) =
+                spatial::get(snapshot, *id).and_then(|o| datum::Grid::from_values(&o.values))
+            && !g.via.is_empty()
+        {
+            let sign = if xf.reflects() { -1.0 } else { 1.0 };
+            let via: Vec<([f64; 2], f64)> = g
+                .via
+                .iter()
+                .map(|(q, k)| (xf.point(*q), sign * k))
+                .collect();
+            ctx.txn()?
+                .modify(*id, FieldPath::new("path"), datum::path_value(&via))?;
+        }
         let (a, b) = (xf.point(start), xf.point(end));
         for (field, v) in [
             ("start_x", a[0]),
@@ -733,6 +823,17 @@ pub(crate) fn copy_datum(
     let name = if key == GRID {
         if let Some(slot) = values.get_mut(types::grid::BULGE) {
             *slot = Some(Value::F64(if xf.reflects() { -bulge } else { bulge }));
+        }
+        if let Some(g) = datum::Grid::from_values(&values) {
+            let sign = if xf.reflects() { -1.0 } else { 1.0 };
+            let via: Vec<([f64; 2], f64)> = g
+                .via
+                .iter()
+                .map(|(q, k)| (xf.point(*q), sign * k))
+                .collect();
+            if let Some(slot) = values.get_mut(types::grid::PATH) {
+                *slot = datum::path_value(&via);
+            }
         }
         let ours = spatial::children(&seen, LEVEL, building);
         for at in [types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL] {
