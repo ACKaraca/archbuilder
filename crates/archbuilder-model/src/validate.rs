@@ -43,11 +43,16 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         SITE => Some(&[PROJECT]),
         BUILDING => Some(&[SITE]),
         STOREY | LEVEL => Some(&[BUILDING]),
+        k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
+        types::SELECTION_SET => Some(&[PROJECT]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
-        k if types::TYPE_KEYS.contains(&k) => Some(&[PROJECT]),
+        types::FLOOR_EDGE => Some(&[FLOOR]),
+        k if types::TYPE_KEYS.contains(&k) || k == types::RAILING_TYPE || k == types::RAMP_TYPE => {
+            Some(&[PROJECT])
+        }
         _ => None,
     }
 }
@@ -82,20 +87,33 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
     }
+    if key == WALL {
+        out.extend(crate::curtain::problems(candidate, object));
+    }
     if key == DOOR || key == WINDOW || key == WALL_OPENING {
         out.extend(crate::insert::problems(candidate, object));
     }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
     }
+    if key == types::RAMP {
+        out.extend(ramp_problem(candidate, object));
+    }
+    if key == types::RAILING {
+        out.extend(railing_problem(candidate, object));
+    }
     if key == types::PLAN_VIEW {
         out.extend(crate::view::problem(object));
+    }
+    if types::is_datum(key) && crate::datum::is_degenerate(candidate, key, object) {
+        out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));
     }
     out.extend(type_problem(candidate, key, object));
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT
         && key != ROOM
+        && key != types::GRID
         && objects(candidate, key)
             .iter()
             .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
@@ -148,6 +166,73 @@ fn check_instances_of_types(
             }
         }
     }
+}
+
+/// Why a ramp has no layout: no level above its base and no rise, or a record that cannot be read.
+#[must_use]
+pub fn ramp_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    use crate::ramp::{Placed, Refusal};
+    let name = display_name(object);
+    let Some(placed) = Placed::of(candidate, object) else {
+        return Some(Error::new(codes::RAMP_MALFORMED).with_arg("name", name));
+    };
+    match placed.layout {
+        Ok(_) => None,
+        Err(Refusal::NoTop) => Some(Error::new(codes::RAMP_NO_TOP).with_arg("name", name)),
+        Err(Refusal::Malformed) => Some(Error::new(codes::RAMP_MALFORMED).with_arg("name", name)),
+    }
+}
+
+/// Why a railing has no derived form: a path with fewer than two points, coincident points, or a
+/// host that is gone.
+#[must_use]
+pub fn railing_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    crate::railing::Derived::of(candidate, object)
+        .err()
+        .map(|_| Error::new(codes::RAILING_MALFORMED).with_arg("name", display_name(object)))
+}
+
+/// The warnings of a ramp (a slope over the type's largest) and of a railing (a clear opening
+/// wider than [`crate::railing::CLEAR_GAP_LIMIT`]). Each carries the element's identifier as the
+/// detail `object`.
+#[must_use]
+pub fn circulation_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
+    let name = display_name(object);
+    let mut out = Vec::new();
+    match type_of(candidate, object.id).as_deref() {
+        Some(types::RAMP) => {
+            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout)
+                && layout.exceeds()
+            {
+                out.push(
+                    Error::new(codes::RAMP_SLOPE)
+                        .with_arg("name", name)
+                        .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
+                        .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
+                        .with_arg(OBJECT, object.id.to_string()),
+                );
+            }
+        }
+        Some(types::RAILING) => {
+            if let Ok(d) = crate::railing::Derived::of(candidate, object) {
+                let gap = d.widest_gap();
+                if gap > crate::railing::CLEAR_GAP_LIMIT + 1.0e-9 {
+                    out.push(
+                        Error::new(codes::RAILING_GAP)
+                            .with_arg("name", name)
+                            .with_arg("gap", format!("{:.0}", gap * 1000.0))
+                            .with_arg(
+                                "max",
+                                format!("{:.0}", crate::railing::CLEAR_GAP_LIMIT * 1000.0),
+                            )
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 /// Why a stair has no layout: no level above its base, a riser count out of bounds, or a record
@@ -255,6 +340,13 @@ pub fn overlap_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
     let walls = crate::floor::storey_walls(candidate, storey);
     crate::floor::overlapping_walls(&walls)
         .into_iter()
+        .filter(|(a, b)| {
+            let (Some(x), Some(y)) = (get(candidate, *a), get(candidate, *b)) else {
+                return true;
+            };
+            !(crate::curtain::is_embedded_in(candidate, &x, &y)
+                || crate::curtain::is_embedded_in(candidate, &y, &x))
+        })
         .map(|(a, b)| {
             let name = |id| {
                 get(candidate, id)
@@ -355,6 +447,8 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_floors(candidate, touched, &mut out);
     check_ceilings(candidate, touched, &mut out);
     check_openings(candidate, touched, &mut out);
+    check_floor_edges(candidate, touched, &mut out);
+    check_roof_extrusions(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
     out
@@ -404,9 +498,8 @@ pub fn attach_problem(candidate: &Snapshot, wall: &Object) -> Option<Error> {
             }
             Err(_) => true,
         },
-        Some(FLOOR) => crate::floor::Derived::of(candidate, &target).is_none_or(|d| {
-            d.top - d.floor.thickness - (level + data.base_offset) < types::HEIGHT_RANGE.0
-        }),
+        Some(FLOOR) => crate::floor::Derived::of(candidate, &target)
+            .is_none_or(|d| d.z_range().0 - (level + data.base_offset) < types::HEIGHT_RANGE.0),
         _ => true,
     };
     fails.then(|| {
@@ -442,7 +535,8 @@ fn check_floors(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>, out:
         let error = match crate::floor::Derived::of(candidate, &floor) {
             None => codes::FLOOR_MALFORMED,
             Some(d) => match d.boundary.check() {
-                Ok(()) => continue,
+                Ok(()) if d.slope_ok() => continue,
+                Ok(()) => codes::FLOOR_SLOPE,
                 Err(r) => refusal_code(r),
             },
         };
@@ -594,6 +688,57 @@ fn check_openings(
     }
 }
 
+/// The roofs by extrusion that changed must have a body the model can build.
+fn check_roof_extrusions(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    use crate::roof_extrusion::{Derived, Refusal};
+    for (id, change) in touched {
+        if *change == Change::Deleted
+            || type_of(candidate, *id).as_deref() != Some(types::ROOF_EXTRUSION)
+        {
+            continue;
+        }
+        let Some(object) = get(candidate, *id) else {
+            continue;
+        };
+        if let Err(refusal) = Derived::of(candidate, &object) {
+            let code = match refusal {
+                Refusal::Malformed | Refusal::Profile => codes::ROOF_EXTRUSION_PROFILE,
+                Refusal::Section => codes::ROOF_EXTRUSION_SECTION,
+                Refusal::Span => codes::ROOF_EXTRUSION_SPAN,
+            };
+            out.push(Error::new(code).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
+/// The floor edges that changed need a profile that can be swept and at least one edge.
+fn check_floor_edges(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    for (id, change) in touched {
+        if *change == Change::Deleted
+            || type_of(candidate, *id).as_deref() != Some(types::FLOOR_EDGE)
+        {
+            continue;
+        }
+        let Some(object) = get(candidate, *id) else {
+            continue;
+        };
+        let ok = crate::floor_edge::FloorEdge::from_values(&object.values).is_some_and(|e| {
+            !e.edges.is_empty() && crate::floor_edge::FloorEdge::profile_ok(&e.profile)
+        });
+        if !ok {
+            out.push(Error::new(codes::FLOOR_EDGE_PROFILE).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
 /// The error code of a boundary refusal.
 #[must_use]
 pub fn refusal_code(refusal: crate::floor::Refusal) -> arc_base::ErrorCode {
@@ -693,6 +838,24 @@ fn check_walls_of_levels(
     }
 }
 
+/// The grid labels used twice, when a grid changed.
+fn label_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let changed = touched.iter().any(|(id, c)| {
+        *c != Change::Deleted && type_of(candidate, *id).as_deref() == Some(types::GRID)
+    });
+    if !changed {
+        return Vec::new();
+    }
+    crate::datum::duplicate_labels(candidate)
+        .into_iter()
+        .map(|(label, found)| {
+            Error::new(codes::DATUM_LABEL_DUPLICATE)
+                .with_arg("name", label)
+                .with_arg("count", found.len().to_string())
+        })
+        .collect()
+}
+
 /// The findings that are not errors: walls on top of each other, a stair's stride or uncut
 /// shaft opening, an open corner (the ends of two walls close together and not
 /// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
@@ -718,6 +881,11 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         {
             out.extend(stair_warnings(candidate, &object));
         }
+        if *change != Change::Deleted
+            && let Some(object) = get(candidate, *id)
+        {
+            out.extend(circulation_warnings(candidate, &object));
+        }
     }
     // Walls attached to a roof or floor that changed, wherever they stand.
     let targets: Vec<ObjectId> = touched
@@ -735,6 +903,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             out.extend(attach_problem(candidate, &wall));
         }
     }
+    out.extend(label_warnings(candidate, touched));
     for storey in storeys {
         out.extend(room_findings(candidate, storey));
         if touched.iter().any(|(id, c)| {
@@ -791,6 +960,40 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
         }
     }
     out.extend(ceiling_warnings(candidate, touched));
+    out.extend(floor_edge_warnings(candidate, touched));
+    out
+}
+
+/// The warnings about floor edge elements: an edge element names edges of its floor by number;
+/// when the floor loses an edge it is an orphan, reported and never moved to another edge.
+fn floor_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut out = Vec::new();
+    let mut edges: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(types::FLOOR_EDGE) => edges.extend(get(candidate, *id)),
+            Some(FLOOR) => {
+                edges.extend(crate::spatial::children(candidate, types::FLOOR_EDGE, *id))
+            }
+            _ => {}
+        }
+    }
+    edges.sort_by_key(|e| e.id);
+    edges.dedup_by_key(|e| e.id);
+    for edge in edges {
+        let orphans = crate::floor_edge::orphans_of(candidate, &edge);
+        if !orphans.is_empty() {
+            out.push(
+                Error::new(codes::FLOOR_EDGE_ORPHAN)
+                    .with_arg("name", display_name(&edge))
+                    .with_arg("count", orphans.len().to_string())
+                    .with_detail(OBJECT, edge.id.to_string()),
+            );
+        }
+    }
     out
 }
 
@@ -933,10 +1136,24 @@ fn pin_free(key: &str) -> &'static [usize] {
         ],
         WALL_OPENING => &[types::wall_opening::NAME, types::wall_opening::PINNED],
         SHAFT => &[types::shaft::NAME, types::shaft::PINNED],
+        types::GRID => &[types::grid::NAME, types::grid::PINNED],
+        types::REFERENCE_PLANE => &[
+            types::reference_plane::NAME,
+            types::reference_plane::STRENGTH,
+            types::reference_plane::PINNED,
+        ],
         VERTICAL_OPENING => &[
             types::vertical_opening::NAME,
             types::vertical_opening::PINNED,
         ],
+        types::FLOOR_EDGE => &[types::floor_edge::NAME, types::floor_edge::PINNED],
+        types::ROOF_EXTRUSION => &[
+            types::roof_extrusion::NAME,
+            types::roof_extrusion::THICKNESS,
+            types::roof_extrusion::PINNED,
+        ],
+        types::RAILING => &[types::railing::NAME, types::railing::PINNED],
+        types::RAMP => &[types::ramp::NAME, types::ramp::PINNED],
         _ => &[types::stair::NAME, types::stair::PINNED],
     }
 }
@@ -990,11 +1207,13 @@ pub enum WarningKind {
     Type,
     /// A ceiling edge that follows a wall that no longer bounds it, or an opening outside its host.
     Ceiling,
+    /// A grid label used twice in a building.
+    Datum,
 }
 
 impl WarningKind {
     /// Every kind, in the order the panel lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Stair,
         Self::Room,
         Self::Wall,
@@ -1002,12 +1221,16 @@ impl WarningKind {
         Self::Ceiling,
         Self::Insert,
         Self::Type,
+        Self::Datum,
     ];
 
     /// The kind of a finding, by its code.
     fn of(error: &Error) -> Self {
         let code = error.code();
-        if code.starts_with("ab.model.stair") {
+        if code.starts_with("ab.model.stair")
+            || code.starts_with("ab.model.ramp")
+            || code.starts_with("ab.model.railing")
+        {
             Self::Stair
         } else if code.starts_with("ab.model.room") {
             Self::Room
@@ -1017,6 +1240,8 @@ impl WarningKind {
             Self::Ceiling
         } else if code == codes::INSERT_MEETS_WALL.code {
             Self::Insert
+        } else if code.starts_with("ab.model.datum") {
+            Self::Datum
         } else if code.starts_with("ab.model.type") {
             Self::Type
         } else {
@@ -1079,6 +1304,18 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
             push(Severity::Error, error, vec![stair.id]);
         }
     }
+    for key in [types::RAMP, types::RAILING] {
+        for object in objects(snapshot, key) {
+            let problem = if key == types::RAMP {
+                ramp_problem(snapshot, &object)
+            } else {
+                railing_problem(snapshot, &object)
+            };
+            if let Some(error) = problem {
+                push(Severity::Error, error, vec![object.id]);
+            }
+        }
+    }
     // A pair of stairs that overlap is one problem, though each stair reports it.
     let mut pairs = std::collections::BTreeSet::new();
     for error in warnings(snapshot, &touched) {
@@ -1105,6 +1342,12 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
     }
     for error in ceiling_range_findings(snapshot) {
         let found = ids(&error);
+        push(Severity::Warning, error, found);
+    }
+    for (label, found) in crate::datum::duplicate_labels(snapshot) {
+        let error = Error::new(codes::DATUM_LABEL_DUPLICATE)
+            .with_arg("name", label)
+            .with_arg("count", found.len().to_string());
         push(Severity::Warning, error, found);
     }
     for key in [WALL, FLOOR, DOOR, WINDOW, ROOF, CEILING] {
@@ -1157,7 +1400,9 @@ pub fn is_ceiling_range(error: &Error) -> bool {
 /// Whether `error` is a warning of the structure: it is reported, never refused.
 #[must_use]
 pub fn is_warning(error: &Error) -> bool {
-    error.code() == codes::INSERT_MEETS_WALL.code || is_ceiling_range(error)
+    error.code() == codes::INSERT_MEETS_WALL.code
+        || error.code() == codes::FLOOR_EDGE_ORPHAN.code
+        || is_ceiling_range(error)
 }
 
 /// The commit validator of the structure: every violation of [`check`] is an error, except the

@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, Point, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -331,7 +331,8 @@ fn delete_set(
             roof_count += 1;
         } else if !kind.as_deref().is_some_and(|k| {
             archbuilder_model::types::is_storey_element(k)
-                || k == archbuilder_model::types::VERTICAL_OPENING
+                || archbuilder_model::types::is_datum(k)
+                || is_hosted_cut(k)
         }) {
             expect(ctx.snapshot(), *id, FLOOR)?;
         }
@@ -357,11 +358,12 @@ fn delete_set(
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
     for id in walls.iter().chain(&alone).chain(&floors) {
-        // A vertical opening goes with its host when both are named.
+        // A vertical opening or floor edge goes with its host when both are named.
         let hosted_in_set = spatial::get(txn.snapshot(), *id)
             .filter(|o| {
-                spatial::type_of(txn.snapshot(), o.id).as_deref()
-                    == Some(archbuilder_model::types::VERTICAL_OPENING)
+                spatial::type_of(txn.snapshot(), o.id)
+                    .as_deref()
+                    .is_some_and(is_hosted_cut)
             })
             .and_then(|o| o.header.owner)
             .is_some_and(|h| floors.contains(&h));
@@ -577,6 +579,12 @@ fn set_join(
 }
 
 /// Deletes the selected walls and inserts; with neither selected, the selected storey.
+/// The elements a floor, roof or ceiling hosts that are deleted by themselves: vertical openings
+/// and floor edges.
+fn is_hosted_cut(key: &str) -> bool {
+    key == archbuilder_model::types::VERTICAL_OPENING || key == archbuilder_model::types::FLOOR_EDGE
+}
+
 fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted> {
     let walls: BTreeSet<ObjectId> = selected_walls(ctx).into_iter().collect();
     let snapshot = ctx.snapshot();
@@ -594,7 +602,8 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
             // The storey's own elements other than walls, which nothing else depends on.
             spatial::type_of(ctx.snapshot(), *id).is_some_and(|k| {
                 (k != WALL && archbuilder_model::types::is_storey_element(&k))
-                    || k == archbuilder_model::types::VERTICAL_OPENING
+                    || archbuilder_model::types::is_datum(&k)
+                    || is_hosted_cut(&k)
             })
         })
         .collect();
@@ -664,10 +673,10 @@ pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &s
         .unwrap_or_default()
 }
 
-fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
+pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
     let storey = storey_for(ctx, p.storey)?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
+        Some(param) => crate::length(ctx, param).map(|q| q.value()),
         None => Ok(default),
     };
     let wall_type = crate::element_type::layered_for(

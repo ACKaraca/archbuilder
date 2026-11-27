@@ -175,6 +175,10 @@ pub(crate) struct Set {
     pub(crate) rooms: Vec<ObjectId>,
     /// The stairs (their start and direction move).
     pub(crate) stairs: Vec<ObjectId>,
+    /// The ramps (their foot and direction move).
+    pub(crate) ramps: Vec<ObjectId>,
+    /// The railings by path (the points move); a hosted railing goes with its host.
+    pub(crate) railings: Vec<ObjectId>,
     /// The roofs (their sketched footprint points move).
     pub(crate) roofs: Vec<ObjectId>,
     /// The doors, windows and wall openings whose wall is not in the set.
@@ -185,6 +189,10 @@ pub(crate) struct Set {
     pub(crate) shafts: Vec<ObjectId>,
     /// The vertical openings, and those of the floors, roofs and ceilings in the set.
     pub(crate) cuts: Vec<ObjectId>,
+    /// The grids and reference planes.
+    pub(crate) datums: Vec<ObjectId>,
+    /// The roofs by extrusion (their plane moves).
+    pub(crate) extruded: Vec<ObjectId>,
 }
 
 impl Set {
@@ -193,11 +201,15 @@ impl Set {
             + self.floors.len()
             + self.rooms.len()
             + self.stairs.len()
+            + self.ramps.len()
+            + self.railings.len()
             + self.roofs.len()
             + self.inserts.len()
             + self.ceilings.len()
             + self.shafts.len()
             + self.cuts.len()
+            + self.datums.len()
+            + self.extruded.len()
     }
 }
 
@@ -235,10 +247,23 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(FLOOR) => set.floors.push(id),
             Some(types::ROOM) => set.rooms.push(id),
             Some(types::STAIR) => set.stairs.push(id),
+            Some(types::RAMP) => set.ramps.push(id),
+            Some(types::RAILING) => {
+                // A hosted railing follows its host and is not moved by itself.
+                let hosted = spatial::get(snapshot, id).is_some_and(|o| {
+                    archbuilder_model::railing::Railing::from_values(&o.values)
+                        .is_none_or(|r| r.host.is_some())
+                });
+                if !hosted {
+                    set.railings.push(id);
+                }
+            }
             Some(types::ROOF) => set.roofs.push(id),
             Some(types::CEILING) => set.ceilings.push(id),
             Some(types::SHAFT) => set.shafts.push(id),
             Some(types::VERTICAL_OPENING) => set.cuts.push(id),
+            Some(types::GRID | types::REFERENCE_PLANE) => set.datums.push(id),
+            Some(types::ROOF_EXTRUSION) => set.extruded.push(id),
             Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -860,7 +885,9 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
             walls.contains(&w).then_some(w)
         });
         dissociated += lost;
-        floor_changes.push((*id, vertices));
+        let mut moved = object.values.clone();
+        crate::ceiling::moved_floor_slope(&mut moved, xf);
+        floor_changes.push((*id, vertices, moved, object.values.clone()));
     }
     let mut slides = Vec::new();
     for id in &set.inserts {
@@ -894,8 +921,18 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
             }
         }
     }
-    for (id, vertices) in floor_changes {
+    for (id, vertices, moved, old) in floor_changes {
         crate::floor::set_vertices(ctx, id, &vertices)?;
+        let txn = ctx.txn()?;
+        for (field, at) in [
+            ("slope_x", types::floor::SLOPE_X),
+            ("slope_y", types::floor::SLOPE_Y),
+            ("slope_direction", types::floor::SLOPE_DIRECTION),
+        ] {
+            if moved.get(at) != old.get(at) {
+                txn.modify(id, FieldPath::new(field), moved.get(at).cloned().flatten())?;
+            }
+        }
     }
     for (id, distance) in slides {
         set_length(ctx, id, "distance", distance)?;
@@ -909,6 +946,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         set_length(ctx, *id, "y", at[1])?;
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
+    crate::circulation::move_circulation(ctx, &snapshot, &set.ramps, &set.railings, xf)?;
     dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
     dissociated += crate::ceiling::move_ceilings(ctx, &snapshot, &set.ceilings, xf, &walls)?;
     crate::opening::move_cuts(
@@ -925,6 +963,8 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         archbuilder_model::floor::VERTICAL_SLOTS,
         xf,
     )?;
+    crate::datum::move_datums(ctx, &snapshot, &set.datums, xf)?;
+    crate::roof_extrusion::move_roofs(ctx, &snapshot, &set.extruded, xf)?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -1078,6 +1118,7 @@ pub(crate) fn copy_set(
             None => return Err(Error::new(codes::KIND_MISMATCH)),
         };
         let mut values = object.values.clone();
+        crate::ceiling::moved_floor_slope(&mut values, xf);
         if let Some(slot) = values.get_mut(types::floor::NAME) {
             *slot = Some(Value::String(name));
         }
@@ -1110,8 +1151,26 @@ pub(crate) fn copy_set(
         }
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, s, &tongue);
-        created.push(create(ctx, types::STAIR, storey, moved.values(&name))?);
+        let new = create(ctx, types::STAIR, storey, moved.values(&name))?;
+        created.push(new);
+        // The railings hosted on the stair go with it.
+        created.extend(crate::circulation::copy_hosted_railings(
+            ctx,
+            crate::circulation::hosted_railings(&snapshot, *id),
+            new,
+            s,
+            xf.reflects(),
+            &tongue,
+        )?);
     }
+    created.extend(crate::circulation::copy_circulation(
+        ctx,
+        &snapshot,
+        (&set.ramps, &set.railings),
+        xf,
+        target,
+        &tongue,
+    )?);
     let (roofs, lost) = crate::roof::copy_roofs(
         ctx,
         &snapshot,
@@ -1134,6 +1193,8 @@ pub(crate) fn copy_set(
     hosts.extend(ceilings.iter().copied());
     created.extend(ceilings.into_iter().map(|(_, new)| new));
     dissociated += lost;
+    // The edge elements of the floors copied go with them: they follow the new floor's edges.
+    created.extend(crate::floor_edge::copy_for(ctx, &snapshot, &hosts)?);
     created.extend(crate::opening::copy_cuts(
         ctx,
         &snapshot,
@@ -1149,6 +1210,19 @@ pub(crate) fn copy_set(
         xf,
         &|host| hosts.get(&host).copied(),
         target,
+    )?);
+    created.extend(crate::datum::copy_datums(ctx, &snapshot, &set.datums, xf)?);
+    let extruded = set
+        .extruded
+        .iter()
+        .map(|id| {
+            spatial::get(&snapshot, *id)
+                .map(|o| (o.header.owner, o.values.clone()))
+                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    created.extend(crate::roof_extrusion::copy_roofs(
+        ctx, extruded, xf, target,
     )?);
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());

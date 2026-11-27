@@ -22,7 +22,8 @@ use archbuilder_model::floor::{Derived, signed_area};
 use archbuilder_model::insert::{self, Facing, Hand, Insert, Kind};
 use archbuilder_model::room::State;
 use archbuilder_model::types::{
-    CEILING, DOOR, FLOOR, ROOF, SHAFT, VERTICAL_OPENING, WALL_OPENING, WINDOW, text,
+    CEILING, DOOR, FLOOR, FLOOR_EDGE, ROOF, ROOF_EXTRUSION, SHAFT, VERTICAL_OPENING, WALL_OPENING,
+    WINDOW, text,
 };
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
@@ -64,8 +65,13 @@ pub struct Export {
     pub bytes: Vec<u8>,
     /// The walls, floors, roofs, rooms, doors and windows written; the openings that void walls are not counted.
     pub elements: usize,
-    /// What was not exported or only approximately; the writer's own entries are included.
+    /// What was not exported or only approximately; the writer's own entries are included, and
+    /// each problem the self-validation found is an item with the outcome `failed`.
     pub report: LossReport,
+    /// Whether the written file passed self-validation (it reads back, holds every object under
+    /// its `GlobalId`, has no repeated `GlobalId` and the product count of the report). A file
+    /// that did not is incomplete.
+    pub valid: bool,
 }
 
 /// The local frame of a wall or an insert in plan: an origin, the direction of its x axis and the
@@ -127,6 +133,7 @@ struct Loss {
     kind: &'static str,
     object: ObjectId,
     name: String,
+    count: i64,
 }
 
 /// The mapping in progress.
@@ -144,12 +151,27 @@ fn name_of(object: &Object) -> String {
 
 impl Mapper<'_> {
     fn lose(&mut self, reason: Reason, kind: &'static str, object: &Object) {
+        self.lose_n(reason, kind, object, 1);
+    }
+
+    fn lose_n(&mut self, reason: Reason, kind: &'static str, object: &Object, count: usize) {
         self.losses.push(Loss {
             reason,
             kind,
             object: object.id,
             name: name_of(object),
+            count: i64::try_from(count).unwrap_or(i64::MAX),
         });
+    }
+
+    /// A curtain wall: the writer of the foundation has no `IfcCurtainWall`, `IfcPlate` or
+    /// `IfcMember`, so the wall, its panels and its mullions are named in the loss report, never
+    /// written as a wall or a proxy.
+    fn curtain_wall(&mut self, object: &Object, derived: &archbuilder_model::curtain::Derived) {
+        let (panels, mullions) = derived.counts();
+        self.lose(reasons::CURTAIN_NOT_WRITTEN, "IFCCURTAINWALL", object);
+        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCPLATE", object, panels);
+        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCMEMBER", object, mullions);
     }
 
     /// The walls, then the floors of a storey whose level is at `level`.
@@ -165,6 +187,10 @@ impl Mapper<'_> {
         for roof in spatial::children(self.snapshot, ROOF, storey) {
             self.cancel.check()?;
             self.roof(&roof, storey, level);
+        }
+        for roof in spatial::children(self.snapshot, ROOF_EXTRUSION, storey) {
+            self.cancel.check()?;
+            self.roof_extrusion(&roof, storey, level);
         }
         for ceiling in spatial::children(self.snapshot, CEILING, storey) {
             self.cancel.check()?;
@@ -182,6 +208,14 @@ impl Mapper<'_> {
         // as a proxy. Its shaft opening is already a hole in the floors above.
         for stair in spatial::children(self.snapshot, archbuilder_model::types::STAIR, storey) {
             self.lose(reasons::STAIR_NOT_WRITTEN, "IFCSTAIR", &stair);
+        }
+        // Likewise ramps and railings: named in the loss report until the foundation's writer has
+        // ramp, ramp flight and railing entities.
+        for ramp in spatial::children(self.snapshot, archbuilder_model::types::RAMP, storey) {
+            self.lose(reasons::RAMP_NOT_WRITTEN, "IFCRAMP", &ramp);
+        }
+        for railing in spatial::children(self.snapshot, archbuilder_model::types::RAILING, storey) {
+            self.lose(reasons::RAILING_NOT_WRITTEN, "IFCRAILING", &railing);
         }
         Ok(())
     }
@@ -294,6 +328,9 @@ impl Mapper<'_> {
         reason = "one wall: body, quantities and inserts"
     )]
     fn wall(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        if let Some(derived) = archbuilder_model::curtain::Derived::of(self.snapshot, object) {
+            return self.curtain_wall(object, &derived);
+        }
         let Some(wall) = Wall::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCWALL", object);
         };
@@ -437,6 +474,12 @@ impl Mapper<'_> {
         });
         for (object, item) in found {
             self.insert(&object, &item, (host, wall, frame), storey, level);
+        }
+        // The openings that curtain walls inside this wall cut; each is named after its wall.
+        for (id, item) in archbuilder_model::curtain::embedded(self.snapshot, host) {
+            if let Some(curtain) = spatial::get(self.snapshot, id) {
+                self.wall_opening(&curtain, &item, (host, wall, frame), storey);
+            }
         }
     }
 
@@ -744,7 +787,7 @@ impl Mapper<'_> {
         let mut hosts: Vec<(std::sync::Arc<Object>, (f64, f64))> = Vec::new();
         for floor in spatial::objects(self.snapshot, FLOOR) {
             if let Some(d) = Derived::of(self.snapshot, &floor) {
-                hosts.push((floor, (d.top - d.floor.thickness, d.top)));
+                hosts.push((floor, d.z_range()));
             }
         }
         for roof in spatial::objects(self.snapshot, ROOF) {
@@ -858,6 +901,52 @@ impl Mapper<'_> {
         );
     }
 
+    /// A roof by extrusion as an `IfcRoof` of the predefined type `FREEFORM`, with its roof type
+    /// and the body extruded from the profile, one solid in the storey's frame.
+    fn roof_extrusion(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Ok(derived) = archbuilder_model::roof_extrusion::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCROOF", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Roof,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        element.predefined_type = Some("FREEFORM".to_owned());
+        element.element_type =
+            et::type_of(self.snapshot, TypeKind::Roof, &object.values).map(|t| t.id.as_u128());
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        match derived.solid().ok().and_then(|s| brep([&s], &frame, level)) {
+            Some(body) => {
+                element.body = Some(body);
+                let projected: f64 = derived
+                    .pieces()
+                    .iter()
+                    .map(|p| archbuilder_model::terrain::double_area(&p.points).abs() / 2.0)
+                    .sum();
+                element.quantity_sets.push(QuantitySet::new(
+                    "Qto_RoofBaseQuantities",
+                    vec![
+                        Quantity::new("GrossArea", QuantityValue::Area(derived.surface_area())),
+                        Quantity::new("ProjectedArea", QuantityValue::Area(projected)),
+                    ],
+                ));
+                element.property_sets.push(PropertySet::new(
+                    "Pset_RoofCommon",
+                    vec![Property::new("IsExternal", PropertyValue::Boolean(true))],
+                ));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCROOF", object),
+        }
+        self.elements.push(element);
+        self.exported += 1;
+    }
+
     fn floor(&mut self, object: &Object, storey: ObjectId, level: f64) {
         let Some(derived) = Derived::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCSLAB", object);
@@ -896,7 +985,8 @@ impl Mapper<'_> {
                     .unwrap_or_default()
             });
         let slab = match parts.as_slice() {
-            [(outer, holes)] => Some(Body::Extrusion {
+            // A sloped slab is a solid of its own: no vertical extrusion has a sloped top.
+            [(outer, holes)] if !derived.sloped() => Some(Body::Extrusion {
                 outer: profile(outer, true),
                 holes: holes.iter().map(|h| profile(h, false)).collect(),
                 direction: -Vector3::z(),
@@ -943,12 +1033,51 @@ impl Mapper<'_> {
         }
         self.elements.push(element);
         self.exported += 1;
-        self.cuts_of(
-            object,
-            storey,
-            level,
-            (derived.top - thickness, derived.top),
+        self.cuts_of(object, storey, level, derived.z_range());
+        for edge in spatial::children(self.snapshot, FLOOR_EDGE, object.id) {
+            self.floor_edge(&edge, storey, level);
+        }
+    }
+
+    /// A floor edge as an `IfcCovering` of the predefined type `MOLDING`: the profile swept
+    /// along the edges, one solid, written in the storey's frame.
+    fn floor_edge(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(derived) = archbuilder_model::floor_edge::Derived::of(self.snapshot, object)
+        else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        if !derived.orphans.is_empty() {
+            self.lose(reasons::FLOOR_EDGE_ORPHAN, "IFCCOVERING", object);
+        }
+        let frame = Frame {
+            origin: [0.0, 0.0],
+            u: [1.0, 0.0],
+        };
+        let Some(body) = derived
+            .solid()
+            .ok()
+            .flatten()
+            .and_then(|s| brep([&s], &frame, level))
+        else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Covering,
+            &name_of(object),
+            storey.as_u128(),
         );
+        element.predefined_type = Some("MOLDING".to_owned());
+        element.body = Some(body);
+        let us = derived.edge.profile.iter().map(|p| p[0]);
+        let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_CoveringBaseQuantities",
+            vec![Quantity::new("Width", QuantityValue::Length(width))],
+        ));
+        self.lose(reasons::FLOOR_EDGE_AS_COVERING, "IFCCOVERING", object);
+        self.elements.push(element);
+        self.exported += 1;
     }
 }
 
@@ -981,6 +1110,12 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
     let mut out = Vec::new();
     for kind in TypeKind::ALL {
         for object in et::of_kind(snapshot, kind) {
+            // A curtain wall type has no wall in the file to be the type of.
+            if kind == TypeKind::Wall
+                && archbuilder_model::curtain::CurtainType::from_values(&object.values).is_some()
+            {
+                continue;
+            }
             let (ifc_kind, predefined) = match kind {
                 TypeKind::Wall => (ElementKind::Wall, "STANDARD"),
                 TypeKind::Floor => (ElementKind::Slab, "FLOOR"),
@@ -1111,6 +1246,28 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         ));
         mapper.storey(entry.storey.id, elevation)?;
     }
+    // The writer has no IfcGrid yet and a proxy would hide the loss: datums are reported.
+    for (key, kind, reason) in [
+        (
+            archbuilder_model::types::GRID,
+            "IFCGRID",
+            reasons::GRID_NOT_WRITTEN,
+        ),
+        (
+            archbuilder_model::types::REFERENCE_PLANE,
+            "IFCGRIDAXIS",
+            reasons::DATUM_NOT_WRITTEN,
+        ),
+        (
+            archbuilder_model::types::WORK_PLANE,
+            "IFCGRIDAXIS",
+            reasons::DATUM_NOT_WRITTEN,
+        ),
+    ] {
+        for datum in spatial::objects(snapshot, key) {
+            mapper.lose(reason, kind, &datum);
+        }
+    }
     model.elements = std::mem::take(&mut mapper.elements);
     model.types = element_types(snapshot);
     let write_options = WriteOptions {
@@ -1127,10 +1284,12 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
     report.header.application = Some(options.application.clone());
     report.header.time = Some(options.timestamp.clone());
     add_losses(&mut report, &mapper.losses);
+    let valid = crate::validate::validate(&written.bytes, &model, options.limits, &mut report);
     Ok(Export {
         bytes: written.bytes,
         elements: mapper.exported,
         report,
+        valid,
     })
 }
 
@@ -1143,7 +1302,7 @@ fn add_losses(report: &mut LossReport, losses: &[Loss]) {
             _ => summary.dropped += 1,
         }
         let mut arguments = std::collections::BTreeMap::new();
-        arguments.insert("count".to_owned(), Argument::Int(1));
+        arguments.insert("count".to_owned(), Argument::Int(loss.count));
         arguments.insert("name".to_owned(), Argument::Text(loss.name.clone()));
         report.items.push(LossItem {
             outcome: loss.reason.outcome,

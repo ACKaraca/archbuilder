@@ -35,8 +35,8 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, DOOR, FLOOR, LEVEL, ROOF, ROOM, SHAFT, STAIR, STOREY, VERTICAL_OPENING, WALL,
-    WALL_OPENING, WINDOW,
+    CEILING, DOOR, FLOOR, LEVEL, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR, STOREY, VERTICAL_OPENING,
+    WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
 use crate::wall::Wall;
@@ -255,6 +255,8 @@ impl PlanSource<'_> {
             );
         }
         out.extend(own(STAIR).iter().map(|o| o.id));
+        out.extend(own(RAMP).iter().map(|o| o.id));
+        out.extend(own(RAILING).iter().map(|o| o.id));
         if let Some(level) = self.level_id {
             out.extend(
                 spatial::objects(s, STAIR)
@@ -316,7 +318,61 @@ impl PlanSource<'_> {
         out
     }
 
+    /// A curtain wall: its mullions and panels as parts (cut, they show as mullion sections and
+    /// thin panel strips), the baseline as a thin line and the swing of door panels.
+    fn curtain_object(&self, curtain: &crate::curtain::Derived) -> Option<SourceObject> {
+        use crate::curtain::Class;
+        let mut out = SourceObject::new(Category::Wall.key(), styles(self.scale, self.tone));
+        for (k, piece) in curtain.solids().ok()?.into_iter().enumerate() {
+            let v = match piece.class {
+                Class::Mullion | Class::Frame | Class::Handle => 0.35,
+                Class::Glass => 0.85,
+                Class::Solid | Class::Leaf => 0.6,
+            };
+            out = out.with_part(
+                Part::new(u32::try_from(k).unwrap_or(0), Geometry::Solid(piece.solid))
+                    .with_fill(Some(CutFill::solid(gray(v)))),
+            );
+        }
+        let w = &curtain.wall;
+        let mid = {
+            let (low, high) = w.extent();
+            (low + high) / 2.0
+        };
+        let l = w.length().max(1.0e-9);
+        let n = [-(w.end[1] - w.start[1]) / l, (w.end[0] - w.start[0]) / l];
+        let line = [
+            [w.start[0] + n[0] * mid, w.start[1] + n[1] * mid],
+            [w.end[0] + n[0] * mid, w.end[1] + n[1] * mid],
+        ];
+        if let Some(c) = curve(&line, false) {
+            out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, 90));
+        }
+        for (k, (_, item)) in curtain.leaves().into_iter().enumerate() {
+            for (j, poly) in crate::insert::symbol(w, curtain.level, &item)
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
+                let points: Vec<[f64; 2]> = poly.iter().map(|p| [p[0], p[1]]).collect();
+                if let Some(c) = curve(&points, false) {
+                    let key = 200 + u32::try_from(k * 8 + j).unwrap_or(0);
+                    out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, key));
+                }
+            }
+        }
+        // The outline of the wall, so that a click between the mullions picks it.
+        let fp = w.plain_footprint();
+        if let Some(c) = curve(&fp, true) {
+            out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, AREA_KEY));
+        }
+        Some(out)
+    }
+
     fn wall_object(&self, object: &Object, detail: Detail) -> Option<SourceObject> {
+        if let Some(curtain) = crate::curtain::Derived::of(self.snapshot, object) {
+            return self.curtain_object(&curtain);
+        }
         let pieces = cleanup::wall_pieces(self.snapshot, object)?.ok()?;
         let materials = cleanup::layer_materials(self.snapshot, object);
         let mut out = SourceObject::new(Category::Wall.key(), styles(self.scale, self.tone));
@@ -542,6 +598,40 @@ impl PlanSource<'_> {
         Some(out)
     }
 
+    fn ramp_object(&self, object: &Object) -> Option<SourceObject> {
+        let placed = crate::ramp::Placed::of(self.snapshot, object)?;
+        let layout = placed.layout.ok()?;
+        let mut out = SourceObject::new(Category::Stair.key(), styles(self.scale, self.tone));
+        out = out.with_part(
+            Part::new(0, Geometry::Solid(layout.solid(placed.base).ok()?))
+                .with_fill(Some(CutFill::solid(gray(0.55)))),
+        );
+        let plan = layout.plan();
+        let mut add = |points: &[[f64; 2]], closed: bool, key: u32| {
+            if let Some(c) = curve(points, closed) {
+                out = std::mem::replace(&mut out, SourceObject::new("", ClassStyles::default()))
+                    .with_symbol(Symbol::new(c, VisibilityClass::Visible, key));
+            }
+        };
+        add(&plan.walk, false, 1001);
+        add(&plan.arrow, false, 1002);
+        for (k, tick) in plan.ticks.iter().enumerate() {
+            add(tick, false, 1020 + u32::try_from(k).unwrap_or(0));
+        }
+        add(&plan.outline, true, AREA_KEY);
+        Some(out)
+    }
+
+    /// The symbol of a railing: its rail line, with the extensions.
+    fn railing_object(&self, object: &Object) -> Option<SourceObject> {
+        let derived = crate::railing::Derived::of(self.snapshot, object).ok()?;
+        let mut out = SourceObject::new(Category::Stair.key(), styles(self.scale, self.tone));
+        if let Some(c) = curve(&derived.plan_line(), false) {
+            out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, 1001));
+        }
+        Some(out)
+    }
+
     fn opening_object(&self, object: &Object, key: &str) -> Option<SourceObject> {
         let mut out = SourceObject::new(Category::Opening.key(), styles(self.scale, self.tone));
         let (outline, _own, class) = if key == SHAFT {
@@ -648,6 +738,8 @@ impl ViewSource for PlanSource<'_> {
             CEILING => self.ceiling_object(&object),
             DOOR | WINDOW | WALL_OPENING => self.insert_object(&object, detail),
             STAIR => self.stair_object(&object),
+            RAMP => self.ramp_object(&object),
+            RAILING => self.railing_object(&object),
             SHAFT | VERTICAL_OPENING => self.opening_object(&object, &key),
             ROOM => self.room_object(id),
             _ => None,
@@ -706,6 +798,8 @@ fn deps(snapshot: &Snapshot, view: &Arc<Object>, pass: Pass) -> Deps {
             ROOF,
             CEILING,
             STAIR,
+            RAMP,
+            RAILING,
             SHAFT,
             VERTICAL_OPENING,
         ],

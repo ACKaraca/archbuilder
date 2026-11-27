@@ -274,6 +274,20 @@ pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>
     found
 }
 
+/// The openings of the wall `id`: those of its inserts and those curtain walls embedded in it cut.
+#[must_use]
+pub fn openings_of(snapshot: &Snapshot, id: arc_base::ObjectId) -> Vec<Insert> {
+    let mut out: Vec<Insert> = hosted(snapshot, id).into_iter().map(|(_, i)| i).collect();
+    if let Some(host) = spatial::get(snapshot, id) {
+        out.extend(
+            crate::curtain::embedded(snapshot, &host)
+                .into_iter()
+                .map(|(_, i)| i),
+        );
+    }
+    out
+}
+
 /// The stretch of the baseline, as distances from its start, where the joined solid with the
 /// corners `footprint` has both faces: between the inner corners of the two ends.
 #[must_use]
@@ -371,6 +385,10 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     let name = types::text(&object.values, 0)
         .unwrap_or_default()
         .to_owned();
+    if crate::curtain::is_curtain(snapshot, &wall_object) {
+        out.push(Error::new(codes::CURTAIN_INSERT).with_arg("name", name));
+        return out;
+    }
     let host = types::text(&wall_object.values, 0)
         .unwrap_or_default()
         .to_owned();
@@ -455,17 +473,17 @@ fn convex_overlap(a: &[[f64; 2]], b: &[[f64; 2]]) -> bool {
 
 /// The wall's axes: where the baseline starts, the direction along it, the left normal, the
 /// extent of the body across the baseline and the height of the base.
-struct Axes {
-    origin: [f64; 2],
-    u: [f64; 2],
-    n: [f64; 2],
-    low: f64,
-    high: f64,
-    base: f64,
+pub(crate) struct Axes {
+    pub(crate) origin: [f64; 2],
+    pub(crate) u: [f64; 2],
+    pub(crate) n: [f64; 2],
+    pub(crate) low: f64,
+    pub(crate) high: f64,
+    pub(crate) base: f64,
 }
 
 impl Axes {
-    fn new(wall: &Wall, level: f64) -> Result<Self> {
+    pub(crate) fn new(wall: &Wall, level: f64) -> Result<Self> {
         let length = wall.length();
         if !(length >= types::MIN_WALL_LENGTH && length.is_finite()) {
             return Err(Error::new(codes::WALL_TOO_SHORT).with_arg("name", ""));
@@ -486,7 +504,7 @@ impl Axes {
     }
 
     /// The plan point `x` along the baseline and `y` to the left of it.
-    fn at(&self, x: f64, y: f64) -> Point2 {
+    pub(crate) fn at(&self, x: f64, y: f64) -> Point2 {
         Point2::new(
             self.origin[0] + self.u[0] * x + self.n[0] * y,
             self.origin[1] + self.u[1] * x + self.n[1] * y,
@@ -601,10 +619,7 @@ pub fn wall_solid(snapshot: &Snapshot, object: &Object) -> Option<Result<Polyhed
         .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
     let footprint =
         crate::join::footprint_of(snapshot, object).unwrap_or_else(|| wall.plain_footprint());
-    let inserts: Vec<Insert> = hosted(snapshot, object.id)
-        .into_iter()
-        .map(|(_, i)| i)
-        .collect();
+    let inserts = openings_of(snapshot, object.id);
     Some(
         gross_solid(snapshot, object, &wall, footprint, level)
             .and_then(|solid| cut(&wall, level, solid, &inserts)),

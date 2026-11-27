@@ -39,9 +39,13 @@ use arc_ui::{
     ProductOverlay, PromptControls, WorkPlane,
 };
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::floor_slope::FLOOR_SET_SLOPE;
 use archbuilder_commands::roof::ROOF_CREATE;
+use archbuilder_commands::roof_extrusion::ROOF_EXTRUSION_CREATE;
 use archbuilder_commands::room::ROOM_PLACE;
+use archbuilder_commands::selection::{SET_CREATE, SET_SELECT};
 use archbuilder_commands::stair::STAIR_CREATE;
+use archbuilder_commands::stats::STATISTICS;
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_io::command::EXPORT_IFC;
@@ -56,6 +60,68 @@ use crate::picker::Picker;
 use crate::room_tool::RoomTool;
 use crate::stair_tool::StairTool;
 use crate::wall_tool::{Env, Tool, storey_for};
+
+/// The seed of an invocation from the controller's counter `state`: the SplitMix64 output, not
+/// the counter. The command context mixes the snapshot revision in as a multiple of the same
+/// constant the counter steps by, so raw counter values `a` and `b` met at revisions `b` and `a`
+/// would give two invocations one stream of identifiers ("already exists").
+fn mixed(state: u64) -> u64 {
+    let mut z = state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The commands whose button starts their prompts once, on the stair tool's machinery.
+const PROMPTED: [&str; 4] = [
+    FLOOR_SET_SLOPE,
+    ROOF_EXTRUSION_CREATE,
+    SET_CREATE,
+    SET_SELECT,
+];
+
+/// The report of `archbuilder.model.statistics` as one line: the elements by kind, then the
+/// types, views and selection sets.
+fn statistics_text(localizer: &arc_app::locale::Localizer, value: &serde_json::Value) -> String {
+    let count = |key: &str| {
+        arc_base::error::Value::Int(
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+        )
+    };
+    let kinds: Vec<String> = value
+        .get("by_kind")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|k| {
+            let key = k.get("kind")?.as_str()?;
+            let n = k.get("count")?.as_i64()?;
+            let name = crate::properties::kind_message(key)
+                .map_or_else(|| key.to_owned(), |id| localizer.format(id, &[]).text);
+            Some(format!("{name} {n}"))
+        })
+        .collect();
+    localizer
+        .format(
+            STATISTICS_REPORT.message_id,
+            &[
+                ("elements", count("elements")),
+                ("kinds", arc_base::error::Value::Text(kinds.join(", "))),
+                ("types", count("element_types")),
+                ("views", count("views")),
+                ("sets", count("selection_sets")),
+            ],
+        )
+        .text
+}
+
+const STATISTICS_REPORT: Message = Message {
+    message_id: "ab-statistics-report",
+};
 
 /// A message of the application, named by identifier.
 struct Message {
@@ -251,9 +317,18 @@ fn plan_candidates(
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
     // In a plan view the tools work on the view's storey.
-    let (storey, elevation) = crate::plan_state::current_in(tab, &snapshot)
+    let found = crate::plan_state::current_in(tab, &snapshot)
         .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
-        .or_else(|| storey_for(&snapshot, selection))?;
+        .or_else(|| storey_for(&snapshot, selection));
+    // The command tabs and the status bar learn the selection and the storey from here.
+    crate::chrome::publish(
+        tab,
+        selection.len(),
+        found
+            .and_then(|(id, _)| spatial::get(&snapshot, id))
+            .and_then(|o| archbuilder_model::types::text(&o.values, 0).map(str::to_owned)),
+    );
+    let (storey, elevation) = found?;
     // The room drawing follows the storey the viewport works on and the selection.
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
@@ -427,8 +502,16 @@ pub struct WallInteraction {
     rooms: RoomTool,
     /// The stair tool: stairs from a start and a direction.
     stairs: StairTool,
+    /// The datum tool: grids and reference planes from two points.
+    datums: crate::datum_tool::DatumTool,
+    /// The segments and the ends and crossings of the datum lines for snapping, with the
+    /// snapshot they were made from.
+    datum_snap: (Vec<[[f64; 2]; 2]>, Vec<[f64; 2]>),
+    datum_snap_of: Option<arc_doc::Snapshot>,
     /// The ghost of the stair the stair tool would make.
     stair_ghost: Vec<ProductOverlay>,
+    /// The line the datum tool would make: from its first point to the pointer.
+    datum_ghost: Vec<ProductOverlay>,
     /// The stair and ceiling range warnings the history last showed, and the snapshot they were
     /// found in, so each change (a stair made, an edit of the grid, a paste, a typed command, a
     /// level moved, an undo) says only what is new.
@@ -529,7 +612,11 @@ impl WallInteraction {
             modify: ModifyTool::new(),
             rooms: RoomTool::new(),
             stairs: StairTool::new(),
+            datums: crate::datum_tool::DatumTool::new(),
+            datum_snap: (Vec::new(), Vec::new()),
+            datum_snap_of: None,
             stair_ghost: Vec::new(),
+            datum_ghost: Vec::new(),
             stair_warnings: (None, Vec::new()),
             view_size: None,
             picker: Picker::default(),
@@ -549,7 +636,7 @@ impl WallInteraction {
             registry: archbuilder_commands::registry()
                 .and_then(|mut r| archbuilder_io::register(&mut r).map(|()| r))
                 .ok(),
-            seed: seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed),
+            seed: mixed(seed.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)),
             cursor: None,
             snap: None,
             guides: Vec::new(),
@@ -615,7 +702,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.tool, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -645,7 +732,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.inserts, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -675,7 +762,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.floors, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -705,7 +792,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.rooms, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -735,9 +822,50 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
-        step(&mut self.stairs, &env, &mut |invocation| {
+        // The members a selection set command chose become the tab's selection, which the shell
+        // applies only for commands it runs itself.
+        let mut chosen: Option<Vec<arc_base::ObjectId>> = None;
+        let result = step(&mut self.stairs, &env, &mut |invocation| {
+            let outcome = cx.invoke(invocation)?;
+            if outcome.command == SET_SELECT {
+                chosen.clone_from(&outcome.selection);
+            }
+            Ok(outcome)
+        });
+        if let Some(ids) = chosen {
+            cx.ask(habits::select_intent(&ids, "replace"));
+        }
+        result
+    }
+
+    /// Runs `step` of the datum tool with the pieces the context gives.
+    fn with_datums(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        step: impl FnOnce(
+            &mut crate::datum_tool::DatumTool,
+            &Env<'_>,
+            &mut dyn FnMut(Invocation) -> Result<arc_command::Outcome>,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        let (Some(registry), Ok(document)) = (self.registry.as_ref(), cx.document()) else {
+            return Ok(());
+        };
+        if cx.read_only() {
+            return Ok(());
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let session = Self::session(cx);
+        let env = Env {
+            registry,
+            document,
+            session: &session,
+            selection: cx.selection(),
+            seed: mixed(self.seed),
+        };
+        step(&mut self.datums, &env, &mut |invocation| {
             cx.invoke(invocation)
         })
     }
@@ -765,7 +893,7 @@ impl WallInteraction {
             document,
             session: &session,
             selection: cx.selection(),
-            seed: self.seed,
+            seed: mixed(self.seed),
         };
         step(&mut self.modify, &env, &mut |invocation| {
             cx.invoke(invocation)
@@ -776,6 +904,8 @@ impl WallInteraction {
     fn current_line(&self) -> &arc_command::CommandLine {
         if self.modify.running() {
             self.modify.line()
+        } else if self.datums.running() {
+            self.datums.line()
         } else if self.rooms.running() {
             self.rooms.line()
         } else if self.stairs.running() {
@@ -806,6 +936,8 @@ impl WallInteraction {
         self.modify.stop();
         self.rooms.stop();
         self.stairs.stop();
+        self.datums.stop();
+        self.datum_ghost.clear();
         self.stair_ghost.clear();
         self.room_hover.clear();
         self.floor_hover.clear();
@@ -986,7 +1118,7 @@ impl WallInteraction {
     /// The next invocation's seed.
     fn next_seed(&mut self) -> u64 {
         self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        self.seed
+        mixed(self.seed)
     }
 
     /// `text` as the active prompt reads it: a decimal comma becomes a point where the language
@@ -1193,6 +1325,7 @@ impl Interaction for WallInteraction {
             .or_else(|| self.floors.take_error())
             .or_else(|| self.rooms.take_error())
             .or_else(|| self.stairs.take_error())
+            .or_else(|| self.datums.take_error())
             .or_else(|| self.modify.take_error());
         self.refresh_highlight(cx);
         self.update_view(cx, None);
@@ -1208,6 +1341,7 @@ impl Interaction for WallInteraction {
         };
         let rooming = self.rooms.running() || self.stairs.running();
         let stairing = self.stairs.running();
+        let datuming = self.datums.running();
         let inserting = self.inserts.running();
         let flooring = self.floors.running();
         let modifying = self.modify.running();
@@ -1243,6 +1377,10 @@ impl Interaction for WallInteraction {
             }
             LineAction::Submit(text) if self.sketching.is_some() => self.sketch_text(cx, &text),
             LineAction::Back if self.sketching.is_some() => Ok(()),
+            LineAction::Cancel if datuming => {
+                self.stop_all();
+                Ok(())
+            }
             LineAction::Cancel if rooming => {
                 self.stop_all();
                 Ok(())
@@ -1259,6 +1397,9 @@ impl Interaction for WallInteraction {
                 Ok(())
             }
             LineAction::Cancel => self.with_tool(cx, |tool, env, run| tool.escape(env, run)),
+            LineAction::Back if datuming => {
+                self.with_datums(cx, |tool, env, run| tool.back(env, run))
+            }
             LineAction::Back if stairing => {
                 self.with_stairs(cx, |tool, env, run| tool.back(env, run))
             }
@@ -1278,6 +1419,13 @@ impl Interaction for WallInteraction {
             }
             LineAction::Invoke(intent) if intent.command == arc_app::commands::EDIT_UNDO => {
                 self.undo(cx)
+            }
+            // A button of these commands starts its prompts (or, for statistics, its report).
+            LineAction::Submit(text)
+                if PROMPTED.contains(&text.trim()) || text.trim() == STATISTICS =>
+            {
+                self.stop_all();
+                self.intent(cx, &Intent::new(text.trim()))
             }
             LineAction::Submit(_) if shortcut.is_some() => {
                 let command = shortcut.clone().unwrap_or_default();
@@ -1302,6 +1450,14 @@ impl Interaction for WallInteraction {
             {
                 self.stop_all();
                 self.intent(cx, &Intent::new(text.trim()))
+            }
+            LineAction::Submit(text) if datuming => {
+                let text = self.typed(cx, &text);
+                let r = self.with_datums(cx, |tool, env, run| tool.text(env, run, &text));
+                if let Some(error) = self.datums.take_error() {
+                    self.notice_error(cx, &error);
+                }
+                r
             }
             LineAction::Submit(text) if stairing => {
                 let text = self.typed(cx, &text);
@@ -1399,6 +1555,9 @@ impl Interaction for WallInteraction {
         if !self.stairs.running() {
             self.stair_ghost.clear();
         }
+        if !self.datums.running() {
+            self.datum_ghost.clear();
+        }
         self.report_chains(cx);
         if !self.modify.running() {
             self.clear_modify_overlays();
@@ -1415,6 +1574,7 @@ impl Interaction for WallInteraction {
             .or_else(|| self.floors.take_error())
             .or_else(|| self.rooms.take_error())
             .or_else(|| self.stairs.take_error())
+            .or_else(|| self.datums.take_error())
             .or_else(|| self.modify.take_error());
         if started {
             // A command that finished at once (pin, zoom extents) waits at no prompt: the key is
@@ -1479,6 +1639,7 @@ impl Interaction for WallInteraction {
                 .chain(self.sketch_overlays())
                 .chain(self.room_hover.iter().cloned())
                 .chain(self.stair_ghost.iter().cloned())
+                .chain(self.datum_ghost.iter().cloned())
                 .chain(self.pick_hover.iter().cloned())
                 .chain(self.ghost.iter().cloned())
                 .chain(self.direct_overlays.iter().cloned())
@@ -1494,6 +1655,7 @@ impl Interaction for WallInteraction {
                 .or(self.floors.running().then_some(()))
                 .or(self.rooms.running().then_some(()))
                 .or(self.stairs.running().then_some(()))
+                .or(self.datums.running().then_some(()))
                 .or(self.modify.prompting().then_some(()))
                 .and(self.cursor),
             dynamic: self
@@ -1523,6 +1685,7 @@ impl Interaction for WallInteraction {
                 && !self.floors.running()
                 && !self.rooms.running()
                 && !self.stairs.running()
+                && !self.datums.running()
                 && !self.modify.running()
                 && self.sketching.is_none(),
             // A chain of walls or of copies says once when it ends, not after each wall or copy.
@@ -1556,6 +1719,9 @@ impl WallInteraction {
         }
         if self.stairs.running() {
             return self.stair_pointer(cx, event);
+        }
+        if self.datums.running() {
+            return self.datum_pointer(cx, event);
         }
         if self.floors.running() {
             return self.floor_pointer(cx, event);
@@ -1847,6 +2013,7 @@ impl WallInteraction {
             || self.floors.running()
             || self.rooms.running()
             || self.stairs.running()
+            || self.datums.running()
             || self.modify.running()
             || self.sketching.is_some()
     }
@@ -2035,6 +2202,11 @@ impl WallInteraction {
             self.hover = None;
             return self.with_tool(cx, |tool, env, run| tool.begin(env, run));
         }
+        if command == archbuilder_commands::curtain::CURTAIN_WALL && intent.params.is_empty() {
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_tool(cx, |tool, env, run| tool.begin_curtain(env, run));
+        }
         if command == FLOOR_CREATE && intent.params.is_empty() {
             self.tool.stop();
             self.inserts.stop();
@@ -2097,9 +2269,36 @@ impl WallInteraction {
             self.stop_all();
             return self.with_rooms(cx, |tool, env, run| tool.begin(env, run));
         }
-        if command == STAIR_CREATE && intent.params.is_empty() {
+        if let Some(made) = [
+            archbuilder_commands::datum::GRID_CREATE,
+            archbuilder_commands::datum::REFERENCE_PLANE_CREATE,
+        ]
+        .into_iter()
+        .find(|c| *c == command)
+        .filter(|_| intent.params.is_empty())
+        {
             self.stop_all();
-            return self.with_stairs(cx, |tool, env, run| tool.begin(env, run));
+            return self.with_datums(cx, |tool, env, run| tool.begin(env, run, made));
+        }
+        if let Some(command) = PROMPTED
+            .iter()
+            .copied()
+            .find(|c| *c == command)
+            .filter(|_| intent.params.is_empty())
+        {
+            return self.start_prompted(cx, command);
+        }
+        if let Some(command) = [
+            STAIR_CREATE,
+            archbuilder_commands::circulation::RAILING_CREATE,
+            archbuilder_commands::circulation::RAMP_CREATE,
+        ]
+        .into_iter()
+        .find(|c| *c == command)
+        .filter(|_| intent.params.is_empty())
+        {
+            self.stop_all();
+            return self.with_stairs(cx, |tool, env, run| tool.begin(env, run, command));
         }
         if command == archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY && intent.params.is_empty() {
             return self.start_sketch(cx, None);
@@ -2157,6 +2356,34 @@ impl WallInteraction {
         Ok(())
     }
 
+    /// Starts the prompts of a one-shot command a button started: the floor slope of the
+    /// selected floor, a roof by extrusion on the storey of the selection, a selection set.
+    fn start_prompted(&mut self, cx: &InteractionContext<'_>, command: &'static str) -> Result<()> {
+        self.stop_all();
+        let snapshot = cx.document()?.snapshot();
+        let mut preset = serde_json::Map::new();
+        if command == FLOOR_SET_SLOPE {
+            let floor = cx
+                .selection()
+                .iter()
+                .copied()
+                .find(|id| {
+                    spatial::type_of(&snapshot, *id).as_deref()
+                        == Some(archbuilder_model::types::FLOOR)
+                })
+                .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_FLOOR_SELECTED))?;
+            preset.insert("floor".into(), serde_json::Value::from(floor.to_string()));
+        }
+        if command == ROOF_EXTRUSION_CREATE
+            && let Some((storey, _)) = storey_for(&snapshot, cx.selection())
+        {
+            preset.insert("storey".into(), serde_json::Value::from(storey.to_string()));
+        }
+        self.with_stairs(cx, |tool, env, run| {
+            tool.begin_once(env, run, command, preset)
+        })
+    }
+
     /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
     fn say_outcome(
         &mut self,
@@ -2164,6 +2391,12 @@ impl WallInteraction {
         command: &str,
         value: &serde_json::Value,
     ) {
+        if command == STATISTICS
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let text = statistics_text(localizer, value);
+            self.push_notice(text);
+        }
         self.say_slivers(cx, value);
         // Floor edges that followed a deleted wall stay put: say so.
         let frozen = value
@@ -2218,6 +2451,7 @@ impl WallInteraction {
             || self.floors.running()
             || self.rooms.running()
             || self.stairs.running()
+            || self.datums.running()
             || self.modify.running()
             || self.direct.active()
             || self.habits.rename.is_some()
@@ -2423,6 +2657,28 @@ impl WallInteraction {
             return;
         };
         let snapshot = document.snapshot();
+        if self
+            .datum_snap_of
+            .as_ref()
+            .is_none_or(|s| !s.ptr_eq(&snapshot))
+        {
+            let lines = archbuilder_model::datum::lines(&snapshot, None);
+            let mut points = archbuilder_model::datum::intersections(&lines);
+            for l in &lines {
+                points.extend(l.points.first().into_iter().chain(l.points.last()).copied());
+            }
+            let segments = lines
+                .iter()
+                .flat_map(|l| {
+                    l.points
+                        .windows(2)
+                        .filter_map(|w| Some([*w.first()?, *w.get(1)?]))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            self.datum_snap = (segments, points);
+            self.datum_snap_of = Some(snapshot.clone());
+        }
         // The plan symbols show in views from above (within about 12 degrees of straight down),
         // where the wall's top hides the insert; in other views they would float in the air.
         if cx.camera().forward().z < -0.98 && self.habits.plan.is_none() {
@@ -2932,6 +3188,64 @@ impl WallInteraction {
         }
     }
 
+    /// The pointer while the datum tool runs: it snaps like the stair tool (wall corners and
+    /// ends, tracking lines, other datums, the grid); once the first point is given it draws the
+    /// line the pointer would make; a click is the next point.
+    fn datum_pointer(&mut self, cx: &InteractionContext<'_>, event: &PointerEvent) -> bool {
+        let Ok(document) = cx.document() else {
+            return false;
+        };
+        let snapshot = document.snapshot();
+        let storey = storey_for(&snapshot, cx.selection()).map(|(s, _)| s);
+        let walls = storey
+            .map(|s| archbuilder_model::floor::storey_walls(&snapshot, s))
+            .unwrap_or_default();
+        let baselines: Vec<[[f64; 2]; 2]> = walls.iter().map(|(_, w)| [w.start, w.end]).collect();
+        let mut ends = vec![[0.0, 0.0]];
+        ends.extend(walls.iter().flat_map(|(_, w)| w.plain_footprint()));
+        let from = self.datums.line().base_point().map(|p| [p.x, p.y]);
+        let hit = event.model.and_then(|m| {
+            crate::snap::snap(&self.snap_input([m.x, m.y], event, &ends, &baselines, from, &[]))
+        });
+        self.angle = hit.as_ref().and_then(|h| h.degrees.map(|d| (h.point, d)));
+        self.guides = hit.as_ref().map_or_else(Vec::new, |h| h.guides.clone());
+        self.snap = hit
+            .as_ref()
+            .and_then(|h| h.kind.marker().map(|kind| (kind, h.point)));
+        let at = hit.map(|h| h.point);
+        if let Some(at) = at {
+            self.cursor = Some(at);
+        }
+        let z = storey
+            .and_then(|s| spatial::get(&snapshot, s))
+            .map_or(0.0, |s| spatial::storey_elevation(&snapshot, &s));
+        match event.kind {
+            PointerKind::Move => {
+                self.datum_ghost = from
+                    .zip(at)
+                    .map(|(a, b)| {
+                        vec![ProductOverlay::Line {
+                            from: arc_base::math::Point3::new(a[0], a[1], z),
+                            to: arc_base::math::Point3::new(b[0], b[1], z),
+                        }]
+                    })
+                    .unwrap_or_default();
+                false
+            }
+            PointerKind::Click if event.button == Some(PointerButton::Primary) => {
+                if let Some(at) = at {
+                    let _ = self.with_datums(cx, |tool, env, run| tool.click(env, run, at));
+                    if let Some(error) = self.datums.take_error() {
+                        self.notice_error(cx, &error);
+                    }
+                    self.datum_ghost.clear();
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Tells the room drawing what a view from above shows: the image size is learned from a
     /// pointer event (the pointer's pixel and model point fix the image's middle), the scale and
     /// middle come from the camera each time. Other views clear it.
@@ -3275,6 +3589,13 @@ mod tests {
         assert_eq!(notices.first().map(String::as_str), Some("10"));
     }
     use std::path::Path;
+
+    #[test]
+    fn every_typed_word_of_the_command_tabs_is_a_command_of_the_line() {
+        for word in crate::chrome::TYPED_WORDS {
+            assert!(super::habits::typed_word(word).is_some(), "{word}");
+        }
+    }
 
     #[test]
     fn a_level_change_that_puts_a_ceiling_through_the_slab_is_said_in_the_history() {

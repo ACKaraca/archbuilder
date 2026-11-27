@@ -201,6 +201,36 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-stair-overlap",
     };
+    /// A ramp or railing finding (see the message `ab-model-ramp-no-top`).
+    pub const RAMP_NO_TOP: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_no_top",
+        category: Category::Conflict,
+        message_id: "ab-model-ramp-no-top",
+    };
+    /// A ramp or railing finding (see the message `ab-model-ramp-malformed`).
+    pub const RAMP_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-ramp-slope`).
+    pub const RAMP_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-slope",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-malformed`).
+    pub const RAILING_MALFORMED: ErrorCode = ErrorCode {
+        code: "ab.model.railing_malformed",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-gap`).
+    pub const RAILING_GAP: ErrorCode = ErrorCode {
+        code: "ab.model.railing_gap",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-gap",
+    };
     /// A type has no layers or more than [`crate::element_type::MAX_LAYERS`].
     pub const TYPE_LAYER_COUNT: ErrorCode = ErrorCode {
         code: "ab.model.type_layer_count",
@@ -230,6 +260,61 @@ pub mod codes {
         code: "ab.model.type_total",
         category: Category::InvalidInput,
         message_id: "ab-model-type-total",
+    };
+    /// A curtain type has a grid rule that cannot lay lines out.
+    pub const CURTAIN_RULE: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_rule",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-rule",
+    };
+    /// A curtain type's system panel is a door or window.
+    pub const CURTAIN_PANEL: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_panel",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-panel",
+    };
+    /// A curtain type has a mullion or panel without a usable size.
+    pub const CURTAIN_MULLION: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_mullion",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-mullion",
+    };
+    /// A curtain wall holds more edits or overrides than allowed.
+    pub const CURTAIN_LIMIT: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_limit",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-limit",
+    };
+    /// A door, window or opening is hosted by a curtain wall.
+    pub const CURTAIN_INSERT: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_insert",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-insert",
+    };
+    /// Removed grid segments leave a cell that is not a rectangle.
+    pub const CURTAIN_CELL_SHAPE: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_cell_shape",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-cell-shape",
+    };
+    /// A curtain wall with grid edits or panel overrides cannot be split or merged: they belong
+    /// to its own grid.
+    pub const CURTAIN_EDITED: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_edited",
+        category: Category::Conflict,
+        message_id: "ab-model-curtain-edited",
+    };
+    /// The wall is not a curtain wall.
+    pub const CURTAIN_NOT_CURTAIN: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_not_curtain",
+        category: Category::InvalidInput,
+        message_id: "ab-model-curtain-not-curtain",
+    };
+    /// A grid line, cell or type a curtain command names does not exist.
+    pub const CURTAIN_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.model.curtain_unknown",
+        category: Category::NotFound,
+        message_id: "ab-model-curtain-unknown",
     };
     /// A value an instance takes from its type differs from the type.
     pub const TYPE_MISMATCH: ErrorCode = ErrorCode {
@@ -333,6 +418,43 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-opening-outside-host",
     };
+    /// The profile of a floor edge is not a simple loop, or the floor edge names no edge.
+    pub const FLOOR_EDGE_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-edge-profile",
+    };
+    /// A floor edge names an edge its floor no longer has (a warning).
+    pub const FLOOR_EDGE_ORPHAN: ErrorCode = ErrorCode {
+        code: "ab.model.floor_edge_orphan",
+        category: Category::Conflict,
+        message_id: "ab-model-floor-edge-orphan",
+    };
+    /// The profile of a roof by extrusion is unreadable or has too few points, a segment of no
+    /// length or a point out of range.
+    pub const ROOF_EXTRUSION_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-profile",
+    };
+    /// The thickness of a roof by extrusion makes its section cross itself.
+    pub const ROOF_EXTRUSION_SECTION: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_section",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-section",
+    };
+    /// The extrusion of a roof is too short or too long.
+    pub const ROOF_EXTRUSION_SPAN: ErrorCode = ErrorCode {
+        code: "ab.model.roof_extrusion_span",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-extrusion-span",
+    };
+    /// A floor's slope is steeper than the limit.
+    pub const FLOOR_SLOPE: ErrorCode = ErrorCode {
+        code: "ab.model.floor_slope",
+        category: Category::InvalidInput,
+        message_id: "ab-model-floor-slope",
+    };
     /// A ceiling's slope is steeper than the limit.
     pub const CEILING_SLOPE: ErrorCode = ErrorCode {
         code: "ab.model.ceiling_slope",
@@ -350,6 +472,18 @@ pub mod codes {
         code: "ab.model.ceiling_range_element",
         category: Category::InvalidInput,
         message_id: "ab-model-ceiling-range-element",
+    };
+    /// A grid or reference plane is shorter than a millimeter, or a work plane has no plane.
+    pub const DATUM_DEGENERATE: ErrorCode = ErrorCode {
+        code: "ab.model.datum_degenerate",
+        category: Category::InvalidInput,
+        message_id: "ab-model-datum-degenerate",
+    };
+    /// Several grids of a building have the same label (a warning).
+    pub const DATUM_LABEL_DUPLICATE: ErrorCode = ErrorCode {
+        code: "ab.model.datum_label_duplicate",
+        category: Category::Conflict,
+        message_id: "ab-model-datum-label-duplicate",
     };
     /// A plan view's range is out of order: view depth, bottom, cut and top must rise.
     pub const VIEW_RANGE: ErrorCode = ErrorCode {

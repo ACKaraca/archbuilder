@@ -8,7 +8,7 @@
 //! rules ([`archbuilder_model::validate::check`]) on its open transaction, so a refused change
 //! reports the rule and leaves the document unchanged.
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::{
     CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
 };
@@ -233,7 +233,7 @@ pub struct SetProperty {
     /// (a wall's or floor's thickness, a door's or window's width, height, frame and operation)
     /// are edited on the type.
     pub field: String,
-    /// The value in canonical JSON form: a text, a number in meters, an enum name or code, or a
+    /// The value in canonical JSON form: a text, a number in meters (also as a text without a unit, `"0.35"`), an enum name or code, or a
     /// truth value.
     pub value: serde_json::Value,
 }
@@ -408,7 +408,7 @@ fn new_project(ctx: &mut Context<'_>, p: NewProject) -> Result<ProjectCreated> {
 }
 
 /// The building a command works in: the given one, the one the selection is in, or the first.
-fn building_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
+pub(crate) fn building_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<ObjectId> {
     let snapshot = ctx.snapshot();
     if let Some(IdParam(id)) = given {
         return expect(snapshot, id, BUILDING).map(|_| id);
@@ -464,7 +464,7 @@ fn add_storey(ctx: &mut Context<'_>, p: AddStorey) -> Result<StoreyAdded> {
         None => next_free_name(&existing, &language(ctx)),
     };
     let meters = match &p.elevation {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH)?.value(),
+        Some(param) => crate::length(ctx, param)?.value(),
         None => spatial::levels(ctx.snapshot(), building)
             .last()
             .and_then(|l| types::meters(&l.values, level::ELEVATION))
@@ -537,7 +537,7 @@ fn set_level_elevation(
     elevation: &QuantityParam,
 ) -> Result<ElevationSet> {
     let level_id = level_of(ctx.snapshot(), id)?;
-    let meters = ctx.quantity(elevation, Dimension::LENGTH)?.value();
+    let meters = crate::length(ctx, elevation)?.value();
     ctx.txn()?.modify(
         level_id,
         FieldPath::new("elevation"),
@@ -651,7 +651,7 @@ fn selected_with_level(snapshot: &Snapshot, id: ObjectId) -> Vec<ObjectId> {
     std::iter::once(storey).chain(level.map(|l| l.id)).collect()
 }
 
-fn select_objects(ctx: &mut Context<'_>, p: SelectObjects) -> Result<()> {
+pub(crate) fn select_objects(ctx: &mut Context<'_>, p: SelectObjects) -> Result<()> {
     let snapshot = ctx.snapshot();
     let current = ctx.selection().to_vec();
     let mut chosen: Vec<ObjectId> = match p.mode {
@@ -709,7 +709,12 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         }
         ValueType::Quantity(dimension) => {
             let param: QuantityParam = serde_json::from_value(json.clone()).ok()?;
-            ctx.quantity(&param, *dimension).ok().map(Value::Quantity)
+            let quantity = if *dimension == arc_base::Dimension::LENGTH {
+                crate::length(ctx, &param)
+            } else {
+                ctx.quantity(&param, *dimension)
+            };
+            quantity.ok().map(Value::Quantity)
         }
         _ => None,
     }
@@ -917,12 +922,54 @@ pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> 
                     );
                 }
             }
+            (types::RAILING | types::RAMP, "railing_type" | "ramp_type" | "continues_to") => {
+                // An identifier or a name; empty clears the reference.
+                let text = p
+                    .value
+                    .as_str()
+                    .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                    .trim();
+                let target_key = match p.field.as_str() {
+                    "railing_type" => types::RAILING_TYPE,
+                    "ramp_type" => types::RAMP_TYPE,
+                    _ => types::RAILING,
+                };
+                let target = if text.is_empty() {
+                    None
+                } else {
+                    Some(
+                        spatial::objects(snapshot, target_key)
+                            .into_iter()
+                            .find(|o| {
+                                o.id.to_string() == text
+                                    || types::text(&o.values, 0)
+                                        .is_some_and(|n| names::same(n, text))
+                            })
+                            .ok_or_else(|| Error::new(codes::VALUE_INVALID))?
+                            .id,
+                    )
+                };
+                ctx.txn()?.modify(
+                    id,
+                    FieldPath::new(p.field.as_str()),
+                    target.map(Value::Reference),
+                )?;
+                ensure_valid(ctx)?;
+            }
             (types::CEILING, "ceiling_slope") => {
                 let text = p
                     .value
                     .as_str()
                     .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
                 crate::ceiling::set_slope_text(ctx, id, text)?;
+                ensure_valid(ctx)?;
+            }
+            (types::FLOOR, "floor_slope") => {
+                let text = p
+                    .value
+                    .as_str()
+                    .ok_or_else(|| Error::new(codes::VALUE_INVALID))?;
+                crate::floor_slope::set_slope_text(ctx, id, text)?;
                 ensure_valid(ctx)?;
             }
             (types::SHAFT, "shaft_base" | "shaft_top") => {

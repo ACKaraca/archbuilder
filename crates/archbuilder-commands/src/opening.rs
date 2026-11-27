@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{Snapshot, Value};
 use archbuilder_model::floor::{Floor, VERTICAL_SLOTS, Vertex};
@@ -179,7 +179,7 @@ pub(crate) fn next_name(
 fn create_shaft(ctx: &mut Context<'_>, p: CreateShaft) -> Result<OpeningCreated> {
     let storey = crate::wall::storey_for(ctx, p.storey)?.id;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>| match param {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
+        Some(param) => crate::length(ctx, param).map(|q| q.value()),
         None => Ok(0.0),
     };
     let (base_offset, top_offset) = (meters(ctx, &p.base_offset)?, meters(ctx, &p.top_offset)?);

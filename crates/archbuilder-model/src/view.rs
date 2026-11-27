@@ -138,7 +138,7 @@ impl Category {
             t::CEILING => Self::Ceiling,
             t::DOOR => Self::Door,
             t::WINDOW => Self::Window,
-            t::STAIR => Self::Stair,
+            t::STAIR | t::RAMP | t::RAILING => Self::Stair,
             t::ROOM => Self::Room,
             t::SHAFT | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
             _ => return None,

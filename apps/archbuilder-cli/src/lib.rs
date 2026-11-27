@@ -10,7 +10,10 @@
 //! thickness, height and the volume of its derived solid minus its openings, and the `doors` and
 //! `windows` lists: each with its host wall, distance along it, width, height and sill, and the
 //! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow, and the
-//! `rooms` list: each with its storey, number, name, state, area, perimeter and volume.
+//! `rooms` list: each with its storey, number, name, state, area, perimeter and volume, the
+//! `statistics` report (counts by kind, type and storey; derived), the `selection_sets` list and
+//! the `curtain_walls` list: each curtain wall with its panels (key, kind, door or window type,
+//! width, height, area, whether overridden) and mullions (key, role, upright or not, length).
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`.
@@ -171,6 +174,85 @@ fn room_nets(
         .collect()
 }
 
+/// The model statistics and the selection sets (name, members) of the file named in `args`, as
+/// JSON; `null` and an empty list when the file cannot be opened.
+fn stats_and_sets(args: &[OsString], product: &Product) -> (Value, Value) {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return (Value::Null, Value::Array(Vec::new()));
+    };
+    let stats = serde_json::to_value(archbuilder_commands::stats::statistics(&snapshot))
+        .unwrap_or(Value::Null);
+    let sets = archbuilder_model::selection::all(&snapshot)
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.id.to_string(),
+                "name": archbuilder_model::types::text(&s.values, 0).unwrap_or_default(),
+                "members": archbuilder_model::selection::members(&s.values)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    (stats, Value::Array(sets))
+}
+
+/// The curtain walls of the file named in `args` with their derived panels and mullions, as JSON;
+/// an empty list when the file cannot be opened.
+fn curtain_walls(args: &[OsString], product: &Product) -> Value {
+    use archbuilder_model::curtain::{Derived, MullionRole};
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return Value::Array(Vec::new());
+    };
+    let walls = archbuilder_model::spatial::objects(&snapshot, archbuilder_model::types::WALL);
+    let list = walls
+        .iter()
+        .filter_map(|w| Some((w, Derived::of(&snapshot, w)?)))
+        .map(|(w, d)| {
+            let panels: Vec<Value> = d
+                .panels
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "key": p.key,
+                        "kind": p.kind.name(),
+                        "type": p.type_ref.as_ref().map(|(_, name)| name.clone()),
+                        "width": p.width(),
+                        "height": p.height(),
+                        "area": p.width() * p.height(),
+                        "overridden": p.overridden,
+                    })
+                })
+                .collect();
+            let mullions: Vec<Value> = d
+                .mullions
+                .iter()
+                .map(|m| {
+                    let role = match m.role {
+                        MullionRole::Interior => "interior",
+                        MullionRole::Border => "border",
+                        MullionRole::Corner => "corner",
+                    };
+                    serde_json::json!({
+                        "key": m.key,
+                        "role": role,
+                        "vertical": m.vertical,
+                        "length": m.length(),
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "id": w.id.to_string(),
+                "name": archbuilder_model::types::text(&w.values, 0).unwrap_or_default(),
+                "panels": panels,
+                "mullions": mullions,
+            })
+        })
+        .collect();
+    Value::Array(list)
+}
+
 /// The shared `inspect`, with the `walls` list added to its JSON line.
 fn inspect<R, W, E>(
     args: Vec<OsString>,
@@ -189,6 +271,8 @@ where
     // The net volume of each wall, from the document itself: the cleaned layers.
     let net = net_volumes(&args, product);
     let nets = room_nets(&args, product);
+    let (stats, sets) = stats_and_sets(&args, product);
+    let curtains = curtain_walls(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
@@ -208,6 +292,9 @@ where
         if checked && let Some(list) = map.get_mut("findings").and_then(Value::as_array_mut) {
             list.extend(found);
         }
+        map.insert("statistics".into(), stats);
+        map.insert("selection_sets".into(), sets);
+        map.insert("curtain_walls".into(), curtains);
         map.insert("floors".into(), floors.into());
         map.insert("rooms".into(), rooms.into());
         map.insert("stairs".into(), stairs.into());

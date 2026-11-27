@@ -55,6 +55,9 @@ pub struct Exported {
     pub dropped: u64,
     /// Occurrences exported with an approximation.
     pub approximated: u64,
+    /// Whether the file passed self-validation; when it did not the file is incomplete and the
+    /// report names each problem as a `failed` item.
+    pub valid: bool,
     /// The loss report, in the form of `schemas/loss-report.schema.json`.
     pub report: serde_json::Value,
 }
@@ -90,6 +93,7 @@ fn export(ctx: &mut Context<'_>, p: ExportParams) -> Result<Exported> {
         elements: u64::try_from(export.elements).unwrap_or(u64::MAX),
         dropped: export.report.summary.dropped,
         approximated: export.report.summary.approximated,
+        valid: export.valid,
         report,
     })
 }

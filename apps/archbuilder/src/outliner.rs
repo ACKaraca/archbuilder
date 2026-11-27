@@ -182,6 +182,9 @@ impl<'a> Structure<'a> {
                         walls.extend(roofs);
                         // Then its ceilings and shafts, by name.
                         for key in [
+                            archbuilder_model::types::RAILING,
+                            archbuilder_model::types::RAMP,
+                            archbuilder_model::types::ROOF_EXTRUSION,
                             archbuilder_model::types::CEILING,
                             archbuilder_model::types::SHAFT,
                         ] {
@@ -203,6 +206,15 @@ impl<'a> Structure<'a> {
                             .iter()
                             .map(|c| (c.id, labelled(snapshot, c)))
                             .collect();
+                            let edges: Vec<_> = spatial::children(
+                                snapshot,
+                                archbuilder_model::types::FLOOR_EDGE,
+                                host,
+                            )
+                            .iter()
+                            .map(|c| (c.id, labelled(snapshot, c)))
+                            .collect();
+                            let cuts: Vec<_> = cuts.into_iter().chain(edges).collect();
                             if !cuts.is_empty() {
                                 children.insert(Some(host), cuts);
                             }
@@ -225,12 +237,21 @@ impl<'a> Structure<'a> {
                         }));
                         children.insert(Some(s.storey.id), walls);
                     }
+                    // The grids and reference planes of the building follow its storeys.
+                    let datums = [
+                        archbuilder_model::types::GRID,
+                        archbuilder_model::types::REFERENCE_PLANE,
+                    ]
+                    .into_iter()
+                    .flat_map(|k| spatial::children(snapshot, k, building.id))
+                    .map(|d| (d.id, labelled(snapshot, &d)));
                     children.insert(
                         Some(building.id),
                         storeys
                             .into_iter()
                             .rev()
                             .map(|s| (s.storey.id, name(&s.storey)))
+                            .chain(datums)
                             .collect(),
                     );
                 }
@@ -542,5 +563,28 @@ mod tests {
         };
         assert_eq!(rename("Facade [Generic 200]"), "Facade");
         assert_eq!(rename("Facade [Other]"), "Facade [Other]");
+        // The building lists its grids and reference planes after its storeys.
+        run(
+            "archbuilder.grid.create",
+            serde_json::json!({"start": [0.0, -2.0], "end": [0.0, 5.0]}),
+        );
+        run(
+            "archbuilder.reference_plane.create",
+            serde_json::json!({"start": [-2.0, 0.0], "end": [5.0, 0.0]}),
+        );
+        let snapshot = document.snapshot();
+        let structure = Structure::new(&snapshot, &[], "en-US");
+        let building = spatial::buildings(&snapshot)[0].id;
+        let listed: Vec<ObjectId> = structure
+            .matching(Some(building), "")
+            .map(|(id, _)| *id)
+            .collect();
+        for key in [
+            archbuilder_model::types::GRID,
+            archbuilder_model::types::REFERENCE_PLANE,
+        ] {
+            let datum = spatial::objects(&snapshot, key)[0].id;
+            assert!(listed.contains(&datum), "{key} not listed");
+        }
     }
 }

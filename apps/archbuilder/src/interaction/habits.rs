@@ -189,7 +189,10 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "pastestorey" if rest.is_empty() => Intent::new(CLIPBOARD_PASTE_TO_STOREY),
         "hide" if rest.is_empty() => Intent::new(ui::HIDE),
         "isolate" if rest.is_empty() => Intent::new(ui::ISOLATE),
+        "plan" if rest.is_empty() => Intent::new(ui::OPEN_VIEW).with("view", "plan"),
+        "3d" | "3b" if rest.is_empty() => Intent::new(ui::OPEN_VIEW).with("view", "3d"),
         "unhide" if rest.is_empty() => Intent::new(ui::RESET_VISIBILITY),
+        "warnings" | "uyarilar" if rest.is_empty() => Intent::new(ui::WARNINGS),
         "snap" if rest.is_empty() => Intent::new(ui::SNAP),
         "repeat" if rest.is_empty() => Intent::new(ui::REPEAT),
         "cut" if rest.is_empty() => Intent::new(ui::CUT),
@@ -301,8 +304,10 @@ impl WallInteraction {
             self.modify.current().map(|r| r.command)
         } else if self.rooms.running() {
             Some(ROOM_PLACE)
+        } else if self.datums.running() {
+            self.datums.command()
         } else if self.stairs.running() {
-            Some(archbuilder_commands::stair::STAIR_CREATE)
+            Some(self.stairs.command())
         } else if self.floors.running() {
             Some(self.floors.state().map_or(FLOOR_CREATE, |s| {
                 if s.roof {
@@ -493,7 +498,7 @@ impl WallInteraction {
 
     /// The snap input of an event, with the grid and the switch of the habits.
     pub(super) fn snap_input<'a>(
-        &self,
+        &'a self,
         pointer: [f64; 2],
         event: &PointerEvent,
         ends: &'a [[f64; 2]],
@@ -505,6 +510,8 @@ impl WallInteraction {
         input.centers = centers;
         input.grid = self.habits.grid;
         input.object_snaps = self.habits.snap_on;
+        input.datums = &self.datum_snap.0;
+        input.datum_points = &self.datum_snap.1;
         input
     }
 
@@ -911,7 +918,8 @@ impl WallInteraction {
         Ok((snapshot, ids))
     }
 
-    /// Makes the plan view of the `view` parameter (or the 3D view, for `3d`) the viewport's;
+    /// Makes the plan view of the `view` parameter (or the 3D view, for `3d`; the plan view of the
+    /// active storey, for `plan`) the viewport's;
     /// with a `storey` parameter, that storey's first view, or its default view when it has none
     /// (a document from before plan views), which is not written to the document. A plan view looks straight down, framed on the
     /// storey's elements, and asks for its drawing; the 3D view gets its own camera back.
@@ -919,7 +927,20 @@ impl WallInteraction {
         let document = cx.document()?;
         let param = |k: &str| intent.params.get(k).and_then(serde_json::Value::as_str);
         let mismatch = || Error::new(codes::KIND_MISMATCH);
-        let view = match (param("view"), param("storey")) {
+        // `plan` is the active storey: the one of the open view, else the selection's.
+        let active = || {
+            let snapshot = document.snapshot();
+            self.habits
+                .plan
+                .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
+                .or_else(|| crate::wall_tool::storey_for(&snapshot, cx.selection()))
+                .map(|(storey, _)| storey.to_string())
+        };
+        let storey_param = match (param("view"), param("storey")) {
+            (Some("plan"), None) => Some(active().ok_or_else(mismatch)?),
+            (_, storey) => storey.map(str::to_owned),
+        };
+        let view = match (param("view"), storey_param.as_deref()) {
             (_, Some(storey)) => {
                 let storey: ObjectId = storey.parse().map_err(|_| mismatch())?;
                 if spatial::type_of(&document.snapshot(), storey).as_deref() != Some(STOREY) {
@@ -1274,4 +1295,27 @@ fn plan_framing(snapshot: &arc_doc::Snapshot, view: ObjectId) -> ViewRequest {
     crate::warnings_panel::extent(snapshot, &ids).map_or(ViewRequest::Extents, |(a, b)| {
         ViewRequest::Plan { a, b, z: level }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_view_words_open_the_plan_and_the_3d_view() {
+        for (text, view) in [
+            ("plan", "plan"),
+            ("PLAN", "plan"),
+            ("3d", "3d"),
+            ("3b", "3d"),
+        ] {
+            let intent = typed_word(text).unwrap();
+            assert_eq!(intent.command, ui::OPEN_VIEW);
+            assert_eq!(
+                intent.params.get("view").and_then(|v| v.as_str()),
+                Some(view)
+            );
+        }
+        assert!(typed_word("plan now").is_none());
+    }
 }

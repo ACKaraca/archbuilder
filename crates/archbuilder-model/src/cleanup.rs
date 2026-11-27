@@ -62,8 +62,21 @@ fn same(a: &[Arc<Object>], b: &[Arc<Object>]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| Arc::ptr_eq(x, y))
 }
 
+/// The most results kept under one (`id`, `extra`): one for each document that has an object with
+/// that identifier (two documents opened from one file, or documents made from the same seed).
+const SAME_KEY: usize = 8;
+
+/// Whether `old` shares an object with `new`: results of one document follow each other this way
+/// (a commit replaces some of the objects), results of two documents never do.
+fn shares(old: &[Arc<Object>], new: &std::collections::HashSet<*const Object>) -> bool {
+    old.iter().any(|o| new.contains(&Arc::as_ptr(o)))
+}
+
 /// The result kept in `store` for (`id`, `extra`) when it was made from `deps`, else `make()`,
-/// which is then kept. The entry holds its objects, so an address is never reused under it.
+/// which is then kept. The entry holds its objects, so an address is never reused under it. A new
+/// result replaces the older ones of the same document only, so documents whose objects have the
+/// same identifiers do not throw each other's results away; the least recently used entry goes
+/// first when the store is full.
 pub(crate) fn cached<T>(
     store: &Store<T>,
     id: ObjectId,
@@ -71,15 +84,28 @@ pub(crate) fn cached<T>(
     deps: Deps,
     make: impl FnOnce() -> T,
 ) -> Arc<T> {
-    let hit = store.lock().ok().and_then(|c| {
-        c.iter()
-            .find(|e| e.id == id && e.extra == extra && same(&e.deps, &deps))
-            .map(|e| Arc::clone(&e.value))
+    let hit = store.lock().ok().and_then(|mut c| {
+        let at = c
+            .iter()
+            .position(|e| e.id == id && e.extra == extra && same(&e.deps, &deps))?;
+        let entry = c.remove(at);
+        let value = Arc::clone(&entry.value);
+        c.push(entry);
+        Some(value)
     });
     hit.unwrap_or_else(|| {
         let value = Arc::new(make());
         if let Ok(mut c) = store.lock() {
-            c.retain(|e| !(e.id == id && e.extra == extra));
+            let new: std::collections::HashSet<*const Object> =
+                deps.iter().map(Arc::as_ptr).collect();
+            c.retain(|e| !(e.id == id && e.extra == extra && shares(&e.deps, &new)));
+            if let Some(oldest) = c
+                .iter()
+                .position(|e| e.id == id && e.extra == extra)
+                .filter(|_| c.iter().filter(|e| e.id == id && e.extra == extra).count() >= SAME_KEY)
+            {
+                c.remove(oldest);
+            }
             if c.len() >= CACHE_ENTRIES {
                 c.remove(0);
             }
@@ -189,10 +215,10 @@ impl StoreyLayers {
             .filter(|p| p.wall == at)
             .cloned()
             .collect();
-        let gaps: Vec<(f64, f64)> = insert::hosted(snapshot, *id)
+        let gaps: Vec<(f64, f64)> = insert::openings_of(snapshot, *id)
             .into_iter()
-            .filter(|(_, i)| i.sill <= z && z < i.top())
-            .map(|(_, i)| i.extent())
+            .filter(|i| i.sill <= z && z < i.top())
+            .map(|i| i.extent())
             .collect();
         let free = self.layout.free.get(at).copied().unwrap_or([true; 2]);
         let key = FinishedKey {
@@ -306,8 +332,12 @@ pub struct CleanFloor {
     pub storey: Option<ObjectId>,
     /// The bounding box of the slab in plan: `[min x, min y, max x, max y]`.
     pub bbox: [f64; 4],
-    /// The underside and the top of the slab.
+    /// The underside and the top of the slab; for a sloped slab the lowest and the highest.
     pub z: (f64, f64),
+    /// The plane of the top when the slab slopes.
+    pub slope: Option<crate::terrain::Plane>,
+    /// The thickness of the slab.
+    pub thickness: f64,
 }
 
 /// The points of a loop, arcs flattened within [`FLAT_CHORD`].
@@ -381,6 +411,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
     }
     for key in [
         crate::types::STAIR,
+        crate::types::RAMP,
         crate::types::LEVEL,
         crate::types::STOREY,
         FLOOR,
@@ -408,7 +439,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
 fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloor> {
     let derived = Derived::of(snapshot, object)?;
     let mut region = derived.boundary.region().ok()?;
-    let z = (derived.top - derived.floor.thickness, derived.top);
+    let z = derived.z_range();
     let outer = derived.boundary.faceted(FLAT_CHORD);
     let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
     for p in outer.loops.iter().flatten() {
@@ -536,6 +567,8 @@ fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloo
         flat,
         faceted,
         z,
+        slope: derived.sloped().then_some(derived.plane),
+        thickness: derived.floor.thickness,
     })
 }
 
@@ -544,6 +577,17 @@ fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloo
 #[must_use]
 pub fn floor_solid(snapshot: &Snapshot, object: &Object) -> Option<arc_base::Result<Polyhedron>> {
     let clean = clean_floor(snapshot, object)?;
+    if let Some(plane) = clean.slope {
+        let flat = prism(
+            &clean.region,
+            -clean.thickness,
+            clean.thickness,
+            CHORD,
+            &Tolerance::DEFAULT,
+            &Limits::DEFAULT,
+        );
+        return Some(flat.and_then(|f| crate::floor::shear(&f, plane)));
+    }
     Some(prism(
         &clean.region,
         clean.z.0,
@@ -653,12 +697,12 @@ fn pieces_in(
     let layers = storey_layers(snapshot, storey);
     let at = layers.index(object.id)?;
     let inserts = if openings {
-        insert::hosted(snapshot, object.id)
+        insert::openings_of(snapshot, object.id)
     } else {
         Vec::new()
     };
     let mut marks: Vec<f64> = vec![0.0, height];
-    for (_, i) in &inserts {
+    for i in &inserts {
         marks.extend([i.sill.clamp(0.0, height), i.top().clamp(0.0, height)]);
     }
     marks.sort_by(f64::total_cmp);
@@ -826,4 +870,39 @@ fn split_by_floor(
         out.push((inside, z0.max(zt), z1));
     }
     out.into_iter().filter(|(_, a, b)| b - a > 1.0e-6).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arc_base::id::Identifier;
+
+    fn object(id: u128) -> Arc<Object> {
+        Arc::new(Object::new(
+            ObjectId::from_u128(id),
+            arc_doc::SchemaVersion { major: 1, minor: 0 },
+            arc_doc::Header::default(),
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn results_of_two_documents_under_one_identifier_are_both_kept() {
+        let store: Store<u32> = Mutex::new(Vec::new());
+        let key = ObjectId::from_u128(7);
+        // Two documents with the same identifiers: their objects are not the same Arcs.
+        let (a, b) = (vec![object(1), object(2)], vec![object(1), object(2)]);
+        let first = cached(&store, key, 0, a.clone(), || 1);
+        let other = cached(&store, key, 0, b.clone(), || 2);
+        assert_eq!((*first, *other), (1, 2));
+        assert!(Arc::ptr_eq(
+            &first,
+            &cached(&store, key, 0, a.clone(), || 3)
+        ));
+        assert!(Arc::ptr_eq(&other, &cached(&store, key, 0, b, || 4)));
+        // A commit of the first document (one object replaced) replaces its result only.
+        let next = vec![Arc::clone(&a[0]), object(2)];
+        assert_eq!(*cached(&store, key, 0, next, || 5), 5);
+        assert_eq!(store.lock().map(|c| c.len()).unwrap_or(0), 2);
+    }
 }

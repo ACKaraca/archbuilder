@@ -36,6 +36,9 @@ pub const LEVEL: &str = "archbuilder.level";
 /// The type key of the plan view of a storey.
 pub const PLAN_VIEW: &str = "archbuilder.plan_view";
 
+/// The type key of a selection set: a named list of elements, owned by the project.
+pub const SELECTION_SET: &str = "archbuilder.selection_set";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -53,6 +56,18 @@ pub const ROOM: &str = "archbuilder.room";
 /// A stair on a storey: runs and landings from the storey's level up to the level above.
 pub const STAIR: &str = "archbuilder.stair";
 
+/// A railing by path on a storey: a sketched path (lines and arcs, with heights) or a side of a
+/// stair or ramp it is hosted on; a type, extensions at its ends and a continuation.
+pub const RAILING: &str = "archbuilder.railing";
+/// A railing type: height, top rail and baluster profiles and spacing, posts, corner join; owned
+/// by the project.
+pub const RAILING_TYPE: &str = "archbuilder.railing_type";
+/// A straight ramp on a storey: a run with landings from the storey's level up to the level above
+/// (or a rise); hosts railings.
+pub const RAMP: &str = "archbuilder.ramp";
+/// A ramp type: the largest slope and the default thickness; owned by the project.
+pub const RAMP_TYPE: &str = "archbuilder.ramp_type";
+
 /// A roof by footprint on a storey: edges with slopes and overhangs, a base offset and a type.
 pub const ROOF: &str = "archbuilder.roof";
 
@@ -65,6 +80,11 @@ pub const WALL_OPENING: &str = "archbuilder.wall_opening";
 pub const SHAFT: &str = "archbuilder.shaft";
 /// A vertical opening: a sketched cut in one floor, roof or ceiling, which hosts it.
 pub const VERTICAL_OPENING: &str = "archbuilder.vertical_opening";
+/// A roof by extrusion on a storey: an open profile sketched in a vertical plane, extruded along
+/// the plane's normal between two distances, thickened normal to the profile.
+pub const ROOF_EXTRUSION: &str = "archbuilder.roof_extrusion";
+/// An edge element: a profile swept along edges of one floor; the floor owns it.
+pub const FLOOR_EDGE: &str = "archbuilder.floor_edge";
 /// A ceiling type: layers, a core, the height above the level and the grid pattern; owned by the
 /// project.
 pub const CEILING_TYPE: &str = "archbuilder.ceiling_type";
@@ -81,6 +101,16 @@ pub const WINDOW_TYPE: &str = "archbuilder.window_type";
 /// A roof type: layers and a core, from the top down; owned by the project.
 pub const ROOF_TYPE: &str = "archbuilder.roof_type";
 
+/// A grid line: a labeled line (straight or an arc) drawn in plan views and in 3D, with an
+/// extent across levels. Contained in a building.
+pub const GRID: &str = "archbuilder.grid";
+/// A named reference plane: a vertical plane through a line, bounded or not, with a reference
+/// strength. Contained in a building.
+pub const REFERENCE_PLANE: &str = "archbuilder.reference_plane";
+/// A work plane: the plane placement and sketching work on, from a level, a grid, a reference
+/// plane or three points. Contained in a building.
+pub const WORK_PLANE: &str = "archbuilder.work_plane";
+
 /// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
 pub const TYPE_KEYS: [&str; 6] = [
     WALL_TYPE,
@@ -93,22 +123,48 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 11] = [
+pub const ELEMENTS: [&str; 17] = [
     WALL,
     DOOR,
     WINDOW,
     FLOOR,
     ROOM,
     STAIR,
+    RAILING,
+    RAMP,
     ROOF,
     CEILING,
     WALL_OPENING,
     SHAFT,
     VERTICAL_OPENING,
+    FLOOR_EDGE,
+    ROOF_EXTRUSION,
+    GRID,
+    REFERENCE_PLANE,
 ];
 
+/// The datums a building owns directly: they have no storey and span levels.
+pub const DATUMS: [&str; 3] = [GRID, REFERENCE_PLANE, WORK_PLANE];
+
+/// Whether `key` is one of [`DATUMS`].
+#[must_use]
+pub fn is_datum(key: &str) -> bool {
+    DATUMS.contains(&key)
+}
+
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 7] = [WALL, FLOOR, ROOM, STAIR, ROOF, CEILING, SHAFT];
+pub const STOREY_ELEMENTS: [&str; 10] = [
+    WALL,
+    FLOOR,
+    ROOM,
+    STAIR,
+    RAILING,
+    RAMP,
+    ROOF,
+    CEILING,
+    SHAFT,
+    ROOF_EXTRUSION,
+];
 
 /// The elements that host a vertical opening.
 pub const VERTICAL_HOSTS: [&str; 3] = [FLOOR, ROOF, CEILING];
@@ -126,7 +182,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 23] = [
+pub const KEYS: [&str; 33] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -150,6 +206,16 @@ pub const KEYS: [&str; 23] = [
     VERTICAL_OPENING,
     CEILING_TYPE,
     PLAN_VIEW,
+    SELECTION_SET,
+    FLOOR_EDGE,
+    ROOF_EXTRUSION,
+    RAILING,
+    RAILING_TYPE,
+    RAMP,
+    RAMP_TYPE,
+    GRID,
+    REFERENCE_PLANE,
+    WORK_PLANE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -276,6 +342,12 @@ pub mod wall {
     /// The roof or floor the top is attached to; appended in schema 1.4. While it is set the
     /// top follows that element's underside and the top level and height wait unchanged.
     pub const TOP_ATTACH: usize = 17;
+    /// The authored grid-line edits of a curtain wall: a list of records (see
+    /// [`crate::curtain::grid_edit`]).
+    pub const GRID_EDITS: usize = 18;
+    /// The authored per-cell panel overrides of a curtain wall: a list of records (see
+    /// [`crate::curtain::cell_override`]).
+    pub const CELL_OVERRIDES: usize = 19;
 }
 
 /// Field positions of `archbuilder.door` and `archbuilder.window`, which share one layout.
@@ -375,6 +447,28 @@ pub mod floor {
     /// The arc edges: records of a vertex number and a bulge; appended in schema 1.3, absent in
     /// older files, whose edges are all straight.
     pub const ARCS: usize = 6;
+    /// The x of a point on the slope arrow's start line; absent for a flat floor; appended in
+    /// schema 1.4. The top offset is the height of the top at that line.
+    pub const SLOPE_X: usize = 7;
+    /// The y of that point.
+    pub const SLOPE_Y: usize = 8;
+    /// The direction of the slope arrow, an angle from the x axis.
+    pub const SLOPE_DIRECTION: usize = 9;
+    /// The length of the arrow, in meters.
+    pub const SLOPE_LENGTH: usize = 10;
+    /// The slope as an angle; absent when the end height gives it.
+    pub const SLOPE: usize = 11;
+    /// The top's height above the level at the arrow's end, in meters.
+    pub const END_HEIGHT: usize = 12;
+    /// The slots of the slope arrow.
+    pub const ARROW: crate::ceiling::ArrowSlots = crate::ceiling::ArrowSlots {
+        x: SLOPE_X,
+        y: SLOPE_Y,
+        direction: SLOPE_DIRECTION,
+        length: SLOPE_LENGTH,
+        slope: SLOPE,
+        end_height: END_HEIGHT,
+    };
 
     /// Field positions of one vertex record.
     pub mod vertex {
@@ -489,6 +583,19 @@ pub mod plan_view {
     pub const DEPTH: usize = 18;
 }
 
+/// Field positions of `archbuilder.selection_set`.
+pub mod selection_set {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The members (records with one optional reference each).
+    pub const MEMBERS: usize = 1;
+    /// The field of the reference inside one entry of [`MEMBERS`].
+    pub const MEMBER_OBJECT: usize = 0;
+}
+
+/// The most members one selection set holds.
+pub const MAX_SET_MEMBERS: usize = 100_000;
+
 /// The range of a plan view's cut height and top, in meters above the level.
 pub const VIEW_HEIGHT_RANGE: (f64, f64) = (0.05, 1000.0);
 /// The range of a plan view's bottom and view depth, in meters relative to the level.
@@ -533,6 +640,15 @@ pub mod ceiling {
     pub const SLOPE: usize = 14;
     /// The underside's height above the level at the arrow's end, in meters.
     pub const END_HEIGHT: usize = 15;
+    /// The slots of the slope arrow.
+    pub const ARROW: crate::ceiling::ArrowSlots = crate::ceiling::ArrowSlots {
+        x: SLOPE_X,
+        y: SLOPE_Y,
+        direction: SLOPE_DIRECTION,
+        length: SLOPE_LENGTH,
+        slope: SLOPE,
+        end_height: END_HEIGHT,
+    };
 }
 
 /// Field positions of `archbuilder.wall_opening`.
@@ -571,6 +687,107 @@ pub mod shaft {
     pub const BASE_LEVEL: usize = 6;
     /// The level of the top; the level above the shaft's storey when absent.
     pub const TOP_LEVEL: usize = 7;
+}
+
+/// Field positions of `archbuilder.roof_extrusion`.
+pub mod roof_extrusion {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The thickness normal to the profile: a copy of the type's total, in meters.
+    pub const THICKNESS: usize = 1;
+    /// The start of the extrusion: its distance from the plane along the plane's normal, in
+    /// meters.
+    pub const START: usize = 2;
+    /// The end of the extrusion, in the same distance.
+    pub const END: usize = 3;
+    /// The direction of the plane's horizontal axis, an angle from the x axis.
+    pub const DIRECTION: usize = 4;
+    /// The roof type (the same position as a roof's, for the readers of types).
+    pub const ROOF_TYPE: usize = 5;
+    /// Whether the roof is pinned.
+    pub const PINNED: usize = 6;
+    /// The x of the plane's origin, in meters.
+    pub const X: usize = 7;
+    /// The y of the plane's origin, in meters.
+    pub const Y: usize = 8;
+    /// The profile: records of `u` (along the plane's axis) and `z` (above the storey's level).
+    pub const PROFILE: usize = 9;
+}
+
+/// Field positions of `archbuilder.floor_edge`.
+pub mod floor_edge {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The profile: records of `u` (outward from the edge) and `v` (above the top of the slab).
+    pub const PROFILE: usize = 1;
+    /// The edges of the floor's boundary, by the number of the vertex each starts at (a list of
+    /// whole numbers).
+    pub const EDGES: usize = 2;
+    /// Whether the edge element is pinned.
+    pub const PINNED: usize = 3;
+}
+
+/// Field positions of `archbuilder.grid`.
+pub mod grid {
+    /// The label.
+    pub const NAME: usize = 0;
+    /// The x coordinate of the start, in meters.
+    pub const START_X: usize = 1;
+    /// The y coordinate of the start, in meters.
+    pub const START_Y: usize = 2;
+    /// The x coordinate of the end, in meters.
+    pub const END_X: usize = 3;
+    /// The y coordinate of the end, in meters.
+    pub const END_Y: usize = 4;
+    /// The bulge of the line: 0 for a straight line, else the tangent of a quarter of the arc's
+    /// included angle (as a floor edge).
+    pub const BULGE: usize = 5;
+    /// Whether the start end shows its head (bubble and label).
+    pub const HEAD_START: usize = 6;
+    /// Whether the end shows its head.
+    pub const HEAD_END: usize = 7;
+    /// The lowest level the grid reaches; the lowest level of the building when absent.
+    pub const BOTTOM_LEVEL: usize = 8;
+    /// The highest level the grid reaches; the highest level of the building when absent.
+    pub const TOP_LEVEL: usize = 9;
+    /// Whether the grid is pinned.
+    pub const PINNED: usize = 10;
+}
+
+/// Field positions of `archbuilder.reference_plane`.
+pub mod reference_plane {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x coordinate of the start, in meters.
+    pub const START_X: usize = 1;
+    /// The y coordinate of the start, in meters.
+    pub const START_Y: usize = 2;
+    /// The x coordinate of the end, in meters.
+    pub const END_X: usize = 3;
+    /// The y coordinate of the end, in meters.
+    pub const END_Y: usize = 4;
+    /// The reference strength ([`crate::datum::Strength`] code).
+    pub const STRENGTH: usize = 5;
+    /// Whether the plane ends at its two points; else it runs on without end.
+    pub const BOUNDED: usize = 6;
+    /// Whether the plane is pinned.
+    pub const PINNED: usize = 7;
+}
+
+/// Field positions of `archbuilder.work_plane`.
+pub mod work_plane {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// Where the plane comes from ([`crate::datum::Source`] code).
+    pub const SOURCE: usize = 1;
+    /// The level, grid or reference plane the plane follows; absent for three points.
+    pub const TARGET: usize = 2;
+    /// The three points of a plane from points: `x`, `y`, `z` of each, in meters, from here.
+    pub const POINTS: usize = 3;
+    /// Whether this is the active plane: at most one is.
+    pub const ACTIVE: usize = 12;
+    /// Whether the plane is displayed.
+    pub const SHOWN: usize = 13;
 }
 
 /// Field positions of `archbuilder.vertical_opening`.
@@ -634,6 +851,100 @@ pub mod stair {
     pub const TOP_LEVEL: usize = 12;
     /// Whether the stair is pinned.
     pub const PINNED: usize = 13;
+}
+
+/// The field positions of a railing record.
+pub mod railing {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The sketched path: points with a height and the bulge of the arc to the next point.
+    pub const PATH: usize = 1;
+    /// The railing type.
+    pub const RAILING_TYPE: usize = 2;
+    /// The stair or ramp the railing is hosted on; the path is derived from it.
+    pub const HOST: usize = 3;
+    /// The side of the host, and the side of the path the wall is on for a return.
+    pub const SIDE: usize = 4;
+    /// The extension at the start of the rail.
+    pub const START_EXTENSION: usize = 5;
+    /// The extension at the end of the rail.
+    pub const END_EXTENSION: usize = 6;
+    /// The horizontal length of an extension.
+    pub const EXTENSION_LENGTH: usize = 7;
+    /// The railing whose start the top rail continues to.
+    pub const CONTINUES_TO: usize = 8;
+    /// Whether the railing is pinned.
+    pub const PINNED: usize = 9;
+}
+
+/// The field positions of a railing type record.
+pub mod railing_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The height of the top rail above the walking surface.
+    pub const HEIGHT: usize = 1;
+    /// The profile of the top rail.
+    pub const RAIL_PROFILE: usize = 2;
+    /// The width of the top rail.
+    pub const RAIL_WIDTH: usize = 3;
+    /// The depth (height) of the top rail's section.
+    pub const RAIL_DEPTH: usize = 4;
+    /// The height of a handrail; 0 for none.
+    pub const HANDRAIL_HEIGHT: usize = 5;
+    /// The profile of the balusters.
+    pub const BALUSTER_PROFILE: usize = 6;
+    /// The size of a baluster.
+    pub const BALUSTER_SIZE: usize = 7;
+    /// The largest distance between the axes of two balusters, along the path.
+    pub const BALUSTER_SPACING: usize = 8;
+    /// The size of a post.
+    pub const POST_SIZE: usize = 9;
+    /// How the top rail turns at a corner.
+    pub const CORNER: usize = 10;
+    /// The radius of a filleted corner.
+    pub const FILLET_RADIUS: usize = 11;
+}
+
+/// The field positions of a ramp record.
+pub mod ramp {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x of the foot.
+    pub const X: usize = 1;
+    /// The y of the foot.
+    pub const Y: usize = 2;
+    /// The direction up the ramp, an angle from the x axis.
+    pub const DIRECTION: usize = 3;
+    /// The width.
+    pub const WIDTH: usize = 4;
+    /// The horizontal length of the sloped run.
+    pub const LENGTH: usize = 5;
+    /// The flat landing at the foot.
+    pub const LANDING_START: usize = 6;
+    /// The flat landing at the top.
+    pub const LANDING_END: usize = 7;
+    /// The thickness.
+    pub const THICKNESS: usize = 8;
+    /// The form: a thick slab or a solid down to the floor construction.
+    pub const FORM: usize = 9;
+    /// The rise, when it is not the height to the level above.
+    pub const RISE: usize = 10;
+    /// The level the ramp arrives at; the level above its storey when absent.
+    pub const TOP_LEVEL: usize = 11;
+    /// The ramp type.
+    pub const RAMP_TYPE: usize = 12;
+    /// Whether the ramp is pinned.
+    pub const PINNED: usize = 13;
+}
+
+/// The field positions of a ramp type record.
+pub mod ramp_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The largest slope (rise over run) of a run.
+    pub const MAX_SLOPE: usize = 1;
+    /// The thickness of a ramp made with the type.
+    pub const THICKNESS: usize = 2;
 }
 
 /// The range of a stair's width, in meters.
@@ -832,6 +1143,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
             .optional()
             .in_aspect("geometry")
             .since_minor(4),
+        crate::curtain::grid_edits_field(5),
+        crate::curtain::cell_overrides_field(5),
     ];
     let floor = vec![
         name_field("identity"),
@@ -842,17 +1155,40 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         type_field("floor_type", FLOOR_TYPE, 1),
         pinned_field(2),
         arcs_field(3),
+        optional_length("slope_x", COORDINATE_RANGE).since_minor(4),
+        optional_length("slope_y", COORDINATE_RANGE).since_minor(4),
+        angle_field("slope_direction").optional().since_minor(4),
+        optional_length("slope_length", (0.001, 100_000.0)).since_minor(4),
+        FieldDecl::new("slope", ValueType::Quantity(Dimension::ANGLE))
+            .optional()
+            .with_bound(real((
+                -crate::ceiling::MAX_SLOPE,
+                crate::ceiling::MAX_SLOPE,
+            )))
+            .in_aspect("geometry")
+            .since_minor(4),
+        optional_length("end_height", BASE_OFFSET_RANGE).since_minor(4),
     ];
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
+        (SELECTION_SET, selection_set_fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
+        (GRID, grid_fields()),
+        (REFERENCE_PLANE, reference_plane_fields()),
+        (WORK_PLANE, work_plane_fields()),
         (SHAFT, shaft_fields()),
         (VERTICAL_OPENING, vertical_opening_fields()),
+        (FLOOR_EDGE, floor_edge_fields()),
+        (ROOF_EXTRUSION, roof_extrusion_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
         (ROOF, roof_fields()),
         (ROOF_TYPE, crate::element_type::floor_type_fields()),
         (STAIR, stair_fields()),
+        (RAILING, railing_fields()),
+        (RAILING_TYPE, railing_type_fields()),
+        (RAMP, ramp_fields()),
+        (RAMP_TYPE, ramp_type_fields()),
         (ROOM, room_fields()),
         (FLOOR, floor),
         (DOOR, insert_fields(DOOR_TYPE)),
@@ -872,6 +1208,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         match key {
             WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
                 decl.validators.push(crate::element_type::layer_findings);
+                if key == WALL_TYPE {
+                    decl.validators.push(crate::curtain::type_findings);
+                }
             }
             DOOR_TYPE | WINDOW_TYPE => decl.validators.push(crate::element_type::size_findings),
             _ => {}
@@ -879,6 +1218,32 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(decl)?;
     }
     Ok(())
+}
+
+/// The fields of a selection set: a name and its member elements. A deleted element leaves the
+/// set (the reference clears).
+fn selection_set_fields() -> Vec<FieldDecl> {
+    let mut member = reference_to(ELEMENTS[0]);
+    member.targets = ELEMENTS
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    member.rule.on_delete = OnDelete::Clear;
+    member.rule.cardinality = Cardinality::Optional;
+    vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "members",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("object", ValueType::Reference(member)).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_SET_MEMBERS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+    ]
 }
 
 /// The fields of a plan view: the range, the scale, the detail level, the underlay, one flag per
@@ -1050,6 +1415,146 @@ fn shaft_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn roof_extrusion_fields() -> Vec<FieldDecl> {
+    use crate::roof_extrusion::{MAX_PROFILE, PROFILE_RANGE, SPAN_RANGE};
+    let point = ValueType::Record(vec![
+        length_field("u", Some(real(PROFILE_RANGE))),
+        length_field("z", Some(real(BASE_OFFSET_RANGE))),
+    ]);
+    vec![
+        name_field("identity"),
+        length_field("thickness", Some(real(THICKNESS_RANGE)))
+            .with_default(length(crate::roof::DEFAULT_THICKNESS)),
+        length_field("start", Some(real(SPAN_RANGE))),
+        length_field("end", Some(real(SPAN_RANGE))).with_default(length(1.0)),
+        angle_field("direction"),
+        type_field("roof_type", ROOF_TYPE, 0),
+        pinned_field(0),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("profile", ValueType::List(Box::new(point)))
+            .with_bound(Bound::Length {
+                max: MAX_PROFILE as u64,
+            })
+            .in_aspect("geometry"),
+    ]
+}
+
+fn floor_edge_fields() -> Vec<FieldDecl> {
+    let profile = ValueType::Record(vec![
+        length_field("u", Some(real(crate::floor_edge::PROFILE_RANGE))),
+        length_field("v", Some(real(crate::floor_edge::PROFILE_RANGE))),
+    ]);
+    vec![
+        name_field("identity"),
+        FieldDecl::new("profile", ValueType::List(Box::new(profile)))
+            .with_bound(Bound::Length {
+                max: crate::floor_edge::MAX_PROFILE as u64,
+            })
+            .in_aspect("geometry"),
+        FieldDecl::new("edges", ValueType::List(Box::new(ValueType::I64)))
+            .with_bound(Bound::Length {
+                max: crate::floor::MAX_VERTICES as u64,
+            })
+            .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn bool_field(name: &str, on: bool) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Bool)
+        .with_default(Value::Bool(on))
+        .in_aspect("graphics")
+}
+
+/// The optional level a grid's extent ends at; dropped when the level is deleted.
+fn extent_field(name: &str) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Reference(optional_level()))
+        .optional()
+        .in_aspect("geometry")
+}
+
+fn grid_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("start_x", Some(real(COORDINATE_RANGE))),
+        length_field("start_y", Some(real(COORDINATE_RANGE))),
+        length_field("end_x", Some(real(COORDINATE_RANGE))),
+        length_field("end_y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("bulge", ValueType::F64)
+            .with_default(Value::F64(0.0))
+            .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE)))
+            .in_aspect("geometry"),
+        bool_field("head_start", true),
+        bool_field("head_end", true),
+        extent_field("bottom_level"),
+        extent_field("top_level"),
+        pinned_field(0),
+    ]
+}
+
+fn strength_variants() -> ValueType {
+    ValueType::Enum(
+        crate::datum::Strength::ALL
+            .iter()
+            .map(|s| EnumVariant::new(s.name(), s.code()))
+            .collect(),
+    )
+}
+
+fn reference_plane_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("start_x", Some(real(COORDINATE_RANGE))),
+        length_field("start_y", Some(real(COORDINATE_RANGE))),
+        length_field("end_x", Some(real(COORDINATE_RANGE))),
+        length_field("end_y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("strength", strength_variants())
+            .with_default(Value::Enum(crate::datum::Strength::Weak.code()))
+            .in_aspect("identity"),
+        bool_field("bounded", true).in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn work_plane_fields() -> Vec<FieldDecl> {
+    let mut target = reference_to(LEVEL);
+    target.targets = [LEVEL, GRID, REFERENCE_PLANE]
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    // A plane that follows a datum goes with it.
+    target.rule.on_delete = OnDelete::Cascade;
+    target.rule.cardinality = Cardinality::Optional;
+    let mut fields = vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "source",
+            ValueType::Enum(
+                crate::datum::Source::ALL
+                    .iter()
+                    .map(|s| EnumVariant::new(s.name(), s.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(crate::datum::Source::Level.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new("target", ValueType::Reference(target))
+            .optional()
+            .in_aspect("geometry"),
+    ];
+    for point in 1..=3 {
+        for axis in ["x", "y", "z"] {
+            fields.push(
+                length_field(&format!("p{point}_{axis}"), Some(real(COORDINATE_RANGE))).optional(),
+            );
+        }
+    }
+    fields.push(bool_field("active", false).in_aspect("identity"));
+    fields.push(bool_field("shown", false));
+    fields
+}
+
 fn vertical_opening_fields() -> Vec<FieldDecl> {
     vec![
         name_field("identity"),
@@ -1106,6 +1611,209 @@ fn stair_fields() -> Vec<FieldDecl> {
             .optional()
             .in_aspect("geometry"),
         pinned_field(1),
+    ]
+}
+
+fn coded_field<const N: usize>(
+    name: &str,
+    variants: [(&'static str, u32); N],
+    default: u32,
+) -> FieldDecl {
+    FieldDecl::new(
+        name,
+        ValueType::Enum(
+            variants
+                .into_iter()
+                .map(|(n, c)| EnumVariant::new(n, c))
+                .collect(),
+        ),
+    )
+    .with_default(Value::Enum(default))
+    .in_aspect("geometry")
+}
+
+fn railing_fields() -> Vec<FieldDecl> {
+    use crate::railing::{DEFAULT_EXTENSION, EXTENSION_RANGE, Extension, MAX_POINTS, Side};
+    let host = {
+        let mut spec = reference_to(STAIR);
+        spec.targets = [STAIR, RAMP]
+            .iter()
+            .filter_map(|k| TypeKey::new(*k).ok())
+            .collect();
+        // A railing hosted on a stair or ramp goes with it.
+        spec.rule.on_delete = OnDelete::Cascade;
+        spec.rule.cardinality = Cardinality::Optional;
+        spec
+    };
+    let next = {
+        let mut spec = reference_to(RAILING);
+        spec.rule.on_delete = OnDelete::Clear;
+        spec.rule.cardinality = Cardinality::Optional;
+        spec
+    };
+    let extension = |name: &str| {
+        coded_field(
+            name,
+            [
+                (Extension::None.name(), Extension::None.code()),
+                (Extension::Horizontal.name(), Extension::Horizontal.code()),
+                (Extension::ReturnWall.name(), Extension::ReturnWall.code()),
+                (Extension::ReturnFloor.name(), Extension::ReturnFloor.code()),
+            ],
+            Extension::None.code(),
+        )
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "path",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+                length_field("z", Some(real(BASE_OFFSET_RANGE))),
+                FieldDecl::new("bulge", ValueType::F64)
+                    .with_default(Value::F64(0.0))
+                    .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_POINTS as u64,
+        })
+        .optional()
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "railing_type",
+            ValueType::Reference({
+                let mut spec = reference_to(RAILING_TYPE);
+                spec.rule.cardinality = Cardinality::Optional;
+                spec
+            }),
+        )
+        .optional()
+        .in_aspect("identity"),
+        FieldDecl::new("host", ValueType::Reference(host))
+            .optional()
+            .in_aspect("geometry"),
+        coded_field(
+            "side",
+            [
+                (Side::Left.name(), Side::Left.code()),
+                (Side::Right.name(), Side::Right.code()),
+            ],
+            Side::Left.code(),
+        ),
+        extension("start_extension"),
+        extension("end_extension"),
+        length_field("extension_length", Some(real(EXTENSION_RANGE)))
+            .with_default(length(DEFAULT_EXTENSION)),
+        FieldDecl::new("continues_to", ValueType::Reference(next))
+            .optional()
+            .in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn railing_type_fields() -> Vec<FieldDecl> {
+    use crate::railing::{
+        Corner, DEFAULT_BALUSTER_SIZE, DEFAULT_BALUSTER_SPACING, DEFAULT_HEIGHT, DEFAULT_POST_SIZE,
+        DEFAULT_RAIL_DEPTH, DEFAULT_RAIL_WIDTH, HEIGHT_LIMITS, Profile, SECTION_RANGE,
+        SPACING_RANGE,
+    };
+    let profile = |name: &str| {
+        coded_field(
+            name,
+            [
+                (Profile::Square.name(), Profile::Square.code()),
+                (Profile::Round.name(), Profile::Round.code()),
+            ],
+            Profile::Square.code(),
+        )
+    };
+    vec![
+        name_field("identity"),
+        length_field("height", Some(real(HEIGHT_LIMITS))).with_default(length(DEFAULT_HEIGHT)),
+        profile("rail_profile"),
+        length_field("rail_width", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_RAIL_WIDTH)),
+        length_field("rail_depth", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_RAIL_DEPTH)),
+        length_field("handrail_height", Some(real((0.0, HEIGHT_LIMITS.1)))),
+        profile("baluster_profile"),
+        length_field("baluster_size", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_BALUSTER_SIZE)),
+        length_field("baluster_spacing", Some(real(SPACING_RANGE)))
+            .with_default(length(DEFAULT_BALUSTER_SPACING)),
+        length_field("post_size", Some(real(SECTION_RANGE)))
+            .with_default(length(DEFAULT_POST_SIZE)),
+        coded_field(
+            "corner",
+            [
+                (Corner::Miter.name(), Corner::Miter.code()),
+                (Corner::Fillet.name(), Corner::Fillet.code()),
+            ],
+            Corner::Miter.code(),
+        ),
+        length_field("fillet_radius", Some(real((0.0, 5.0)))).with_default(length(0.15)),
+    ]
+}
+
+fn ramp_fields() -> Vec<FieldDecl> {
+    use crate::ramp::{
+        DEFAULT_LENGTH, DEFAULT_THICKNESS, DEFAULT_WIDTH, Form, LANDING_RANGE, LENGTH_RANGE,
+        RISE_LIMITS, THICKNESS_RANGE as RAMP_THICKNESS, WIDTH_RANGE,
+    };
+    vec![
+        name_field("identity"),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("direction", ValueType::Quantity(Dimension::ANGLE))
+            .with_default(Value::Quantity(Quantity::new(0.0, Dimension::ANGLE)))
+            .with_bound(real((-1000.0, 1000.0)))
+            .in_aspect("geometry"),
+        length_field("width", Some(real(WIDTH_RANGE))).with_default(length(DEFAULT_WIDTH)),
+        length_field("length", Some(real(LENGTH_RANGE))).with_default(length(DEFAULT_LENGTH)),
+        length_field("landing_start", Some(real(LANDING_RANGE))),
+        length_field("landing_end", Some(real(LANDING_RANGE))),
+        length_field("thickness", Some(real(RAMP_THICKNESS)))
+            .with_default(length(DEFAULT_THICKNESS)),
+        coded_field(
+            "form",
+            [
+                (Form::Slab.name(), Form::Slab.code()),
+                (Form::Solid.name(), Form::Solid.code()),
+            ],
+            Form::Slab.code(),
+        ),
+        optional_length("rise", RISE_LIMITS),
+        FieldDecl::new("top_level", ValueType::Reference(optional_level()))
+            .optional()
+            .in_aspect("geometry"),
+        FieldDecl::new(
+            "ramp_type",
+            ValueType::Reference({
+                let mut spec = reference_to(RAMP_TYPE);
+                spec.rule.cardinality = Cardinality::Optional;
+                spec
+            }),
+        )
+        .optional()
+        .in_aspect("identity"),
+        pinned_field(0),
+    ]
+}
+
+fn ramp_type_fields() -> Vec<FieldDecl> {
+    use crate::ramp::{
+        DEFAULT_MAX_SLOPE, DEFAULT_THICKNESS, SLOPE_RANGE, THICKNESS_RANGE as RAMP_THICKNESS,
+    };
+    vec![
+        name_field("identity"),
+        FieldDecl::new("max_slope", ValueType::F64)
+            .with_default(Value::F64(DEFAULT_MAX_SLOPE))
+            .with_bound(real(SLOPE_RANGE))
+            .in_aspect("geometry"),
+        length_field("thickness", Some(real(RAMP_THICKNESS)))
+            .with_default(length(DEFAULT_THICKNESS)),
     ]
 }
 
@@ -1205,11 +1913,17 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         FLOOR => floor::PINNED,
         ROOM => room::PINNED,
         STAIR => stair::PINNED,
+        RAILING => railing::PINNED,
+        RAMP => ramp::PINNED,
         ROOF => roof::PINNED,
         CEILING => ceiling::PINNED,
         WALL_OPENING => wall_opening::PINNED,
         SHAFT => shaft::PINNED,
         VERTICAL_OPENING => vertical_opening::PINNED,
+        FLOOR_EDGE => floor_edge::PINNED,
+        ROOF_EXTRUSION => roof_extrusion::PINNED,
+        GRID => grid::PINNED,
+        REFERENCE_PLANE => reference_plane::PINNED,
         _ => return None,
     })
 }
@@ -1439,6 +2153,12 @@ mod tests {
                     ("floor_type", floor::FLOOR_TYPE),
                     ("pinned", floor::PINNED),
                     ("arcs", floor::ARCS),
+                    ("slope_x", floor::SLOPE_X),
+                    ("slope_y", floor::SLOPE_Y),
+                    ("slope_direction", floor::SLOPE_DIRECTION),
+                    ("slope_length", floor::SLOPE_LENGTH),
+                    ("slope", floor::SLOPE),
+                    ("end_height", floor::END_HEIGHT),
                 ],
             ),
             (DOOR, insert_fields),
@@ -1495,6 +2215,8 @@ mod tests {
                     ("pinned", wall::PINNED),
                     ("top_offset", wall::TOP_OFFSET),
                     ("top_attach", wall::TOP_ATTACH),
+                    ("grid_edits", wall::GRID_EDITS),
+                    ("cell_overrides", wall::CELL_OVERRIDES),
                 ],
             ),
             (
@@ -1509,6 +2231,28 @@ mod tests {
                     ("room_bounding", layered_type::ROOM_BOUNDING),
                     ("wrap_ends", layered_type::WRAP_ENDS),
                     ("wrap_inserts", layered_type::WRAP_INSERTS),
+                    ("curtain", crate::curtain::slot::CURTAIN),
+                    ("vertical_rule", crate::curtain::slot::VERTICAL),
+                    ("vertical_value", crate::curtain::slot::VERTICAL + 1),
+                    ("vertical_justify", crate::curtain::slot::VERTICAL + 2),
+                    ("vertical_offset", crate::curtain::slot::VERTICAL + 3),
+                    ("horizontal_rule", crate::curtain::slot::HORIZONTAL),
+                    ("horizontal_value", crate::curtain::slot::HORIZONTAL + 1),
+                    ("horizontal_justify", crate::curtain::slot::HORIZONTAL + 2),
+                    ("horizontal_offset", crate::curtain::slot::HORIZONTAL + 3),
+                    ("panel", crate::curtain::slot::PANEL),
+                    ("panel_thickness", crate::curtain::slot::PANEL_THICKNESS),
+                    ("panel_material", crate::curtain::slot::PANEL_MATERIAL),
+                    ("interior_profile", crate::curtain::slot::INTERIOR),
+                    ("interior_width", crate::curtain::slot::INTERIOR + 1),
+                    ("interior_depth", crate::curtain::slot::INTERIOR + 2),
+                    ("border_profile", crate::curtain::slot::BORDER),
+                    ("border_width", crate::curtain::slot::BORDER + 1),
+                    ("border_depth", crate::curtain::slot::BORDER + 2),
+                    ("corner_profile", crate::curtain::slot::CORNER),
+                    ("corner_width", crate::curtain::slot::CORNER + 1),
+                    ("corner_depth", crate::curtain::slot::CORNER + 2),
+                    ("priority", crate::curtain::slot::PRIORITY),
                 ],
             ),
             (

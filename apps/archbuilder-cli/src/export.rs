@@ -92,6 +92,7 @@ fn export(args: &Args<'_>, product: &Product) -> Result<serde_json::Value> {
         "file": args.out.display().to_string(),
         "bytes": export.bytes.len(),
         "elements": export.elements,
+        "valid": export.valid,
         "summary": export.report.summary,
         "items": export.report.items,
     }))

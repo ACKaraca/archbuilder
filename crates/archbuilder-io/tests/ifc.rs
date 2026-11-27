@@ -151,6 +151,7 @@ fn ids_of(snapshot: &Snapshot, key: &str) -> Vec<ObjectId> {
 fn the_house_exports_without_loss_and_deterministically() {
     let house = House::new();
     let first = export_ifc(&house.snapshot(), &options()).unwrap();
+    assert!(first.valid, "{:?}", first.report.items);
     let second = export_ifc(&house.snapshot(), &options()).unwrap();
     assert_eq!(first.bytes, second.bytes);
     assert!(!first.report.has_loss(), "{:?}", first.report);
@@ -185,6 +186,7 @@ fn types_layer_sets_and_wall_flags_are_exported() {
     );
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -244,6 +246,7 @@ fn the_export_reads_back_as_the_model() {
     let house = House::new();
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -370,6 +373,7 @@ fn the_door_operation_names_the_side_of_the_hinge_in_the_exported_body() {
             }
         }
         let exported = export_ifc(&house.snapshot(), &options()).unwrap();
+        assert!(exported.valid, "{:?}", exported.report.items);
         let file = read(&exported.bytes, &mut ReadOptions::default())
             .unwrap()
             .file;
@@ -421,6 +425,7 @@ fn body_volumes_and_quantities_equal_the_derived_volumes() {
     let house = House::new();
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -533,6 +538,7 @@ fn a_casement_window_is_reported_as_approximated() {
         json!({"type": copy["type"], "objects": [window]}),
     );
     let exported = export_ifc(&house.snapshot(), &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss());
     assert_eq!(exported.report.summary.approximated, 1);
     let [item] = &exported.report.items[..] else {
@@ -596,6 +602,7 @@ fn enclosed_rooms_are_spaces_and_the_others_are_reported() {
         .collect();
     assert_eq!(enclosed.len(), 1);
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let reasons: Vec<_> = exported
         .report
         .items
@@ -721,6 +728,7 @@ fn a_room_around_a_courtyard_is_a_space_with_a_void() {
         12.0 * 12.0 - 4.0 * 4.0,
     );
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -760,6 +768,7 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     assert_eq!(derived.boundary.loops.len(), 3);
     near(derived.area(), 60.0 - 4.0 - 4.53 * 1.1);
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let [item] = &exported.report.items[..] else {
         panic!("{:?}", exported.report.items);
     };
@@ -783,6 +792,76 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     near(body, (60.0 - 4.0 - 4.53 * 1.1) * 0.2);
 }
 
+/// A ramp and its railings are named in the loss report (the pinned writer has no ramp or railing
+/// entities), never written as proxies; the opening the ramp cuts in the slab above is written.
+#[test]
+fn a_ramp_and_its_railings_are_reported_and_its_opening_is_a_hole_of_the_slab_above() {
+    let house = House::new();
+    let made = house.run(
+        "archbuilder.ramp.create",
+        json!({"start": [6.5, 0.5], "to": [6.5, 5.5]}),
+    );
+    let ramp = House::id(&made["ramp"]);
+    let free = house.run(
+        "archbuilder.railing.create",
+        json!({"points": [[1.0, 1.0], [2.0, 1.0]]}),
+    );
+    let free = House::id(&free["railing"]);
+    let snapshot = house.snapshot();
+    let upper = spatial::objects(&snapshot, FLOOR)
+        .into_iter()
+        .find(|f| Derived::of(&snapshot, f).is_some_and(|d| d.top > 1.0))
+        .unwrap();
+    // The outer loop, the sketched hole and the ramp's opening (5.05 x 1.3).
+    let derived = Derived::of(&snapshot, &upper).unwrap();
+    assert_eq!(derived.boundary.loops.len(), 3);
+    near(derived.area(), 60.0 - 4.0 - 5.05 * 1.3);
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let mut kinds: Vec<(String, String)> = exported
+        .report
+        .items
+        .iter()
+        .map(|i| (i.reason.clone(), i.record_kind.clone().unwrap_or_default()))
+        .collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        [
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.railing_not_written".to_owned(),
+                "IFCRAILING".to_owned()
+            ),
+            (
+                "ab.io.ifc.ramp_not_written".to_owned(),
+                "IFCRAMP".to_owned()
+            ),
+        ]
+    );
+    assert!(
+        exported
+            .report
+            .items
+            .iter()
+            .any(|i| i.object_id == Some(ramp.to_string()))
+    );
+    assert!(
+        exported
+            .report
+            .items
+            .iter()
+            .any(|i| i.object_id == Some(free.to_string()))
+    );
+    assert_eq!(exported.elements, 15);
+}
+
 /// A hip roof over the upper walls, with those walls attached to it: an `IfcRoof` of the roof
 /// type whose body is the slab, and walls whose bodies are their clipped solids.
 #[test]
@@ -804,6 +883,7 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
     house.run("archbuilder.wall.attach_top", json!({"walls": upper_walls}));
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -888,6 +968,7 @@ fn a_floor_with_an_arc_edge_and_layered_walls_read_back() {
     );
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -930,6 +1011,7 @@ fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
     let slab = House::id(&made["floor"]);
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -978,4 +1060,72 @@ fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
             assert!(net < whole);
         }
     }
+}
+
+/// A curtain wall is never written as a wall or a proxy: its wall, panels and mullions are named
+/// in the loss report with their counts, and a curtain wall inside a basic wall is a void of it.
+#[test]
+fn a_curtain_wall_is_reported_and_its_embedding_is_a_void_of_the_host() {
+    let house = House::new();
+    let ty = House::id(&house.run("archbuilder.curtain.type", json!({"name": "CW"}))["type"]);
+    let host = House::id(
+        &house.run(
+            "archbuilder.wall.create",
+            json!({"start": [20.0, 0.0], "end": [28.0, 0.0], "height": 3.0}),
+        )["wall"],
+    );
+    let curtain = House::id(
+        &house.run(
+            "archbuilder.wall.create",
+            json!({"start": [22.0, 0.0], "end": [25.0, 0.0], "height": 2.0, "type": ty.to_string()}),
+        )["wall"],
+    );
+    let snapshot = house.snapshot();
+    let d = archbuilder_model::curtain::Derived::of(
+        &snapshot,
+        &spatial::get(&snapshot, curtain).unwrap(),
+    )
+    .unwrap();
+    let (panels, mullions) = d.counts();
+    let exported = export_ifc(&snapshot, &options()).unwrap();
+    let kinds: BTreeMap<String, i64> = exported
+        .report
+        .items
+        .iter()
+        .filter(|i| i.reason == "ab.io.ifc.curtain_not_written")
+        .map(|i| {
+            assert_eq!(i.object_id, Some(curtain.to_string()));
+            let count = match i.arguments.get("count") {
+                Some(arc_io_common::loss::Argument::Int(n)) => *n,
+                other => panic!("{other:?}"),
+            };
+            (i.record_kind.clone().unwrap(), count)
+        })
+        .collect();
+    assert_eq!(kinds["IFCCURTAINWALL"], 1);
+    assert_eq!(kinds["IFCPLATE"], i64::try_from(panels).unwrap());
+    assert_eq!(kinds["IFCMEMBER"], i64::try_from(mullions).unwrap());
+    let file = read(&exported.bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file;
+    let ids: Vec<String> = file
+        .instances()
+        .iter()
+        .filter(|i| i.records[0].type_name == "IFCOPENINGELEMENT")
+        .map(|i| gid(&file, i.name))
+        .collect();
+    assert!(ids.contains(&global_id(derived_id(
+        curtain.as_u128(),
+        role::INSERT_OPENING,
+        0
+    ))));
+    assert!(host != curtain);
+    // Neither the wall nor the type is written as a wall.
+    assert!(
+        !file
+            .instances()
+            .iter()
+            .any(|i| i.records[0].type_name == "IFCWALL"
+                && gid(&file, i.name) == global_id(curtain.as_u128()))
+    );
 }

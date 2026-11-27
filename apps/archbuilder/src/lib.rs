@@ -41,12 +41,18 @@ use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 pub mod ceiling_view;
 pub mod chrome;
 pub mod clipboard;
+pub mod datum_tool;
+pub mod datum_view;
 pub mod direct;
 pub mod extract_ceiling;
+pub mod extract_circulation;
+pub mod extract_datum;
 pub mod extract_floor;
+pub mod extract_floor_edge;
 pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_roof;
+pub mod extract_roof_extrusion;
 pub mod extract_stair;
 pub mod extract_view;
 pub mod extract_wall;
@@ -202,8 +208,12 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         let mut out = extract_wall::dependents(snapshot, changes);
         out.extend(extract_floor::dependents(snapshot, changes));
         out.extend(extract_stair::dependents(snapshot, changes));
+        out.extend(extract_circulation::dependents(snapshot, changes));
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
+        out.extend(extract_floor_edge::dependents(snapshot, changes));
+        out.extend(extract_roof_extrusion::dependents(snapshot, changes));
+        out.extend(extract_datum::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
@@ -325,6 +335,24 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.ramp".into(),
+        types: vec![archbuilder_model::types::RAMP.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_circulation::extract_ramp(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.railing".into(),
+        types: vec![archbuilder_model::types::RAILING.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_circulation::extract_railing(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.roof".into(),
         types: vec![ROOF.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -343,11 +371,56 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.roof_extrusion".into(),
+        types: vec![archbuilder_model::types::ROOF_EXTRUSION.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_extrusion::extract_roof_extrusion(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.floor_edge".into(),
+        types: vec![archbuilder_model::types::FLOOR_EDGE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_floor_edge::extract_floor_edge(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.shaft".into(),
         types: vec![archbuilder_model::types::SHAFT.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_ceiling::extract_shaft(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.grid".into(),
+        types: vec![archbuilder_model::types::GRID.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_grid(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.reference_plane".into(),
+        types: vec![archbuilder_model::types::REFERENCE_PLANE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_reference_plane(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.work_plane".into(),
+        types: vec![archbuilder_model::types::WORK_PLANE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_datum::extract_work_plane(snapshot, object, cancel)
             })
         }),
     })?;
@@ -477,28 +550,30 @@ fn menu() -> Result<Menu> {
     Menu::new(items)
 }
 
-/// The shell configuration: the viewport in the middle, the outliner above the property grid on
-/// the right, the command line below; the menu bar and the toolbar; key bindings for the file
+/// The shell configuration: the project browser above the property grid on the left, the viewport
+/// in the middle, the command line below; the menu bar and the command tabs; key bindings for the file
 /// commands and Delete for the storey; the level labels and the starting view. `seed` seeds the invocations (see [`ShellConfig::seed`]).
 ///
 /// # Errors
 /// None for this layout and menu; their validation errors otherwise.
 pub fn config(seed: u64) -> Result<ShellConfig> {
-    let right = Dock::Split {
+    // A left column (project browser above the properties, types and settings), the viewport in
+    // the middle and a short strip with the command line and the warnings below.
+    let left = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.26,
+        fraction: 0.55,
         first: Box::new(tabs(&[OUTLINER])),
         second: Box::new(tabs(&[PROPERTIES, TYPES, SETTINGS])),
     };
     let top = Dock::Split {
         axis: Axis::Horizontal,
-        fraction: 0.62,
-        first: Box::new(tabs(&[VIEWPORT])),
-        second: Box::new(right),
+        fraction: 0.22,
+        first: Box::new(left),
+        second: Box::new(tabs(&[VIEWPORT])),
     };
     let root = Dock::Split {
         axis: Axis::Vertical,
-        fraction: 0.74,
+        fraction: 0.87,
         first: Box::new(top),
         second: Box::new(tabs(&[COMMAND_LINE, WARNINGS])),
     };
@@ -548,6 +623,14 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                     out.extend(ceiling_view::overlays(&snapshot, language));
                     out.extend(opening_view::overlays(&snapshot));
                 }
+                let level = planned
+                    .then(|| room_view::shared().active())
+                    .flatten()
+                    .and_then(|s| archbuilder_model::spatial::get(&snapshot, s))
+                    .map(|s| archbuilder_model::spatial::storey_elevation(&snapshot, &s));
+                out.extend(datum_view::overlays(&snapshot, level, &|id| {
+                    room_view::shared().is_hidden(id)
+                }));
                 out.extend(pin_marks(&snapshot));
             }
             out
@@ -557,8 +640,12 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         initial_view: Some(InitialView {
             toward_camera: [1.0, -1.4, 0.9],
         }),
-        toolbar: chrome::toolbar(),
+        toolbar: Vec::new(),
+        command_tabs: chrome::command_tabs(),
+        quick_access: chrome::quick_access(),
+        icons: chrome::icons(),
         status: chrome::status(),
+        status_text: Some(chrome::status_text()),
         seed,
     })
 }

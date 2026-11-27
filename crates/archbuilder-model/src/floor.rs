@@ -19,7 +19,7 @@
 
 use std::collections::BTreeSet;
 
-use arc_base::math::Point2;
+use arc_base::math::{Point2, Point3};
 use arc_base::{Limits, ObjectId, Result, Tolerance};
 use arc_doc::{Snapshot, Value};
 use arc_geom::{
@@ -27,6 +27,8 @@ use arc_geom::{
     Segment2, prism,
 };
 
+use crate::ceiling::{Arrow, MAX_SLOPE};
+use crate::terrain::Plane;
 use crate::types::{self, COORDINATE_RANGE, MIN_WALL_LENGTH, floor};
 use crate::wall::Wall;
 
@@ -1178,6 +1180,10 @@ pub struct Derived {
     pub boundary: Boundary,
     /// The shaft openings that reach the floor but could not be cut.
     pub uncut: usize,
+    /// The slope arrow; `None` for a level slab.
+    pub arrow: Option<Arrow>,
+    /// The plane of the top over the plan: level at `top` without an arrow.
+    pub plane: Plane,
 }
 
 impl Derived {
@@ -1191,6 +1197,7 @@ impl Derived {
             .and_then(|id| crate::spatial::get(snapshot, id))
             .map_or(0.0, |s| crate::spatial::storey_elevation(snapshot, &s));
         let mut openings = crate::stair::openings_of_floor(snapshot, object);
+        openings.extend(crate::ramp::openings_of_floor(snapshot, object));
         let top = level + floor.top_offset;
         // Shafts and vertical openings that pass through the slab's body cut it like a stair.
         openings.extend(crate::opening::cuts(
@@ -1199,12 +1206,67 @@ impl Derived {
             (top - floor.thickness, top),
         ));
         let (boundary, uncut) = floor.boundary_in(snapshot)?.with_openings(&openings);
+        let arrow = Arrow::read(&object.values, floor::ARROW);
+        let plane = match arrow {
+            Some(a) => {
+                let g = a.gradient(floor.top_offset);
+                Plane {
+                    at: a.start,
+                    z: top,
+                    grad: [g * a.direction.cos(), g * a.direction.sin()],
+                }
+            }
+            None => Plane::level(top),
+        };
         Some(Self {
-            top: level + floor.top_offset,
+            top,
             floor,
             boundary,
             uncut,
+            arrow,
+            plane,
         })
+    }
+
+    /// Whether the top slopes.
+    #[must_use]
+    pub fn sloped(&self) -> bool {
+        self.plane.grad[0].hypot(self.plane.grad[1]) > 1.0e-9
+    }
+
+    /// Whether the slope is within [`MAX_SLOPE`] (a level slab is).
+    #[must_use]
+    pub fn slope_ok(&self) -> bool {
+        self.arrow.is_none_or(|a| {
+            let g = a.gradient(self.floor.top_offset);
+            g.is_finite() && g.atan().abs() <= MAX_SLOPE + 1.0e-9
+        })
+    }
+
+    /// The lowest elevation of the underside and the highest of the top over the slab's plan
+    /// (the openings do not matter: they lie inside the outline).
+    #[must_use]
+    pub fn z_range(&self) -> (f64, f64) {
+        let mut lo = f64::MAX;
+        let mut hi = f64::MIN;
+        for p in self.boundary.loops.iter().flatten() {
+            let z = self.plane.z(*p);
+            lo = lo.min(z);
+            hi = hi.max(z);
+        }
+        if lo > hi {
+            (lo, hi) = (self.top, self.top);
+        }
+        (lo - self.floor.thickness, hi)
+    }
+
+    /// The plane of the underside: the top's, lowered by the thickness.
+    #[must_use]
+    pub fn underside(&self) -> Plane {
+        Plane {
+            z: self.plane.z - self.floor.thickness,
+            ..self.plane
+        }
     }
 
     /// The area in square meters.
@@ -1224,8 +1286,36 @@ impl Derived {
     /// # Errors
     /// The solid kernel's errors.
     pub fn solid(&self) -> Result<Polyhedron> {
-        self.boundary.solid(self.top, self.floor.thickness)
+        if !self.sloped() {
+            return self.boundary.solid(self.top, self.floor.thickness);
+        }
+        shear(
+            &self
+                .boundary
+                .faceted(FLAT_CHORD)
+                .solid(0.0, self.floor.thickness)?,
+            self.plane,
+        )
     }
+}
+
+/// `flat`, a slab whose top is at 0, followed along `plane`: every vertex rises by the height of
+/// the plane over it. Planes stay planes and the volume stays.
+///
+/// # Errors
+/// The solid kernel's errors.
+pub fn shear(flat: &Polyhedron, plane: Plane) -> Result<Polyhedron> {
+    let vertices = flat
+        .vertices()
+        .iter()
+        .map(|v| Point3::new(v.x, v.y, v.z + plane.z([v.x, v.y])))
+        .collect();
+    Polyhedron::new(
+        vertices,
+        flat.faces().to_vec(),
+        &Tolerance::DEFAULT,
+        &Limits::DEFAULT,
+    )
 }
 
 /// The walls of `storey` that have a readable baseline, in identifier order.

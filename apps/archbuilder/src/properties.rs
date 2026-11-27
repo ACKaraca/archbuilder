@@ -198,6 +198,12 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "floor_slope",
+        Message {
+            message_id: "ab-prop-floor-slope",
+        },
+    ),
+    (
         "ceiling_slope",
         Message {
             message_id: "ab-prop-ceiling-slope",
@@ -261,6 +267,42 @@ const LABELS: &[(&str, Message)] = &[
         "cut_area",
         Message {
             message_id: "ab-prop-cut-area",
+        },
+    ),
+    (
+        "extrusion_type",
+        Message {
+            message_id: "ab-prop-extrusion-type",
+        },
+    ),
+    (
+        "extrusion_area",
+        Message {
+            message_id: "ab-prop-extrusion-area",
+        },
+    ),
+    (
+        "extrusion_volume",
+        Message {
+            message_id: "ab-prop-extrusion-volume",
+        },
+    ),
+    (
+        "edge_floor",
+        Message {
+            message_id: "ab-prop-edge-floor",
+        },
+    ),
+    (
+        "edge_length",
+        Message {
+            message_id: "ab-prop-edge-length",
+        },
+    ),
+    (
+        "edge_volume",
+        Message {
+            message_id: "ab-prop-edge-volume",
         },
     ),
     (
@@ -672,6 +714,18 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "curtain_panels",
+        Message {
+            message_id: "ab-prop-curtain-panels",
+        },
+    ),
+    (
+        "curtain_mullions",
+        Message {
+            message_id: "ab-prop-curtain-mullions",
+        },
+    ),
+    (
         "department",
         Message {
             message_id: "ab-prop-department",
@@ -741,6 +795,90 @@ const LABELS: &[(&str, Message)] = &[
         "room_volume",
         Message {
             message_id: "ab-prop-room-volume",
+        },
+    ),
+    (
+        "strong",
+        Message {
+            message_id: "ab-strength-strong",
+        },
+    ),
+    (
+        "weak",
+        Message {
+            message_id: "ab-strength-weak",
+        },
+    ),
+    (
+        "none",
+        Message {
+            message_id: "ab-strength-none",
+        },
+    ),
+    (
+        "points",
+        Message {
+            message_id: "ab-source-points",
+        },
+    ),
+    (
+        "grid",
+        Message {
+            message_id: "ab-source-grid",
+        },
+    ),
+    (
+        "reference_plane",
+        Message {
+            message_id: "ab-source-reference-plane",
+        },
+    ),
+    (
+        "bulge",
+        Message {
+            message_id: "ab-prop-bulge",
+        },
+    ),
+    (
+        "head_start",
+        Message {
+            message_id: "ab-prop-head-start",
+        },
+    ),
+    (
+        "head_end",
+        Message {
+            message_id: "ab-prop-head-end",
+        },
+    ),
+    (
+        "strength",
+        Message {
+            message_id: "ab-prop-strength",
+        },
+    ),
+    (
+        "bounded",
+        Message {
+            message_id: "ab-prop-bounded",
+        },
+    ),
+    (
+        "source",
+        Message {
+            message_id: "ab-prop-source",
+        },
+    ),
+    (
+        "active",
+        Message {
+            message_id: "ab-prop-active",
+        },
+    ),
+    (
+        "shown",
+        Message {
+            message_id: "ab-prop-shown",
         },
     ),
     (
@@ -1060,6 +1198,18 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::RAILING,
+        Message {
+            message_id: "ab-kind-railing",
+        },
+    ),
+    (
+        types::RAMP,
+        Message {
+            message_id: "ab-kind-ramp",
+        },
+    ),
+    (
         ROOF,
         Message {
             message_id: "ab-kind-roof",
@@ -1095,7 +1245,46 @@ const KINDS: &[(&str, Message)] = &[
             message_id: "ab-kind-vertical-opening",
         },
     ),
+    (
+        types::FLOOR_EDGE,
+        Message {
+            message_id: "ab-kind-floor-edge",
+        },
+    ),
+    (
+        types::ROOF_EXTRUSION,
+        Message {
+            message_id: "ab-kind-roof-extrusion",
+        },
+    ),
+    (
+        types::GRID,
+        Message {
+            message_id: "ab-kind-grid",
+        },
+    ),
+    (
+        types::REFERENCE_PLANE,
+        Message {
+            message_id: "ab-kind-reference-plane",
+        },
+    ),
+    (
+        types::WORK_PLANE,
+        Message {
+            message_id: "ab-kind-work-plane",
+        },
+    ),
 ];
+
+/// The message identifier of the readable name of the kind `key`.
+#[must_use]
+pub fn kind_message(key: &str) -> Option<&'static str> {
+    KINDS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, m)| m.message_id)
+}
 
 /// The heading of a selection of several kinds of object.
 const OBJECTS: Message = Message {
@@ -1112,6 +1301,160 @@ const NOT_EDITABLE: Message = Message {
 const DEFAULT_VIEW: Message = Message {
     message_id: "ab-prop-view-default-note",
 };
+
+/// Labels of the fields of ramps and railings.
+const CIRC_LABELS: [(&str, Message); 25] = [
+    (
+        "length",
+        Message {
+            message_id: "ab-prop-circ-length",
+        },
+    ),
+    (
+        "landing_start",
+        Message {
+            message_id: "ab-prop-circ-landing-start",
+        },
+    ),
+    (
+        "landing_end",
+        Message {
+            message_id: "ab-prop-circ-landing-end",
+        },
+    ),
+    (
+        "form",
+        Message {
+            message_id: "ab-prop-circ-form",
+        },
+    ),
+    (
+        "slab",
+        Message {
+            message_id: "ab-prop-circ-slab",
+        },
+    ),
+    (
+        "solid",
+        Message {
+            message_id: "ab-prop-circ-solid",
+        },
+    ),
+    (
+        "side",
+        Message {
+            message_id: "ab-prop-circ-side",
+        },
+    ),
+    (
+        "none",
+        Message {
+            message_id: "ab-prop-circ-none",
+        },
+    ),
+    (
+        "start_extension",
+        Message {
+            message_id: "ab-prop-circ-start-extension",
+        },
+    ),
+    (
+        "end_extension",
+        Message {
+            message_id: "ab-prop-circ-end-extension",
+        },
+    ),
+    (
+        "extension_length",
+        Message {
+            message_id: "ab-prop-circ-extension-length",
+        },
+    ),
+    (
+        "horizontal",
+        Message {
+            message_id: "ab-prop-circ-horizontal",
+        },
+    ),
+    (
+        "return_wall",
+        Message {
+            message_id: "ab-prop-circ-return-wall",
+        },
+    ),
+    (
+        "return_floor",
+        Message {
+            message_id: "ab-prop-circ-return-floor",
+        },
+    ),
+    (
+        "ramp_slope",
+        Message {
+            message_id: "ab-prop-circ-ramp-slope",
+        },
+    ),
+    (
+        "ramp_rise",
+        Message {
+            message_id: "ab-prop-circ-ramp-rise",
+        },
+    ),
+    (
+        "ramp_volume",
+        Message {
+            message_id: "ab-prop-circ-ramp-volume",
+        },
+    ),
+    (
+        "ramp_type_name",
+        Message {
+            message_id: "ab-prop-circ-ramp-type-name",
+        },
+    ),
+    (
+        "railing_type_name",
+        Message {
+            message_id: "ab-prop-circ-railing-type-name",
+        },
+    ),
+    (
+        "railing_host",
+        Message {
+            message_id: "ab-prop-circ-railing-host",
+        },
+    ),
+    (
+        "railing_length",
+        Message {
+            message_id: "ab-prop-circ-railing-length",
+        },
+    ),
+    (
+        "railing_posts",
+        Message {
+            message_id: "ab-prop-circ-railing-posts",
+        },
+    ),
+    (
+        "railing_balusters",
+        Message {
+            message_id: "ab-prop-circ-railing-balusters",
+        },
+    ),
+    (
+        "railing_gap",
+        Message {
+            message_id: "ab-prop-circ-railing-gap",
+        },
+    ),
+    (
+        "railing_continues",
+        Message {
+            message_id: "ab-prop-circ-railing-continues",
+        },
+    ),
+];
 
 /// The readable name of a field or variant; the rows of a roof's edges are numbered from 1.
 fn label_text(localize: &dyn Localize, name: &str) -> String {
@@ -1143,6 +1486,7 @@ fn label_text(localize: &dyn Localize, name: &str) -> String {
     }
     LABELS
         .iter()
+        .chain(CIRC_LABELS.iter())
         .find(|(n, _)| *n == name)
         .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
 }
@@ -1225,6 +1569,24 @@ fn shown(
             values.push(Some(Value::String(hidden.to_string())));
             read_only.push("view_hidden".to_owned());
         }
+        // A grid's extent levels are set by `archbuilder.datum.set_extent`; a work plane shows
+        // where it comes from and whether it is active and shown.
+        types::GRID | types::WORK_PLANE => {
+            let hidden: &[usize] = if key == types::GRID {
+                &[types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL]
+            } else {
+                &[types::work_plane::TARGET, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+            };
+            for at in hidden.iter().rev() {
+                if *at < fields.len() && *at < values.len() {
+                    fields.remove(*at);
+                    values.remove(*at);
+                }
+            }
+            if key == types::WORK_PLANE {
+                read_only.push("source".to_owned());
+            }
+        }
         STOREY => {
             let level = spatial::level_of(snapshot, object);
             fields = vec![
@@ -1282,6 +1644,25 @@ fn shown(
             fields.push(text_field("wall_volume"));
             values.push(volume);
             read_only.push("wall_volume".to_owned());
+            // A curtain wall: the derived panels and mullions, which schedules and the export
+            // read the same way.
+            if let Some(curtain) = archbuilder_model::curtain::Derived::of(snapshot, object) {
+                let (panels, mullions) = curtain.counts();
+                let area: f64 = curtain.panels.iter().map(|p| p.area()).sum();
+                let length: f64 = curtain.mullions.iter().map(|m| m.length()).sum();
+                let orphans =
+                    curtain.layout.orphans.edits.len() + curtain.layout.orphans.overrides.len();
+                let mut panel_text = format!("{panels} / {area:.2} m²");
+                if orphans > 0 {
+                    panel_text.push_str(&format!(" ({orphans} orphaned)"));
+                }
+                fields.push(text_field("curtain_panels"));
+                values.push(Some(Value::String(panel_text)));
+                read_only.push("curtain_panels".to_owned());
+                fields.push(text_field("curtain_mullions"));
+                values.push(Some(Value::String(format!("{mullions} / {length:.2} m"))));
+                read_only.push("curtain_mullions".to_owned());
+            }
             // The top level is a choice below; editing the height disconnects the top.
             // A constrained wall shows the height its level gives.
             if let Some(wall) = archbuilder_model::wall::Wall::of(snapshot, object)
@@ -1361,8 +1742,21 @@ fn shown(
                 &mut values,
                 &mut read_only,
             );
+            let slope = derived.as_ref().and_then(|d| {
+                d.arrow.map(|a| {
+                    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
+                        archbuilder_model::units::slope_unit(&p.values)
+                    });
+                    archbuilder_model::units::slope_text(
+                        a.gradient(d.floor.top_offset).atan(),
+                        unit,
+                        '.',
+                    )
+                })
+            });
             for (name, value) in [
                 ("floor_storey", storey),
+                ("floor_slope", slope),
                 (
                     "floor_area",
                     derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
@@ -1378,7 +1772,10 @@ fn shown(
             ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
-                read_only.push(name.to_owned());
+                // The slope is typed: an angle, a percentage or a rise over a run.
+                if name != "floor_slope" {
+                    read_only.push(name.to_owned());
+                }
             }
         }
         // A room shows its record, the upper limit as a choice, and what the walls make of it.
@@ -1619,6 +2016,110 @@ fn shown(
                 read_only.push(name.to_owned());
             }
         }
+        // A ramp shows its record and what its levels make of it.
+        types::RAMP => {
+            use archbuilder_model::types::ramp as rp;
+            let order = [
+                rp::NAME,
+                rp::WIDTH,
+                rp::LENGTH,
+                rp::LANDING_START,
+                rp::LANDING_END,
+                rp::THICKNESS,
+                rp::FORM,
+                rp::RISE,
+                rp::X,
+                rp::Y,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            let placed = archbuilder_model::ramp::Placed::of(snapshot, object);
+            let layout = placed.as_ref().and_then(|p| p.layout.as_ref().ok());
+            let kind = placed
+                .as_ref()
+                .and_then(|p| p.ramp.ramp_type)
+                .and_then(|t| spatial::get(snapshot, t))
+                .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            for (name, value) in [
+                (
+                    "ramp_slope",
+                    layout.map(|l| {
+                        let warn = if l.exceeds() { " ⚠" } else { "" };
+                        format!("{:.1} %{warn}", l.slope() * 100.0)
+                    }),
+                ),
+                ("ramp_rise", layout.map(|l| format!("{:.3} m", l.height))),
+                (
+                    "ramp_volume",
+                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                ),
+                ("ramp_type_name", kind),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A railing shows its side and extensions, and what its path and type make of it.
+        types::RAILING => {
+            use archbuilder_model::types::railing as rl;
+            let order = [
+                rl::NAME,
+                rl::SIDE,
+                rl::START_EXTENSION,
+                rl::END_EXTENSION,
+                rl::EXTENSION_LENGTH,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            let derived = archbuilder_model::railing::Derived::of(snapshot, object).ok();
+            let name_of = |at: usize| match object.values.get(at) {
+                Some(Some(Value::Reference(id))) => spatial::get(snapshot, *id)
+                    .and_then(|o| types::text(&o.values, 0).map(str::to_owned)),
+                _ => None,
+            };
+            for (name, value) in [
+                ("railing_type_name", name_of(rl::RAILING_TYPE)),
+                ("railing_host", name_of(rl::HOST)),
+                ("railing_continues", name_of(rl::CONTINUES_TO)),
+                (
+                    "railing_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "railing_posts",
+                    derived.as_ref().map(|d| d.posts().len().to_string()),
+                ),
+                (
+                    "railing_balusters",
+                    derived.as_ref().map(|d| d.balusters().0.len().to_string()),
+                ),
+                (
+                    "railing_gap",
+                    derived.as_ref().map(|d| {
+                        let gap = d.widest_gap();
+                        let warn = if gap > archbuilder_model::railing::CLEAR_GAP_LIMIT {
+                            " ⚠"
+                        } else {
+                            ""
+                        };
+                        format!("{:.0} mm{warn}", gap * 1000.0)
+                    }),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
         // A roof shows its type, base offset and overhang, one slope for its sloped edges, then
         // each edge (whether it slopes, its slope, its own overhang), and what derives from it.
         ROOF => roof_rows(
@@ -1782,6 +2283,61 @@ fn shown(
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A roof by extrusion shows its plane's direction and distances, its type and what derives
+        // from it; the profile is edited by the command.
+        types::ROOF_EXTRUSION => {
+            let derived = archbuilder_model::roof_extrusion::Derived::of(snapshot, object).ok();
+            let kind =
+                archbuilder_model::element_type::type_of(snapshot, TypeKind::Roof, &object.values)
+                    .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            fields.truncate(types::roof_extrusion::ROOF_TYPE);
+            values.truncate(types::roof_extrusion::ROOF_TYPE);
+            read_only.push("thickness".to_owned());
+            for (name, value) in [
+                ("extrusion_type", kind),
+                (
+                    "extrusion_area",
+                    derived
+                        .as_ref()
+                        .map(|d| format!("{:.3} m²", d.surface_area())),
+                ),
+                (
+                    "extrusion_volume",
+                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A floor edge shows its floor, the length it runs along and the volume of its body; the
+        // edges are chosen by the command, the profile edited there.
+        types::FLOOR_EDGE => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::floor_edge::Derived::of(snapshot, object);
+            fields.truncate(types::floor_edge::PROFILE);
+            values.truncate(types::floor_edge::PROFILE);
+            for (name, value) in [
+                ("edge_floor", host),
+                (
+                    "edge_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "edge_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                ),
+            ] {
                 fields.push(text_field(name));
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());

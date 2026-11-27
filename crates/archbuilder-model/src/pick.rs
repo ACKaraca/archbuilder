@@ -94,6 +94,57 @@ pub fn stack(
             over.push((z, o.id));
         }
     }
+    // A roof by extrusion like a roof: on the lines of its pieces, else over it.
+    for o in spatial::objects(snapshot, crate::types::ROOF_EXTRUSION)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Ok(d) = crate::roof_extrusion::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let pieces = d.pieces();
+        let z = -pieces
+            .iter()
+            .map(|p| p.plane.z)
+            .fold(f64::MIN, f64::max)
+            .max(d.level);
+        let edges = pieces.iter().any(|p| {
+            p.points
+                .iter()
+                .zip(p.points.iter().cycle().skip(1))
+                .any(|(a, b)| segment_distance(*a, *b, at) <= aperture)
+        });
+        if edges {
+            on_lines.push((z, o.id));
+        } else if pieces
+            .iter()
+            .any(|p| crate::floor::Boundary::polygons(vec![p.points.clone()]).contains(at))
+        {
+            over.push((z, o.id));
+        }
+    }
+    // A floor edge lies along its floor's edges: picked on its line, before the floor.
+    for o in spatial::objects(snapshot, crate::types::FLOOR_EDGE)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(d) = crate::floor_edge::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let near = d.chains.iter().any(|c| {
+            c.points
+                .windows(2)
+                .any(|w| segment_distance([w[0][0], w[0][1]], [w[1][0], w[1][1]], at) <= aperture)
+        });
+        let z = d
+            .chains
+            .iter()
+            .flat_map(|c| c.points.iter().map(|p| p[2]))
+            .fold(f64::MIN, f64::max);
+        if near {
+            on_lines.push((-z, o.id));
+        }
+    }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));
@@ -136,6 +187,33 @@ pub fn stack(
         .collect();
     stairs.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(stairs.into_iter().map(|(_, id)| id));
+    // Ramps like stairs; railings by their line.
+    let mut circulation: Vec<(f64, ObjectId)> = spatial::objects(snapshot, crate::types::RAMP)
+        .iter()
+        .take(MAX_PER_KIND)
+        .filter_map(|o| {
+            let p = crate::ramp::Placed::of(snapshot, o)?;
+            let outline = crate::floor::Boundary {
+                loops: vec![p.outline()],
+                ..crate::floor::Boundary::default()
+            };
+            outline.contains(at).then_some((-p.base, o.id))
+        })
+        .collect();
+    circulation.extend(
+        spatial::objects(snapshot, crate::types::RAILING)
+            .iter()
+            .take(MAX_PER_KIND)
+            .filter_map(|o| {
+                let d = crate::railing::Derived::of(snapshot, o).ok()?;
+                let line = d.plan_line();
+                line.windows(2)
+                    .any(|w| segment_distance(w[0], w[1], at) <= aperture)
+                    .then_some((-d.base, o.id))
+            }),
+    );
+    circulation.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.extend(circulation.into_iter().map(|(_, id)| id));
     // Shafts and vertical openings: the cuts come before the room around them.
     let mut cuts: Vec<(f64, ObjectId)> = Vec::new();
     for s in crate::opening::shafts(snapshot) {
@@ -202,6 +280,8 @@ pub fn stack(
         .collect();
     levels.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(levels.into_iter().map(|(_, id)| id));
+    // Datum lines are thin: they are picked where nothing else is.
+    out.extend(crate::datum::pick(snapshot, at, aperture));
     out.dedup();
     let mut seen = std::collections::BTreeSet::new();
     out.retain(|id| seen.insert(*id));
@@ -270,6 +350,7 @@ fn host_top(snapshot: &Snapshot, host: &std::sync::Arc<arc_doc::Object>) -> f64 
 
 /// The closed outlines that mark `id` for the hover: the loops of its plan shape as 3D points.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm for each kind of element")]
 pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f64; 3]>> {
     let Some(object) = spatial::get(snapshot, id) else {
         return Vec::new();
@@ -327,6 +408,26 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             .unwrap_or_default(),
         Some(crate::types::STAIR) => crate::stair::Placed::of(snapshot, &object)
             .map(|p| vec![close(&p.outline(), p.base)])
+            .unwrap_or_default(),
+        Some(crate::types::RAMP) => crate::ramp::Placed::of(snapshot, &object)
+            .map(|p| vec![close(&p.outline(), p.base)])
+            .unwrap_or_default(),
+        Some(crate::types::RAILING) => crate::railing::Derived::of(snapshot, &object)
+            .map(|d| vec![close(&d.plan_line(), d.base)])
+            .unwrap_or_default(),
+        Some(crate::types::GRID | crate::types::REFERENCE_PLANE) => {
+            crate::datum::outline(snapshot, &object)
+        }
+        Some(crate::types::ROOF_EXTRUSION) => crate::roof_extrusion::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.pieces()
+                    .iter()
+                    .map(|p| close(&p.points, p.plane.z))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(crate::types::FLOOR_EDGE) => crate::floor_edge::Derived::of(snapshot, &object)
+            .map(|d| d.chains.iter().map(|c| c.points.clone()).collect())
             .unwrap_or_default(),
         Some(LEVEL) => {
             let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);

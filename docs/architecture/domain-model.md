@@ -329,7 +329,9 @@ a view from above only those whose point is in the visible area. A tag is center
 rooms, no sloped tops, no separation lines.
 
 Picking in a view from above uses one ordered list for the hover and the click: doors and windows,
-walls, stairs, rooms, floors, levels; a repeated click at the same spot steps down it (within a few pixels and
+walls, the lines of roofs, roofs by extrusion and floor edges, ceiling edges, stairs, ramps and
+railings, shafts and vertical openings, rooms, floors, roofs, ceilings, levels, then grids and
+reference planes; a repeated click at the same spot steps down it (within a few pixels and
 about 1.5 s of the last click; Escape and moving the pointer start again), and the hover shows what
 the click would pick. Other views leave the pick to the viewport, with the door or window first.
 
@@ -380,7 +382,7 @@ Stairs do not bound rooms.
 
 `archbuilder.stair.create` takes `start`, `to` (a point the first run heads toward) or
 `direction`, `shape`, `turn`, `width`, `tread`, `max_riser`, `waist`, `top_level` and `name`; one
-call is one undo step. The Stair tool (toolbar Stair, Structure menu, the typed shortcut `ST`, the
+call is one undo step. The Stair tool (Architecture tab Stair, Structure menu, the typed shortcut `ST`, the
 words `stair` and `merdiven`, New stair in the context menu with nothing selected) asks for the start
 and the direction point with the keywords straight, L turn and U turn (a turn asks for the side),
 width and tread (another answer to the turn prompt asks the side again, naming the valid answers); every
@@ -464,7 +466,7 @@ The `.archb` addition is backward compatible: the record types `archbuilder.roof
 `archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
 project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
 
-In the application the Roof tool (toolbar, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
+In the application the Roof tool (Architecture tab, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
 New roof in the context menu) is the floor tool's picks and sketch with the keywords `slope` (`s`;
 `k` switches to the sketch), `overhang` and `base`; a prompt's own shortcut letter wins over the
 English letters of other keywords. The slope is typed as in the grid below and refused outside 1°
@@ -591,7 +593,7 @@ valley of a roof is not cut in its body (the opening is still written as a void,
 says so). The plan marks a shaft with its outline and a cross on every storey whose level is within
 its span.
 
-In the application the tools are in the toolbar and the Structure menu and have the typed shortcuts
+In the application the tools are in the Architecture tab, the Selection tab and the Structure menu and have the typed shortcuts
 `CL` (ceiling: a click inside a room makes it, `sketch` sketches it), `OP` (wall opening, placed like a door; the
 keyword `rise` makes it an arch), `SH` (shaft, a sketch) and `VO` (vertical opening in the selected floor, roof
 or ceiling, a sketch); `SO` sets a ceiling's slope arrow (`archbuilder.ceiling.set_slope` with `from`, `to` and
@@ -638,6 +640,27 @@ as a view beside its copy) or a hide in view makes the view and applies the chan
 undoing it shows the default view again and, back at the saved state, the document is unmodified.
 It cannot be deleted. The record type is a backward-compatible addition to the `.archb`
 format: an older application reading a newer file sees the views as records it does not know.
+
+#### Selection sets and model statistics
+
+`archbuilder.selection_set` (schema 1.0) is a named, saved list of elements, owned by the project.
+The record holds a name (unique among the sets, case folded) and its members as one optional
+reference each; element identifiers never change, so a set stays valid across edits, and deleting an
+element removes it from every set (the delete is one undo step that also restores the entry). Only
+building elements are members (not levels, storeys or types). `archbuilder.set.create` (the given
+elements, else the selected ones), `archbuilder.set.update` (add and remove members),
+`archbuilder.set.rename` and `archbuilder.set.delete` are each one undo step;
+`archbuilder.set.select` makes the members the selection (or adds them) and changes no document.
+Rule-based sets (category and parameter conditions) and a report of the members dropped by a delete
+are not built yet. In the window, the Save set button asks for a name and saves the selection; the
+Select set button asks for the name of a set (the first by default) and selects its members.
+
+`archbuilder.model.statistics` returns a report derived from the document and never stored: element
+counts by kind, by type (instances without a type under an empty name) and by storey, and the number
+of plan views, selection sets and element types. `archbuilder-cli inspect` prints it as `statistics`
+beside the `selection_sets` list; the window's Statistics button says it in one line above the
+command line. Stored size by table, the largest families and measured
+regeneration time are not part of it yet.
 
 The drawing is derived ([`archbuilder_model::plan`]) and never stored: an implementation of the
 `arc-view` source interface for one view. A wall gives one part per layer of its cleaned solids, with
@@ -688,7 +711,7 @@ of them as one undo step.
 ### Editing tools
 
 `archbuilder-commands/src/edit.rs` adds editing commands to move, copy, rotate and mirror. Each is
-one transaction and one undo step, starts from the Modify menu, the toolbar, the context menu where
+one transaction and one undo step, starts from the Modify menu, the Modify tab, the context menu where
 it applies, or a typed name, and runs in the modify tool (pick first or pick later, Enter and
 Escape as for move). Commands that pick take points: a point picks the nearest wall face, wall
 center line or floor edge, or the wall whose body is nearest, within about ten pixels.
@@ -813,18 +836,23 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
 - **Double click** (primary, view from above, no command running): on a wall it selects the walls joined
   to it end to end; on a floor it starts the add-hole flow for that floor (there is no sketch edit mode
   yet); on a room it opens an inline rename of the room (Enter renames, Escape cancels).
-- **Clipboard.** Ctrl+C copies the selected walls (with their doors and windows), floors, doors,
-  windows and rooms as content, a snapshot of their field values (`archbuilder.clipboard` content,
-  JSON), with the lower left corner of their plan extent as the base point, and puts a short text on
+- **Clipboard.** Ctrl+C copies the selected elements of every kind `archbuilder.modify.copy`
+  copies (walls with their doors and windows, curtain walls with their grid edits, panel overrides
+  and type, floors with their edges and openings, rooms, stairs and ramps with their hosted
+  railings, railings by path, roofs, roofs by extrusion, ceilings, shafts, grids and reference
+  planes) as content, a snapshot of their field values (`archbuilder.clipboard` content, JSON),
+  with the lower left corner of their plan extent as the base point, and puts a short text on
   the system clipboard (the platform reports the paste shortcut only while that clipboard holds
   something). A wall's level-constrained top is stored as its effective height. Ctrl+X copies and
   deletes in one undo step. Ctrl+V asks for an insertion point with the base at the pointer and a
   ghost of the copy; Enter or Space pastes in place (`archbuilder.clipboard.paste` with `content`,
   a copy translated by the displacement from the base to the point) into the storey the selection is
   in, else the lowest. `archbuilder.clipboard.paste_to_storey` pastes into the selected storey at
-  the same plan position. The clipboard is one for the whole application and its content does not
-  depend on the originals, so a paste works after they are deleted and in another open document
-  (another tab). Each paste is one undo step and the joins re-derive. A
+  the same plan position. Grids and reference planes go to the building of that storey, a grid with
+  the label after its original's; a type, level or host the document does not have is dropped (the
+  default type, the storey's own levels). The clipboard is one for the whole application and its
+  content does not depend on the originals, so a paste works after they are deleted and in another
+  open document (another tab). Each paste is one undo step and the joins re-derive. A
   paste in place over identical walls says once that the pasted objects lie on top of their
   originals instead of listing each collision. Copying with nothing selected, or pasting before
   anything was copied, says so.
@@ -872,7 +900,9 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
   | UD | undo | CU | cut |
 
   Typed in the command line: `selectid <id> ...` selects objects by identifier, and `selectall`,
-  `paste`, `pastestorey`, `hide`, `isolate`, `unhide` do what their shortcuts do.
+  `paste`, `pastestorey`, `hide`, `isolate`, `unhide` do what their shortcuts do. `plan` opens the
+  plan view of the active storey (the open view's storey, else the selection's, else the lowest) and
+  `3d` (`3b`) returns to the 3D view; the View tab's Plan and 3D buttons submit these words.
 - **Selection.** Select all, select all of this kind (the kinds in the selection: wall, door, window,
   floor, room), keep one kind of the selection, previous selection (restores the selection before the
   last change; an empty selection never replaces it) and select by identifier. They skip hidden objects.
@@ -892,6 +922,11 @@ Not done: a band never selects rooms (a room has no scene geometry; a click, Tab
 this kind do, also while isolated); Tab does not step the snap candidates of a point prompt; there is no sketch edit mode for a
 floor; a copied selection is not written to the system clipboard as data.
 
+A length parameter or length field (`archbuilder.property.set`, wall, floor, stair and the other
+creating commands) reads a bare number as meters on every surface: a JSON number, and the text a
+command line delivers (`value=0.3`, `value="0.35"`). A text with a unit (`"400 mm"`) says its own.
+Text that is no length is refused as before.
+
 `archbuilder.modify.move`, `copy`, `rotate` and `mirror` (rotate's `angle`: a JSON number is radians, a text with a unit such as `"90 deg"` says its own, a bare text number is degrees; typed `m`, `co`, `ro`, `mi`, or the
 Turkish `taşı`, `kopyala`, `döndür`, `aynala`) work on the selection, or ask for objects first and
 take the selection on Enter. Each run is one transaction. Walls move by their baselines and their
@@ -909,7 +944,9 @@ stays exterior, and swaps the hand of its doors and windows. A floor keeps an ed
 wall only when that wall moves or is copied with it; every other edge is dissociated and stays
 where the motion puts it (the result and a notice say how many). A door or window moved alone slides
 along its wall by the displacement projected onto the baseline and is refused outside the clear span
-or on another opening; rotating or mirroring one alone is refused. Storeys and levels are skipped.
+or on another opening; rotating or mirroring one alone is refused. A roof by extrusion moves with
+its plane (a reflection turns the extrusion to the other side of it); a copied stair or ramp takes
+its hosted railings. Storeys and levels are skipped.
 
 Walls and floors in this slice: a floor by interior faces sits between the walls; a floor by exterior
 faces overlaps the wall bottoms by the slab thickness. Wall volumes are not reduced and the floor
@@ -944,6 +981,16 @@ save dialog for IFC files that starts with the document's name, then runs with t
 relative path resolves against the folder of the saved document, else the documents or home folder.
 When no file dialog opens or the user cancels, the history says that no file was chosen and the
 typed form with a path still works.
+
+Self-validation (AB-IO-019): after writing, `export_ifc` reads the bytes back with the reader of
+`arc-io-ifc` and checks that the file reads, that the project, site, building, storeys, elements and
+element types are each in the file under their `GlobalId`, that no two rooted entities share a
+`GlobalId`, and that the file holds as many products and openings as elements were written. Each
+problem is a loss item with the outcome `failed` (`ab.io.ifc.validation_unreadable`,
+`validation_missing`, `validation_duplicate_id`, `validation_count`) and `Export::valid` is false;
+`archbuilder.file.export_ifc` and `export-ifc` return it as `valid`. The file is still written, so
+`valid: false` is what marks it incomplete; it is not renamed or removed. Property sets, geometry
+and relationships are not re-checked yet.
 
 #### The element types of the first slice
 
@@ -1000,7 +1047,7 @@ window size not matched by an existing type; saving writes them. The history say
 again.
 The headless CLI reads such a file without changing it; its instances then have no type.
 
-In the application the toolbar's type selector lists the types of the running wall, floor, door or
+In the application the command tabs' type selector lists the types of the running wall, floor, door or
 window tool and sets the type it places next (the prompt in progress takes it at once), and without
 a tool lists the types of the selection's kind and retypes all selected objects of that kind. The
 property grid shows the type as a choice after the name and the values the type decides read-only;
@@ -1179,3 +1226,22 @@ Rules:
 3. Detached drawings and drafting views have no dependency edges into the model.
 4. Annotation anchors in detail layers depend on their anchor element's derived geometry; an
    unresolved anchor sets the annotation state to orphaned without failing the transaction.
+
+## Datums: grids, reference planes and work planes
+
+Three element kinds belong to a building and have no storey: `archbuilder.grid`, `archbuilder.reference_plane` and
+`archbuilder.work_plane`. Records hold authored data only; polylines, extents and planes are derived.
+
+| Kind | Authored fields | Rules |
+|---|---|---|
+| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned` | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
+| Reference plane | name, two points, `strength` (strong, weak, none), `bounded`, `pinned` | A vertical plane. Strong and weak planes are found by snapping; an unbounded plane runs 200 m past its points in plan. Names are unique per building. |
+| Work plane | name, `source` (level, grid, reference plane, points), `target`, three points, `active`, `shown` | At most one is active. A plane that follows a datum is derived from it on every read, so moving the datum moves the plane, and deleting the datum deletes the plane. Three points on a line make no plane and are refused. |
+
+Commands: `archbuilder.grid.create` (two points, or `from_wall`; `bulge` for an arc; `after` or `label`),
+`archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
+and heads). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
+original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
+reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
+Not built yet: multi-segment grids, per-view extents and their propagation, element-face work planes, and elements that store the
+work plane they were sketched on.

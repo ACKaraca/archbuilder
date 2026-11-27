@@ -54,7 +54,8 @@ pub mod ui {
     pub const ISOLATE_KIND: &str = "archbuilder.view.isolate_category";
     /// Ends the temporary hide and isolation.
     pub const RESET_VISIBILITY: &str = "archbuilder.view.reset";
-    /// Makes a plan view (the `view` parameter) or the 3D view (`3d`) the view of the viewport.
+    /// Makes a plan view (the `view` parameter), the plan view of the active storey (`plan`) or the
+    /// 3D view (`3d`) the view of the viewport.
     pub const OPEN_VIEW: &str = "archbuilder.view.open";
     /// Hides the selected elements in the plan view that is open: the view's own list, saved and
     /// undone with the document.

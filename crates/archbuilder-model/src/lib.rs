@@ -56,9 +56,12 @@ macro_rules! coded {
 
 pub mod ceiling;
 pub mod cleanup;
+pub mod curtain;
+pub mod datum;
 pub mod element_type;
 pub mod error;
 pub mod floor;
+pub mod floor_edge;
 pub mod insert;
 pub mod join;
 pub mod layered;
@@ -66,8 +69,12 @@ pub mod names;
 pub mod opening;
 pub mod pick;
 pub mod plan;
+pub mod railing;
+pub mod ramp;
 pub mod roof;
+pub mod roof_extrusion;
 pub mod room;
+pub mod selection;
 pub mod sketch;
 pub mod spatial;
 pub mod stair;
@@ -179,6 +186,46 @@ pub mod defaults {
         }
     }
 
+    /// The name of the railing numbered `n` on a storey in `language`: `Railing 3`, `Korkuluk 3`.
+    #[must_use]
+    pub fn railing(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Korkuluk {n}")
+        } else {
+            format!("Railing {n}")
+        }
+    }
+
+    /// The name of the ramp numbered `n` on a storey in `language`: `Ramp 3`, `Rampa 3`.
+    #[must_use]
+    pub fn ramp(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Rampa {n}")
+        } else {
+            format!("Ramp {n}")
+        }
+    }
+
+    /// The name of the default railing type in `language`.
+    #[must_use]
+    pub fn railing_type(language: &str) -> &'static str {
+        if turkish(language) {
+            "Korkuluk 900"
+        } else {
+            "Railing 900"
+        }
+    }
+
+    /// The name of the default ramp type in `language`.
+    #[must_use]
+    pub fn ramp_type(language: &str) -> &'static str {
+        if turkish(language) {
+            "Rampa 1:12"
+        } else {
+            "Ramp 1:12"
+        }
+    }
+
     /// The name of the roof numbered `n` on a storey in `language`: `Roof 3`, `Çatı 3`.
     #[must_use]
     pub fn roof(language: &str, n: usize) -> String {
@@ -196,6 +243,27 @@ pub mod defaults {
             format!("Tavan {n}")
         } else {
             format!("Ceiling {n}")
+        }
+    }
+
+    /// The name of the reference plane numbered `n` in `language`: `Reference plane 3`,
+    /// `Referans düzlemi 3`.
+    #[must_use]
+    pub fn reference_plane(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Referans düzlemi {n}")
+        } else {
+            format!("Reference plane {n}")
+        }
+    }
+
+    /// The name of the work plane numbered `n` in `language`: `Work plane 3`, `Çalışma düzlemi 3`.
+    #[must_use]
+    pub fn work_plane(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çalışma düzlemi {n}")
+        } else {
+            format!("Work plane {n}")
         }
     }
 
@@ -226,6 +294,27 @@ pub mod defaults {
             format!("Kesik {n}")
         } else {
             format!("Cut {n}")
+        }
+    }
+
+    /// The name of the roof by extrusion numbered `n` in `language`: `Extruded roof 3`,
+    /// `Ekstrüzyon çatı 3`.
+    #[must_use]
+    pub fn roof_extrusion(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Ekstrüzyon çatı {n}")
+        } else {
+            format!("Extruded roof {n}")
+        }
+    }
+
+    /// The name of the floor edge numbered `n` in `language`: `Slab edge 3`, `Döşeme kenarı 3`.
+    #[must_use]
+    pub fn floor_edge(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Döşeme kenarı {n}")
+        } else {
+            format!("Slab edge {n}")
         }
     }
 

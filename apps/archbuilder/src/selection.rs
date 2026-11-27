@@ -1,6 +1,6 @@
 //! Selection helpers that need no window: select all, select all of a kind, keep one kind of the
 //! selection, the walls joined to a wall, the previous selection, and the plan extent of a set of
-//! objects (the clipboard's base point). Hidden objects ([`crate::visibility`]) are skipped.
+//! objects (the clipboard's base point, zooming to a selection). Hidden objects ([`crate::visibility`]) are skipped.
 
 use std::collections::BTreeSet;
 
@@ -131,89 +131,111 @@ pub fn wall_chain(snapshot: &Snapshot, wall: ObjectId, vis: &Visibility) -> Vec<
     chain.into_iter().collect()
 }
 
-/// The lower left corner of the plan extent of `ids`: walls by their footprints, floors by their
-/// boundaries, rooms and doors and windows by their points.
+/// The lower left corner of the plan extent of `ids` ([`plan_points`]).
 #[must_use]
 pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
-    let mut low: Option<[f64; 2]> = None;
-    let mut add = |p: [f64; 2]| {
-        if p[0].is_finite() && p[1].is_finite() {
-            let l = low.get_or_insert(p);
-            l[0] = l[0].min(p[0]);
-            l[1] = l[1].min(p[1]);
-        }
+    ids.iter()
+        .take(MAX_SELECTED)
+        .flat_map(|id| plan_points(snapshot, *id))
+        .filter(|p| p[0].is_finite() && p[1].is_finite())
+        .reduce(|l, p| [l[0].min(p[0]), l[1].min(p[1])])
+}
+
+/// The points in plan that bound the element `id`, for every kind of element: walls by their
+/// footprint, floors, ceilings, shafts and vertical openings by their outline, rooms by their
+/// point, stairs, ramps and roofs by their outline, railings by their plan line, floor edges by
+/// their chains, grids and reference planes by their ends, doors, windows and wall openings by
+/// their place in their wall. Empty for anything else or an element that has no place.
+#[must_use]
+pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
+    use archbuilder_model::types;
+    let Some(object) = spatial::get(snapshot, id) else {
+        return Vec::new();
     };
-    for id in ids.iter().take(MAX_SELECTED) {
-        let Some(object) = spatial::get(snapshot, *id) else {
-            continue;
-        };
-        match spatial::type_of(snapshot, *id).as_deref() {
-            Some(WALL) => {
-                if let Some(w) = Wall::from_values(&object.values) {
-                    w.plain_footprint().into_iter().for_each(&mut add);
-                }
-            }
-            Some(FLOOR) => {
-                if let Some(d) = archbuilder_model::floor::Derived::of(snapshot, &object) {
-                    d.boundary
-                        .loops
+    match spatial::type_of(snapshot, id).as_deref() {
+        Some(WALL) => Wall::from_values(&object.values)
+            .map(|w| w.plain_footprint().to_vec())
+            .unwrap_or_default(),
+        Some(FLOOR) => archbuilder_model::floor::Floor::from_values(&object.values)
+            .and_then(|f| f.boundary_in(snapshot))
+            .map(|b| b.loops.into_iter().flatten().collect())
+            .unwrap_or_default(),
+        Some(ROOM) => archbuilder_model::room::Room::from_values(&object.values)
+            .map(|r| vec![r.point])
+            .unwrap_or_default(),
+        Some(types::STAIR) => archbuilder_model::stair::Placed::of(snapshot, &object)
+            .map(|p| p.outline())
+            .unwrap_or_default(),
+        Some(types::RAMP) => archbuilder_model::ramp::Placed::of(snapshot, &object)
+            .map(|p| p.outline())
+            .unwrap_or_default(),
+        Some(types::RAILING) => archbuilder_model::railing::Derived::of(snapshot, &object)
+            .map(|d| d.plan_line())
+            .unwrap_or_default(),
+        Some(types::ROOF) => archbuilder_model::roof::Derived::of(snapshot, &object)
+            .map(|d| d.surface.outline.clone())
+            .unwrap_or_default(),
+        Some(types::ROOF_EXTRUSION) => {
+            archbuilder_model::roof_extrusion::Derived::of(snapshot, &object)
+                .map(|d| {
+                    d.pieces()
                         .iter()
-                        .flatten()
-                        .copied()
-                        .for_each(&mut add);
-                }
-            }
-            Some(ROOM) => {
-                if let Some(r) = archbuilder_model::room::Room::from_values(&object.values) {
-                    add(r.point);
-                }
-            }
-            Some(archbuilder_model::types::STAIR) => {
-                if let Some(p) = archbuilder_model::stair::Placed::of(snapshot, &object) {
-                    p.outline().into_iter().for_each(&mut add);
-                }
-            }
-            Some(archbuilder_model::types::ROOF) => {
-                if let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object) {
-                    d.surface.outline.iter().copied().for_each(&mut add);
-                }
-            }
-            Some(archbuilder_model::types::CEILING) => {
-                if let Some(b) = archbuilder_model::ceiling::Ceiling::from_values(&object.values)
-                    .and_then(|c| c.shape.boundary_in(snapshot))
-                {
-                    b.loops.into_iter().flatten().for_each(&mut add);
-                }
-            }
-            Some(archbuilder_model::types::SHAFT) => {
-                if let Some(s) = archbuilder_model::opening::shaft_span(snapshot, &object) {
-                    s.outline.into_iter().for_each(&mut add);
-                }
-            }
-            Some(archbuilder_model::types::VERTICAL_OPENING) => {
-                if let Some(o) = archbuilder_model::opening::outline_of(
-                    snapshot,
-                    &object,
-                    archbuilder_model::floor::VERTICAL_SLOTS,
-                ) {
-                    o.into_iter().for_each(&mut add);
-                }
-            }
-            Some(DOOR | WINDOW | archbuilder_model::types::WALL_OPENING) => {
-                if let Some(host) = object
-                    .header
-                    .owner
-                    .and_then(|h| spatial::get(snapshot, h))
-                    .and_then(|h| Wall::from_values(&h.values))
-                {
-                    add(host.start);
-                    add(host.end);
-                }
-            }
-            _ => {}
+                        .flat_map(|p| p.points.iter().copied())
+                        .collect()
+                })
+                .unwrap_or_default()
         }
+        Some(types::CEILING) => archbuilder_model::ceiling::Ceiling::from_values(&object.values)
+            .and_then(|c| c.shape.boundary_in(snapshot))
+            .map(|b| b.loops.into_iter().flatten().collect())
+            .unwrap_or_default(),
+        Some(types::SHAFT) => archbuilder_model::opening::shaft_span(snapshot, &object)
+            .map(|s| s.outline)
+            .unwrap_or_default(),
+        Some(types::VERTICAL_OPENING) => archbuilder_model::opening::outline_of(
+            snapshot,
+            &object,
+            archbuilder_model::floor::VERTICAL_SLOTS,
+        )
+        .unwrap_or_default(),
+        Some(types::FLOOR_EDGE) => archbuilder_model::floor_edge::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.chains
+                    .iter()
+                    .flat_map(|c| c.points.iter().map(|p| [p[0], p[1]]))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(types::GRID) => archbuilder_model::datum::Grid::from_values(&object.values)
+            .map(|g| vec![g.start, g.end])
+            .unwrap_or_default(),
+        Some(types::REFERENCE_PLANE) => {
+            archbuilder_model::datum::RefPlane::from_values(&object.values)
+                .map(|r| vec![r.start, r.end])
+                .unwrap_or_default()
+        }
+        Some(DOOR | WINDOW | types::WALL_OPENING) => {
+            let host = object
+                .header
+                .owner
+                .and_then(|w| spatial::get(snapshot, w))
+                .and_then(|w| Wall::from_values(&w.values));
+            let item = archbuilder_model::insert::Insert::of(snapshot, &object);
+            let (Some(w), Some(item)) = (host, item) else {
+                return Vec::new();
+            };
+            let length = w.length().max(1e-9);
+            let along = |d: f64| {
+                [
+                    w.start[0] + (w.end[0] - w.start[0]) * d / length,
+                    w.start[1] + (w.end[1] - w.start[1]) * d / length,
+                ]
+            };
+            let (low, high) = item.extent();
+            vec![along(low), along(high)]
+        }
+        _ => Vec::new(),
     }
-    low
 }
 
 /// What the previous selection was: the selection the tab had before its last change, so that

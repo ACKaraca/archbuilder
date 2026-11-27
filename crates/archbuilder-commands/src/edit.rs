@@ -978,6 +978,10 @@ fn split(ctx: &mut Context<'_>, p: Split) -> Result<Edited> {
     };
     let snapshot = ctx.snapshot().clone();
     let (id, w) = wall_at(&snapshot, storey, p.at, radius)?;
+    if spatial::get(&snapshot, id).is_some_and(|o| archbuilder_model::curtain::is_edited(&o)) {
+        return Err(Error::new(archbuilder_model::error::codes::CURTAIN_EDITED)
+            .with_arg("name", name_of(&snapshot, id)));
+    }
     let u = direction(&w).ok_or_else(|| Error::new(codes::NO_WALL_AT))?;
     let length = w.length();
     let picked = dot(sub(p.at, w.start), u);
@@ -1256,6 +1260,10 @@ fn merge(ctx: &mut Context<'_>, p: Merge) -> Result<Edited> {
         spatial::get(&snapshot, ia).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?,
         spatial::get(&snapshot, ib).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?,
     );
+    if archbuilder_model::curtain::is_edited(&oa) || archbuilder_model::curtain::is_edited(&ob) {
+        return Err(Error::new(archbuilder_model::error::codes::CURTAIN_EDITED)
+            .with_arg("name", name_of(&snapshot, ia)));
+    }
     let (Some(ua), Some(ub)) = (direction(&a), direction(&b)) else {
         return Err(refused());
     };

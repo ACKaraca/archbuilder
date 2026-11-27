@@ -72,6 +72,60 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-stair-not-written",
     };
+    /// A floor edge element: IFC4 has no element for an edge of a slab, so it is written as a
+    /// molding covering that carries its swept body.
+    pub const FLOOR_EDGE_AS_COVERING: Reason = Reason {
+        code: "ab.io.ifc.floor_edge_as_covering",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-floor-edge-as-covering",
+    };
+    /// A floor edge element that names edges its floor no longer has: those edges are not written.
+    pub const FLOOR_EDGE_ORPHAN: Reason = Reason {
+        code: "ab.io.ifc.floor_edge_orphan",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-floor-edge-orphan",
+    };
+    /// A railing: the writer of the pinned foundation has no railing entity yet.
+    pub const RAILING_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.railing_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-railing-not-written",
+    };
+    /// A ramp: the writer of the pinned foundation has no ramp or ramp flight entity yet, so the
+    /// ramp is left out (the opening it cuts in the floor above is written).
+    pub const RAMP_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.ramp_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-ramp-not-written",
+    };
+    /// A grid: the IFC writer of the foundation has no grid or grid axis entity yet, so the grid
+    /// is left out rather than written as a proxy.
+    pub const GRID_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.grid_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-grid-not-written",
+    };
+    /// A reference plane or work plane: drawing aids with no IFC entity, left out.
+    pub const DATUM_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.datum_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-datum-not-written",
+    };
+    /// A curtain wall: the IFC writer of the foundation has no curtain wall, plate or member
+    /// entity yet, so the wall, its panels and its mullions are left out. The count is the
+    /// number of entities of that kind the wall would write.
+    pub const CURTAIN_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.curtain_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-curtain-not-written",
+    };
     /// An arc edge of a boundary or an arched opening, written as chords within the model's
     /// flattening tolerance: IFC bodies here are faceted.
     pub const ARC_FACETED: Reason = Reason {
@@ -87,5 +141,33 @@ pub mod reasons {
         outcome: Outcome::Approximated,
         severity: Severity::Warning,
         message_id: "ab-io-loss-cut-not-applied",
+    };
+    /// The exported file could not be read back by the independent reader.
+    pub const VALIDATION_UNREADABLE: Reason = Reason {
+        code: "ab.io.ifc.validation_unreadable",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-unreadable",
+    };
+    /// An object of the model is not in the exported file.
+    pub const VALIDATION_MISSING: Reason = Reason {
+        code: "ab.io.ifc.validation_missing",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-missing",
+    };
+    /// Two entities of the exported file share a `GlobalId`.
+    pub const VALIDATION_DUPLICATE_ID: Reason = Reason {
+        code: "ab.io.ifc.validation_duplicate_id",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-duplicate-id",
+    };
+    /// The exported file holds a number of products other than the export counted.
+    pub const VALIDATION_COUNT: Reason = Reason {
+        code: "ab.io.ifc.validation_count",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-count",
     };
 }

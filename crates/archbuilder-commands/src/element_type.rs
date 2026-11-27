@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Object, Snapshot, Value};
 use archbuilder_model::element_type::{
@@ -51,6 +51,9 @@ struct Msg {
 
 const GENERIC_WALL: Msg = Msg {
     message_id: "ab-type-wall-generic",
+};
+const CURTAIN_WALL: Msg = Msg {
+    message_id: "ab-type-wall-curtain",
 };
 const CAVITY_WALL: Msg = Msg {
     message_id: "ab-type-wall-cavity",
@@ -229,7 +232,7 @@ fn mm(meters: f64) -> FluentValue<'static> {
 }
 
 /// The project a document's types belong to.
-fn project(snapshot: &Snapshot) -> Result<ObjectId> {
+pub(crate) fn project(snapshot: &Snapshot) -> Result<ObjectId> {
     spatial::objects(snapshot, types::PROJECT)
         .first()
         .map(|p| p.id)
@@ -258,6 +261,37 @@ fn free_name(snapshot: &Snapshot, kind: TypeKind, name: &str, names: &Names) -> 
         })
         .find(|candidate| !taken(candidate))
         .unwrap_or_else(|| name.to_owned())
+}
+
+/// The type of `kind` a pasted instance takes whose type was `original`, a record with the field
+/// values `values` (perhaps of another document): `original` when this document has it, else a
+/// type of the same name with the same values, else a new type with those values under a free
+/// name.
+///
+/// # Errors
+/// The errors of the transaction.
+pub(crate) fn adopt(
+    ctx: &mut Context<'_>,
+    kind: TypeKind,
+    original: ObjectId,
+    mut values: Vec<Option<Value>>,
+) -> Result<ObjectId> {
+    let snapshot = ctx.txn()?.snapshot().clone();
+    if spatial::type_of(&snapshot, original).as_deref() == Some(kind.key()) {
+        return Ok(original);
+    }
+    let name = types::text(&values, 0).unwrap_or_default().to_owned();
+    if let Some(same) = et::of_kind(&snapshot, kind)
+        .iter()
+        .find(|t| names::same(et::name(t), &name) && t.values == values)
+    {
+        return Ok(same.id);
+    }
+    let free = free_name(&snapshot, kind, &name, &Names::new(&language(ctx)));
+    if let Some(slot) = values.get_mut(0) {
+        *slot = Some(Value::String(free));
+    }
+    create_type(ctx, kind, values)
 }
 
 /// Creates a type of `kind` owned by the project.
@@ -540,10 +574,93 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
     }
 }
 
+/// Whether `t` is a curtain wall type, which no plain wall takes by default.
+fn is_curtain_type(kind: TypeKind, t: &Object) -> bool {
+    kind == TypeKind::Wall
+        && archbuilder_model::curtain::CurtainType::from_values(&t.values).is_some()
+}
+
+/// Makes a curtain wall type from `ty`, named `name` (else the interface language's default,
+/// made unique): one layer as thick as the deepest mullion.
+///
+/// # Errors
+/// The errors of the transaction and `ab.model.curtain_*` for a type that breaks the rules.
+pub(crate) fn create_curtain_type(
+    ctx: &mut Context<'_>,
+    ty: &archbuilder_model::curtain::CurtainType,
+    name: Option<&str>,
+) -> Result<ObjectId> {
+    if let Some(problem) = ty.problems().into_iter().next() {
+        return Err(problem);
+    }
+    let n = Names::new(&language(ctx));
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wanted = name
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map_or_else(|| n.text(&CURTAIN_WALL, &[]), str::to_owned);
+    let name = free_name(&snapshot, TypeKind::Wall, &wanted, &n);
+    let base = WallType {
+        layers: Layers::single(&ty.material, ty.depth()),
+        exposure: Exposure::Exterior,
+        load_bearing: false,
+        room_bounding: true,
+        wrap_ends: Wrap::None,
+        wrap_inserts: Wrap::None,
+    };
+    let mut values = et::wall_type_values(&name, &base);
+    values.extend(ty.values());
+    create_type(ctx, TypeKind::Wall, values)
+}
+
+/// Replaces the curtain part of the wall type `id` with `ty` and the layers with one as thick as
+/// the deepest mullion, then moves every instance with the type; returns how many changed.
+///
+/// # Errors
+/// The errors of the transaction and `ab.model.curtain_*` for a type that breaks the rules.
+pub(crate) fn set_curtain_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    ty: &archbuilder_model::curtain::CurtainType,
+    name: Option<&str>,
+) -> Result<usize> {
+    use archbuilder_model::curtain::slot;
+    if let Some(problem) = ty.problems().into_iter().next() {
+        return Err(problem);
+    }
+    let layers = Layers::single(&ty.material, ty.depth());
+    let [start, end] = layers.core_values();
+    let mut fields: Vec<(String, Option<Value>)> = vec![
+        ("layers".to_owned(), Some(layers.list_value())),
+        ("core_start".to_owned(), Some(start)),
+        ("core_end".to_owned(), Some(end)),
+    ];
+    if let Some(name) = name.map(str::trim).filter(|t| !t.is_empty()) {
+        fields.push(("name".to_owned(), Some(Value::String(name.to_owned()))));
+    }
+    let names: Vec<String> = ctx
+        .snapshot()
+        .registry()
+        .get(TypeKind::Wall.key())
+        .map(|d| d.schema.fields.iter().map(|f| f.name.to_string()).collect())
+        .unwrap_or_default();
+    for (k, value) in ty.values().into_iter().enumerate() {
+        if let Some(field) = names.get(slot::CURTAIN + k) {
+            fields.push((field.clone(), value));
+        }
+    }
+    let txn = ctx.txn()?;
+    for (field, value) in fields {
+        txn.modify(id, FieldPath::new(&field), value)?;
+    }
+    propagate(ctx, TypeKind::Wall, id)
+}
+
 /// The first type of `kind` (in the order of [`et::of_kind`]) whose values match `wanted`.
 fn find(snapshot: &Snapshot, kind: TypeKind, wanted: &[(usize, Value)]) -> Option<ObjectId> {
     et::of_kind(snapshot, kind)
         .into_iter()
+        .filter(|t| !is_curtain_type(kind, t))
         .find(|t| {
             let copies = et::copies(kind, &t.values);
             wanted.iter().all(|(at, value)| {
@@ -560,8 +677,12 @@ fn find(snapshot: &Snapshot, kind: TypeKind, wanted: &[(usize, Value)]) -> Optio
 /// [`generic`] values, else the first in name order.
 #[must_use]
 pub fn default_of(snapshot: &Snapshot, kind: TypeKind) -> Option<ObjectId> {
-    find(snapshot, kind, &generic(kind))
-        .or_else(|| et::of_kind(snapshot, kind).first().map(|t| t.id))
+    find(snapshot, kind, &generic(kind)).or_else(|| {
+        et::of_kind(snapshot, kind)
+            .iter()
+            .find(|t| !is_curtain_type(kind, t))
+            .map(|t| t.id)
+    })
 }
 
 /// The wall or floor type a new instance gets: the one `given` names (else the default), unless
@@ -580,7 +701,7 @@ pub(crate) fn layered_for(
     let Some(param) = thickness else {
         return Ok(chosen);
     };
-    let thickness = ctx.quantity(param, Dimension::LENGTH)?.value();
+    let thickness = crate::length(ctx, param)?.value();
     let total = spatial::get(ctx.txn()?.snapshot(), chosen)
         .and_then(|t| Layers::from_values(&t.values))
         .map(|l| l.total());
@@ -1032,7 +1153,7 @@ pub struct TypeChanged {
 
 fn meters(ctx: &Context<'_>, param: Option<&QuantityParam>) -> Result<Option<f64>> {
     param
-        .map(|p| ctx.quantity(p, Dimension::LENGTH).map(|q| q.value()))
+        .map(|p| crate::length(ctx, p).map(|q| q.value()))
         .transpose()
 }
 
@@ -1057,7 +1178,7 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
             }
             let mut new = Vec::with_capacity(list.len());
             for l in list {
-                let thickness = ctx.quantity(&l.thickness, Dimension::LENGTH)?.value();
+                let thickness = crate::length(ctx, &l.thickness)?.value();
                 new.push(Layer::new(l.function.into(), &l.material, thickness));
             }
             layers.layers = new;
@@ -1130,7 +1251,7 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
 
 /// Writes the values the type `id` decides on each of its instances that differ; returns how
 /// many changed.
-fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> Result<usize> {
+pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> Result<usize> {
     let snapshot = ctx.txn()?.snapshot().clone();
     let Some(found) = spatial::get(&snapshot, id) else {
         return Ok(0);

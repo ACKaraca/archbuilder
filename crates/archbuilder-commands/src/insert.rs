@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -222,9 +222,7 @@ fn place(ctx: &mut Context<'_>, kind: Kind, p: PlaceInsert) -> Result<InsertPlac
     let wall =
         Wall::of(ctx.snapshot(), &wall_object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>| match param {
-        Some(param) => ctx
-            .quantity(param, Dimension::LENGTH)
-            .map(|q| Some(q.value())),
+        Some(param) => crate::length(ctx, param).map(|q| Some(q.value())),
         None => Ok(None),
     };
     let type_kind = if kind == Kind::Door {
@@ -339,9 +337,7 @@ fn place_opening(ctx: &mut Context<'_>, p: PlaceInsert) -> Result<InsertPlaced> 
     let wall =
         Wall::of(ctx.snapshot(), &wall_object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>| match param {
-        Some(param) => ctx
-            .quantity(param, Dimension::LENGTH)
-            .map(|q| Some(q.value())),
+        Some(param) => crate::length(ctx, param).map(|q| Some(q.value())),
         None => Ok(None),
     };
     let sill = meters(ctx, &p.sill)?.unwrap_or(0.0);

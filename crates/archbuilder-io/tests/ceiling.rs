@@ -113,6 +113,7 @@ fn ceilings_and_openings_are_coverings_and_voids() {
     );
     let snapshot = document.snapshot();
     let before = export_ifc(&snapshot, &ExportOptions::default()).unwrap();
+    assert!(before.valid, "{:?}", before.report.items);
     let file = read(&before.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -171,6 +172,7 @@ fn a_shaft_larger_than_its_host_is_no_void_of_it_and_the_report_says_so() {
                "base_offset": -0.5, "top_offset": 1.0}),
     );
     let out = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+    assert!(out.valid, "{:?}", out.report.items);
     let file = read(&out.bytes, &mut ReadOptions::default()).unwrap().file;
     assert_eq!(file.instances_of("IFCRELVOIDSELEMENT").count(), 0);
     assert!(
