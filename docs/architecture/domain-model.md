@@ -1236,12 +1236,24 @@ Three element kinds belong to a building and have no storey: `archbuilder.grid`,
 |---|---|---|
 | Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned`, `path` (the vertices between start and end of a multi-segment grid, each with the `bulge` of the segment that arrives at it; `bulge` is that of the last segment) | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
 | Reference plane | name, two points, `strength` (strong, weak, none), `bounded`, `pinned` | A vertical plane. Strong and weak planes are found by snapping; an unbounded plane runs 200 m past its points in plan. Names are unique per building. |
-| Work plane | name, `source` (level, grid, reference plane, points), `target`, three points, `active`, `shown` | At most one is active. A plane that follows a datum is derived from it on every read, so moving the datum moves the plane, and deleting the datum deletes the plane. Three points on a line make no plane and are refused. |
+| Work plane | name, `source` (level, grid, reference plane, points, face), `target`, three points, `active`, `shown`, `face_element` and `face` (`exterior`, `interior`, `top`, `bottom`) | At most one is active. A plane that follows a datum or an element face is derived from it on every read, so moving the datum or the element moves the plane, and deleting it deletes the plane. A wall's faces are vertical planes standing on its base (the exterior is the baseline's left), a floor's or ceiling's top and underside follow its slope; normals point away from the body. Three points on a line make no plane and are refused. |
 
 Commands: `archbuilder.grid.create` (two points, `points` with per-segment `bulges` for a multi-segment line, `from_wall`, or `from_walls` for a chain of walls that meet end to start; `bulge` for an arc; `after` or `label`),
 `archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
-and heads). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
+and heads), and `archbuilder.datum.set_view_extent` (per-view extent and head overrides, below). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
 original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
 reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
-Not built yet: per-view extents and their propagation, element-face work planes, and elements that store the
-work plane they were sketched on.
+A plan view stores its own overrides of grids in the optional `datum_views` list (records of a grid, `start_inset`, `end_inset`,
+`head_start`, `head_end`, each optional): an inset pulls that end of the drawn line in along the line (positive) or pushes it out
+along the end segment (negative), and a head flag overrides the grid's own. The grid and every other view keep the model extent, a view
+that pulls a line in past its other end draws nothing, and an override of a deleted grid is dropped. One
+`archbuilder.datum.set_view_extent` call changes the chosen grids in a list of views (an adjusted view and the parallel views it is
+propagated to are all plan views) in one transaction, copies the overrides from a view (`from_view`), or drops them (`reset`). Levels
+have no extent of their own in a plan view; their extent belongs to the elevation views, which do not exist yet.
+Work planes on faces: `archbuilder.work_plane.set` takes an `element` (or a selected wall, floor or ceiling) and a `face`. Floors,
+ceilings, roofs, roofs by extrusion, railings, shafts and vertical openings take an optional `work_plane` when created and store it
+(`work_plane`, cleared when the plane is deleted; the plane must belong to the element's building). A roof by extrusion made on a
+vertical work plane takes the plane's line and follows it: moving the datum moves the roof, moving the roof by hand (or giving it a
+plane of its own) detaches it, and when the plane is deleted it returns to the plane stored at creation. The other sketch-based kinds
+store the plane without following it. In a 3D view the active work plane is where the tools' points land (the wall, floor, railing
+and datum tools draw along it); a plan view keeps the storey's plane.

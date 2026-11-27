@@ -1535,6 +1535,13 @@ fn shown(
         types::PLAN_VIEW => {
             // The hidden elements are counted, not listed (Show hidden in view of the context
             // menu shows them again); the storey is shown for orientation.
+            // The grid overrides are set by `archbuilder.datum.set_view_extent`.
+            if fields.len() > types::plan_view::DATUM_VIEWS
+                && values.len() > types::plan_view::DATUM_VIEWS
+            {
+                fields.remove(types::plan_view::DATUM_VIEWS);
+                values.remove(types::plan_view::DATUM_VIEWS);
+            }
             if fields.len() > types::plan_view::HIDDEN && values.len() > types::plan_view::HIDDEN {
                 fields.remove(types::plan_view::HIDDEN);
                 values.remove(types::plan_view::HIDDEN);
@@ -1573,9 +1580,26 @@ fn shown(
         // where it comes from and whether it is active and shown.
         types::GRID | types::WORK_PLANE => {
             let hidden: &[usize] = if key == types::GRID {
-                &[types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL]
+                &[
+                    types::grid::BOTTOM_LEVEL,
+                    types::grid::TOP_LEVEL,
+                    types::grid::PATH,
+                ]
             } else {
-                &[types::work_plane::TARGET, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                &[
+                    types::work_plane::TARGET,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    types::work_plane::FACE_ELEMENT,
+                    types::work_plane::FACE,
+                ]
             };
             for at in hidden.iter().rev() {
                 if *at < fields.len() && *at < values.len() {

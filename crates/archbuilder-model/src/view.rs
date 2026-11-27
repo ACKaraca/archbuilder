@@ -172,6 +172,99 @@ pub struct PlanView {
     /// The view depth relative to the level: how far below the bottom elements are still drawn
     /// (not above the bottom).
     pub depth: f64,
+    /// The extent and head overrides of grids in this view.
+    pub datum_views: Vec<DatumView>,
+}
+
+/// The range of a view-specific grid extent adjustment, in meters.
+pub const INSET_RANGE: (f64, f64) = (-1000.0, 1000.0);
+
+/// What one view overrides of a grid: how far each end is pulled in (positive) or pushed out
+/// (negative) from the model extent, and whether each end shows its head. `None` keeps what the
+/// grid itself says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DatumView {
+    /// The grid.
+    pub datum: ObjectId,
+    /// How far the start is pulled in along the line, in meters.
+    pub start_inset: Option<f64>,
+    /// How far the end is pulled in along the line, in meters.
+    pub end_inset: Option<f64>,
+    /// Whether the start shows its head.
+    pub head_start: Option<bool>,
+    /// Whether the end shows its head.
+    pub head_end: Option<bool>,
+}
+
+impl DatumView {
+    /// The override of `datum` that overrides nothing.
+    #[must_use]
+    pub fn new(datum: ObjectId) -> Self {
+        Self {
+            datum,
+            start_inset: None,
+            end_inset: None,
+            head_start: None,
+            head_end: None,
+        }
+    }
+
+    /// Whether the entry overrides nothing and may be dropped.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.start_inset.is_none()
+            && self.end_inset.is_none()
+            && self.head_start.is_none()
+            && self.head_end.is_none()
+    }
+}
+
+/// The value of the `datum_views` field; absent when there is no override.
+#[must_use]
+pub fn datum_views_value(list: &[DatumView]) -> Option<Value> {
+    (!list.is_empty()).then(|| {
+        Value::List(
+            list.iter()
+                .take(crate::types::MAX_PER_VIEW_DATUMS)
+                .map(|d| {
+                    Value::Record(vec![
+                        Some(Value::Reference(d.datum)),
+                        d.start_inset.map(crate::types::length),
+                        d.end_inset.map(crate::types::length),
+                        d.head_start.map(Value::Bool),
+                        d.head_end.map(Value::Bool),
+                    ])
+                })
+                .collect(),
+        )
+    })
+}
+
+fn datum_views_at(values: &[Option<Value>]) -> Vec<DatumView> {
+    let Some(Some(Value::List(items))) = values.get(plan_view::DATUM_VIEWS) else {
+        return Vec::new();
+    };
+    let flag = |r: &[Option<Value>], at: usize| match r.get(at) {
+        Some(Some(Value::Bool(b))) => Some(*b),
+        _ => None,
+    };
+    items
+        .iter()
+        .take(crate::types::MAX_PER_VIEW_DATUMS)
+        .filter_map(|item| match item {
+            Value::Record(r) => match r.first() {
+                Some(Some(Value::Reference(datum))) => Some(DatumView {
+                    datum: *datum,
+                    start_inset: crate::types::meters(r, 1),
+                    end_inset: crate::types::meters(r, 2),
+                    head_start: flag(r, 3),
+                    head_end: flag(r, 4),
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 impl PlanView {
@@ -190,6 +283,7 @@ impl PlanView {
             hidden: Vec::new(),
             bottom: 0.0,
             depth: -BOTTOM_MARGIN,
+            datum_views: Vec::new(),
         }
     }
 
@@ -231,6 +325,7 @@ impl PlanView {
             hidden,
             bottom: crate::types::meters(values, plan_view::BOTTOM).unwrap_or(0.0),
             depth: crate::types::meters(values, plan_view::DEPTH).unwrap_or(-BOTTOM_MARGIN),
+            datum_views: datum_views_at(values),
         })
     }
 
@@ -250,6 +345,7 @@ impl PlanView {
         out.push(Some(hidden_value(&self.hidden)));
         out.push(Some(crate::types::length(self.bottom)));
         out.push(Some(crate::types::length(self.depth)));
+        out.push(datum_views_value(&self.datum_views));
         out
     }
 

@@ -439,3 +439,337 @@ fn a_grid_follows_a_chain_of_walls_in_either_order() {
         .is_err()
     );
 }
+
+fn view_settings(env: &Env, view: ObjectId) -> archbuilder_model::view::PlanView {
+    archbuilder_model::view::PlanView::from_values(
+        &spatial::get(&env.snapshot(), view).unwrap().values,
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_view_sets_its_own_grid_extent_and_heads_and_propagates_them() {
+    let env = Env::new();
+    let grid = env
+        .run(
+            "archbuilder.grid.create",
+            json!({"start": [0.0, 0.0], "end": [10.0, 0.0]}),
+        )
+        .unwrap();
+    let gid = id_of(&grid, "grid");
+    let storeys = env.storeys();
+    // Each storey's first view; a duplicate makes a second view of the first storey.
+    let a = env
+        .run(
+            "archbuilder.view.duplicate",
+            json!({"view": storeys[0].to_string()}),
+        )
+        .unwrap();
+    let a: ObjectId = id_of(&a, "view").parse().unwrap();
+    let b = env
+        .run(
+            "archbuilder.view.duplicate",
+            json!({"view": storeys[1].to_string()}),
+        )
+        .unwrap();
+    let b: ObjectId = id_of(&b, "view").parse().unwrap();
+    let c = env
+        .run(
+            "archbuilder.view.duplicate",
+            json!({"view": storeys[2].to_string()}),
+        )
+        .unwrap();
+    let c: ObjectId = id_of(&c, "view").parse().unwrap();
+    // The adjustment in one view: the start pulled in 2 m, the end pushed out 1 m, no end head.
+    env.run(
+        "archbuilder.datum.set_view_extent",
+        json!({"objects": [gid], "views": [a.to_string()], "start_inset": 2.0,
+               "end_inset": -1.0, "head_end": false}),
+    )
+    .unwrap();
+    let id: ObjectId = gid.parse().unwrap();
+    let g = grid_of(&env, id);
+    // The model extent is untouched.
+    assert_eq!((g.start, g.end), ([0.0, 0.0], [10.0, 0.0]));
+    assert!(g.head_start && g.head_end);
+    let ov = view_settings(&env, a).datum_views;
+    assert_eq!(ov.len(), 1);
+    let shown = g.in_view(ov.first()).unwrap();
+    assert_eq!((shown.start, shown.end), ([2.0, 0.0], [11.0, 0.0]));
+    assert!(shown.head_start && !shown.head_end);
+    assert!(view_settings(&env, b).datum_views.is_empty());
+    // Propagated to the two other views in one command: one undo step takes both back.
+    env.run(
+        "archbuilder.datum.set_view_extent",
+        json!({"objects": [gid], "views": [b.to_string(), c.to_string()],
+               "from_view": a.to_string()}),
+    )
+    .unwrap();
+    for v in [b, c] {
+        assert_eq!(view_settings(&env, v).datum_views, ov);
+    }
+    env.document.undo().wait().unwrap();
+    assert!(view_settings(&env, b).datum_views.is_empty());
+    assert!(view_settings(&env, c).datum_views.is_empty());
+    // A reset shows the grid's own extent again; a view that pulls the line in past its other end
+    // shows nothing; nothing to change is refused.
+    env.run(
+        "archbuilder.datum.set_view_extent",
+        json!({"objects": [gid], "views": [a.to_string()], "reset": true}),
+    )
+    .unwrap();
+    assert!(view_settings(&env, a).datum_views.is_empty());
+    env.run(
+        "archbuilder.datum.set_view_extent",
+        json!({"objects": [gid], "views": [a.to_string()], "start_inset": 6.0, "end_inset": 6.0}),
+    )
+    .unwrap();
+    assert!(
+        grid_of(&env, id)
+            .in_view(view_settings(&env, a).datum_views.first())
+            .is_none()
+    );
+    for bad in [
+        json!({"objects": [gid], "views": [a.to_string()]}),
+        json!({"objects": [gid], "views": [a.to_string()], "start_inset": 1.0e9}),
+        json!({"objects": [gid], "views": []}),
+    ] {
+        assert!(env.run("archbuilder.datum.set_view_extent", bad).is_err());
+    }
+    // Deleting the grid leaves no dangling override: the view still opens and draws.
+    let invocation = Invocation {
+        seed: env.seed,
+        selection: vec![id],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert!(view_settings(&env, a).datum_views.is_empty());
+}
+
+fn active_plane(env: &Env) -> datum::Plane {
+    let building = spatial::buildings(&env.snapshot())[0].id;
+    datum::active(&env.snapshot(), building).unwrap().1.unwrap()
+}
+
+fn delete(env: &Env, id: ObjectId) {
+    let invocation = Invocation {
+        seed: env.seed,
+        selection: vec![id],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+}
+
+#[test]
+fn a_work_plane_lies_on_a_wall_face_and_follows_and_leaves_with_the_wall() {
+    let env = Env::new();
+    let storey = env.storeys()[0].to_string();
+    let wall = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [8.0, 0.0], "storey": storey}),
+        )
+        .unwrap();
+    let wall_id: ObjectId = id_of(&wall, "wall").parse().unwrap();
+    let t = 0.1; // half the default thickness: a center-line wall
+    // The exterior face is the baseline's left; the normal points away from the body.
+    env.run(
+        "archbuilder.work_plane.set",
+        json!({"element": wall_id.to_string()}),
+    )
+    .unwrap();
+    let p = active_plane(&env);
+    assert!((p.origin[1] - t).abs() < 1e-9 && p.normal == [0.0, 1.0, 0.0]);
+    env.run(
+        "archbuilder.work_plane.set",
+        json!({"element": wall_id.to_string(), "face": "interior"}),
+    )
+    .unwrap();
+    let p = active_plane(&env);
+    assert!((p.origin[1] + t).abs() < 1e-9 && p.normal == [0.0, -1.0, 0.0]);
+    // Asking for the same face again reuses the plane; another face makes a second one.
+    env.run(
+        "archbuilder.work_plane.set",
+        json!({"element": wall_id.to_string(), "face": "interior"}),
+    )
+    .unwrap();
+    assert_eq!(spatial::objects(&env.snapshot(), WORK_PLANE).len(), 2);
+    // A wall has no top face; a floor has no exterior one; an unknown name is refused.
+    for bad in [
+        json!({"element": wall_id.to_string(), "face": "top"}),
+        json!({"element": wall_id.to_string(), "face": "left"}),
+        json!({"element": storey}),
+    ] {
+        assert!(env.run("archbuilder.work_plane.set", bad).is_err());
+    }
+    // The plane follows the wall when it moves.
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [wall_id.to_string()], "displacement": [0.0, 3.0]}),
+    )
+    .unwrap();
+    assert!((active_plane(&env).origin[1] - (3.0 - t)).abs() < 1e-9);
+    // A selected wall gives its face without a name.
+    let invocation = Invocation {
+        seed: env.seed,
+        selection: vec![wall_id],
+        ..Invocation::new("archbuilder.work_plane.set", json!({"face": "exterior"}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert!((active_plane(&env).origin[1] - (3.0 + t)).abs() < 1e-9);
+    // Deleting the wall deletes the planes on its faces; undo brings them back.
+    delete(&env, wall_id);
+    assert!(spatial::objects(&env.snapshot(), WORK_PLANE).is_empty());
+    env.document.undo().wait().unwrap();
+    assert_eq!(spatial::objects(&env.snapshot(), WORK_PLANE).len(), 3 - 1);
+}
+
+#[test]
+fn a_work_plane_lies_on_a_slab_face() {
+    let env = Env::new();
+    let storey = env.storeys()[1].to_string();
+    let floor = env
+        .run(
+            "archbuilder.floor.create",
+            json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]],
+                   "storey": storey, "offset": 0.05}),
+        )
+        .unwrap();
+    let floor_id = id_of(&floor, "floor");
+    let thickness = floor.value["thickness"].as_f64().unwrap();
+    env.run("archbuilder.work_plane.set", json!({"element": floor_id}))
+        .unwrap();
+    let top = active_plane(&env);
+    assert!((top.origin[2] - 3.05).abs() < 1e-9 && top.normal == [0.0, 0.0, 1.0]);
+    env.run(
+        "archbuilder.work_plane.set",
+        json!({"element": floor_id, "face": "bottom"}),
+    )
+    .unwrap();
+    let bottom = active_plane(&env);
+    assert!((bottom.origin[2] - (3.05 - thickness)).abs() < 1e-9);
+    assert_eq!(bottom.normal, [0.0, 0.0, -1.0]);
+    // The level of the storey moves: the face follows the floor.
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [floor_id], "field": "top_offset", "value": 0.5}),
+    )
+    .unwrap();
+    assert!((active_plane(&env).origin[2] - (3.5 - thickness)).abs() < 1e-9);
+}
+
+#[test]
+fn sketches_store_their_work_plane_and_a_roof_by_extrusion_follows_it() {
+    let env = Env::new();
+    let grid = env
+        .run(
+            "archbuilder.grid.create",
+            json!({"start": [0.0, 0.0], "end": [10.0, 0.0]}),
+        )
+        .unwrap();
+    let gid = id_of(&grid, "grid");
+    let plane = env
+        .run("archbuilder.work_plane.set", json!({"target": gid}))
+        .unwrap();
+    let wp = id_of(&plane, "work_plane");
+    let storey = env.storeys()[0].to_string();
+    // A floor sketched on the plane keeps a reference to it; the plane goes, the reference clears.
+    let floor = env
+        .run(
+            "archbuilder.floor.create",
+            json!({"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]],
+                   "storey": storey, "work_plane": wp}),
+        )
+        .unwrap();
+    let floor_id: ObjectId = id_of(&floor, "floor").parse().unwrap();
+    let stored = |id: ObjectId| {
+        let o = spatial::get(&env.snapshot(), id).unwrap();
+        let registry = env.snapshot().registry().clone();
+        let at = registry
+            .get(&spatial::type_of(&env.snapshot(), id).unwrap())
+            .unwrap()
+            .schema
+            .fields
+            .iter()
+            .position(|f| f.name == "work_plane")
+            .unwrap();
+        o.values.get(at).cloned().flatten()
+    };
+    assert_eq!(
+        stored(floor_id),
+        Some(arc_doc::Value::Reference(wp.parse().unwrap()))
+    );
+    // A plane that is not a work plane is refused.
+    assert!(
+        env.run(
+            "archbuilder.floor.create",
+            json!({"points": [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 5.0]],
+                   "storey": storey, "work_plane": gid}),
+        )
+        .is_err()
+    );
+    // A roof by extrusion takes the plane's line and follows it when the grid moves.
+    let roof = env
+        .run(
+            "archbuilder.roof_extrusion.create",
+            json!({"work_plane": wp, "profile": [[0.0, 2.5], [10.0, 3.5]], "end": 6.0,
+                   "storey": storey}),
+        )
+        .unwrap();
+    let roof_id: ObjectId = id_of(&roof, "roof").parse().unwrap();
+    let origin = |env: &Env| {
+        let s = env.snapshot();
+        archbuilder_model::roof_extrusion::Derived::of(&s, &spatial::get(&s, roof_id).unwrap())
+            .unwrap()
+            .roof
+            .origin
+    };
+    assert_eq!(origin(&env), [0.0, 0.0]);
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [gid], "displacement": [0.0, 2.0]}),
+    )
+    .unwrap();
+    assert_eq!(origin(&env), [0.0, 2.0]);
+    // Moved by hand, the roof keeps its place and leaves the plane.
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [roof_id.to_string()], "displacement": [1.0, 0.0]}),
+    )
+    .unwrap();
+    assert_eq!(origin(&env), [1.0, 2.0]);
+    assert_eq!(stored(roof_id), None);
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [gid], "displacement": [0.0, 5.0]}),
+    )
+    .unwrap();
+    assert_eq!(origin(&env), [1.0, 2.0]);
+    env.document.undo().wait().unwrap();
+    env.document.undo().wait().unwrap();
+    assert_eq!(
+        stored(roof_id),
+        Some(arc_doc::Value::Reference(wp.parse().unwrap()))
+    );
+    assert_eq!(origin(&env), [0.0, 2.0]);
+    // Without a plane or a work plane there is nothing to extrude along.
+    assert!(
+        env.run(
+            "archbuilder.roof_extrusion.create",
+            json!({"profile": [[0.0, 2.5], [10.0, 3.5]], "end": 6.0}),
+        )
+        .is_err()
+    );
+    // Deleting the plane clears the references; the roof is back at the plane it was sketched
+    // with (its stored one), as the record holds authored data only.
+    delete(&env, wp.parse().unwrap());
+    assert_eq!(stored(roof_id), None);
+    assert_eq!(stored(floor_id), None);
+    assert_eq!(origin(&env), [0.0, 0.0]);
+}

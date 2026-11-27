@@ -407,6 +407,10 @@ pub(crate) fn next_name(
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRailing {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the host's, else the storey of the selection, else the lowest.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -547,6 +551,7 @@ fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCrea
         None => next_name(ctx.snapshot(), RAILING, storey, &language(ctx)),
     };
     let id = create(ctx, RAILING, Some(storey), railing.values(&name))?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let derived = {
         let txn = ctx.txn()?;
@@ -711,6 +716,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
                 extension_length: None,
                 continues_to: None,
                 name: None,
+                work_plane: None,
             },
         )?;
         railings.push(made.railing);

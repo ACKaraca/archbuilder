@@ -628,7 +628,12 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                     .flatten()
                     .and_then(|s| archbuilder_model::spatial::get(&snapshot, s))
                     .map(|s| archbuilder_model::spatial::storey_elevation(&snapshot, &s));
-                out.extend(datum_view::overlays(&snapshot, level, &|id| {
+                let overrides = plan_state::current_in(tab, &snapshot)
+                    .and_then(|v| archbuilder_model::spatial::get(&snapshot, v))
+                    .and_then(|o| archbuilder_model::view::PlanView::from_values(&o.values))
+                    .map(|v| v.datum_views)
+                    .unwrap_or_default();
+                out.extend(datum_view::overlays(&snapshot, level, &overrides, &|id| {
                     room_view::shared().is_hidden(id)
                 }));
                 out.extend(pin_marks(&snapshot));

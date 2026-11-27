@@ -81,6 +81,10 @@ impl From<FaceParam> for Face {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateFloor {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -418,6 +422,7 @@ fn create_floor(ctx: &mut Context<'_>, p: CreateFloor) -> Result<FloorCreated> {
         ],
     )?;
     crate::element_type::assign(ctx, id, TypeKind::Floor, floor_type)?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let thickness = spatial::get(ctx.txn()?.snapshot(), id)
         .and_then(|f| types::meters(&f.values, types::floor::THICKNESS))

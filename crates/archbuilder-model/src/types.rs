@@ -581,6 +581,9 @@ pub mod plan_view {
     pub const BOTTOM: usize = 17;
     /// The view depth relative to the level, in meters: elements down to it draw beyond the cut.
     pub const DEPTH: usize = 18;
+    /// The grids whose extent or heads this view overrides (records, see [`crate::view::DatumView`]);
+    /// appended in schema 1.1.
+    pub const DATUM_VIEWS: usize = 19;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -604,6 +607,8 @@ pub const VIEW_DEPTH_RANGE: (f64, f64) = (-1000.0, 1000.0);
 pub const VIEW_SCALE_RANGE: (f64, f64) = (1.0, 10_000.0);
 /// The most elements one view hides.
 pub const MAX_HIDDEN: usize = 100_000;
+/// The most datum overrides one view holds.
+pub const MAX_PER_VIEW_DATUMS: usize = 20_000;
 
 /// Field positions of `archbuilder.ceiling`. The first seven are those of a floor, so the
 /// boundary is read and edited by the floor's code.
@@ -712,6 +717,9 @@ pub mod roof_extrusion {
     pub const Y: usize = 8;
     /// The profile: records of `u` (along the plane's axis) and `z` (above the storey's level).
     pub const PROFILE: usize = 9;
+    /// The work plane the roof was sketched on; while it is set and vertical the roof's plane
+    /// follows it. Appended in schema 1.1.
+    pub const WORK_PLANE: usize = 10;
 }
 
 /// Field positions of `archbuilder.floor_edge`.
@@ -792,6 +800,11 @@ pub mod work_plane {
     pub const ACTIVE: usize = 12;
     /// Whether the plane is displayed.
     pub const SHOWN: usize = 13;
+    /// The wall, floor or ceiling a plane from an element face takes its face from; appended in
+    /// schema 1.1.
+    pub const FACE_ELEMENT: usize = 14;
+    /// Which face of that element ([`crate::datum::FaceSide`] code); appended in schema 1.1.
+    pub const FACE: usize = 15;
 }
 
 /// Field positions of `archbuilder.vertical_opening`.
@@ -1208,6 +1221,11 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (LEVEL, level),
         (WALL, wall),
     ] {
+        let mut fields = fields;
+        if ON_WORK_PLANE.contains(&key) {
+            let field = work_plane_ref(&fields);
+            fields.push(field);
+        }
         let mut decl = declaration(key, fields)?;
         match key {
             WALL_TYPE | FLOOR_TYPE | ROOF_TYPE | CEILING_TYPE => {
@@ -1316,6 +1334,27 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         length_field("depth", Some(real(VIEW_DEPTH_RANGE)))
             .with_default(length(-crate::view::BOTTOM_MARGIN))
             .in_aspect("range"),
+    );
+    let mut grid_ref = reference_to(GRID);
+    grid_ref.rule.on_delete = OnDelete::Clear;
+    grid_ref.rule.cardinality = Cardinality::Optional;
+    fields.push(
+        FieldDecl::new(
+            "datum_views",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("datum", ValueType::Reference(grid_ref)).optional(),
+                optional_length("start_inset", crate::view::INSET_RANGE),
+                optional_length("end_inset", crate::view::INSET_RANGE),
+                FieldDecl::new("head_start", ValueType::Bool).optional(),
+                FieldDecl::new("head_end", ValueType::Bool).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_PER_VIEW_DATUMS as u64,
+        })
+        .optional()
+        .in_aspect("graphics")
+        .since_minor(1),
     );
     fields
 }
@@ -1572,7 +1611,59 @@ fn work_plane_fields() -> Vec<FieldDecl> {
     }
     fields.push(bool_field("active", false).in_aspect("identity"));
     fields.push(bool_field("shown", false));
+    // A plane from an element face goes with the element.
+    let mut element = reference_to(WALL);
+    element.targets = [WALL, FLOOR, CEILING]
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    element.rule.on_delete = OnDelete::Cascade;
+    element.rule.cardinality = Cardinality::Optional;
+    fields.push(
+        FieldDecl::new("face_element", ValueType::Reference(element))
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
+    );
+    fields.push(
+        FieldDecl::new(
+            "face",
+            ValueType::Enum(
+                crate::datum::FaceSide::ALL
+                    .iter()
+                    .map(|s| EnumVariant::new(s.name(), s.code()))
+                    .collect(),
+            ),
+        )
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+    );
     fields
+}
+
+/// The element types whose sketch or plane is made on a work plane, and so store it.
+pub const ON_WORK_PLANE: [&str; 7] = [
+    FLOOR,
+    CEILING,
+    ROOF,
+    ROOF_EXTRUSION,
+    RAILING,
+    SHAFT,
+    VERTICAL_OPENING,
+];
+
+/// The work plane an element was sketched on, appended after the latest field of `fields`: an
+/// optional reference that clears when the plane is deleted, so older files load without one.
+fn work_plane_ref(fields: &[FieldDecl]) -> FieldDecl {
+    let minor = fields.iter().map(|f| f.since_minor).max().unwrap_or(0) + 1;
+    let mut target = reference_to(WORK_PLANE);
+    target.rule.on_delete = OnDelete::Clear;
+    target.rule.cardinality = Cardinality::Optional;
+    FieldDecl::new("work_plane", ValueType::Reference(target))
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(minor)
 }
 
 fn vertical_opening_fields() -> Vec<FieldDecl> {

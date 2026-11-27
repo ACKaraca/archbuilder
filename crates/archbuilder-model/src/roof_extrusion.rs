@@ -92,6 +92,27 @@ impl RoofExtrusion {
         )
     }
 
+    /// The roof with its plane taken from the vertical work plane it was sketched on, when its
+    /// record names one that resolves: moving the work plane's datum moves the roof. Any other
+    /// plane (none, gone, not vertical) leaves the stored one.
+    #[must_use]
+    pub fn on_work_plane(self, snapshot: &Snapshot, values: &[Option<Value>]) -> Self {
+        let plane = match values.get(f::WORK_PLANE) {
+            Some(Some(Value::Reference(id))) => {
+                crate::spatial::get(snapshot, *id).and_then(|w| crate::datum::resolve(snapshot, &w))
+            }
+            _ => None,
+        };
+        match plane {
+            Some(p) if p.normal[2].abs() < 1.0e-9 => Self {
+                origin: [p.origin[0], p.origin[1]],
+                direction: p.u[1].atan2(p.u[0]),
+                ..self
+            },
+            _ => self,
+        }
+    }
+
     /// The plane's axis and normal as unit vectors in plan.
     #[must_use]
     pub fn axes(&self) -> ([f64; 2], [f64; 2]) {
@@ -197,7 +218,9 @@ impl Derived {
     /// # Errors
     /// The [`Refusal`] that says why the roof has no body.
     pub fn of(snapshot: &Snapshot, object: &Object) -> std::result::Result<Self, Refusal> {
-        let roof = RoofExtrusion::from_values(&object.values).ok_or(Refusal::Malformed)?;
+        let roof = RoofExtrusion::from_values(&object.values)
+            .ok_or(Refusal::Malformed)?
+            .on_work_plane(snapshot, &object.values);
         let level = object
             .header
             .owner

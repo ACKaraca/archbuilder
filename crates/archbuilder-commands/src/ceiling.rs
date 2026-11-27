@@ -36,6 +36,10 @@ pub const CEILING_SET_SLOPE: &str = "archbuilder.ceiling.set_slope";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCeiling {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -247,6 +251,7 @@ fn create_ceiling(ctx: &mut Context<'_>, p: CreateCeiling) -> Result<CeilingCrea
         offset: None,
         name: None,
         mode: None,
+        work_plane: None,
     };
     let walls = crate::floor::picked_walls(ctx, storey, &shape, true)?;
     let vertices = crate::opening::with_arcs(
@@ -289,6 +294,7 @@ fn create_ceiling(ctx: &mut Context<'_>, p: CreateCeiling) -> Result<CeilingCrea
     } else if p.slope_from.is_some() || p.slope_to.is_some() {
         return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
     }
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
     let found = spatial::get(txn.snapshot(), id);

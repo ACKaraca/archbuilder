@@ -60,6 +60,52 @@ coded! {
         ReferencePlane = 2, "reference_plane";
         /// The plane through three points.
         Points = 3, "points";
+        /// A face of a wall, floor or ceiling.
+        Face = 4, "face";
+    }
+}
+
+coded! {
+    /// Which face of an element a work plane lies on.
+    FaceSide {
+        /// The outer face of a wall: the side the baseline's left hand is on.
+        #[default]
+        Exterior = 0, "exterior";
+        /// The inner face of a wall.
+        Interior = 1, "interior";
+        /// The top of a floor or ceiling.
+        Top = 2, "top";
+        /// The underside of a floor or ceiling.
+        Bottom = 3, "bottom";
+    }
+}
+
+impl FaceSide {
+    /// The face of a work plane record's field values.
+    #[must_use]
+    pub fn of_values(values: &[Option<Value>]) -> Self {
+        Self::of_field(values, work_plane::FACE)
+    }
+
+    /// Whether an element of type `key` has this face.
+    #[must_use]
+    pub fn on(self, key: &str) -> bool {
+        match key {
+            types::WALL => matches!(self, Self::Exterior | Self::Interior),
+            types::FLOOR | types::CEILING => matches!(self, Self::Top | Self::Bottom),
+            _ => false,
+        }
+    }
+
+    /// The face a work plane takes from an element of type `key` when none is named.
+    #[must_use]
+    pub fn default_of(key: &str) -> Option<Self> {
+        match key {
+            types::WALL => Some(Self::Exterior),
+            types::FLOOR => Some(Self::Top),
+            types::CEILING => Some(Self::Bottom),
+            _ => None,
+        }
     }
 }
 
@@ -215,27 +261,130 @@ impl Grid {
     /// unit vectors (the same for a straight line).
     #[must_use]
     pub fn directions(&self) -> (P, P) {
-        let line = self.polyline();
-        let unit = |a: P, b: P| {
-            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-            let d = dx.hypot(dy);
-            if d > 0.0 {
-                [dx / d, dy / d]
-            } else {
-                [1.0, 0.0]
-            }
-        };
-        let n = line.len();
-        match (
-            line.first(),
-            line.get(1),
-            n.checked_sub(2).and_then(|k| line.get(k)),
-            line.last(),
-        ) {
-            (Some(a), Some(b), Some(c), Some(d)) => (unit(*a, *b), unit(*c, *d)),
-            _ => ([1.0, 0.0], [1.0, 0.0]),
+        line_directions(&self.polyline())
+    }
+
+    /// The grid as the view with the override `over` draws it: the line pulled in or pushed out
+    /// at each end and the heads that show. `None` when the view pulls the line in past its other
+    /// end (it shows nothing).
+    #[must_use]
+    pub fn in_view(&self, over: Option<&crate::view::DatumView>) -> Option<ViewGrid> {
+        let line = trimmed(
+            &self.polyline(),
+            over.and_then(|o| o.start_inset).unwrap_or(0.0),
+            over.and_then(|o| o.end_inset).unwrap_or(0.0),
+        )?;
+        let (d0, d1) = line_directions(&line);
+        Some(ViewGrid {
+            start: *line.first()?,
+            end: *line.last()?,
+            line,
+            toward_start: [-d0[0], -d0[1]],
+            toward_end: d1,
+            head_start: over.and_then(|o| o.head_start).unwrap_or(self.head_start),
+            head_end: over.and_then(|o| o.head_end).unwrap_or(self.head_end),
+        })
+    }
+}
+
+/// A grid as one view draws it ([`Grid::in_view`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ViewGrid {
+    /// The line as drawn.
+    pub line: Vec<P>,
+    /// Where it starts as drawn.
+    pub start: P,
+    /// Where it ends as drawn.
+    pub end: P,
+    /// The unit direction that leaves the line at its start.
+    pub toward_start: P,
+    /// The unit direction that leaves the line at its end.
+    pub toward_end: P,
+    /// Whether the start shows its head.
+    pub head_start: bool,
+    /// Whether the end shows its head.
+    pub head_end: bool,
+}
+
+fn line_directions(line: &[P]) -> (P, P) {
+    let unit = |a: P, b: P| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let d = dx.hypot(dy);
+        if d > 0.0 {
+            [dx / d, dy / d]
+        } else {
+            [1.0, 0.0]
+        }
+    };
+    let n = line.len();
+    match (
+        line.first(),
+        line.get(1),
+        n.checked_sub(2).and_then(|k| line.get(k)),
+        line.last(),
+    ) {
+        (Some(a), Some(b), Some(c), Some(d)) => (unit(*a, *b), unit(*c, *d)),
+        _ => ([1.0, 0.0], [1.0, 0.0]),
+    }
+}
+
+/// The length of a polyline.
+fn path_length(line: &[P]) -> f64 {
+    line.windows(2)
+        .map(|w| match (w.first(), w.get(1)) {
+            (Some(a), Some(b)) => (b[0] - a[0]).hypot(b[1] - a[1]),
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// `line` without its first `d` meters.
+fn cut_front(line: &[P], mut d: f64) -> Vec<P> {
+    let mut rest = line;
+    while let [a, b, ..] = rest {
+        let s = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if d < s {
+            let t = d / s;
+            let mut out = vec![[a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]];
+            out.extend_from_slice(rest.get(1..).unwrap_or_default());
+            return out;
+        }
+        d -= s;
+        rest = rest.get(1..).unwrap_or_default();
+    }
+    rest.to_vec()
+}
+
+/// `line` with its start moved by `inset` along the line: pulled in when positive, pushed out
+/// along the first segment when negative.
+fn move_start(line: &[P], inset: f64) -> Vec<P> {
+    if inset > 0.0 {
+        return cut_front(line, inset);
+    }
+    let mut out = line.to_vec();
+    if let [a, b, ..] = line {
+        let d = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if inset < 0.0 && d > 0.0 {
+            let t = inset / d;
+            out.insert(0, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
         }
     }
+    out
+}
+
+/// `line` with its two ends moved by the insets; `None` when nothing is left.
+fn trimmed(line: &[P], start_inset: f64, end_inset: f64) -> Option<Vec<P>> {
+    let pulled = start_inset.max(0.0) + end_inset.max(0.0);
+    if !(start_inset.is_finite() && end_inset.is_finite())
+        || pulled >= path_length(line) - MIN_LENGTH
+    {
+        return None;
+    }
+    let mut v = move_start(line, start_inset);
+    v.reverse();
+    let mut v = move_start(&v, end_inset);
+    v.reverse();
+    Some(v)
 }
 
 /// The grids of a building, in identifier order.
@@ -690,8 +839,76 @@ impl Plane {
     }
 }
 
+fn from_slope(plane: &crate::terrain::Plane, lowered: f64, up: bool) -> Option<Plane> {
+    let [gx, gy] = plane.grad;
+    let normal = unit3([-gx, -gy, 1.0])?;
+    let u = unit3([1.0, 0.0, gx])?;
+    let sign = if up { 1.0 } else { -1.0 };
+    Some(Plane {
+        origin: [plane.at[0], plane.at[1], plane.z - lowered],
+        normal: [normal[0] * sign, normal[1] * sign, normal[2] * sign],
+        u,
+    })
+}
+
+/// The plane of the face `side` of the wall, floor or ceiling `element`: a wall's vertical face
+/// standing on its base, a slab's top or underside (sloped as the slab is). Its normal points
+/// away from the body. `None` for another kind, a face the kind has not, or an element that cannot
+/// be read.
+#[must_use]
+pub fn face_plane(snapshot: &Snapshot, element: &Object, side: FaceSide) -> Option<Plane> {
+    let key = spatial::type_of(snapshot, element.id)?;
+    if !side.on(&key) {
+        return None;
+    }
+    let level = element
+        .header
+        .owner
+        .and_then(|s| spatial::get(snapshot, s))
+        .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
+    match key.as_str() {
+        types::WALL => {
+            let wall = crate::wall::Wall::of(snapshot, element)?;
+            let (low, high) = wall.extent();
+            let u = unit3([
+                wall.end[0] - wall.start[0],
+                wall.end[1] - wall.start[1],
+                0.0,
+            ])?;
+            let (left, offset) = match side {
+                FaceSide::Interior => (-1.0, low),
+                _ => (1.0, high),
+            };
+            Some(Plane {
+                origin: [
+                    wall.start[0] - u[1] * offset,
+                    wall.start[1] + u[0] * offset,
+                    level + wall.base_offset,
+                ],
+                normal: [-u[1] * left, u[0] * left, 0.0],
+                u,
+            })
+        }
+        types::FLOOR => {
+            let d = crate::floor::Derived::of(snapshot, element)?;
+            match side {
+                FaceSide::Top => from_slope(&d.plane, 0.0, true),
+                _ => from_slope(&d.plane, d.floor.thickness, false),
+            }
+        }
+        types::CEILING => {
+            let d = crate::ceiling::derived(snapshot, &spatial::get(snapshot, element.id)?)?;
+            match side {
+                FaceSide::Bottom => from_slope(&d.plane, 0.0, false),
+                _ => from_slope(&d.plane, -d.ceiling.thickness(), true),
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The plane the work plane record `object` stands for, now: a level's elevation, the line of a
-/// grid or reference plane, or the three points. `None` when the source is gone or the points lie
+/// grid or reference plane, the three points, or a face of an element. `None` when the source is gone or the points lie
 /// on one line.
 #[must_use]
 pub fn resolve(snapshot: &Snapshot, object: &Object) -> Option<Plane> {
@@ -710,6 +927,10 @@ pub fn resolve(snapshot: &Snapshot, object: &Object) -> Option<Plane> {
             let r = RefPlane::from_values(&target.values)?;
             let (low, _) = extent(snapshot, target.header.owner, None, None);
             Plane::vertical(r.start, r.end, low)
+        }
+        Source::Face => {
+            let element = spatial::get(snapshot, reference_at(v, work_plane::FACE_ELEMENT)?)?;
+            face_plane(snapshot, &element, FaceSide::of_field(v, work_plane::FACE))
         }
         Source::Points => {
             let at = |k: usize| -> Option<[f64; 3]> {
@@ -755,7 +976,7 @@ pub fn is_degenerate(snapshot: &Snapshot, key: &str, object: &Object) -> bool {
                 Source::Level => Some(types::LEVEL),
                 Source::Grid => Some(GRID),
                 Source::ReferencePlane => Some(REFERENCE_PLANE),
-                Source::Points => None,
+                Source::Points | Source::Face => None,
             };
             let target = reference_at(&object.values, work_plane::TARGET);
             match (expected, target) {
@@ -816,6 +1037,31 @@ mod tests {
             cross([[0.0, 0.0], [4.0, 0.0]], [[0.0, 1.0], [4.0, 1.0]]),
             None
         );
+    }
+
+    #[test]
+    fn a_line_is_pulled_in_or_pushed_out_along_its_segments() {
+        let line = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]];
+        assert_eq!(
+            trimmed(&line, 1.0, 1.0),
+            Some(vec![[1.0, 0.0], [4.0, 0.0], [4.0, 2.0]])
+        );
+        // Past a vertex, along the next segment.
+        assert_eq!(trimmed(&line, 5.0, 0.0), Some(vec![[4.0, 1.0], [4.0, 3.0]]));
+        // Pushed out along the end segments.
+        assert_eq!(
+            trimmed(&line, -2.0, -1.0),
+            Some(vec![
+                [-2.0, 0.0],
+                [0.0, 0.0],
+                [4.0, 0.0],
+                [4.0, 3.0],
+                [4.0, 4.0]
+            ])
+        );
+        // Nothing is left of a line pulled in past itself, or by a value that is not a number.
+        assert_eq!(trimmed(&line, 4.0, 3.0), None);
+        assert_eq!(trimmed(&line, f64::NAN, 0.0), None);
     }
 
     #[test]

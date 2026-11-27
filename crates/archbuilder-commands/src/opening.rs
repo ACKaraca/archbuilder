@@ -32,6 +32,10 @@ pub const VERTICAL_OPENING_CREATE: &str = "archbuilder.vertical_opening.create";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateShaft {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey the shaft starts on; else the storey of the selection, else the lowest.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -66,6 +70,10 @@ pub struct CreateShaft {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCut {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The floor, roof or ceiling that hosts the opening; else the selected one.
     #[serde(default)]
     pub host: Option<IdParam>,
@@ -209,6 +217,7 @@ fn create_shaft(ctx: &mut Context<'_>, p: CreateShaft) -> Result<OpeningCreated>
             reference(top),
         ],
     )?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
     let span = spatial::get(txn.snapshot(), id)
@@ -247,6 +256,7 @@ fn create_cut(ctx: &mut Context<'_>, p: CreateCut) -> Result<OpeningCreated> {
         Some(host),
         vec![Some(named(&name)), Some(Floor::vertex_values(&vertices))],
     )?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
     let area = spatial::get(txn.snapshot(), id)

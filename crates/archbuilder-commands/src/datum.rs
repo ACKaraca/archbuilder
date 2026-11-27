@@ -34,6 +34,9 @@ pub const WORK_PLANE_SHOW: &str = "archbuilder.work_plane.show";
 /// The identifier of the datum extent command.
 pub const DATUM_SET_EXTENT: &str = "archbuilder.datum.set_extent";
 
+/// The identifier of the per-view extent command.
+pub const DATUM_SET_VIEW_EXTENT: &str = "archbuilder.datum.set_view_extent";
+
 /// The most grids one extent command works on.
 const MAX_OBJECTS: usize = 5_000;
 
@@ -134,9 +137,19 @@ pub struct ReferencePlaneCreated {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetWorkPlane {
-    /// `level`, `grid`, `reference_plane` or `points`; else what `target` or the selection is.
+    /// `level`, `grid`, `reference_plane`, `points` or `face`; else what `target`, `element` or
+    /// the selection is.
     #[serde(default)]
     pub source: Option<String>,
+    /// The wall, floor or ceiling whose face is the plane; else a selected one when nothing else
+    /// is named.
+    #[serde(default)]
+    pub element: Option<IdParam>,
+    /// The face of `element`: `exterior` or `interior` of a wall, `top` or `bottom` of a floor or
+    /// ceiling; the wall's exterior, the floor's top and the ceiling's underside when absent.
+    #[serde(default)]
+    #[schemars(length(max = 32))]
+    pub face: Option<String>,
     /// The level, grid or reference plane (identifier or name); else the selected one.
     #[serde(default)]
     #[schemars(length(max = 256))]
@@ -204,6 +217,177 @@ pub struct SetExtent {
 pub struct ExtentSet {
     /// The grids changed.
     pub objects: usize,
+}
+
+/// Parameters of `archbuilder.datum.set_view_extent`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetViewExtent {
+    /// The grids; else the selected ones.
+    #[serde(default)]
+    pub objects: Option<Vec<IdParam>>,
+    /// The plan views (or storeys, for their first view) that take the change: the view that was
+    /// adjusted and every parallel view the change is propagated to, all in one transaction.
+    #[serde(default)]
+    #[schemars(length(max = 5000))]
+    pub views: Vec<IdParam>,
+    /// A view whose overrides of the grids the target views take over (a view without one clears
+    /// theirs), instead of the values below.
+    #[serde(default)]
+    pub from_view: Option<IdParam>,
+    /// How far the start is pulled in along the line, in meters; negative pushes it out.
+    #[serde(default)]
+    pub start_inset: Option<f64>,
+    /// How far the end is pulled in along the line, in meters; negative pushes it out.
+    #[serde(default)]
+    pub end_inset: Option<f64>,
+    /// Whether the start shows its head in these views.
+    #[serde(default)]
+    pub head_start: Option<bool>,
+    /// Whether the end shows its head in these views.
+    #[serde(default)]
+    pub head_end: Option<bool>,
+    /// Drops the overrides of the grids in these views: they show the grid's own extent again.
+    #[serde(default)]
+    pub reset: Option<bool>,
+}
+
+/// What `archbuilder.datum.set_view_extent` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ViewExtentSet {
+    /// The views changed.
+    pub views: usize,
+    /// The grids whose display changed in them.
+    pub grids: usize,
+}
+
+fn set_view_extent(ctx: &mut Context<'_>, p: SetViewExtent) -> Result<ViewExtentSet> {
+    use archbuilder_model::view::{self as plan, DatumView, PlanView};
+    let ids: Vec<ObjectId> = match p.objects {
+        Some(list) if list.len() > MAX_OBJECTS => {
+            return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+        }
+        Some(list) => list.into_iter().map(|IdParam(id)| id).collect(),
+        None => ctx.selection().iter().copied().take(MAX_OBJECTS).collect(),
+    };
+    let snapshot = ctx.snapshot().clone();
+    let grids: Vec<ObjectId> = ids
+        .into_iter()
+        .filter(|id| spatial::type_of(&snapshot, *id).as_deref() == Some(GRID))
+        .collect();
+    if grids.is_empty() || p.views.is_empty() {
+        return Err(Error::new(codes::NOTHING_SELECTED));
+    }
+    let inset_ok = |v: Option<f64>| {
+        v.is_none_or(|v| v.is_finite() && v >= plan::INSET_RANGE.0 && v <= plan::INSET_RANGE.1)
+    };
+    if !inset_ok(p.start_inset) || !inset_ok(p.end_inset) {
+        return Err(Error::new(codes::VALUE_INVALID));
+    }
+    let reset = p.reset.unwrap_or(false);
+    let given = p.start_inset.is_some()
+        || p.end_inset.is_some()
+        || p.head_start.is_some()
+        || p.head_end.is_some();
+    if !reset && p.from_view.is_none() && !given {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    let settings_of = |ctx: &mut Context<'_>, id: ObjectId| -> Result<(ObjectId, PlanView)> {
+        let view = crate::view::real_view(ctx, id)?;
+        let object = expect(ctx.snapshot(), view, archbuilder_model::types::PLAN_VIEW)?;
+        let settings = PlanView::from_values(&object.values)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        Ok((view, settings))
+    };
+    let source = match p.from_view {
+        Some(IdParam(id)) => Some(settings_of(ctx, id)?.1),
+        None => None,
+    };
+    let mut done: Vec<ObjectId> = Vec::new();
+    for IdParam(id) in &p.views {
+        let (view, mut settings) = settings_of(ctx, *id)?;
+        if done.contains(&view) {
+            continue;
+        }
+        for grid in &grids {
+            let mut entry = settings
+                .datum_views
+                .iter()
+                .find(|d| d.datum == *grid)
+                .copied()
+                .unwrap_or_else(|| DatumView::new(*grid));
+            if reset {
+                entry = DatumView::new(*grid);
+            } else if let Some(from) = &source {
+                entry = from
+                    .datum_views
+                    .iter()
+                    .find(|d| d.datum == *grid)
+                    .copied()
+                    .unwrap_or_else(|| DatumView::new(*grid));
+            } else {
+                entry.start_inset = p.start_inset.or(entry.start_inset);
+                entry.end_inset = p.end_inset.or(entry.end_inset);
+                entry.head_start = p.head_start.or(entry.head_start);
+                entry.head_end = p.head_end.or(entry.head_end);
+            }
+            settings.datum_views.retain(|d| d.datum != *grid);
+            if !entry.is_empty() {
+                settings.datum_views.push(entry);
+            }
+        }
+        ctx.txn()?.modify(
+            view,
+            FieldPath::new("datum_views"),
+            plan::datum_views_value(&settings.datum_views),
+        )?;
+        done.push(view);
+    }
+    ensure_valid(ctx)?;
+    Ok(ViewExtentSet {
+        views: done.len(),
+        grids: grids.len(),
+    })
+}
+
+/// Stores on the element `id` the work plane `plane` it was sketched on (nothing when `None`): the
+/// plane must be one of the building the element's storey belongs to.
+pub(crate) fn store_work_plane(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    plane: Option<IdParam>,
+) -> Result<()> {
+    let Some(IdParam(plane)) = plane else {
+        return Ok(());
+    };
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wp = expect(&snapshot, plane, WORK_PLANE)?;
+    let building = spatial::get(&snapshot, id)
+        .and_then(|e| e.header.owner)
+        .and_then(|s| spatial::get(&snapshot, s))
+        .and_then(|s| s.header.owner);
+    if building.is_none() || wp.header.owner != building {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    ctx.txn()?.modify(
+        id,
+        FieldPath::new("work_plane"),
+        Some(Value::Reference(plane)),
+    )
+}
+
+/// The line `[origin, origin + axis]` in plan of the vertical work plane `plane`.
+pub(crate) fn vertical_work_plane(ctx: &Context<'_>, plane: ObjectId) -> Result<[[f64; 2]; 2]> {
+    let snapshot = ctx.snapshot();
+    let wp = expect(snapshot, plane, WORK_PLANE)?;
+    match datum::resolve(snapshot, &wp) {
+        Some(p) if p.normal[2].abs() < 1.0e-9 => Ok([
+            [p.origin[0], p.origin[1]],
+            [p.origin[0] + p.u[0], p.origin[1] + p.u[1]],
+        ]),
+        Some(_) => Err(Error::new(codes::KIND_MISMATCH)),
+        None => Err(Error::new(codes::NO_WORK_PLANE)),
+    }
 }
 
 fn level_named(snapshot: &Snapshot, building: ObjectId, text: &str) -> Result<ObjectId> {
@@ -427,6 +611,24 @@ fn resolve_target(
     if p.points.is_some() || p.source.as_deref() == Some("points") {
         return Ok((Source::Points, None));
     }
+    let face_kind = |id: ObjectId| {
+        spatial::type_of(snapshot, id).filter(|k| datum::FaceSide::default_of(k).is_some())
+    };
+    if p.element.is_some() || p.source.as_deref() == Some("face") {
+        let id = match &p.element {
+            Some(IdParam(id)) => Some(*id),
+            None => ctx
+                .selection()
+                .iter()
+                .copied()
+                .find(|id| face_kind(*id).is_some()),
+        };
+        let id = id.ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+        return match face_kind(id) {
+            Some(_) => Ok((Source::Face, Some(id))),
+            None => Err(Error::new(codes::KIND_MISMATCH)),
+        };
+    }
     let source_of = |key: &str| match key {
         LEVEL => Some(Source::Level),
         GRID => Some(Source::Grid),
@@ -452,7 +654,22 @@ fn resolve_target(
                 spatial::type_of(snapshot, *id).is_some_and(|k| source_of(&k).is_some())
             }),
         };
+    // Nothing named and no datum selected: a selected wall, floor or ceiling gives its face.
+    let found = found.or_else(|| {
+        p.target
+            .is_none()
+            .then(|| {
+                ctx.selection()
+                    .iter()
+                    .copied()
+                    .find(|id| face_kind(*id).is_some())
+            })
+            .flatten()
+    });
     let id = found.ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+    if face_kind(id).is_some() {
+        return Ok((Source::Face, Some(id)));
+    }
     let source = spatial::type_of(snapshot, id)
         .and_then(|k| source_of(&k))
         .ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
@@ -469,17 +686,44 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
     let (source, target) = resolve_target(ctx, building, &p)?;
     let snapshot = ctx.snapshot().clone();
     let shown = p.shown.unwrap_or(true);
+    // The face of an element the plane lies on.
+    let side = if source == Source::Face {
+        let key = target
+            .and_then(|id| spatial::type_of(&snapshot, id))
+            .ok_or_else(|| Error::new(codes::NO_WORK_PLANE))?;
+        let side = match p.face.as_deref().map(str::trim).filter(|f| !f.is_empty()) {
+            Some(text) => datum::FaceSide::ALL
+                .into_iter()
+                .find(|s| s.name() == text)
+                .ok_or_else(|| Error::new(codes::VALUE_INVALID))?,
+            None => {
+                datum::FaceSide::default_of(&key).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            }
+        };
+        if !side.on(&key) {
+            return Err(Error::new(codes::KIND_MISMATCH));
+        }
+        Some(side)
+    } else {
+        None
+    };
     // A plane that follows a datum is reused; three points always make a new one.
     let existing = (source != Source::Points)
         .then(|| {
             spatial::children(&snapshot, WORK_PLANE, building)
                 .into_iter()
                 .find(|o| {
+                    let at = |slot: usize| match o.values.get(slot) {
+                        Some(Some(Value::Reference(t))) => Some(*t),
+                        _ => None,
+                    };
                     Source::of_values(&o.values) == source
-                        && matches!(
-                            o.values.get(types::work_plane::TARGET),
-                            Some(Some(Value::Reference(t))) if Some(*t) == target
-                        )
+                        && if source == Source::Face {
+                            at(types::work_plane::FACE_ELEMENT) == target
+                                && Some(datum::FaceSide::of_values(&o.values)) == side
+                        } else {
+                            at(types::work_plane::TARGET) == target
+                        }
                 })
         })
         .flatten();
@@ -506,7 +750,9 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
         let mut values: Vec<Option<Value>> = vec![
             Some(named(&name)),
             Some(Value::Enum(source.code())),
-            target.map(Value::Reference),
+            target
+                .filter(|_| source != Source::Face)
+                .map(Value::Reference),
         ];
         let points = p.points.unwrap_or([[0.0; 3]; 3]);
         for point in points {
@@ -519,6 +765,12 @@ fn set_work_plane(ctx: &mut Context<'_>, p: SetWorkPlane) -> Result<WorkPlaneSet
         }
         values.push(Some(Value::Bool(true)));
         values.push(Some(Value::Bool(shown)));
+        values.push(
+            target
+                .filter(|_| source == Source::Face)
+                .map(Value::Reference),
+        );
+        values.push(side.map(|s| Value::Enum(s.code())));
         (create(ctx, WORK_PLANE, Some(building), values)?, name)
     };
     ensure_valid(ctx)?;
@@ -710,6 +962,21 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         label,
         description,
         |ctx: &mut Context<'_>, p: SetExtent| set_extent(ctx, p),
+    ))?;
+    let (id, label, description) = spec(
+        DATUM_SET_VIEW_EXTENT,
+        Msg {
+            message_id: "ab-cmd-datum-set-view-extent-label",
+        },
+        Msg {
+            message_id: "ab-cmd-datum-set-view-extent-description",
+        },
+    );
+    registry.register(CommandSpec::new(
+        id,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: SetViewExtent| set_view_extent(ctx, p),
     ))
 }
 

@@ -41,7 +41,7 @@ pub const VIEW_SET: &str = "archbuilder.view.set";
 /// a view (a document saved before plan views) shows a default view that the document does not hold;
 /// it is made here, in the command's transaction, so the change that needed it and its making are
 /// one undo step.
-fn real_view(ctx: &mut Context<'_>, id: ObjectId) -> Result<ObjectId> {
+pub(crate) fn real_view(ctx: &mut Context<'_>, id: ObjectId) -> Result<ObjectId> {
     match spatial::type_of(ctx.snapshot(), id).as_deref() {
         Some(PLAN_VIEW) => Ok(id),
         Some(STOREY) => {

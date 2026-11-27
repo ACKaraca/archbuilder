@@ -317,7 +317,8 @@ fn plan_candidates(
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
     // In a plan view the tools work on the view's storey.
-    let found = crate::plan_state::current_in(tab, &snapshot)
+    let planned = crate::plan_state::current_in(tab, &snapshot);
+    let found = planned
         .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
         .or_else(|| storey_for(&snapshot, selection));
     // The command tabs and the status bar learn the selection and the storey from here.
@@ -333,6 +334,20 @@ pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Opti
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
     rooms.set_selection(selection);
+    // In a 3D view the active work plane of the storey's building is where points land (a plan
+    // view looks straight down and keeps the storey's plane).
+    let active = planned.is_none().then(|| {
+        spatial::get(&snapshot, storey)
+            .and_then(|s| s.header.owner)
+            .and_then(|b| archbuilder_model::datum::active(&snapshot, b))
+            .and_then(|(_, plane)| plane)
+    });
+    if let Some(Some(p)) = active {
+        return Some(WorkPlane {
+            origin: Point3::new(p.origin[0], p.origin[1], p.origin[2]),
+            normal: Vector3::new(p.normal[0], p.normal[1], p.normal[2]),
+        });
+    }
     Some(WorkPlane {
         origin: Point3::new(0.0, 0.0, elevation),
         normal: Vector3::z(),
