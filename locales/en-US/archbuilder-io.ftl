@@ -49,3 +49,4 @@ ab-io-loss-mesh-object = { $count } objects without a body are not in the file: 
 ab-io-loss-mesh-body-failed = The element "{ $name }" has no mesh in the file: its solid could not be derived.
 ab-io-loss-mesh-curves = Curved edges and surfaces of { $count } elements are written as triangles.
 ab-io-loss-mesh-unit = The file does not record its unit: read the coordinates in the unit the export was made in.
+ab-io-loss-family-not-written = A family instance is not in the IFC file: the mapping of family instances is not written yet. It is listed here, and is not exported as a proxy.

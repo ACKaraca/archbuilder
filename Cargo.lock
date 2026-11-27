@@ -369,6 +369,7 @@ dependencies = [
  "arc-geom",
  "arc-solve",
  "arc-view",
+ "blake3",
 ]
 
 [[package]]

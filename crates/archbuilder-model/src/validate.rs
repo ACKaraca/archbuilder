@@ -45,7 +45,11 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         STOREY | LEVEL => Some(&[BUILDING]),
         k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
-        types::SELECTION_SET | types::VARIABLE | types::PARAMETER => Some(&[PROJECT]),
+        types::SELECTION_SET
+        | types::VARIABLE
+        | types::PARAMETER
+        | types::FAMILY
+        | types::FAMILY_TYPE => Some(&[PROJECT]),
         types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
@@ -141,12 +145,20 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     }
     let own = folded(object);
     // Rooms are told apart by number, not by name.
+    // A component's mark is optional, and a family type is named within its family.
+    let scope = |o: &Object| {
+        o.header.owner == object.header.owner
+            && (key != types::FAMILY_TYPE
+                || o.values.get(types::family_type::FAMILY)
+                    == object.values.get(types::family_type::FAMILY))
+    };
     if key != PROJECT
         && key != ROOM
         && key != types::GRID
+        && key != types::COMPONENT
         && objects(candidate, key)
             .iter()
-            .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
+            .any(|o| o.id != object.id && scope(o) && folded(o) == own)
     {
         out.push(name_taken(object));
     }

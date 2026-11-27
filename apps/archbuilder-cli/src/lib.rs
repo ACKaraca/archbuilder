@@ -18,6 +18,7 @@
 //! length), and the `variables` list: each document variable with its identifier, data type,
 //! formula and value (derived), and `parameters`: the project parameters (`parameters`) and the
 //! value of each element and type with its source and formula (`values`, derived).
+//! `family check` and `family publish` read and write `.archbfam` packages ([`family`]).
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`. `export-mesh <file.archb> <out.obj|stl|gltf|glb> [options]` writes
@@ -33,6 +34,7 @@ use serde_json::Value;
 
 pub mod check;
 pub mod export;
+pub mod family;
 pub mod floors;
 pub mod rooms;
 pub mod stairs;
@@ -91,6 +93,9 @@ where
         archbuilder_commands::install(document);
         Ok(())
     };
+    if args.first().and_then(|a| a.to_str()) == Some("family") {
+        return family::run(&args[1..], product, stdout, stderr);
+    }
     if args.first().and_then(|a| a.to_str()) == Some("export-ifc") {
         return export::run(&args[1..], product, stdout, stderr);
     }
@@ -114,6 +119,14 @@ where
         let _ = writeln!(
             stderr,
             "  export-mesh <file> <out.obj|stl|gltf|glb> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]   write meshes; prints the loss report"
+        );
+        let _ = writeln!(
+            stderr,
+            "  family check <file.archbfam> [--available name@version]   verify a family package; exit 3 when it is refused"
+        );
+        let _ = writeln!(
+            stderr,
+            "  family publish --out <file.archbfam> --name N --version V --family <definition.txt>=<version>   publish families into a new package"
         );
         return exit;
     }

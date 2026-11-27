@@ -265,10 +265,13 @@ pub(crate) fn stored_input(
 /// reject rule, with the objects that fail.
 pub(crate) fn ensure_formulas(ctx: &mut Context<'_>) -> Result<Vec<String>> {
     let txn = ctx.txn()?;
-    Ok(archbuilder_model::parameter::check(txn.snapshot())?
+    let warnings = archbuilder_model::parameter::check(txn.snapshot())?
         .iter()
         .map(warning_text)
-        .collect())
+        .collect();
+    // A change of a variable or a parameter may leave a family instance that no longer evaluates.
+    archbuilder_model::family::loaded::check_components(txn.snapshot(), None)?;
+    Ok(warnings)
 }
 
 /// A rule warning as text: `parameter on object: rule`.

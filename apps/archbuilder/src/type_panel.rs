@@ -32,7 +32,7 @@ struct Message {
     message_id: &'static str,
 }
 
-const KIND_LABELS: [(TypeKind, Message); 4] = [
+const KIND_LABELS: [(TypeKind, Message); 5] = [
     (
         TypeKind::Wall,
         Message {
@@ -55,6 +55,12 @@ const KIND_LABELS: [(TypeKind, Message); 4] = [
         TypeKind::Window,
         Message {
             message_id: "ab-types-kind-window",
+        },
+    ),
+    (
+        TypeKind::Family,
+        Message {
+            message_id: "ab-types-kind-family",
         },
     ),
 ];
@@ -436,7 +442,10 @@ impl Draft {
             draft.rafter_cut = cut.cut;
             draft.fascia = mm(cut.fascia_depth);
         }
-        if kind.layered() {
+        if kind == TypeKind::Family {
+            // The values of a family type are listed beside the name; they change through
+            // `archbuilder.type.set` with `values`.
+        } else if kind.layered() {
             let layers = Layers::from_values(&object.values)?;
             draft.rows = layers
                 .layers
@@ -510,7 +519,9 @@ impl Draft {
         let Some(map) = params.as_object_mut() else {
             return Err(String::new());
         };
-        if kind.layered() {
+        if kind == TypeKind::Family {
+            // Only the name is edited here.
+        } else if kind.layered() {
             let layers = self.layers(localize)?;
             map.insert(
                 "layers".into(),
@@ -664,6 +675,42 @@ pub struct TypePanel {
     /// After Duplicate of a railing or ramp type: the types it had.
     circ_copying: Option<Vec<ObjectId>>,
 }
+
+/// The values of a family type, one row each: the parameter and its literal or formula.
+fn family_values(ui: &mut Ui, snapshot: &Snapshot, id: ObjectId, localize: &dyn Localize) {
+    use archbuilder_model::expr::{Evaluated, Stored};
+    use archbuilder_model::family::loaded::{FamilyType, Loaded};
+    let Some(ty) = spatial::get(snapshot, id).and_then(|o| FamilyType::of(&o)) else {
+        return;
+    };
+    let definition = spatial::get(snapshot, ty.family)
+        .and_then(|o| Loaded::of(&o))
+        .and_then(|f| f.definition().ok());
+    ui.label(RichText::new(say(localize, &FAMILY_VALUES_HEADING, &[])).strong());
+    egui::Grid::new("archbuilder-types-family-values")
+        .striped(true)
+        .num_columns(2)
+        .show(ui, |ui| {
+            for (key, value) in &ty.values {
+                let name = definition
+                    .as_ref()
+                    .and_then(|d| d.parameter(key))
+                    .map_or_else(|| key.clone(), |p| p.name.clone());
+                ui.label(name);
+                ui.label(match value {
+                    Stored::Formula(f) => format!("= {}", f.text()),
+                    Stored::Literal(Evaluated::Number(v)) => v.to_string(),
+                    Stored::Literal(Evaluated::Bool(b)) => b.to_string(),
+                    Stored::Literal(Evaluated::Text(t)) => t.clone(),
+                });
+                ui.end_row();
+            }
+        });
+}
+
+const FAMILY_VALUES_HEADING: Message = Message {
+    message_id: "ab-types-family-values",
+};
 
 fn combo_text<T: PartialEq + Copy>(
     items: &[(T, Message)],
@@ -1182,7 +1229,9 @@ impl TypePanel {
                         }
                     });
                 }
-                if kind.layered() {
+                if kind == TypeKind::Family {
+                    family_values(ui, &snapshot, id, localize);
+                } else if kind.layered() {
                     ui.label(RichText::new(say(localize, &LAYERS_HEADING, &[])).strong());
                     let mut swap: Option<(usize, usize)> = None;
                     let mut remove: Option<usize> = None;

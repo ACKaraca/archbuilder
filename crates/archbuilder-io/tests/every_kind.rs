@@ -211,6 +211,66 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         json!({"name": "All walls", "objects": walls}),
     );
 
+    // A family instance has no IFC mapping yet: it is listed in the loss report.
+    {
+        use archbuilder_model::family::fixtures::table;
+        use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let s = document.snapshot();
+        let project = spatial::project(&s).unwrap().id;
+        let storey = spatial::objects(&s, types::STOREY)[0].id;
+        let definition = table();
+        let published = publish(
+            &definition,
+            None,
+            archbuilder_model::family::Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let values = definition.type_named("1400x800").unwrap().values.clone();
+        document
+            .submit(move |txn| {
+                use arc_base::id::Identifier;
+                let owned = |owner| arc_doc::Header {
+                    owner: Some(owner),
+                    ..Default::default()
+                };
+                let (f, t, c) = (
+                    arc_base::ObjectId::from_u128(0xC1),
+                    arc_base::ObjectId::from_u128(0xC2),
+                    arc_base::ObjectId::from_u128(0xC3),
+                );
+                txn.create(
+                    types::FAMILY,
+                    f,
+                    owned(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    types::FAMILY_TYPE,
+                    t,
+                    owned(project),
+                    FamilyType::record("1400x800", f, &values),
+                )?;
+                let comp = Component {
+                    id: c,
+                    storey: Some(storey),
+                    name: String::new(),
+                    family_type: t,
+                    offset: 0.0,
+                    origin: [30.0, 30.0],
+                    rotation: 0.0,
+                    mirror: false,
+                    values: Default::default(),
+                };
+                txn.create(types::COMPONENT, c, owned(storey), comp.record())
+            })
+            .wait()
+            .unwrap();
+    }
     let s = document.snapshot();
     for key in ELEMENTS
         .iter()
@@ -243,10 +303,10 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     assert!(
         !reasons
             .iter()
-            .any(|r| r.ends_with("_not_written") && !matches!(*r, "ab.io.ifc.datum_not_written")),
+            .any(|r| r.ends_with("_not_written") && !matches!(*r, "ab.io.ifc.datum_not_written" | "ab.io.ifc.family_not_written")),
         "{reasons:?}"
     );
-    for reason in ["ab.io.ifc.dormer_as_parts", "ab.io.ifc.fascia_as_covering"] {
+    for reason in ["ab.io.ifc.family_not_written", "ab.io.ifc.dormer_as_parts", "ab.io.ifc.fascia_as_covering"] {
         assert!(reasons.contains(&reason), "{reason} not reported");
     }
     // The standard property sets of the kinds the model knows values for.

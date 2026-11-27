@@ -33,6 +33,7 @@ third_party = [
   "arc-solve",
   "arc-ui",
   "arc-view",
+  "blake3",
   "fluent-bundle",
   "schemars",
   "serde",

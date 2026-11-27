@@ -182,6 +182,22 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-components",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-component",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-component-hint",
+                        }),
+                        archbuilder_commands::family_project::COMPONENT_PLACE,
+                        "component",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-floors-roofs",
                     },
                     vec![
@@ -995,6 +1011,22 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-families",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-load-family",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-load-family-hint",
+                        }),
+                        archbuilder_commands::family_project::FAMILY_LOAD,
+                        "load-family",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-parameters",
                     },
                     vec![
@@ -1589,6 +1621,8 @@ pub fn icons() -> Vec<(String, String)> {
         "statistics",
         "variables",
         "parameters",
+        "component",
+        "load-family",
         "project-location",
         "coordinates",
         "recenter",

@@ -35,7 +35,7 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR,
+    CEILING, COMPONENT, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR,
     STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
@@ -256,6 +256,7 @@ impl PlanSource<'_> {
                     .map(|o| o.id),
             );
         }
+        out.extend(own(COMPONENT).iter().map(|o| o.id));
         out.extend(own(STAIR).iter().map(|o| o.id));
         out.extend(own(RAMP).iter().map(|o| o.id));
         out.extend(own(RAILING).iter().map(|o| o.id));
@@ -747,6 +748,69 @@ impl PlanSource<'_> {
         Some(out)
     }
 
+    /// A family instance: its solids as parts (the plan section cuts them like any body) and the
+    /// symbolic plan geometry its definition shows at the view's detail level, with the footprint
+    /// of its solids so that a click inside picks it.
+    fn component_object(&self, object: &Object, detail: DetailLevel) -> Option<SourceObject> {
+        use crate::family::def::{Detail as Level, SymbolKind, ViewKind};
+        let placed = crate::family::loaded::Component::of(object)
+            .and_then(|c| crate::family::loaded::place(self.snapshot, &c).ok())?;
+        let level = match detail {
+            DetailLevel::Coarse => Level::Low,
+            DetailLevel::Medium => Level::Medium,
+            _ => Level::High,
+        };
+        let mut out = SourceObject::new("archbuilder.component", styles(self.scale, self.tone));
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for (k, s) in placed
+            .solids
+            .iter()
+            .filter(|s| s.shown.at(level, ViewKind::Plan))
+            .enumerate()
+        {
+            let b = s.solid.bounding_box();
+            for i in 0..2 {
+                lo[i] = lo[i].min(b.min()[i]);
+                hi[i] = hi[i].max(b.max()[i]);
+            }
+            out = out.with_part(
+                Part::new(
+                    u32::try_from(k).unwrap_or(0),
+                    Geometry::Solid(s.solid.clone()),
+                )
+                .with_fill(Some(CutFill::solid(gray(0.6)))),
+            );
+        }
+        for (k, sym) in placed
+            .plan
+            .iter()
+            .filter(|s| s.shown.at(level, ViewKind::Plan))
+            .enumerate()
+        {
+            if let Some(c) = curve(&sym.points, sym.kind != SymbolKind::Line) {
+                out = out.with_symbol(Symbol::new(
+                    c,
+                    VisibilityClass::Visible,
+                    100 + u32::try_from(k).unwrap_or(0),
+                ));
+            }
+        }
+        if lo[0].is_finite()
+            && let Some(c) = curve(
+                &[
+                    [lo[0], lo[1]],
+                    [hi[0], lo[1]],
+                    [hi[0], hi[1]],
+                    [lo[0], hi[1]],
+                ],
+                true,
+            )
+        {
+            out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, AREA_KEY));
+        }
+        Some(out)
+    }
+
     fn room_object(&self, id: ObjectId) -> Option<SourceObject> {
         let entry = self
             .rooms
@@ -812,6 +876,7 @@ impl PlanSource<'_> {
             RAILING => self.railing_object(&object),
             SHAFT | VERTICAL_OPENING => self.opening_object(&object, &key),
             ELEVATOR => self.elevator_object(&object),
+            COMPONENT => self.component_object(&object, def.detail),
             ROOM => self.room_object(id),
             MODEL_VIEW => self.marker_object(&object),
             _ => None,
@@ -926,6 +991,10 @@ fn deps(snapshot: &Snapshot, view: &Arc<Object>, pass: Pass) -> Deps {
             ELEVATOR,
             VERTICAL_OPENING,
             MODEL_VIEW,
+            crate::types::COMPONENT,
+            crate::types::FAMILY,
+            crate::types::FAMILY_TYPE,
+            crate::types::VARIABLE,
         ],
     };
     for key in keys {

@@ -109,17 +109,20 @@ pub enum TypeKind {
     Roof,
     /// Ceiling types.
     Ceiling,
+    /// Family types (loaded families, ADR 0009).
+    Family,
 }
 
 impl TypeKind {
-    /// Every kind, in the order of [`types::TYPE_KEYS`].
-    pub const ALL: [Self; 6] = [
+    /// Every kind, in the order of [`types::TYPE_KEYS`], then the family types.
+    pub const ALL: [Self; 7] = [
         Self::Wall,
         Self::Floor,
         Self::Door,
         Self::Window,
         Self::Roof,
         Self::Ceiling,
+        Self::Family,
     ];
 
     /// The key of the type records.
@@ -132,6 +135,7 @@ impl TypeKind {
             Self::Window => WINDOW_TYPE,
             Self::Roof => ROOF_TYPE,
             Self::Ceiling => CEILING_TYPE,
+            Self::Family => types::FAMILY_TYPE,
         }
     }
 
@@ -145,6 +149,7 @@ impl TypeKind {
             Self::Window => WINDOW,
             Self::Roof => ROOF,
             Self::Ceiling => CEILING,
+            Self::Family => types::COMPONENT,
         }
     }
 
@@ -169,6 +174,7 @@ impl TypeKind {
             Self::Door | Self::Window => types::insert::INSERT_TYPE,
             Self::Roof => types::roof::ROOF_TYPE,
             Self::Ceiling => types::ceiling::CEILING_TYPE,
+            Self::Family => types::component::FAMILY_TYPE,
         }
     }
 
@@ -181,6 +187,7 @@ impl TypeKind {
             Self::Door | Self::Window => "insert_type",
             Self::Roof => "roof_type",
             Self::Ceiling => "ceiling_type",
+            Self::Family => "family_type",
         }
     }
 
@@ -196,7 +203,7 @@ impl TypeKind {
         match self {
             Self::Door => Some(Kind::Door),
             Self::Window => Some(Kind::Window),
-            Self::Wall | Self::Floor | Self::Roof | Self::Ceiling => None,
+            Self::Wall | Self::Floor | Self::Roof | Self::Ceiling | Self::Family => None,
         }
     }
 }
@@ -674,6 +681,8 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
                 ]
             })
             .unwrap_or_default(),
+        // A family instance reads its type at evaluation; nothing is copied (ADR 0009).
+        TypeKind::Family => Vec::new(),
     }
 }
 
@@ -687,6 +696,7 @@ pub fn is_copied(kind: TypeKind, field: &str) -> bool {
             field,
             "width" | "height" | "frame_width" | "frame_depth" | "operation"
         ),
+        TypeKind::Family => false,
     }
 }
 

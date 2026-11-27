@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use arc_base::ObjectId;
+use arc_base::id::Identifier;
 use arc_command::{Invocation, Invoker, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Snapshot};
@@ -179,6 +180,67 @@ impl Rig {
             json!({"start": [-5.0, -3.0], "end": [16.0, -3.0]}),
             &[],
         );
+        self.component();
+    }
+
+    /// A loaded family with one type and a component of it.
+    fn component(&self) {
+        use archbuilder_model::family::fixtures::table;
+        use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let s = self.snapshot();
+        let project = spatial::project(&s).unwrap().id;
+        let storey = self.first(STOREY);
+        let definition = table();
+        let published = publish(
+            &definition,
+            None,
+            archbuilder_model::family::Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let values = definition.type_named("1400x800").unwrap().values.clone();
+        self.document
+            .submit(move |txn| {
+                let owned = |owner| arc_doc::Header {
+                    owner: Some(owner),
+                    ..Default::default()
+                };
+                let (f, t, c) = (
+                    ObjectId::from_u128(0xB1),
+                    ObjectId::from_u128(0xB2),
+                    ObjectId::from_u128(0xB3),
+                );
+                txn.create(
+                    types::FAMILY,
+                    f,
+                    owned(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    types::FAMILY_TYPE,
+                    t,
+                    owned(project),
+                    FamilyType::record("1400x800", f, &values),
+                )?;
+                let comp = Component {
+                    id: c,
+                    storey: Some(storey),
+                    name: String::new(),
+                    family_type: t,
+                    offset: 0.0,
+                    origin: [20.0, 20.0],
+                    rotation: 0.0,
+                    mirror: false,
+                    values: Default::default(),
+                };
+                txn.create(types::COMPONENT, c, owned(storey), comp.record())
+            })
+            .wait()
+            .unwrap();
     }
 }
 

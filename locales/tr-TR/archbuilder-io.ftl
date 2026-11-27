@@ -49,3 +49,4 @@ ab-io-loss-mesh-object = Gövdesi olmayan { $count } nesne dosyada yok: odalar, 
 ab-io-loss-mesh-body-failed = "{ $name }" öğesinin dosyada ağı yok: katısı türetilemedi.
 ab-io-loss-mesh-curves = { $count } öğenin eğri kenar ve yüzeyleri üçgen olarak yazıldı.
 ab-io-loss-mesh-unit = Dosya birimini kaydetmez: koordinatları dışa aktarımın yapıldığı birimde okuyun.
+ab-io-loss-family-not-written = Bir aile örneği IFC dosyasında yok: aile örneklerinin eşlemesi henüz yazılmadı. Burada listelenir, vekil öğe olarak dışa aktarılmaz.

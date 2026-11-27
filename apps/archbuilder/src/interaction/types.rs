@@ -63,6 +63,7 @@ fn tool_command(kind: TypeKind) -> &'static str {
         TypeKind::Window => WINDOW_PLACE,
         TypeKind::Roof => archbuilder_commands::roof::ROOF_CREATE,
         TypeKind::Ceiling => archbuilder_commands::ceiling::CEILING_CREATE,
+        TypeKind::Family => archbuilder_commands::family_project::COMPONENT_PLACE,
     }
 }
 
@@ -186,6 +187,8 @@ impl WallInteraction {
                 TypeKind::Floor | TypeKind::Roof | TypeKind::Ceiling => {
                     self.with_floors(cx, |tool, env, run| tool.retype(env, run))
                 }
+                // The prompts of the component command take the type when they ask for it.
+                TypeKind::Family => Ok(()),
             };
         }
         let mut invocation = Invocation::new(

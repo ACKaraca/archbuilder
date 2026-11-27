@@ -245,6 +245,18 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.elevator(&lift, storey, level);
         }
+        // A family instance is named in the loss report until its mapping is written: never a
+        // silent proxy.
+        for component in
+            spatial::children(self.snapshot, archbuilder_model::types::COMPONENT, storey)
+        {
+            self.cancel.check()?;
+            self.lose(
+                reasons::FAMILY_NOT_WRITTEN,
+                "IFCBUILDINGELEMENTPROXY",
+                &component,
+            );
+        }
         Ok(())
     }
 
@@ -1524,6 +1536,10 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
     use insert::Operation;
     let mut out = Vec::new();
     for kind in TypeKind::ALL {
+        // Family types are listed in the loss report until their IFC mapping exists.
+        if kind == TypeKind::Family {
+            continue;
+        }
         for object in et::of_kind(snapshot, kind) {
             // A wall type with the curtain fields is the `IfcCurtainWallType` of its curtain walls.
             let curtain = kind == TypeKind::Wall
@@ -1537,6 +1553,7 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
                 // A roof type does not decide the roof's form; its occurrences name it.
                 TypeKind::Roof => (ElementKind::Roof, ""),
                 TypeKind::Ceiling => (ElementKind::Covering, "CEILING"),
+                TypeKind::Family => continue,
             };
             let mut t = ElementType::new(object.id.as_u128(), ifc_kind, et::name(&object));
             t.predefined_type = (!predefined.is_empty()).then(|| predefined.to_owned());

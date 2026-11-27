@@ -64,6 +64,7 @@ pub mod element_type;
 pub mod elevator;
 pub mod error;
 pub mod expr;
+pub mod family;
 pub mod floor;
 pub mod floor_edge;
 pub mod headroom;
@@ -432,7 +433,8 @@ pub mod defaults {
 /// # Errors
 /// The registry's errors; none occur for these declarations.
 pub fn register_types(registry: &mut TypeRegistry) -> Result<()> {
-    types::register(registry)
+    types::register(registry)?;
+    family::package::register(registry)
 }
 
 /// The document type set of the model.
