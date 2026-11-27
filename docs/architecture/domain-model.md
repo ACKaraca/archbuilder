@@ -1181,6 +1181,34 @@ thickness; a slab cut into several parts is a faceted B-rep. The slab takes its 
 `GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
 the rule of `inspect`), all of the authored boundary, not of the cut body.
 
+Mesh export: `archbuilder.file.export_mesh` (Exchange tab, Mesh group, and File > Export) writes the
+elements as OBJ with an MTL library beside it, binary STL or glTF 2.0 (`.gltf` with the buffer
+embedded, or `.glb`), through the writers of `arc-io-mesh`; `archbuilder-cli export-mesh <file.archb>
+<out> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]` does the same
+headless and prints the loss report. The format is the `format` parameter or else the file
+extension; without a path the application asks in a save dialog whose extension picks the format.
+Every body the viewport draws is written (walls by layer, curtain walls by panel and mullion, doors
+and windows by part, floors, floor edges, both kinds of roof with their eave cut, fascias and
+gutters, dormers, ceilings, stairs, ramps, railings and elevator cars), each solid derived from the
+records as the viewport derives it. An element is one object (OBJ), one node (glTF) or part of the
+single solid (STL); its name is `<name> [<identifier>]`, with `#` and `\` written as `_`, and a
+glTF node also carries `{"archbuilder": {"id", "kind", "name"}}` as `extras`. A glTF file has a
+root node, named after the project, that turns the model's Z axis up into glTF's Y axis up; the
+positions stay the model's own. Options: `selection` (only the selected elements) or `elements` (a
+list), `hidden` (elements to leave out: the application passes what its view hides or isolates away,
+since that state is not in the document), `merge` (one object for the model, split by material),
+`materials` (on by default) and `unit` (meters by default; centimeters, millimeters, feet and inches
+for OBJ and STL, which record no unit; glTF is always in meters and refuses another). Materials are
+named by role (`wall.core`, `wall.finish`, `door.leaf`, `window.glass`, `roof`, ...) with the
+viewport's colors, glass being translucent; the MTL colors are sRGB-encoded and the glTF base
+colors linear. Coordinates are single precision in STL and glTF, so a model far from the origin
+loses precision there; recenter the project (`archbuilder.coordinates.recenter`) first. The loss report
+lists what a mesh cannot carry: parameters, types, layers and quantities (one item with the element
+count), hosting, joins, attachments and room relations, objects without a body (rooms, grids,
+reference and work planes, selection sets, by kind), curved surfaces written as triangles, the
+missing unit of OBJ and STL, and any element whose solid could not be derived (named). The command
+changes nothing in the document and is not undoable.
+
 Export: `archbuilder-io` writes the first building of the document with `arc-io-ifc`; `export_ifc`
 takes a snapshot and the caller's file name and time stamp (no clock in the crate) and returns the
 bytes, the number of walls, floors, doors and windows, and a loss report (`archbuilder-cli

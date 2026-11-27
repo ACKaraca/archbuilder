@@ -130,6 +130,16 @@ ab-notice-ifc-loss = { $count ->
 }
 ab-export-ifc-title = Export IFC
 ab-export-ifc-filter = IFC files (*.ifc)
+ab-export-mesh-title = Export mesh
+ab-export-mesh-filter-obj = Wavefront OBJ with materials (*.obj)
+ab-export-mesh-filter-stl = STL (*.stl)
+ab-export-mesh-filter-gltf = glTF 2.0 (*.gltf)
+ab-export-mesh-filter-glb = glTF 2.0 binary (*.glb)
+ab-group-mesh = Mesh
+ab-tool-export-mesh = Export mesh
+ab-tool-export-mesh-hint = Writes the elements (the selection, when there is one, without what is hidden) as OBJ, STL or glTF; the extension of the file names the format
+ab-notice-mesh-exported = Wrote { $count } elements as a mesh to { $name }.
+ab-notice-mesh-loss = { $count } items did not fit in the mesh file: see the loss report.
 
 ab-notice-modify-dissociated = { $count ->
     [one] One floor edge no longer follows a wall and stays where it is.

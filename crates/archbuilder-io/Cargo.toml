@@ -15,6 +15,8 @@ arc-doc = { workspace = true }
 arc-geom = { workspace = true }
 arc-io-common = { workspace = true }
 arc-io-ifc = { workspace = true }
+arc-io-mesh = { workspace = true }
+arc-mesh = { workspace = true }
 archbuilder-model = { path = "../archbuilder-model" }
 schemars = { workspace = true }
 serde = { workspace = true }
@@ -22,7 +24,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 archbuilder-commands = { path = "../archbuilder-commands" }
-arc-mesh = { workspace = true }
 
 [lints]
 workspace = true

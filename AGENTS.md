@@ -30,15 +30,15 @@ Present:
 ```
 crates/archbuilder-model/     spatial, wall, insert, floor, roof, room and element types, picking order, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands (headless)
-crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, floor edges, roofs (footprint and extrusion) with their dormers (opening, walls and roof) and fascias (moldings), ceilings, openings, rooms, stairs, ramps, railings, curtain walls and grids with a loss report (elevators and gutters are named in it); `archbuilder.file.export_ifc` (headless)
+crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, floor edges, roofs (footprint and extrusion) with their dormers (opening, walls and roof) and fascias (moldings), ceilings, openings, rooms, stairs, ramps, railings, curtain walls and grids with a loss report (elevators and gutters are named in it); `archbuilder.file.export_ifc`; mesh export (OBJ with MTL, STL, glTF/GLB) with a loss report, `archbuilder.file.export_mesh` (headless)
 apps/archbuilder/             desktop application: arc-app shell, panels, extractors, tools
-apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window, floor and curtain wall (panels, mullions) lists, `export-ifc`
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window, floor and curtain wall (panels, mullions) lists, `export-ifc`, `export-mesh`
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages
 locales/tr-TR/                Turkish catalogs of the same crates
 ```
 
-Planned, not created yet (`archbuilder-io` will also map DWG/DXF, PDF, meshes, BCF and more):
+Planned, not created yet (`archbuilder-io` will also map DWG/DXF, PDF, BCF and more):
 
 ```
 crates/archbuilder-ui/        tools, panels, viewport interaction (egui); until it exists the panels

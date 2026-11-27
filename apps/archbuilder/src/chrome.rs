@@ -979,20 +979,38 @@ pub fn command_tabs() -> Vec<CommandTab> {
             }
             .message_id
             .to_owned(),
-            groups: vec![group(
-                Message {
-                    message_id: "ab-group-ifc",
-                },
-                vec![icon_button(
+            groups: vec![
+                group(
                     Message {
-                        message_id: "ab-tool-export-ifc",
+                        message_id: "ab-group-ifc",
                     },
-                    None,
-                    archbuilder_io::command::EXPORT_IFC,
-                    "export-ifc",
-                    ButtonSize::Large,
-                )],
-            )],
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-export-ifc",
+                        },
+                        None,
+                        archbuilder_io::command::EXPORT_IFC,
+                        "export-ifc",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-mesh",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-export-mesh",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-export-mesh-hint",
+                        }),
+                        archbuilder_io::command::EXPORT_MESH,
+                        "export-mesh",
+                        ButtonSize::Large,
+                    )],
+                ),
+            ],
             context: None,
         },
         CommandTab {
@@ -1398,6 +1416,7 @@ pub fn icons() -> Vec<(String, String)> {
         "properties",
         "outliner",
         "export-ifc",
+        "export-mesh",
     ]
 }
 

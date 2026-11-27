@@ -28,6 +28,7 @@ third_party = [
   "arc-gpu",
   "arc-io-common",
   "arc-io-ifc",
+  "arc-io-mesh",
   "arc-mesh",
   "arc-ui",
   "arc-view",
