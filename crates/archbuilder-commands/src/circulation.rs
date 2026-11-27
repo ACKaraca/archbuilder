@@ -2,16 +2,24 @@
 //!
 //! - `archbuilder.railing.create`: a railing from a sketched path (`points` as `[x, y]` or
 //!   `[x, y, z]` with the height of the walking surface above the level, `arcs` as pairs of vertex
-//!   number and bulge) or hosted on a stair or ramp (`host` and `side`; the path follows the host).
+//!   number and bulge) or hosted on a stair, a ramp, a floor (an edge of its boundary, `host_edge`)
+//!   or a floor edge element (`host` and `side`; the path follows the host).
 //!   Extensions at both ends (`start_extension`, `end_extension`: `none`, `horizontal`,
 //!   `return_wall`, `return_floor`) and `continues_to`, the railing whose start the top rail
 //!   continues to, are authored on it.
 //! - `archbuilder.railing_type.define` and `archbuilder.ramp_type.define`: create a type, or edit
 //!   the one named by `type`.
-//! - `archbuilder.ramp.create`: a straight ramp by run with landings, a width, a thickness and a
-//!   form; the slope follows from the rise (the level above, else `rise`) and the length, and a
-//!   slope over the type's largest is a warning. Railings are created on the sides named in
-//!   `railings` (both by default), hosted on the ramp.
+//! - `archbuilder.ramp.create`: a ramp by run with landings, a width, a thickness and a form (or
+//!   by sketch: a `boundary` of points with the run line given by `start`, `to` and the
+//!   landings); the slope follows from the rise (the level above, else `rise`) and the length, and
+//!   a slope over the type's largest is a warning. More `runs` follow the first, each turned at
+//!   the middle of the landing before it and with a slope of its own if it is given one.
+//!   Railings are created on the sides named in `railings` (both by default), hosted on the ramp.
+//! - `archbuilder.ramp.move_end` and `archbuilder.railing.move_point`: what the drag handles run,
+//!   the foot or the end of the first run of a ramp and a point of the path of a railing.
+//! - `archbuilder.ramp.set_run` and `archbuilder.ramp.add_run`: change one run of a ramp (its
+//!   length, landing, turn or slope; remove it) and add a run. A change of one run's slope moves
+//!   the elevations of the runs after it.
 //!
 //! The prompts ([`RailingPrompts`], [`RampPrompts`]) ask for points: a railing takes points until
 //! Enter, a ramp takes the foot and the end of the run.
@@ -28,7 +36,9 @@ use archbuilder_model::railing::{
     Corner, Derived, Extension, Profile, Railing, RailingType, Side, Vertex,
 };
 use archbuilder_model::ramp::{self, Form, Placed, Ramp};
-use archbuilder_model::types::{self, RAILING, RAILING_TYPE, RAMP, RAMP_TYPE, STAIR};
+use archbuilder_model::types::{
+    self, FLOOR, FLOOR_EDGE, RAILING, RAILING_TYPE, RAMP, RAMP_TYPE, STAIR,
+};
 use archbuilder_model::{defaults, names, spatial};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -44,6 +54,14 @@ pub const RAILING_TYPE_DEFINE: &str = "archbuilder.railing_type.define";
 pub const RAMP_CREATE: &str = "archbuilder.ramp.create";
 /// The identifier of the define-ramp-type command.
 pub const RAMP_TYPE_DEFINE: &str = "archbuilder.ramp_type.define";
+/// The identifier of the command that edits one run of a ramp.
+pub const RAMP_SET_RUN: &str = "archbuilder.ramp.set_run";
+/// The identifier of the command that adds a run to a ramp.
+pub const RAMP_ADD_RUN: &str = "archbuilder.ramp.add_run";
+/// The identifier of the command that moves the foot or the end of the first run of a ramp.
+pub const RAMP_MOVE_END: &str = "archbuilder.ramp.move_end";
+/// The identifier of the command that moves a point of the path of a railing.
+pub const RAILING_MOVE_POINT: &str = "archbuilder.railing.move_point";
 
 fn invalid() -> Error {
     Error::new(arc_command::error::codes::PARAMS_INVALID)
@@ -319,6 +337,82 @@ fn define_ramp_type(ctx: &mut Context<'_>, p: DefineRampType) -> Result<TypeDefi
     })
 }
 
+/// The key of the instances and the name of their reference field for a railing or ramp type
+/// record `id`; `None` for any other record.
+pub fn instance_of_type(snapshot: &Snapshot, id: ObjectId) -> Option<(&'static str, &'static str)> {
+    match spatial::type_of(snapshot, id).as_deref() {
+        Some(RAILING_TYPE) => Some((RAILING, "railing_type")),
+        Some(RAMP_TYPE) => Some((RAMP, "ramp_type")),
+        _ => None,
+    }
+}
+
+/// The railings or ramps that have the type `id`.
+pub fn type_users(snapshot: &Snapshot, id: ObjectId) -> Vec<ObjectId> {
+    let Some((key, _)) = instance_of_type(snapshot, id) else {
+        return Vec::new();
+    };
+    let at = if key == RAILING {
+        types::railing::RAILING_TYPE
+    } else {
+        types::ramp::RAMP_TYPE
+    };
+    spatial::objects(snapshot, key)
+        .iter()
+        .filter(|o| matches!(o.values.get(at), Some(Some(Value::Reference(t))) if *t == id))
+        .map(|o| o.id)
+        .collect()
+}
+
+/// A copy of the railing type or ramp type `id`, named `name` or, without one, like it with the
+/// next free number.
+pub(crate) fn duplicate_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    name: Option<&str>,
+) -> Result<ObjectId> {
+    let (key, _) = instance_of_type(ctx.snapshot(), id).ok_or_else(invalid)?;
+    let object = spatial::get(ctx.snapshot(), id).ok_or_else(invalid)?;
+    let base = name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .or_else(|| types::text(&object.values, 0))
+        .unwrap_or_default()
+        .to_owned();
+    let kind = if key == RAILING {
+        RAILING_TYPE
+    } else {
+        RAMP_TYPE
+    };
+    let name = free_name(ctx.snapshot(), kind, &base);
+    let mut values = object.values.clone();
+    if let Some(slot) = values.get_mut(0) {
+        *slot = Some(Value::String(name));
+    }
+    let owner = crate::element_type::project(ctx.snapshot())?;
+    create(ctx, kind, Some(owner), values)
+}
+
+/// Gives each of `objects` that is a railing (for a railing type) or a ramp (for a ramp type) the
+/// type `type_id`; returns how many. Objects of another kind are left alone.
+pub(crate) fn retype(
+    ctx: &mut Context<'_>,
+    type_id: ObjectId,
+    objects: &[ObjectId],
+) -> Result<usize> {
+    let (key, field) = instance_of_type(ctx.snapshot(), type_id).ok_or_else(invalid)?;
+    let mut count = 0;
+    for id in objects {
+        if spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(key) {
+            ctx.txn()?
+                .modify(*id, FieldPath::new(field), Some(Value::Reference(type_id)))?;
+            count += 1;
+        }
+    }
+    ensure_valid(ctx)?;
+    Ok(count)
+}
+
 /// The railing type `given` names, else the default one (made when the document has none).
 fn railing_type_for(ctx: &mut Context<'_>, given: Option<&str>) -> Result<ObjectId> {
     if let Some(text) = given {
@@ -420,7 +514,7 @@ pub struct CreateRailing {
     /// Arcs of the path: pairs of the vertex number and the bulge of the edge that starts there.
     #[serde(default)]
     pub arcs: Option<Vec<[f64; 2]>>,
-    /// The stair or ramp the railing is hosted on; the path follows it.
+    /// The stair, ramp, floor or floor edge the railing is hosted on; the path follows it.
     #[serde(default)]
     pub host: Option<IdParam>,
     /// `left` or `right`: the side of the host, or the side the wall is on for a return.
@@ -441,6 +535,10 @@ pub struct CreateRailing {
     /// The railing whose start the top rail continues to.
     #[serde(default)]
     pub continues_to: Option<IdParam>,
+    /// With a floor as `host`: the edge the railing stands on, by the number of the vertex it
+    /// starts at (the whole outer boundary without it); with a floor edge: its chain.
+    #[serde(default)]
+    pub host_edge: Option<u32>,
     /// The name; else the first free `Railing <n>`.
     #[serde(default)]
     pub name: Option<String>,
@@ -459,6 +557,8 @@ pub struct RailingCreated {
     pub posts: usize,
     /// The number of balusters.
     pub balusters: usize,
+    /// Whether the railing would need more balusters than the most one gets and has none.
+    pub balusters_capped: bool,
     /// The widest clear opening between neighbors, in meters.
     pub widest_gap: f64,
 }
@@ -502,12 +602,20 @@ fn path_of(p: &CreateRailing) -> Result<Vec<Vertex>> {
 fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCreated> {
     let host = match &p.host {
         Some(IdParam(id)) => match spatial::type_of(ctx.snapshot(), *id).as_deref() {
-            Some(STAIR | RAMP) => Some(*id),
+            Some(STAIR | RAMP | FLOOR | FLOOR_EDGE) => Some(*id),
             _ => return Err(Error::new(crate::error::codes::KIND_MISMATCH)),
         },
         None => None,
     };
     let storey = match host {
+        // A floor edge is owned by its floor; the railing is in the floor's storey.
+        Some(h) if spatial::type_of(ctx.snapshot(), h).as_deref() == Some(FLOOR_EDGE) => {
+            spatial::get(ctx.snapshot(), h)
+                .and_then(|o| o.header.owner)
+                .and_then(|f| spatial::get(ctx.snapshot(), f))
+                .and_then(|f| f.header.owner)
+                .ok_or_else(invalid)?
+        }
         Some(h) => spatial::get(ctx.snapshot(), h)
             .and_then(|o| o.header.owner)
             .ok_or_else(invalid)?,
@@ -545,6 +653,7 @@ fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCrea
         extension: meters(ctx, p.extension_length.as_ref())?
             .unwrap_or(archbuilder_model::railing::DEFAULT_EXTENSION),
         continues_to,
+        host_edge: host.and(p.host_edge).and_then(|n| usize::try_from(n).ok()),
     };
     let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => name.to_owned(),
@@ -565,6 +674,7 @@ fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCrea
         length: derived.length(),
         posts: derived.posts().len(),
         balusters: derived.balusters().0.len(),
+        balusters_capped: derived.balusters_capped(),
         widest_gap: derived.widest_gap(),
     })
 }
@@ -609,6 +719,18 @@ pub struct CreateRamp {
     /// The level the ramp arrives at; else the level above the storey.
     #[serde(default)]
     pub top_level: Option<IdParam>,
+    /// The slope (rise over run) of the first run, when it is not the one that carries the rise
+    /// over all the runs.
+    #[serde(default)]
+    pub slope: Option<f64>,
+    /// The runs after the first, each with the turn at the landing before it, its length, its
+    /// landing and, if it is to have its own, its slope.
+    #[serde(default)]
+    pub runs: Option<Vec<RunParam>>,
+    /// The boundary of a ramp by sketch, `[x, y]` points of a simple polygon; the foot, the
+    /// direction and the lengths then describe the run line the slope rises along.
+    #[serde(default)]
+    pub boundary: Option<Vec<[f64; 2]>>,
     /// The ramp type, by identifier or name; the default type without one.
     #[serde(default)]
     pub ramp_type: Option<String>,
@@ -623,6 +745,48 @@ pub struct CreateRamp {
     pub name: Option<String>,
 }
 
+/// A run after the first one of a ramp.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunParam {
+    /// The turn at the landing before the run, positive to the left; a JSON number is radians, a
+    /// text number such as `"90"` is degrees. None without it.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The horizontal length of the sloped part.
+    pub length: QuantityParam,
+    /// The flat landing after the run; none.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The slope of this run; the shared slope without it.
+    #[serde(default)]
+    pub slope: Option<f64>,
+}
+
+/// An angle as a command parameter: a JSON number is radians, a text number is degrees.
+fn angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
+    match param {
+        QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
+            Ok(t.trim().parse::<f64>().unwrap_or(0.0).to_radians())
+        }
+        other => Ok(ctx.quantity(other, Dimension::ANGLE)?.value()),
+    }
+}
+
+fn run_of(ctx: &Context<'_>, p: &RunParam) -> Result<archbuilder_model::ramp::Run> {
+    Ok(archbuilder_model::ramp::Run {
+        turn: p
+            .turn
+            .as_ref()
+            .map(|t| angle(ctx, t))
+            .transpose()?
+            .unwrap_or(0.0),
+        length: meters(ctx, Some(&p.length))?.ok_or_else(invalid)?,
+        landing: meters(ctx, p.landing.as_ref())?.unwrap_or(0.0),
+        slope: p.slope,
+    })
+}
+
 /// What `archbuilder.ramp.create` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RampCreated {
@@ -632,9 +796,9 @@ pub struct RampCreated {
     pub storey: IdParam,
     /// The rise in meters.
     pub rise: f64,
-    /// The slope of the run (rise over run).
+    /// The slope of the steepest run (rise over run).
     pub slope: f64,
-    /// Whether the slope passes the type's largest.
+    /// Whether the slope of any run passes the type's largest.
     pub slope_exceeded: bool,
     /// The volume of the body in cubic meters.
     pub volume: f64,
@@ -655,10 +819,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
             }
             d[1].atan2(d[0])
         }
-        (None, Some(QuantityParam::Text(t))) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        (None, Some(param)) => ctx.quantity(param, Dimension::ANGLE)?.value(),
+        (None, Some(param)) => angle(ctx, param)?,
         (None, None) => 0.0,
     };
     let length = match (meters(ctx, p.length.as_ref())?, p.to) {
@@ -686,6 +847,14 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
         rise: meters(ctx, p.rise.as_ref())?,
         top_level,
         ramp_type: Some(type_id),
+        slope: p.slope,
+        runs: p
+            .runs
+            .iter()
+            .flatten()
+            .map(|r| run_of(ctx, r))
+            .collect::<Result<Vec<_>>>()?,
+        boundary: p.boundary.clone().unwrap_or_default(),
     };
     let sides = match &p.railings {
         None => vec![Side::Left, Side::Right],
@@ -715,6 +884,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
                 end_extension: None,
                 extension_length: None,
                 continues_to: None,
+                host_edge: None,
                 name: None,
                 work_plane: None,
             },
@@ -736,6 +906,221 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
         slope_exceeded: layout.exceeds(),
         volume: layout.volume(),
         railings,
+    })
+}
+
+/// Parameters of `archbuilder.ramp.set_run`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetRampRun {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The run: 0 is the first, 1 the one after its landing, and so on.
+    pub run: usize,
+    /// The new horizontal length of the sloped part.
+    #[serde(default)]
+    pub length: Option<QuantityParam>,
+    /// The new landing after the run.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The new turn at the landing before the run (not for the first run); a JSON number is
+    /// radians, a text number degrees.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The slope of the run (rise over run).
+    #[serde(default)]
+    pub slope: Option<f64>,
+    /// Gives the run the shared slope again.
+    #[serde(default)]
+    pub clear_slope: bool,
+    /// Removes the run (not the first).
+    #[serde(default)]
+    pub remove: bool,
+}
+
+/// Parameters of `archbuilder.ramp.add_run`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddRampRun {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The turn at the landing before the run, positive to the left; a JSON number is radians, a
+    /// text number such as `"90"` is degrees. None without it.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The horizontal length of the sloped part.
+    pub length: QuantityParam,
+    /// The flat landing after the run; none.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The slope of this run; the shared slope without it.
+    #[serde(default)]
+    pub slope: Option<f64>,
+}
+
+/// What the commands that edit the runs of a ramp return.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RampEdited {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The rise: the elevation of the top above the base, in meters.
+    pub rise: f64,
+    /// How far the top is above the elevation the ramp was to reach, in meters.
+    pub top_off: f64,
+    /// The slope of each run.
+    pub slopes: Vec<f64>,
+    /// The elevation at the start and at the end of each run, in meters.
+    pub elevations: Vec<[f64; 2]>,
+}
+
+/// Changes the ramp `id` as `change` says and reports what its runs are now.
+fn edit_ramp(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    change: impl FnOnce(&Context<'_>, &mut Ramp) -> Result<()>,
+) -> Result<RampEdited> {
+    let object = expect(ctx.snapshot(), id, RAMP)?;
+    let name = types::text(&object.values, 0)
+        .unwrap_or_default()
+        .to_owned();
+    let mut body = Ramp::from_values(&object.values).ok_or_else(invalid)?;
+    change(ctx, &mut body)?;
+    write_changes(ctx, RAMP, &object, body.values(&name))?;
+    ensure_valid(ctx)?;
+    let layout = {
+        let txn = ctx.txn()?;
+        spatial::get(txn.snapshot(), id).and_then(|o| Placed::of(txn.snapshot(), &o))
+    }
+    .and_then(|p| p.layout.ok())
+    .ok_or_else(|| Error::new(crate::error::codes::KIND_MISMATCH))?;
+    Ok(RampEdited {
+        ramp: IdParam(id),
+        rise: layout.height,
+        top_off: layout.top_off(),
+        slopes: layout.slopes().to_vec(),
+        elevations: layout.elevations().iter().map(|e| [e.0, e.1]).collect(),
+    })
+}
+
+fn set_ramp_run(ctx: &mut Context<'_>, p: SetRampRun) -> Result<RampEdited> {
+    edit_ramp(ctx, p.ramp.0, |ctx, body| {
+        let length = meters(ctx, p.length.as_ref())?;
+        let landing = meters(ctx, p.landing.as_ref())?;
+        let turn = p.turn.as_ref().map(|t| angle(ctx, t)).transpose()?;
+        let slope = if p.clear_slope {
+            Some(None)
+        } else {
+            p.slope.map(Some)
+        };
+        if p.run == 0 {
+            if turn.is_some() || p.remove {
+                return Err(invalid());
+            }
+            body.length = length.unwrap_or(body.length);
+            body.landing_end = landing.unwrap_or(body.landing_end);
+            body.slope = slope.unwrap_or(body.slope);
+            return Ok(());
+        }
+        let at = p.run - 1;
+        if at >= body.runs.len() {
+            return Err(invalid());
+        }
+        if p.remove {
+            body.runs.remove(at);
+            return Ok(());
+        }
+        let run = &mut body.runs[at];
+        run.length = length.unwrap_or(run.length);
+        run.landing = landing.unwrap_or(run.landing);
+        run.turn = turn.unwrap_or(run.turn);
+        run.slope = slope.unwrap_or(run.slope);
+        Ok(())
+    })
+}
+
+/// Parameters of `archbuilder.ramp.move_end`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveRampEnd {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// `start`: the foot, the end of the first run stays; `end`: the end of the first sloped run,
+    /// the foot stays.
+    pub end: String,
+    /// Where it goes, `[x, y]` in meters.
+    pub to: [f64; 2],
+}
+
+fn move_ramp_end(ctx: &mut Context<'_>, p: MoveRampEnd) -> Result<RampEdited> {
+    let end = match p.end.as_str() {
+        "start" => false,
+        "end" => true,
+        _ => return Err(invalid()),
+    };
+    edit_ramp(ctx, p.ramp.0, |_, body| {
+        *body = body.with_end_moved(end, p.to).ok_or_else(invalid)?;
+        Ok(())
+    })
+}
+
+/// Parameters of `archbuilder.railing.move_point`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MoveRailingPoint {
+    /// The railing by path (a hosted railing follows its host).
+    pub railing: IdParam,
+    /// The point, counted from 0.
+    pub vertex: usize,
+    /// Where it goes, `[x, y]` in meters; the height stays.
+    pub to: [f64; 2],
+}
+
+/// What `archbuilder.railing.move_point` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RailingMoved {
+    /// The railing.
+    pub railing: IdParam,
+    /// The length along the walking surface in meters.
+    pub length: f64,
+}
+
+fn move_railing_point(ctx: &mut Context<'_>, p: MoveRailingPoint) -> Result<RailingMoved> {
+    let object = expect(ctx.snapshot(), p.railing.0, RAILING)?;
+    let name = types::text(&object.values, 0)
+        .unwrap_or_default()
+        .to_owned();
+    let mut railing = Railing::from_values(&object.values).ok_or_else(invalid)?;
+    if railing.host.is_some() || !p.to.iter().all(|v| v.is_finite()) {
+        return Err(invalid());
+    }
+    let vertex = railing.path.get_mut(p.vertex).ok_or_else(invalid)?;
+    vertex.point[0] = p.to[0];
+    vertex.point[1] = p.to[1];
+    write_changes(ctx, RAILING, &object, railing.values(&name))?;
+    ensure_valid(ctx)?;
+    let derived = {
+        let txn = ctx.txn()?;
+        spatial::get(txn.snapshot(), p.railing.0).and_then(|o| Derived::of(txn.snapshot(), &o).ok())
+    }
+    .ok_or_else(|| Error::new(crate::error::codes::KIND_MISMATCH))?;
+    Ok(RailingMoved {
+        railing: p.railing,
+        length: derived.length(),
+    })
+}
+
+fn add_ramp_run(ctx: &mut Context<'_>, p: AddRampRun) -> Result<RampEdited> {
+    edit_ramp(ctx, p.ramp.0, |ctx, body| {
+        body.runs.push(run_of(
+            ctx,
+            &RunParam {
+                turn: p.turn,
+                length: p.length,
+                landing: p.landing,
+                slope: p.slope,
+            },
+        )?);
+        Ok(())
     })
 }
 
@@ -911,6 +1296,12 @@ const PROMPT_RAMP_START: Msg = Msg {
 const PROMPT_RAMP_END: Msg = Msg {
     message_id: "ab-prompt-ramp-end",
 };
+const PROMPT_RAMP_BOUNDARY: Msg = Msg {
+    message_id: "ab-prompt-ramp-boundary",
+};
+const KEY_SKETCH: Msg = Msg {
+    message_id: "ab-keyword-ramp-sketch",
+};
 
 /// The prompts of `archbuilder.railing.create`: points until Enter.
 #[derive(Debug)]
@@ -979,7 +1370,9 @@ impl PromptMachine for RailingPrompts {
     }
 }
 
-/// The prompts of `archbuilder.ramp.create`: the foot, then the end of the run.
+/// The prompts of `archbuilder.ramp.create`: the foot, then the end of the run; with the keyword
+/// `sketch` at the first prompt, the run line is followed by the points of the boundary, ended
+/// with Enter.
 #[derive(Debug)]
 pub struct RampPrompts;
 
@@ -993,33 +1386,77 @@ impl PromptMachine for RampPrompts {
                 _ => None,
             })
             .collect();
-        if let [start, to] = points[..] {
+        let sketch = state
+            .answers
+            .iter()
+            .any(|a| matches!(&a.input, PromptInput::Keyword(k) if k == "sketch"));
+        let done = state
+            .answers
+            .iter()
+            .any(|a| matches!(&a.input, PromptInput::Keyword(k) if k == "done"));
+        let finished = if sketch {
+            done && points.len() >= 5
+        } else {
+            points.len() >= 2
+        };
+        if finished {
             let mut params = Map::new();
-            params.insert("start".into(), Json::from(start.to_vec()));
-            params.insert("to".into(), Json::from(to.to_vec()));
-            if let Some(v) = state.preset.get("storey") {
-                params.insert("storey".into(), v.clone());
+            params.insert("start".into(), Json::from(points[0].to_vec()));
+            params.insert("to".into(), Json::from(points[1].to_vec()));
+            if sketch {
+                let boundary: Vec<Json> =
+                    points[2..].iter().map(|p| Json::from(p.to_vec())).collect();
+                params.insert("boundary".into(), Json::Array(boundary));
+            }
+            for key in ["storey", "ramp_type", "railing_type"] {
+                if let Some(v) = state.preset.get(key) {
+                    params.insert(key.into(), v.clone());
+                }
             }
             return Ok(Step::Done(params));
         }
-        let message = if points.is_empty() {
-            PROMPT_RAMP_START.message_id
-        } else {
-            PROMPT_RAMP_END.message_id
+        let point = Accept::Point {
+            dims: PointDims::Two,
         };
-        Ok(Step::Ask(Prompt::new(
-            format!("point-{}", state.answers.len()),
-            message,
-            Accept::Point {
-                dims: PointDims::Two,
-            },
-        )))
+        let key = format!("point-{}", state.answers.len());
+        Ok(Step::Ask(match (sketch, points.len()) {
+            (false, 0) => {
+                Prompt::new(key, PROMPT_RAMP_START.message_id, point).or(Accept::keywords([
+                    KeywordOption::new("sketch", KEY_SKETCH.message_id).with_shortcut('s'),
+                ]))
+            }
+            (_, 0) => Prompt::new(key, PROMPT_RAMP_START.message_id, point),
+            (_, 1) => Prompt::new(key, PROMPT_RAMP_END.message_id, point),
+            (_, count) => {
+                let prompt = Prompt::new(key, PROMPT_RAMP_BOUNDARY.message_id, point)
+                    .with_arg("count", (count - 2).to_string());
+                if count >= 5 {
+                    prompt
+                        .or(Accept::keywords([KeywordOption::new(
+                            "done",
+                            KEY_DONE.message_id,
+                        )
+                        .with_shortcut('d')]))
+                        .with_default(PromptInput::Keyword("done".to_owned()))
+                } else {
+                    prompt
+                }
+            }
+        }))
     }
 
     fn check(&self, state: &PromptState<'_>, _: &Prompt, input: &PromptInput) -> Result<()> {
-        if let (PromptInput::Point(p), Some(PromptInput::Point(s))) =
-            (input, state.answers.first().map(|a| &a.input))
-            && (p.x - s.x).hypot(p.y - s.y) < 1.0e-6
+        // The end of the run is not on the foot; a boundary point is not on the one before it.
+        let points: Vec<&arc_command::prompt::Point> = state
+            .answers
+            .iter()
+            .filter_map(|a| match &a.input {
+                PromptInput::Point(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        if let (PromptInput::Point(p), Some(last)) = (input, points.last())
+            && (p.x - last.x).hypot(p.y - last.y) < 1.0e-6
         {
             return Err(invalid());
         }
@@ -1061,6 +1498,11 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         description,
         |ctx: &mut Context<'_>, p: DefineRailingType| define_railing_type(ctx, p),
     ))?;
+    register_ramps(registry)
+}
+
+/// Registers the commands of the ramps.
+fn register_ramps(registry: &mut Registry) -> Result<()> {
     const RMC_LABEL: Msg = Msg {
         message_id: "ab-cmd-ramp-create-label",
     };
@@ -1089,5 +1531,57 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         label,
         description,
         |ctx: &mut Context<'_>, p: DefineRampType| define_ramp_type(ctx, p),
+    ))?;
+    const RSR_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-set-run-label",
+    };
+    const RSR_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-set-run-description",
+    };
+    let (label, description) = (RSR_LABEL.message_id, RSR_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_SET_RUN,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: SetRampRun| set_ramp_run(ctx, p),
+    ))?;
+    const RME_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-move-end-label",
+    };
+    const RME_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-move-end-description",
+    };
+    let (label, description) = (RME_LABEL.message_id, RME_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_MOVE_END,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: MoveRampEnd| move_ramp_end(ctx, p),
+    ))?;
+    const RMP_LABEL: Msg = Msg {
+        message_id: "ab-cmd-railing-move-point-label",
+    };
+    const RMP_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-railing-move-point-description",
+    };
+    let (label, description) = (RMP_LABEL.message_id, RMP_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAILING_MOVE_POINT,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: MoveRailingPoint| move_railing_point(ctx, p),
+    ))?;
+    const RAR_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-add-run-label",
+    };
+    const RAR_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-add-run-description",
+    };
+    let (label, description) = (RAR_LABEL.message_id, RAR_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_ADD_RUN,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: AddRampRun| add_ramp_run(ctx, p),
     ))
 }

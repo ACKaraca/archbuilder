@@ -3259,6 +3259,22 @@ impl WallInteraction {
                 self.stair_ghost = at
                     .and_then(|at| self.stairs.preview(&snapshot, at))
                     .map(|stair| stair_ghost(&snapshot, storey, z, &stair))
+                    .or_else(|| {
+                        // A railing or a ramp: the path or the outline it would make.
+                        at.and_then(|at| self.stairs.sketch(at)).map(|sketch| {
+                            sketch
+                                .lines
+                                .iter()
+                                .map(|line| ProductOverlay::Path {
+                                    points: line
+                                        .iter()
+                                        .map(|p| Point3::new(p[0], p[1], z))
+                                        .collect(),
+                                    dashed: true,
+                                })
+                                .collect()
+                        })
+                    })
                     .unwrap_or_default();
                 false
             }
@@ -3677,6 +3693,22 @@ mod tests {
         assert_eq!(notices.first().map(String::as_str), Some("10"));
     }
     use std::path::Path;
+
+    #[test]
+    fn the_words_of_the_railing_and_ramp_tools_start_them() {
+        use archbuilder_commands::circulation::{RAILING_CREATE, RAMP_CREATE};
+        for (word, command) in [
+            ("railing", RAILING_CREATE),
+            ("Korkuluk", RAILING_CREATE),
+            ("ramp", RAMP_CREATE),
+            ("RAMPA", RAMP_CREATE),
+        ] {
+            let intent = super::habits::typed_word(word).unwrap();
+            assert_eq!(intent.command, command, "{word}");
+            assert!(intent.params.is_empty());
+        }
+        assert!(super::habits::typed_word("railing 3").is_none());
+    }
 
     #[test]
     fn every_typed_word_of_the_command_tabs_is_a_command_of_the_line() {

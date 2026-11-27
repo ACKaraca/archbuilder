@@ -201,21 +201,37 @@ pub fn circulation_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error>
     let mut out = Vec::new();
     match type_of(candidate, object.id).as_deref() {
         Some(types::RAMP) => {
-            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout)
-                && layout.exceeds()
-            {
-                out.push(
-                    Error::new(codes::RAMP_SLOPE)
-                        .with_arg("name", name)
-                        .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
-                        .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
-                        .with_arg(OBJECT, object.id.to_string()),
-                );
+            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout) {
+                if layout.exceeds() {
+                    out.push(
+                        Error::new(codes::RAMP_SLOPE)
+                            .with_arg("name", name.clone())
+                            .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
+                            .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
+                if layout.top_off().abs() > crate::ramp::TOP_TOLERANCE {
+                    out.push(
+                        Error::new(codes::RAMP_TOP)
+                            .with_arg("name", name)
+                            .with_arg("off", format!("{:.0}", layout.top_off() * 1000.0))
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
             }
         }
         Some(types::RAILING) => {
             if let Ok(d) = crate::railing::Derived::of(candidate, object) {
                 let gap = d.widest_gap();
+                if d.balusters_capped() {
+                    out.push(
+                        Error::new(codes::RAILING_BALUSTERS)
+                            .with_arg("name", name.clone())
+                            .with_arg("max", crate::railing::MAX_BALUSTERS.to_string())
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
                 if gap > crate::railing::CLEAR_GAP_LIMIT + 1.0e-9 {
                     out.push(
                         Error::new(codes::RAILING_GAP)

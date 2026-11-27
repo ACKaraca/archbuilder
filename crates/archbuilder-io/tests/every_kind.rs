@@ -82,9 +82,18 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         "archbuilder.floor.create",
         json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
     );
-    r(
+    let floor_edge = r(
         "archbuilder.floor_edge.create",
         json!({"floor": floor["floor"]}),
+    );
+    // Railings hosted on a floor edge of the slab and on the edge element.
+    r(
+        "archbuilder.railing.create",
+        json!({"host": floor["floor"], "host_edge": 0}),
+    );
+    r(
+        "archbuilder.railing.create",
+        json!({"host": floor_edge["floor_edge"]}),
     );
     let sloped = r(
         "archbuilder.floor.create",
@@ -133,6 +142,21 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         "archbuilder.railing.create",
         json!({"points": [[70.0, 0.0], [73.0, 0.0], [73.0, 2.0]]}),
     );
+    // A ramp of three runs with two quarter turns the same way and landings at both ends, and a
+    // ramp by sketch.
+    r(
+        "archbuilder.ramp.create",
+        json!({"start": [80.0, 0.0], "to": [86.0, 0.0], "rise": 1.5, "landing_start": 1.0,
+               "landing_end": 2.0, "runs": [
+                   {"turn": "90", "length": 6.0, "landing": 2.0},
+                   {"turn": "90", "length": 6.0, "landing": 1.5}]}),
+    );
+    r(
+        "archbuilder.ramp.create",
+        json!({"start": [100.0, 2.0], "to": [105.0, 2.0], "rise": 0.4, "landing_start": 0.5,
+               "landing_end": 1.0,
+               "boundary": [[100.0, 1.0], [106.5, 1.0], [106.5, 3.0], [100.0, 3.0]]}),
+    );
     r(
         "archbuilder.grid.create",
         json!({"start": [-2.0, 0.0], "end": [-2.0, 10.0]}),
@@ -163,6 +187,19 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     }
     let out = export_ifc(&s, &ExportOptions::default()).unwrap();
     assert!(out.valid, "{:#?}", out.report.items);
+    let text = String::from_utf8_lossy(&out.bytes);
+    let count = |entity: &str| text.matches(&format!("={entity}(")).count();
+    // One flight per run: one each for the ramp of one run and the ramp by sketch, three for the
+    // ramp of three runs; that one's landings are at the foot, at both turns and at the top.
+    assert_eq!(count("IFCRAMPFLIGHT"), 5);
+    assert!(
+        text.contains(".TWO_QUARTER_TURN_RAMP."),
+        "no two-quarter-turn ramp"
+    );
+    assert!(text.contains(".STRAIGHT_RUN_RAMP."), "no straight ramp");
+    // Railings: the two sides of the stair, the one by path, two on each ramp and the two on the
+    // floor.
+    assert_eq!(count("IFCRAILING"), 11);
     if let Ok(path) = std::env::var("AB_EVERY_KIND_IFC") {
         std::fs::write(path, &out.bytes).unwrap();
     }

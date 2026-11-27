@@ -8,6 +8,7 @@ use arc_command::Invocation;
 use arc_doc::Snapshot;
 use arc_ui::egui::PointerButton;
 use arc_ui::{Intent, PointerEvent, PointerKind};
+use archbuilder_commands::circulation::{RAILING_CREATE, RAMP_CREATE};
 use archbuilder_commands::element_type::{TYPE_ASSIGN, TYPE_MATCH, TYPE_UPGRADE, needs_upgrade};
 use archbuilder_commands::error::codes;
 use archbuilder_commands::floor::FLOOR_CREATE;
@@ -17,6 +18,7 @@ use archbuilder_model::element_type::{self as et, TypeKind};
 use archbuilder_model::spatial;
 
 use super::{PICK_PIXELS, WallInteraction, view_ray};
+use crate::circ_types::CircKind;
 use crate::shortcuts::ui;
 use crate::tool_type;
 
@@ -62,6 +64,13 @@ fn tool_command(kind: TypeKind) -> &'static str {
         TypeKind::Roof => archbuilder_commands::roof::ROOF_CREATE,
         TypeKind::Ceiling => archbuilder_commands::ceiling::CEILING_CREATE,
     }
+}
+
+/// The name of the type of the railing or ramp `id`, when it has one.
+fn circulation_type_name(snapshot: &Snapshot, id: ObjectId) -> Option<String> {
+    let (_, found) = CircKind::of_object(snapshot, id)?;
+    let object = spatial::get(snapshot, found?)?;
+    archbuilder_model::types::text(&object.values, 0).map(str::to_owned)
 }
 
 /// The first selected object that has a type, with its kind and type.
@@ -192,6 +201,20 @@ impl WallInteraction {
     /// Starts the tool of the selected wall, floor, door or window with its type.
     fn create_similar(&mut self, cx: &InteractionContext<'_>) -> Result<()> {
         let snapshot = cx.document()?.snapshot();
+        if let Some((circ, Some(found))) = cx
+            .selection()
+            .iter()
+            .find_map(|id| CircKind::of_object(&snapshot, *id))
+        {
+            let (command, key) = match circ {
+                CircKind::Railing => (RAILING_CREATE, "railing_type"),
+                CircKind::Ramp => (RAMP_CREATE, "ramp_type"),
+            };
+            self.stop_all();
+            return self.with_stairs(cx, |tool, env, run| {
+                tool.begin_similar(env, run, command, key, found)
+            });
+        }
         let Some((_, kind, found)) = typed_in(&snapshot, cx.selection()) else {
             return Err(Error::new(codes::NOTHING_SELECTED));
         };
@@ -204,7 +227,14 @@ impl WallInteraction {
     fn start_matching(&mut self, cx: &InteractionContext<'_>) -> Result<()> {
         self.stop_all();
         let snapshot = cx.document()?.snapshot();
-        let source = typed_in(&snapshot, cx.selection()).map(|(id, _, _)| id);
+        let source = typed_in(&snapshot, cx.selection())
+            .map(|(id, _, _)| id)
+            .or_else(|| {
+                cx.selection()
+                    .iter()
+                    .copied()
+                    .find(|id| circulation_type_name(&snapshot, *id).is_some())
+            });
         self.matching = Some(source);
         self.note_match_source(&snapshot);
         Ok(())
@@ -216,6 +246,7 @@ impl WallInteraction {
             self.match_type_name = spatial::get(snapshot, source)
                 .and_then(|o| et::type_of_object(snapshot, &o))
                 .map(|(_, t)| et::name(&t).to_owned())
+                .or_else(|| circulation_type_name(snapshot, source))
                 .unwrap_or_default();
         }
     }
@@ -279,7 +310,9 @@ impl WallInteraction {
         };
         match source {
             None => {
-                if typed_in(&snapshot, &[target]).is_some() {
+                if typed_in(&snapshot, &[target]).is_some()
+                    || circulation_type_name(&snapshot, target).is_some()
+                {
                     self.matching = Some(Some(target));
                     self.note_match_source(&snapshot);
                 } else {

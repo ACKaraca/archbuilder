@@ -601,7 +601,7 @@ impl PlanSource<'_> {
     fn ramp_object(&self, object: &Object) -> Option<SourceObject> {
         let placed = crate::ramp::Placed::of(self.snapshot, object)?;
         let layout = placed.layout.ok()?;
-        let mut out = SourceObject::new(Category::Stair.key(), styles(self.scale, self.tone));
+        let mut out = SourceObject::new(Category::Ramp.key(), styles(self.scale, self.tone));
         out = out.with_part(
             Part::new(0, Geometry::Solid(layout.solid(placed.base).ok()?))
                 .with_fill(Some(CutFill::solid(gray(0.55)))),
@@ -625,7 +625,7 @@ impl PlanSource<'_> {
     /// The symbol of a railing: its rail line, with the extensions.
     fn railing_object(&self, object: &Object) -> Option<SourceObject> {
         let derived = crate::railing::Derived::of(self.snapshot, object).ok()?;
-        let mut out = SourceObject::new(Category::Stair.key(), styles(self.scale, self.tone));
+        let mut out = SourceObject::new(Category::Railing.key(), styles(self.scale, self.tone));
         if let Some(c) = curve(&derived.plan_line(), false) {
             out = out.with_symbol(Symbol::new(c, VisibilityClass::Visible, 1001));
         }

@@ -598,8 +598,11 @@ pub mod plan_view {
     pub const DETAIL: usize = 5;
     /// Whether the storey below is shown faint under the plan.
     pub const UNDERLAY: usize = 6;
-    /// The first category flag (see [`crate::view::Category`]); one flag per category follows.
+    /// The first category flag (see [`crate::view::Category`]); one flag per category follows, as
+    /// many as [`CATEGORY_COUNT`]. Categories added later are at the end of the record.
     pub const CATEGORIES: usize = 7;
+    /// The number of category flags that stand together after the underlay.
+    pub const CATEGORY_COUNT: usize = 9;
     /// The elements hidden in this view (records with one optional reference each).
     pub const HIDDEN: usize = 16;
     /// The field of the reference inside one entry of [`HIDDEN`].
@@ -613,6 +616,10 @@ pub mod plan_view {
     pub const DATUM_VIEWS: usize = 19;
     /// Which north the view is oriented to ([`crate::view::North`] code); appended in schema 1.2.
     pub const NORTH: usize = 20;
+    /// Whether railings are drawn; appended in schema 1.3.
+    pub const SHOW_RAILINGS: usize = 21;
+    /// Whether ramps are drawn; appended in schema 1.3.
+    pub const SHOW_RAMPS: usize = 22;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -921,6 +928,9 @@ pub mod railing {
     pub const CONTINUES_TO: usize = 8;
     /// Whether the railing is pinned.
     pub const PINNED: usize = 9;
+    /// The edge of a floor the railing stands on (the number of the vertex it starts at), or, for
+    /// a floor edge element, the number of its chain; the whole outer boundary without it.
+    pub const HOST_EDGE: usize = 10;
 }
 
 /// The field positions of a railing type record.
@@ -981,6 +991,24 @@ pub mod ramp {
     pub const RAMP_TYPE: usize = 12;
     /// Whether the ramp is pinned.
     pub const PINNED: usize = 13;
+    /// The slope of the first run, when it is not the one shared by the runs.
+    pub const SLOPE: usize = 14;
+    /// The runs after the first (records, see [`run`]).
+    pub const RUNS: usize = 15;
+    /// The boundary of a ramp by sketch (records of `x` and `y`).
+    pub const BOUNDARY: usize = 16;
+
+    /// The fields of one entry of [`RUNS`].
+    pub mod run {
+        /// The turn at the landing before the run.
+        pub const TURN: usize = 0;
+        /// The horizontal length of the sloped part.
+        pub const LENGTH: usize = 1;
+        /// The landing after the run.
+        pub const LANDING: usize = 2;
+        /// The slope of the run, when it has its own.
+        pub const SLOPE: usize = 3;
+    }
 }
 
 /// The field positions of a ramp type record.
@@ -1321,6 +1349,10 @@ fn selection_set_fields() -> Vec<FieldDecl> {
 
 /// The fields of a plan view: the range, the scale, the detail level, the underlay, one flag per
 /// category and the elements hidden in the view.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one declaration per field, in record order"
+)]
 fn plan_view_fields() -> Vec<FieldDecl> {
     let mut hidden = reference_to(ELEMENTS[0]);
     hidden.targets = ELEMENTS
@@ -1361,6 +1393,7 @@ fn plan_view_fields() -> Vec<FieldDecl> {
     fields.extend(
         crate::view::Category::ALL
             .iter()
+            .take(plan_view::CATEGORY_COUNT)
             .map(|c| flag(c.field(), c.shown_by_default())),
     );
     fields.push(
@@ -1420,6 +1453,14 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("graphics")
         .since_minor(2),
+    );
+    // The categories added after the first release stand at the end of the record, so that the
+    // slots of the others stay where files have them.
+    fields.extend(
+        crate::view::Category::ALL
+            .iter()
+            .skip(plan_view::CATEGORY_COUNT)
+            .map(|c| flag(c.field(), c.shown_by_default()).since_minor(3)),
     );
     fields
 }
@@ -1812,11 +1853,11 @@ fn railing_fields() -> Vec<FieldDecl> {
     use crate::railing::{DEFAULT_EXTENSION, EXTENSION_RANGE, Extension, MAX_POINTS, Side};
     let host = {
         let mut spec = reference_to(STAIR);
-        spec.targets = [STAIR, RAMP]
+        spec.targets = [STAIR, RAMP, FLOOR, FLOOR_EDGE]
             .iter()
             .filter_map(|k| TypeKey::new(*k).ok())
             .collect();
-        // A railing hosted on a stair or ramp goes with it.
+        // A railing hosted on a stair, ramp, floor or floor edge goes with it.
         spec.rule.on_delete = OnDelete::Cascade;
         spec.rule.cardinality = Cardinality::Optional;
         spec
@@ -1886,6 +1927,14 @@ fn railing_fields() -> Vec<FieldDecl> {
             .optional()
             .in_aspect("geometry"),
         pinned_field(0),
+        FieldDecl::new("host_edge", ValueType::I64)
+            .with_bound(Bound::Int {
+                min: 0,
+                max: i64::try_from(crate::floor::MAX_VERTICES).unwrap_or(i64::MAX),
+            })
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
     ]
 }
 
@@ -1936,7 +1985,8 @@ fn railing_type_fields() -> Vec<FieldDecl> {
 fn ramp_fields() -> Vec<FieldDecl> {
     use crate::ramp::{
         DEFAULT_LENGTH, DEFAULT_THICKNESS, DEFAULT_WIDTH, Form, LANDING_RANGE, LENGTH_RANGE,
-        RISE_LIMITS, THICKNESS_RANGE as RAMP_THICKNESS, WIDTH_RANGE,
+        MAX_BOUNDARY, MAX_RUNS, RISE_LIMITS, SLOPE_RANGE, THICKNESS_RANGE as RAMP_THICKNESS,
+        WIDTH_RANGE,
     };
     vec![
         name_field("identity"),
@@ -1975,6 +2025,42 @@ fn ramp_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("identity"),
         pinned_field(0),
+        FieldDecl::new("slope", ValueType::F64)
+            .with_bound(real((0.0, SLOPE_RANGE.1)))
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
+        FieldDecl::new(
+            "runs",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                angle_field("turn"),
+                length_field("length", Some(real(LENGTH_RANGE)))
+                    .with_default(length(DEFAULT_LENGTH)),
+                length_field("landing", Some(real(LANDING_RANGE))),
+                FieldDecl::new("slope", ValueType::F64)
+                    .with_bound(real((0.0, SLOPE_RANGE.1)))
+                    .optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_RUNS as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+        FieldDecl::new(
+            "boundary",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_BOUNDARY as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
     ]
 }
 

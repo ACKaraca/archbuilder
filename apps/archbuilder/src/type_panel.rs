@@ -24,6 +24,8 @@ use archbuilder_model::element_type::{
 use archbuilder_model::insert::Operation;
 use archbuilder_model::spatial;
 
+use crate::circ_types::{self, CircKind};
+
 /// A message of the application.
 struct Message {
     message_id: &'static str,
@@ -119,6 +121,60 @@ const OPERATION_LABELS: [(Operation, Message); 5] = [
         },
     ),
 ];
+const CIRC_LABELS: [(CircKind, Message); 2] = [
+    (
+        CircKind::Railing,
+        Message {
+            message_id: "ab-types-kind-railing",
+        },
+    ),
+    (
+        CircKind::Ramp,
+        Message {
+            message_id: "ab-types-kind-ramp",
+        },
+    ),
+];
+const PROFILE_LABELS: [(archbuilder_model::railing::Profile, Message); 2] = [
+    (
+        archbuilder_model::railing::Profile::Square,
+        Message {
+            message_id: "ab-types-profile-square",
+        },
+    ),
+    (
+        archbuilder_model::railing::Profile::Round,
+        Message {
+            message_id: "ab-types-profile-round",
+        },
+    ),
+];
+const CORNER_LABELS: [(archbuilder_model::railing::Corner, Message); 2] = [
+    (
+        archbuilder_model::railing::Corner::Miter,
+        Message {
+            message_id: "ab-types-corner-miter",
+        },
+    ),
+    (
+        archbuilder_model::railing::Corner::Fillet,
+        Message {
+            message_id: "ab-types-corner-fillet",
+        },
+    ),
+];
+const RAIL_PROFILE: Message = Message {
+    message_id: "ab-types-rail-profile",
+};
+const BALUSTER_PROFILE: Message = Message {
+    message_id: "ab-types-baluster-profile",
+};
+const CORNER: Message = Message {
+    message_id: "ab-types-corner",
+};
+const CIRC_INVALID: Message = Message {
+    message_id: "ab-types-circ-invalid",
+};
 const TYPE_LABEL: Message = Message {
     message_id: "ab-types-type",
 };
@@ -523,6 +579,12 @@ pub struct TypePanel {
     followed: Vec<ObjectId>,
     /// After Duplicate: the kind and the types it had, so the panel shows the copy once it exists.
     copying: Option<(TypeKind, Vec<ObjectId>)>,
+    /// The railing or ramp types the panel shows instead of an element kind.
+    circ: Option<CircKind>,
+    /// The draft of a railing or ramp type, as read and as edited.
+    circ_draft: Option<(ObjectId, circ_types::Draft, circ_types::Draft)>,
+    /// After Duplicate of a railing or ramp type: the types it had.
+    circ_copying: Option<Vec<ObjectId>>,
 }
 
 fn combo_text<T: PartialEq + Copy>(
@@ -544,6 +606,248 @@ impl Panel for TypePanel {
 }
 
 impl TypePanel {
+    /// The railing or ramp types: the kind and type choosers, name, duplicate, delete, the
+    /// fields of the draft and Apply.
+    #[allow(clippy::too_many_lines, reason = "the panel's rows, top to bottom")]
+    fn circ_body(
+        &mut self,
+        ui: &mut Ui,
+        cx: &mut PanelContext<'_>,
+        snapshot: &Snapshot,
+        circ: CircKind,
+    ) {
+        let localize = cx.localize;
+        let all = circ_types::types_of(snapshot, circ);
+        if let Some(before) = &self.circ_copying
+            && let Some((copy, _)) = all.iter().find(|(id, _)| !before.contains(id))
+        {
+            self.chosen = Some(*copy);
+            self.circ_copying = None;
+            self.circ_draft = None;
+        }
+        let id = self
+            .chosen
+            .filter(|id| all.iter().any(|(t, _)| t == id))
+            .or_else(|| all.first().map(|(t, _)| *t));
+        let mut actions: Vec<Intent> = Vec::new();
+        ui.horizontal(|ui| {
+            ComboBox::from_id_salt("archbuilder-types-kind")
+                .selected_text(
+                    CIRC_LABELS
+                        .iter()
+                        .find(|(c, _)| *c == circ)
+                        .map(|(_, m)| say(localize, m, &[]))
+                        .unwrap_or_default(),
+                )
+                .show_ui(ui, |ui| {
+                    for (k, m) in &KIND_LABELS {
+                        if ui.selectable_label(false, say(localize, m, &[])).clicked() {
+                            self.kind = Some(*k);
+                            self.chosen = None;
+                            self.circ = None;
+                        }
+                    }
+                    for (c, m) in &CIRC_LABELS {
+                        if ui
+                            .selectable_label(*c == circ, say(localize, m, &[]))
+                            .clicked()
+                        {
+                            self.circ = Some(*c);
+                            self.chosen = None;
+                        }
+                    }
+                });
+            ui.label(say(localize, &TYPE_LABEL, &[]));
+            let current = all
+                .iter()
+                .find(|(t, _)| Some(*t) == id)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_default();
+            ComboBox::from_id_salt("archbuilder-types-type")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (t, name) in &all {
+                        if ui.selectable_label(Some(*t) == id, name).clicked() {
+                            self.chosen = Some(*t);
+                        }
+                    }
+                });
+        });
+        let Some(id) = id else {
+            ui.weak(say(localize, &EMPTY, &[]));
+            return;
+        };
+        let Some(fresh) = circ_types::Draft::of(snapshot, circ, id) else {
+            return;
+        };
+        let follow = self
+            .circ_draft
+            .as_ref()
+            .is_none_or(|(at, base, draft)| *at != id || (draft == base && *base != fresh));
+        if follow {
+            self.circ_draft = Some((id, fresh.clone(), fresh));
+        }
+        let Some((_, base, draft)) = self.circ_draft.as_mut() else {
+            return;
+        };
+        let base = base.clone();
+        let users = circ_types::users(snapshot, id);
+        let mut copying = None;
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(say(localize, &NAME, &[]));
+            ui.add(TextEdit::singleline(draft.name_mut()).desired_width(180.0));
+            if ui.button(say(localize, &DUPLICATE, &[])).clicked() {
+                actions.push(Intent::new(TYPE_DUPLICATE).with("type", id.to_string()));
+                copying = Some(all.iter().map(|(t, _)| *t).collect::<Vec<_>>());
+            }
+        });
+        ui.horizontal(|ui| {
+            let count = arc_base::error::Value::Int(i64::try_from(users).unwrap_or(0));
+            ui.weak(say(localize, &IN_USE, &[("count", count)]));
+            let others: Vec<_> = all.iter().filter(|(t, _)| *t != id).collect();
+            if users > 0 && !others.is_empty() {
+                ui.label(say(localize, &REPLACE_WITH, &[]));
+                let replacement = self
+                    .replacement
+                    .filter(|r| others.iter().any(|(t, _)| t == r))
+                    .unwrap_or(others[0].0);
+                let name = others
+                    .iter()
+                    .find(|(t, _)| *t == replacement)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_default();
+                ComboBox::from_id_salt("archbuilder-types-replacement")
+                    .selected_text(name)
+                    .show_ui(ui, |ui| {
+                        for (t, n) in &others {
+                            if ui.selectable_label(*t == replacement, n).clicked() {
+                                self.replacement = Some(*t);
+                            }
+                        }
+                    });
+                if ui.button(say(localize, &DELETE, &[])).clicked() {
+                    actions.push(
+                        Intent::new(TYPE_DELETE)
+                            .with("type", id.to_string())
+                            .with("replacement", replacement.to_string()),
+                    );
+                }
+            } else if ui.button(say(localize, &DELETE, &[])).clicked() {
+                actions.push(Intent::new(TYPE_DELETE).with("type", id.to_string()));
+            }
+        });
+        let edited = base != *draft;
+        let params = draft.params(id);
+        if let Err(label) = &params {
+            let field = localize
+                .message(label, &[])
+                .unwrap_or_else(|| (*label).to_owned());
+            ui.colored_label(
+                Color32::from_rgb(230, 90, 80),
+                say(localize, &CIRC_INVALID, &[("field", field.into())]),
+            );
+        }
+        ui.horizontal(|ui| {
+            let apply = ui.add_enabled(
+                edited && params.is_ok(),
+                egui::Button::new(say(localize, &APPLY, &[])),
+            );
+            if apply.clicked()
+                && let Ok((command, serde_json::Value::Object(map))) = &params
+            {
+                let mut intent = Intent::new(*command);
+                intent.params = map.clone();
+                actions.push(intent);
+            }
+            if ui
+                .add_enabled(edited, egui::Button::new(say(localize, &REVERT, &[])))
+                .clicked()
+            {
+                *draft = base.clone();
+            }
+        });
+        ui.separator();
+        egui::ScrollArea::both()
+            .id_salt("archbuilder-types-details")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match draft {
+                circ_types::Draft::Railing(d) => {
+                    egui::Grid::new("archbuilder-types-railing")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (label, text) in
+                                circ_types::RAILING_LABELS.iter().zip(d.lengths.iter_mut())
+                            {
+                                ui.label(
+                                    localize.message(label.message_id, &[]).unwrap_or_default(),
+                                );
+                                ui.add(TextEdit::singleline(text).desired_width(70.0));
+                                ui.end_row();
+                            }
+                            for (label, salt, value) in [
+                                (
+                                    &RAIL_PROFILE,
+                                    "archbuilder-types-rail-profile",
+                                    &mut d.rail_profile,
+                                ),
+                                (
+                                    &BALUSTER_PROFILE,
+                                    "archbuilder-types-baluster-profile",
+                                    &mut d.baluster_profile,
+                                ),
+                            ] {
+                                ui.label(say(localize, label, &[]));
+                                ComboBox::from_id_salt(salt)
+                                    .selected_text(combo_text(&PROFILE_LABELS, *value, localize))
+                                    .show_ui(ui, |ui| {
+                                        for (p, m) in &PROFILE_LABELS {
+                                            ui.selectable_value(value, *p, say(localize, m, &[]));
+                                        }
+                                    });
+                                ui.end_row();
+                            }
+                            ui.label(say(localize, &CORNER, &[]));
+                            ComboBox::from_id_salt("archbuilder-types-corner")
+                                .selected_text(combo_text(&CORNER_LABELS, d.corner, localize))
+                                .show_ui(ui, |ui| {
+                                    for (c, m) in &CORNER_LABELS {
+                                        ui.selectable_value(
+                                            &mut d.corner,
+                                            *c,
+                                            say(localize, m, &[]),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                }
+                circ_types::Draft::Ramp(d) => {
+                    egui::Grid::new("archbuilder-types-ramp")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (label, text) in circ_types::RAMP_LABELS
+                                .iter()
+                                .zip([&mut d.max_slope, &mut d.thickness])
+                            {
+                                ui.label(
+                                    localize.message(label.message_id, &[]).unwrap_or_default(),
+                                );
+                                ui.add(TextEdit::singleline(text).desired_width(70.0));
+                                ui.end_row();
+                            }
+                        });
+                }
+            });
+        if !actions.is_empty() {
+            self.circ_draft = None;
+        }
+        if copying.is_some() {
+            self.circ_copying = copying;
+        }
+        cx.actions.extend(actions.into_iter().map(Action::Intent));
+    }
+
     #[allow(clippy::too_many_lines, reason = "the panel's rows, top to bottom")]
     fn body(&mut self, ui: &mut Ui, cx: &mut PanelContext<'_>) {
         let (Some(view), Some(tab)) = (cx.view.as_deref(), cx.tab) else {
@@ -560,7 +864,19 @@ impl TypePanel {
             if let Some((kind, Some(id))) = crate::tool_type::shown(&snapshot, view.selection()) {
                 self.kind = Some(kind);
                 self.chosen = Some(id);
+                self.circ = None;
+            } else if let Some((circ, found)) = view
+                .selection()
+                .iter()
+                .find_map(|id| CircKind::of_object(&snapshot, *id))
+            {
+                self.circ = Some(circ);
+                self.chosen = found;
             }
+        }
+        if let Some(circ) = self.circ {
+            self.circ_body(ui, cx, &snapshot, circ);
+            return;
         }
         // The copy a Duplicate made is the type shown next, so a rename edits the copy.
         if let Some((kind, before)) = &self.copying {
@@ -591,6 +907,12 @@ impl TypePanel {
                             .clicked()
                         {
                             self.kind = Some(*k);
+                            self.chosen = None;
+                        }
+                    }
+                    for (c, m) in &CIRC_LABELS {
+                        if ui.selectable_label(false, say(localize, m, &[])).clicked() {
+                            self.circ = Some(*c);
                             self.chosen = None;
                         }
                     }

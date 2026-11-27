@@ -22,6 +22,14 @@ use serde_json::{Map, Value};
 
 use crate::wall_tool::{Env, Runner, storey_for};
 
+/// What the railing or ramp the tool would make looks like in plan, as the pointer is now: the
+/// lines to draw, in project coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sketch {
+    /// The lines of the preview; a line that is closed repeats its first point.
+    pub lines: Vec<Vec<[f64; 2]>>,
+}
+
 /// The state of the stair tool of one tab.
 #[derive(Debug, Default)]
 pub struct StairTool {
@@ -34,6 +42,43 @@ pub struct StairTool {
     last: Map<String, Value>,
     /// The parameters of a one-shot command; `None` for the repeating stair, railing and ramp.
     once: Option<Map<String, Value>>,
+    /// A railing or ramp type the tool gives what it creates (create similar): the parameter
+    /// name and the type's identifier.
+    similar: Option<(&'static str, String)>,
+}
+
+/// The outline and the walking line of the ramp from the foot `start` to the end of the run `to`,
+/// with the width and the landings a new ramp starts with.
+fn ramp_sketch(start: [f64; 2], to: [f64; 2]) -> Option<Sketch> {
+    let (dx, dy) = (to[0] - start[0], to[1] - start[1]);
+    let length = dx.hypot(dy);
+    if length < archbuilder_model::ramp::LENGTH_RANGE.0 {
+        return None;
+    }
+    let ramp = archbuilder_model::ramp::Ramp {
+        start,
+        direction: dy.atan2(dx),
+        width: archbuilder_model::ramp::DEFAULT_WIDTH,
+        length,
+        landing_start: 0.0,
+        landing_end: 0.0,
+        thickness: archbuilder_model::ramp::DEFAULT_THICKNESS,
+        form: archbuilder_model::ramp::Form::Slab,
+        rise: None,
+        top_level: None,
+        ramp_type: None,
+        slope: None,
+        runs: Vec::new(),
+        boundary: Vec::new(),
+    };
+    // Only the plan is drawn, so any height that makes a layout will do.
+    let layout = archbuilder_model::ramp::Layout::new(&ramp, Some(1.0), 1.0).ok()?;
+    let plan = layout.plan();
+    let mut outline = plan.outline;
+    outline.extend(outline.first().copied());
+    Some(Sketch {
+        lines: vec![outline, plan.walk],
+    })
 }
 
 fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -89,6 +134,48 @@ impl StairTool {
         previewed(&session.preview(env_snapshot, Some(&pointer))?)
     }
 
+    /// The preview of the railing or ramp the pointer at `at` would make as the next point: the
+    /// path so far and the pointer for a railing; the outline and the walking line of the ramp
+    /// from its foot to the pointer; the run line and the boundary so far for a ramp by sketch.
+    /// `None` for the stair, or before the first point.
+    #[must_use]
+    pub fn sketch(&self, at: [f64; 2]) -> Option<Sketch> {
+        let session = self.line.active()?;
+        let points: Vec<[f64; 2]> = session
+            .answers()
+            .iter()
+            .filter_map(|a| match &a.input {
+                PromptInput::Point(p) => Some([p.x, p.y]),
+                _ => None,
+            })
+            .collect();
+        let sketching = session
+            .answers()
+            .iter()
+            .any(|a| matches!(&a.input, PromptInput::Keyword(k) if k == "sketch"));
+        match self.command {
+            c if c == archbuilder_commands::circulation::RAILING_CREATE && !points.is_empty() => {
+                let mut path = points;
+                path.push(at);
+                Some(Sketch { lines: vec![path] })
+            }
+            c if c == archbuilder_commands::circulation::RAMP_CREATE => match points.as_slice() {
+                [] => None,
+                [start] => ramp_sketch(*start, at),
+                [start, end, boundary @ ..] if sketching => {
+                    let mut ring: Vec<[f64; 2]> = boundary.to_vec();
+                    ring.push(at);
+                    ring.extend(ring.first().copied());
+                    Some(Sketch {
+                        lines: vec![vec![*start, *end], ring],
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The command the tool runs, while it runs.
     #[must_use]
     pub fn command(&self) -> &'static str {
@@ -105,6 +192,24 @@ impl StairTool {
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, command: &'static str) -> Result<()> {
+        self.similar = None;
+        self.begin_with(env, run, command, None)
+    }
+
+    /// Starts the railing or ramp tool with the type `type_id` as the preset `key`
+    /// (`railing_type` or `ramp_type`): create similar.
+    ///
+    /// # Errors
+    /// As [`Self::begin`].
+    pub fn begin_similar(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        key: &'static str,
+        type_id: ObjectId,
+    ) -> Result<()> {
+        self.similar = Some((key, type_id.to_string()));
         self.begin_with(env, run, command, None)
     }
 
@@ -120,6 +225,7 @@ impl StairTool {
         command: &'static str,
         preset: Map<String, Value>,
     ) -> Result<()> {
+        self.similar = None;
         self.begin_with(env, run, command, Some(preset))
     }
 
@@ -153,6 +259,9 @@ impl StairTool {
                 Map::new()
             };
             preset.insert("storey".into(), Value::from(storey.to_string()));
+            if let Some((key, id)) = &self.similar {
+                preset.insert((*key).into(), Value::from(id.clone()));
+            }
             preset
         };
         let localized = BTreeMap::new();

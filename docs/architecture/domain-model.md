@@ -417,6 +417,77 @@ A ramp is an `IfcRamp` (`STRAIGHT_RUN_RAMP`) aggregating an `IfcRampFlight` (`ST
 railings. A railing record hosted on a stair or ramp is an `IfcRailing` `GUARDRAIL` that is a part of it; a railing by path is a
 `BALUSTRADE` contained in its storey (`Qto_RailingBaseQuantities.Length`).
 
+#### Railings and ramps
+
+`archbuilder.railing` is a railing by path (points with a height above the level and the bulge of
+the arc to the next point) or hosted on another element, with a type, the extension at each end of
+the rail and the railing its top rail continues to. `archbuilder.ramp` is a straight run with a
+landing at each end, a width, a thickness and a form. `archbuilder.railing_type` holds the height
+of the top rail, the profiles, an optional handrail, the baluster spacing, the post size and how
+the rail turns at a corner (miter or fillet); `archbuilder.ramp_type` holds the largest slope and
+the thickness. Only these inputs are stored; the walking surface, the posts, the balusters, the
+rails and the solids are derived each time.
+
+Types. The type editor lists railing types and ramp types next to the element types: it shows the
+type of the selected railing or ramp, edits all its values (checked as typed, one
+`archbuilder.railing_type.define` or `archbuilder.ramp_type.define` on Apply, so every railing or
+ramp of the type changes in one undo step), duplicates it (`archbuilder.type.duplicate`) and
+deletes it, asking for the type its railings or ramps get instead (`archbuilder.type.delete`).
+Create similar starts the railing or ramp tool with the type of the selected one; match type
+(`archbuilder.type.match`) gives the railings or ramps picked after the source its type, and
+leaves objects of another kind alone.
+
+Hosts. A railing is hosted on a stair, a ramp, a floor or a floor edge element (`host`, with
+`side`). On a floor it stands on one edge of the boundary (`host_edge`, the number of the vertex
+the edge starts at) or, without a number, on the whole outer boundary; on a floor edge element it
+stands on one of its chains (`host_edge`, the first chain without it). The rail is on the top of
+the slab, 0.05 m in from the edge, so it follows the floor whenever the boundary moves (edges that
+follow walls included), and an edge the floor no longer has leaves the railing without a path,
+reported as such and never moved to another edge. A railing goes with its host when the host is
+deleted. Known limit: copying or pasting a floor does not copy the railings hosted on it.
+
+Rails and joins. The top rail and the handrail are swept along the path in one solid for each
+stretch, with a ring of the section at every point in the plane that bisects the two bars meeting
+there: a true miter, so the joined bars neither overlap nor leave a gap and the solid has the
+volume of the center line times the section. The type's corner setting (miter or fillet) decides
+whether the path is rounded before it is swept. A path that turns back on itself by more than 120
+degrees is cut square there, and a bar shorter than the miters at its ends is drawn as two bars
+that overlap (the only place the overlap remains). A hosted rail has transitions at the joins of
+its path: a landing where the slope changes and the heading does not, a turn where the heading
+changes (`Derived::transitions`), each with a post and the corner of the type. When a railing
+continues to another, its rail is mitered at the first point of the next one's rail and runs to
+the middle of the next one's first bar, where the next one's own rail starts; the next one has no
+extension at its start, as the first has none at its end.
+
+Ramps of several runs and by sketch. After the first run a ramp can have more runs (`runs`, at
+most 16), each with the turn at the middle of the landing before it (to the left when positive, at
+most 135 degrees, and the landing must hold the miter of the turn), its length, its landing and,
+optionally, its own slope. The slope that carries the rise over all the runs is shared by the runs
+that have none of their own; setting the slope of one run (`archbuilder.ramp.set_run`) changes the
+elevations of every run after it and none before it, and the top then differs from the level the
+ramp was to reach, which is a warning (`ab.model.ramp_top`) along with a run steeper than the
+largest slope of the type (`ab.model.ramp_slope`, for any run). `archbuilder.ramp.add_run` adds a
+run, `set_run` changes or removes one. The body is a set of convex pieces over the band along the
+center line (mitered where it turns), each with the plane its top follows; a slab has the
+thickness below the top, a solid a level underside. A ramp by sketch has a `boundary` of straight
+edges (a simple polygon) and the run line of its foot, direction and lengths: the slope rises
+along the run line over the whole boundary, between the two landings. Its opening in the floor of
+the level it arrives at is the boundary up to the arrival edge, and a railing hosted on it stands
+on the extremes of the boundary across the run line. In the tool the keyword `sketch` at the first
+prompt asks for the run line and then the points of the boundary, ended with Enter. The record
+holds `slope`, `runs` and `boundary` only when used (schema 1.1; older files load).
+
+Bounds and drawing. A railing gets at most 4 000 balusters ([`railing::MAX_BALUSTERS`]): one that
+would need more has none, keeps its rails and posts and is reported (`ab.model.railing_balusters`),
+and `archbuilder.railing.create` says so (`balusters_capped`); the count is computed before any
+baluster is. In a plan view ramps and railings are drawn under their own categories (`ramp`,
+`railing`, flags `show_ramps` and `show_railings`), not under stairs, and each run of a ramp has
+its slope in percent written at its middle (with the decimal separator of the language, marked when
+it passes the type's largest slope). While the railing or ramp tool asks for points, a dashed
+preview follows the pointer: the path so far for a railing, the outline and walking line of the
+ramp from its foot, the run line and the boundary so far for a ramp by sketch. Typing `railing`
+(`korkuluk`) or `ramp` (`rampa`) at the command line starts the tool, and Repeat repeats it.
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored
@@ -621,13 +692,14 @@ the storeys, the stairs and the openings are the same objects.
 
 #### The plan view of the first slice
 
-`archbuilder.plan_view` (schema 1.0) is the plan view of a storey, owned by it (deleting the storey
+`archbuilder.plan_view` (schema 1.1) is the plan view of a storey, owned by it (deleting the storey
 deletes its views). Its record holds authored settings only: the cut height above the storey's level
 (1.2 m by default), an optional top above the level (else the next level, else 3 m), whether the
 overhead range between the cut and the top is drawn, the scale denominator (100), the detail level
 (`coarse`, `medium`, `fine`), whether the storey below shows faint underneath, one flag per category
-(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts; ceilings are off
-in a new view, since they belong to ceiling plans), the elements hidden in this view (one optional
+(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts, and, in schema
+1.1, railings and ramps, which a file from before it shows; ceilings are off in a new view, since
+they belong to ceiling plans), the elements hidden in this view (one optional
 reference each; deleting an element drops its entry), the bottom of the range relative to the level
 (0 by default) and the view depth below it (1 cm under the level by default, so a slab whose top is
 the level is beyond the cut). Everything below the cut down to the view depth draws beyond the cut.
@@ -810,6 +882,14 @@ Shift) still starts the selection band. A drag shorter than 4 pixels is a click.
   handle about the center of its bounds, in steps of 15 degrees (free with Shift)
   (`archbuilder.modify.rotate`). A selected door or window has two flip handles that flip its hand
   and its facing on a click.
+- **Handles** of a single selected ramp: a square at the foot (`archbuilder.ramp.move_end`, the
+  end of the first run stays, so the run turns and changes length), a square at the end of the
+  first sloped run (the foot and the landing in front of the slope stay) and a diamond at the
+  middle of the left edge of that run, in steps of 50 mm (`archbuilder.property.set` of `width`; a
+  ramp by sketch has none). A single selected railing by path has a square at each point of its
+  path (`archbuilder.railing.move_point`, the height stays; a point dropped on its neighbor makes
+  nothing); a railing on a stair, ramp or floor follows its host and has none. A selected ramp or
+  railing by path is dragged and turned like a stair.
 - **Alt** held during a drag turns snapping off (the pointer's own point, whole millimeters of
   height, free rotation). Escape ends a drag and leaves the keyboard focus in the viewport.
 - **Temporary dimensions.** A single selected wall shows the distance between its center line and

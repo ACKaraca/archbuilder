@@ -219,11 +219,23 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-ramp-slope",
     };
+    /// A ramp or railing finding (see the message `ab-model-ramp-top`).
+    pub const RAMP_TOP: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_top",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-top",
+    };
     /// A ramp or railing finding (see the message `ab-model-railing-malformed`).
     pub const RAILING_MALFORMED: ErrorCode = ErrorCode {
         code: "ab.model.railing_malformed",
         category: Category::InvalidInput,
         message_id: "ab-model-railing-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-balusters`).
+    pub const RAILING_BALUSTERS: ErrorCode = ErrorCode {
+        code: "ab.model.railing_balusters",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-balusters",
     };
     /// A ramp or railing finding (see the message `ab-model-railing-gap`).
     pub const RAILING_GAP: ErrorCode = ErrorCode {
