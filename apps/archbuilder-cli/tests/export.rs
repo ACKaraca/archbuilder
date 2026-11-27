@@ -124,3 +124,54 @@ fn export_ifc_writes_the_file_and_prints_the_report() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn export_mesh_writes_each_format_and_prints_the_report() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-cli-mesh-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("house.archb");
+    let (file, dir_text) = (file.to_str().unwrap(), dir.to_str().unwrap());
+    for (create, command, params) in [
+        (true, "archbuilder.project.new", json!({})),
+        (
+            false,
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [6.0, 0.0], "name": "South"}),
+        ),
+    ] {
+        let params = params.to_string();
+        let mut args = vec![
+            "run",
+            file,
+            "--save",
+            "--allow-edit",
+            "--write-root",
+            dir_text,
+        ];
+        if create {
+            args.push("--create");
+        }
+        args.extend(["--command", command, "--params", &params]);
+        assert_eq!(cli(&args).0, Exit::Success);
+    }
+    let obj = dir.join("house.obj");
+    let (exit, report) = cli(&["export-mesh", file, obj.to_str().unwrap(), "--unit", "mm"]);
+    assert_eq!(exit, Exit::Success, "{report}");
+    assert_eq!(report["elements"], 1);
+    assert!(report["triangles"].as_u64().unwrap() >= 12);
+    assert!((report["bounds"][1][0].as_f64().unwrap() - 6000.0).abs() < 1e-6);
+    let text = std::fs::read_to_string(&obj).unwrap();
+    assert!(text.contains("mtllib house.mtl") && text.contains("o South ["));
+    assert!(dir.join("house.mtl").is_file());
+    for name in ["house.stl", "house.glb", "house.gltf"] {
+        let out = dir.join(name);
+        assert_eq!(
+            cli(&["export-mesh", file, out.to_str().unwrap()]).0,
+            Exit::Success
+        );
+        assert!(out.is_file());
+    }
+    assert_eq!(cli(&["export-mesh", file, "x.bin"]).0, Exit::Usage);
+    let _ = std::fs::remove_dir_all(&dir);
+}

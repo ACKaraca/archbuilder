@@ -18,7 +18,8 @@
 //! length).
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
-//! `archbuilder.file.export_ifc`.
+//! `archbuilder.file.export_ifc`. `export-mesh <file.archb> <out.obj|stl|gltf|glb> [options]` writes
+//! the elements as a mesh ([`export::run_mesh`]) and prints the loss report.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
@@ -91,6 +92,9 @@ where
     if args.first().and_then(|a| a.to_str()) == Some("export-ifc") {
         return export::run(&args[1..], product, stdout, stderr);
     }
+    if args.first().and_then(|a| a.to_str()) == Some("export-mesh") {
+        return export::run_mesh(&args[1..], product, stdout, stderr);
+    }
     if args.first().and_then(|a| a.to_str()) == Some("help") {
         let exit = headless::run_with_setup(
             args,
@@ -104,6 +108,10 @@ where
         let _ = writeln!(
             stderr,
             "  export-ifc <file> <out.ifc> [--timestamp T]   write the document as an IFC4 file; prints the loss report"
+        );
+        let _ = writeln!(
+            stderr,
+            "  export-mesh <file> <out.obj|stl|gltf|glb> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]   write meshes; prints the loss report"
         );
         return exit;
     }

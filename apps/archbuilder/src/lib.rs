@@ -174,6 +174,37 @@ fn document_dialog(title: &str) -> PathDialog {
     }
 }
 
+const EXPORT_MESH_TITLE: Message = Message {
+    message_id: "ab-export-mesh-title",
+};
+
+/// The save dialog of Export mesh: the extension the person picks or types names the format.
+fn export_mesh_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Save,
+        title: EXPORT_MESH_TITLE.message_id.into(),
+        filters: vec![
+            PathFilter {
+                message_id: "ab-export-mesh-filter-obj".into(),
+                extensions: vec!["obj".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-stl".into(),
+                extensions: vec!["stl".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-gltf".into(),
+                extensions: vec!["gltf".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-glb".into(),
+                extensions: vec!["glb".into()],
+            },
+        ],
+        default_name: Some("{document}.obj".into()),
+    }
+}
+
 /// The dialog of the shortcut file commands: a JSON file.
 fn shortcuts_dialog(mode: PathMode, title: &str) -> PathDialog {
     PathDialog {
@@ -248,6 +279,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     register_settings(&mut builder)?;
     // File > Export > IFC asks for the file in a save dialog that starts with the document's name.
     builder.path_dialog(archbuilder_io::command::EXPORT_IFC, export_ifc_dialog());
+    builder.path_dialog(archbuilder_io::command::EXPORT_MESH, export_mesh_dialog());
     // The shortcut table goes to and comes from a small JSON file.
     builder.path_dialog(
         archbuilder_io::command::EXPORT_SHORTCUTS,
@@ -549,6 +581,7 @@ fn menu() -> Result<Menu> {
                 label: MENU_EXPORT.message_id.into(),
                 items: [
                     archbuilder_io::command::EXPORT_IFC,
+                    archbuilder_io::command::EXPORT_MESH,
                     archbuilder_io::command::EXPORT_SHORTCUTS,
                 ]
                 .into_iter()

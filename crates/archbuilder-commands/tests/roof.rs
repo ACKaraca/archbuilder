@@ -398,3 +398,64 @@ fn slopes_are_typed_in_the_project_unit_and_refused_outside_the_range() {
     assert_eq!(error.code(), "ab.cmd.slope_invalid");
     assert!(error.arguments().contains_key("high"));
 }
+
+#[test]
+fn the_roof_type_cuts_the_eaves_of_its_roofs_and_undo_restores_them() {
+    let env = Env::new();
+    env.house();
+    let roof = env.roof();
+    let volume = |env: &Env| env.derived(roof).solid().unwrap().volume();
+    let plumb = volume(&env);
+    let snapshot = env.snapshot();
+    let ty = spatial::objects(&snapshot, archbuilder_model::types::ROOF_TYPE)[0].id;
+    // A type that never set the optional fields cuts plumb.
+    let before = env.derived(roof).surface.cut;
+    assert_eq!(before.cut, archbuilder_model::roof::RafterCut::Plumb);
+
+    env.run(
+        "archbuilder.type.set",
+        json!({"type": ty, "rafter_cut": "square"}),
+    )
+    .unwrap();
+    let square = volume(&env);
+    assert!(square < plumb - 1e-3, "{square} against {plumb}");
+    // The top and the outline stay; only the underside end moves in.
+    let d = env.derived(roof);
+    assert!((d.surface.plan_area() - 11.2 * 7.2).abs() < 1e-6);
+    let solid = d.solid().unwrap();
+    assert!(solid.bounding_box().min().x >= -0.6 - 1e-9);
+    assert!(solid.bounding_box().max().x <= 10.6 + 1e-9);
+
+    env.run(
+        "archbuilder.type.set",
+        json!({"type": ty, "rafter_cut": "two_cut_plumb", "fascia_depth": "0.1"}),
+    )
+    .unwrap();
+    let two = volume(&env);
+    assert!(two < plumb - 1e-3 && (two - square).abs() > 1e-4);
+
+    // Undo each step, then redo one.
+    env.document.undo().wait().unwrap();
+    assert!((volume(&env) - square).abs() < 1e-9);
+    env.document.undo().wait().unwrap();
+    assert!((volume(&env) - plumb).abs() < 1e-9);
+    env.document.redo().wait().unwrap();
+    assert!((volume(&env) - square).abs() < 1e-9);
+
+    // A depth outside its range, and the fields on a type of another kind, are refused.
+    assert!(
+        env.run(
+            "archbuilder.type.set",
+            json!({"type": ty, "fascia_depth": "0.001"}),
+        )
+        .is_err()
+    );
+    let wall_type = spatial::objects(&env.snapshot(), archbuilder_model::types::WALL_TYPE)[0].id;
+    assert!(
+        env.run(
+            "archbuilder.type.set",
+            json!({"type": wall_type, "rafter_cut": "square"}),
+        )
+        .is_err()
+    );
+}

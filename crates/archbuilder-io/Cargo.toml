@@ -16,6 +16,8 @@ arc-geom = { workspace = true }
 arc-io-common = { workspace = true }
 arc-io-ifc = { workspace = true }
 archbuilder-commands = { path = "../archbuilder-commands" }
+arc-io-mesh = { workspace = true }
+arc-mesh = { workspace = true }
 archbuilder-model = { path = "../archbuilder-model" }
 schemars = { workspace = true }
 serde = { workspace = true }

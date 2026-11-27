@@ -16,6 +16,30 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-io-path-required",
     };
+    /// A mesh export of glTF asked for another unit than meters.
+    pub const MESH_UNIT_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.io.mesh_unit_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-io-mesh-unit-unsupported",
+    };
+    /// A mesh export has no element with a body to write.
+    pub const MESH_EMPTY: ErrorCode = ErrorCode {
+        code: "ab.io.mesh_empty",
+        category: Category::NotFound,
+        message_id: "ab-io-mesh-empty",
+    };
+    /// The mesh format is neither named nor given by the file extension.
+    pub const MESH_FORMAT_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.io.mesh_format_unknown",
+        category: Category::InvalidInput,
+        message_id: "ab-io-mesh-format-unknown",
+    };
+    /// The mesh export of the selection was asked for with nothing selected.
+    pub const MESH_SELECTION_EMPTY: ErrorCode = ErrorCode {
+        code: "ab.io.mesh_selection_empty",
+        category: Category::InvalidInput,
+        message_id: "ab-io-mesh-selection-empty",
+    };
 }
 
 /// The loss reasons of the IFC export.
@@ -227,5 +251,48 @@ pub mod reasons {
         outcome: Outcome::Failed,
         severity: Severity::Error,
         message_id: "ab-io-validation-count",
+    };
+
+    /// The parameters, types, layers and quantities of the elements: a mesh holds triangles.
+    pub const MESH_PARAMETERS_NOT_CARRIED: Reason = Reason {
+        code: "ab.io.mesh.parameters_not_carried",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-mesh-parameters",
+    };
+    /// Hosting, attachments, joins and room relations: a mesh holds no relations.
+    pub const MESH_RELATIONS_NOT_CARRIED: Reason = Reason {
+        code: "ab.io.mesh.relations_not_carried",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-mesh-relations",
+    };
+    /// Objects without a body: rooms, grids, reference and work planes, selection sets.
+    pub const MESH_OBJECT_NOT_EXPORTED: Reason = Reason {
+        code: "ab.io.mesh.object_not_exported",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-mesh-object",
+    };
+    /// An element whose solid could not be derived or meshed.
+    pub const MESH_BODY_FAILED: Reason = Reason {
+        code: "ab.io.mesh.body_failed",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-mesh-body-failed",
+    };
+    /// Curved edges and surfaces are written as triangles.
+    pub const MESH_CURVES_FACETED: Reason = Reason {
+        code: "ab.io.mesh.curves_faceted",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-mesh-curves",
+    };
+    /// OBJ and STL record no unit.
+    pub const MESH_UNIT_NOT_RECORDED: Reason = Reason {
+        code: "ab.io.mesh.unit_not_recorded",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-mesh-unit",
     };
 }

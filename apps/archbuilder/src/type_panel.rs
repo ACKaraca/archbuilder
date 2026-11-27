@@ -22,6 +22,7 @@ use archbuilder_model::element_type::{
     self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
+use archbuilder_model::roof::{EaveCut, RafterCut};
 use archbuilder_model::spatial;
 
 use crate::circ_types::{self, CircKind};
@@ -264,6 +265,38 @@ const WRAP_LABELS: [(Wrap, Message); 4] = [
         },
     ),
 ];
+const EAVE_CUT: Message = Message {
+    message_id: "ab-types-eave-cut",
+};
+const FASCIA_DEPTH: Message = Message {
+    message_id: "ab-types-fascia-depth-mm",
+};
+const EAVE_LABELS: [(RafterCut, Message); 4] = [
+    (
+        RafterCut::Plumb,
+        Message {
+            message_id: "ab-types-eave-plumb",
+        },
+    ),
+    (
+        RafterCut::Square,
+        Message {
+            message_id: "ab-types-eave-square",
+        },
+    ),
+    (
+        RafterCut::TwoCutPlumb,
+        Message {
+            message_id: "ab-types-eave-two-cut-plumb",
+        },
+    ),
+    (
+        RafterCut::TwoCutSquare,
+        Message {
+            message_id: "ab-types-eave-two-cut-square",
+        },
+    ),
+];
 const LAYERS_HEADING: Message = Message {
     message_id: "ab-types-layers",
 };
@@ -357,6 +390,9 @@ struct Draft {
     wrap_inserts: Wrap,
     sizes: [String; 5],
     operation: Operation,
+    /// Roof types: how the eave ends are cut, and the fascia depth in millimeters as typed.
+    rafter_cut: RafterCut,
+    fascia: String,
 }
 
 fn mm(meters: f64) -> String {
@@ -392,7 +428,14 @@ impl Draft {
             wrap_inserts: Wrap::None,
             sizes: Default::default(),
             operation: Operation::SingleSwing,
+            rafter_cut: RafterCut::Plumb,
+            fascia: mm(EaveCut::default().fascia_depth),
         };
+        if kind == TypeKind::Roof {
+            let cut = EaveCut::from_values(&object.values);
+            draft.rafter_cut = cut.cut;
+            draft.fascia = mm(cut.fascia_depth);
+        }
         if kind.layered() {
             let layers = Layers::from_values(&object.values)?;
             draft.rows = layers
@@ -483,6 +526,17 @@ impl Draft {
                 "core".into(),
                 serde_json::json!([layers.core.0, layers.core.1]),
             );
+            if kind == TypeKind::Roof {
+                let depth = meters(&self.fascia).filter(|v| *v > 0.0).ok_or_else(|| {
+                    say(
+                        localize,
+                        &NUMBER_INVALID,
+                        &[("layer", arc_base::error::Value::Int(0))],
+                    )
+                })?;
+                map.insert("rafter_cut".into(), self.rafter_cut.name().into());
+                map.insert("fascia_depth".into(), depth.into());
+            }
             if kind == TypeKind::Wall {
                 map.insert("exposure".into(), self.exposure.name().into());
                 map.insert("load_bearing".into(), self.load_bearing.into());
@@ -1099,6 +1153,32 @@ impl TypePanel {
                                         ui.selectable_value(value, *w, say(localize, m, &[]));
                                     }
                                 });
+                        }
+                    });
+                }
+                if kind == TypeKind::Roof {
+                    ui.horizontal(|ui| {
+                        ui.label(say(localize, &EAVE_CUT, &[]));
+                        ComboBox::from_id_salt("archbuilder-types-eave-cut")
+                            .selected_text(combo_text(&EAVE_LABELS, draft.rafter_cut, localize))
+                            .show_ui(ui, |ui| {
+                                for (c, m) in &EAVE_LABELS {
+                                    ui.selectable_value(
+                                        &mut draft.rafter_cut,
+                                        *c,
+                                        say(localize, m, &[]),
+                                    );
+                                }
+                            });
+                        if matches!(
+                            draft.rafter_cut,
+                            RafterCut::TwoCutPlumb | RafterCut::TwoCutSquare
+                        ) {
+                            ui.label(say(localize, &FASCIA_DEPTH, &[]));
+                            ui.add_sized(
+                                [60.0, 20.0],
+                                egui::TextEdit::singleline(&mut draft.fascia),
+                            );
                         }
                     });
                 }

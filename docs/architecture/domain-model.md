@@ -635,8 +635,28 @@ stairs. Roof types are as floor types (layers from the top down); a new project 
 generic 300 mm roof type and timber rafters with insulation under tiles, and a document without
 roof types gets the same two when its first roof is made.
 
+The eave cut. A roof type decides how the eave end of the slab is cut on every sloped edge of
+every roof of that type; the setting is the type's, so changing it re-derives all of those roofs
+in one undo step, and a gable edge keeps its vertical plane. It is measured in the vertical section
+square to the eave edge, from the slab's top corner on the outline (the line the overhang
+reaches); no cut reaches outside the outline, and the overhang, the base height and the underside
+that walls attach to do not change. `plumb` is a vertical end face from the underside up to the top
+(the form of every roof before the setting existed). `square` is an end face square to the slope
+through the top corner, which pulls the underside back from the outline by the thickness times the
+sine of the slope. `two_cut_plumb` is a vertical face of the `fascia_depth`, measured down from the
+top corner, and then a level soffit back to the underside; `two_cut_square` is a face square to the
+slope whose length along it is the `fascia_depth`, and then a level soffit. A fascia depth at least
+as long as the whole end face leaves no soffit and the cut equals the single form. All layers of
+the type share the cut faces: the layer boundaries are parallel to the slope, so each layer ends at
+the same cut plane and keeps its thickness square to the slope. Where two neighboring sloped edges
+meet at a corner the cut planes meet in a miter, and the soffits of two-cut ends must end at one
+height there (equal overhang, slope and fascia depth on both edges); otherwise the roof is refused
+with `ab.model.roof_cut_conflict`, naming the point, rather than given a step. The viewport, the
+volumes and the IFC body (`IfcFacetedBrep`) all follow the cut. Roofs by extrusion keep the
+square end of their profile; the setting does not reach them.
+
 The `.archb` addition is backward compatible: the record types `archbuilder.roof` and
-`archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
+`archbuilder.roof_type` (whose optional `rafter_cut` and `fascia_depth` are schema 1.1), the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
 project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
 
 In the application the Roof tool (Architecture tab, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
@@ -1161,6 +1181,34 @@ thickness; a slab cut into several parts is a faceted B-rep. The slab takes its 
 `GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
 the rule of `inspect`), all of the authored boundary, not of the cut body.
 
+Mesh export: `archbuilder.file.export_mesh` (Exchange tab, Mesh group, and File > Export) writes the
+elements as OBJ with an MTL library beside it, binary STL or glTF 2.0 (`.gltf` with the buffer
+embedded, or `.glb`), through the writers of `arc-io-mesh`; `archbuilder-cli export-mesh <file.archb>
+<out> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]` does the same
+headless and prints the loss report. The format is the `format` parameter or else the file
+extension; without a path the application asks in a save dialog whose extension picks the format.
+Every body the viewport draws is written (walls by layer, curtain walls by panel and mullion, doors
+and windows by part, floors, floor edges, both kinds of roof with their eave cut, fascias and
+gutters, dormers, ceilings, stairs, ramps, railings and elevator cars), each solid derived from the
+records as the viewport derives it. An element is one object (OBJ), one node (glTF) or part of the
+single solid (STL); its name is `<name> [<identifier>]`, with `#` and `\` written as `_`, and a
+glTF node also carries `{"archbuilder": {"id", "kind", "name"}}` as `extras`. A glTF file has a
+root node, named after the project, that turns the model's Z axis up into glTF's Y axis up; the
+positions stay the model's own. Options: `selection` (only the selected elements) or `elements` (a
+list), `hidden` (elements to leave out: the application passes what its view hides or isolates away,
+since that state is not in the document), `merge` (one object for the model, split by material),
+`materials` (on by default) and `unit` (meters by default; centimeters, millimeters, feet and inches
+for OBJ and STL, which record no unit; glTF is always in meters and refuses another). Materials are
+named by role (`wall.core`, `wall.finish`, `door.leaf`, `window.glass`, `roof`, ...) with the
+viewport's colors, glass being translucent; the MTL colors are sRGB-encoded and the glTF base
+colors linear. Coordinates are single precision in STL and glTF, so a model far from the origin
+loses precision there; recenter the project (`archbuilder.coordinates.recenter`) first. The loss report
+lists what a mesh cannot carry: parameters, types, layers and quantities (one item with the element
+count), hosting, joins, attachments and room relations, objects without a body (rooms, grids,
+reference and work planes, selection sets, by kind), curved surfaces written as triangles, the
+missing unit of OBJ and STL, and any element whose solid could not be derived (named). The command
+changes nothing in the document and is not undoable.
+
 Export: `archbuilder-io` writes the first building of the document with `arc-io-ifc`; `export_ifc`
 takes a snapshot and the caller's file name and time stamp (no clock in the crate) and returns the
 bytes, the number of walls, floors, doors and windows, and a loss report (`archbuilder-cli
@@ -1200,6 +1248,7 @@ instance's own.
 |---|---|---|
 | Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding`; `wrap_ends`, `wrap_inserts` (`none`, `exterior`, `interior` or `both`: the wrapping of finish layers at free ends and at the openings of doors and windows; schema 1.1, absent in older files, read as `none`) | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
 | Floor type | `name`, `layers` from the top down, `core_start`, `core_end` | As a wall type |
+| Roof type | The fields of a floor type, then the optional `rafter_cut` (`plumb`, `square`, `two_cut_plumb` or `two_cut_square`) and `fascia_depth` (schema 1.1; absent in older files and in types that never set them: a plumb cut) | As a wall type; `fascia_depth` 10 mm to 2 m, used by the two-cut forms; see the eave cut below |
 | Door type, window type | `name`, `width`, `height`, `frame_width`, `frame_depth`, `operation`, `sill` (the default sill height of new instances) | The ranges of an insert; the frame leaves an opening; the operation suits the kind |
 
 A new project starts with three wall types (a generic 200 mm type, an exterior masonry cavity type
@@ -1211,7 +1260,7 @@ formatted in the interface language from the commands' message catalog when the 
 and are user data afterwards.
 
 Commands, one transaction and one undo step each: `archbuilder.type.set` changes a type's name,
-layers, core, flags, size, operation or default sill, and in the same transaction writes the new
+layers, core, flags, size, operation, default sill or, for a roof type, `rafter_cut` and `fascia_depth`, and in the same transaction writes the new
 copies on every instance, so walls rethicken around their location lines, joins re-derive, floors
 that follow wall faces move, openings are checked against the new walls (a change that would break
 one is refused, naming it) and rooms re-derive; `archbuilder.type.duplicate` copies a type under the

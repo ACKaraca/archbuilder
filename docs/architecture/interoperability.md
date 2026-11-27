@@ -22,7 +22,7 @@ properties, relationships) and **edit** (native, parametric editing after import
 | PDF | Write | View | Vector sheets at true scale | AB-SHEET-011 |
 | PDF, PNG, JPEG | Read | View | Underlays | AB-LINK-007 |
 | PNG, JPEG, TIFF | Write | View | Image export | AB-SHEET-013 |
-| glTF, OBJ, STL | Write | View | Meshes with materials and element node names | AB-IO-013 |
+| glTF, OBJ, STL | Write | View | Meshes with materials and element node names (`archbuilder.file.export_mesh`) | AB-IO-013 |
 | glTF, OBJ | Read | View | Context links and generic elements | AB-LINK-008 |
 | OpenUSD | Write | View with element metadata | Aligned with the Arc Scene contract | AB-IO-014 |
 | Arc Scene | Write (stream) | View | To RenderBuilder | AB-VIS-009 |

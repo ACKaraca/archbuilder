@@ -213,6 +213,9 @@ fn the_file_menu_has_export_ifc_after_save_as() {
                 command: "archbuilder.file.export_ifc".into()
             },
             MenuItem::Command {
+                command: "archbuilder.file.export_mesh".into()
+            },
+            MenuItem::Command {
                 command: "archbuilder.shortcuts.export".into()
             }
         ]
@@ -251,6 +254,17 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(dialog.mode, arc_app::product::PathMode::Save);
     assert_eq!(dialog.filters[0].extensions, ["ifc"]);
     assert_eq!(dialog.default_name.as_deref(), Some("{document}.ifc"));
+    // Export mesh asks in a save dialog whose extension names the format.
+    let dialog = product.path_dialog("archbuilder.file.export_mesh").unwrap();
+    let extensions: Vec<_> = dialog.filters.iter().flat_map(|f| &f.extensions).collect();
+    assert_eq!(extensions, ["obj", "stl", "gltf", "glb"]);
+    assert!(
+        product
+            .headless()
+            .registry
+            .get("archbuilder.file.export_mesh")
+            .is_some()
+    );
 }
 
 #[test]
