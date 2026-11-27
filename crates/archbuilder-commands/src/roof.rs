@@ -263,7 +263,7 @@ fn angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
 }
 
 fn length(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
-    Ok(ctx.quantity(param, Dimension::LENGTH)?.value())
+    Ok(crate::length(ctx, param)?.value())
 }
 
 /// The walls of a chain or of picks, as the floor command finds them.

@@ -164,7 +164,7 @@ fn invalid() -> Error {
 fn create_stair(ctx: &mut Context<'_>, p: CreateStair) -> Result<StairCreated> {
     let storey = crate::wall::storey_for(ctx, p.storey)?.id;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
-        Some(param) => ctx.quantity(param, Dimension::LENGTH).map(|q| q.value()),
+        Some(param) => crate::length(ctx, param).map(|q| q.value()),
         None => Ok(default),
     };
     if !p.start.iter().all(|v| v.is_finite()) {

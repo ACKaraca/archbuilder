@@ -216,9 +216,7 @@ fn create_ceiling(ctx: &mut Context<'_>, p: CreateCeiling) -> Result<CeilingCrea
     let storey = crate::wall::storey_for(ctx, p.storey)?.id;
     crate::element_type::ensure_ceiling_types(ctx)?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>| match param {
-        Some(param) => ctx
-            .quantity(param, Dimension::LENGTH)
-            .map(|q| Some(q.value())),
+        Some(param) => crate::length(ctx, param).map(|q| Some(q.value())),
         None => Ok(None),
     };
     let chosen = crate::element_type::layered_for(
@@ -334,7 +332,7 @@ fn set_slope(ctx: &mut Context<'_>, p: SetSlope) -> Result<IdParam> {
             None => None,
         };
         let end = match &p.end_height {
-            Some(h) => Some(ctx.quantity(h, Dimension::LENGTH)?.value()),
+            Some(h) => Some(crate::length(ctx, h)?.value()),
             None => None,
         };
         write_slope(ctx, id, from, to, slope, end)?;

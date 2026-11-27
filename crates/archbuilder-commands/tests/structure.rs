@@ -331,3 +331,71 @@ fn a_new_project_is_named_in_the_language_the_session_was_told() {
     let project = spatial::project(&env.snapshot()).unwrap();
     assert_eq!(text(&project.values, 0), Some("Adsız Proje"));
 }
+
+impl Env {
+    /// Runs a command line as the command line parses it, where every value arrives as text.
+    fn line(&self, text: &str) -> arc_base::Result<Outcome> {
+        let parsed = arc_command::parse_line(&self.registry, &Default::default(), text)?.unwrap();
+        self.run(&parsed.command, Json::Object(parsed.params))
+    }
+}
+
+#[test]
+fn a_bare_number_on_the_command_line_is_meters_for_every_length_field() {
+    let env = started();
+    let floor1 = env.storey_named("Floor 1");
+    let elevation = |env: &Env| {
+        spatial::storeys(&env.snapshot(), env.building())
+            .iter()
+            .find(|s| s.storey.id == floor1)
+            .unwrap()
+            .elevation()
+    };
+    for (text, meters) in [
+        ("value=0.3", 0.3),
+        ("value=\"0.35\"", 0.35),
+        ("value=\"400 mm\"", 0.4),
+        ("value=0.4m", 0.4),
+    ] {
+        env.line(&format!(
+            "archbuilder.property.set objects={floor1} field=elevation {text}"
+        ))
+        .unwrap();
+        assert!((elevation(&env) - meters).abs() < 1e-9, "{text}");
+    }
+    // A wall's height goes through the same conversion.
+    let wall = Env::id(
+        &env.ok(
+            "archbuilder.wall.create",
+            json!({"start": [0, 0], "end": [4, 0]}),
+        )["wall"],
+    );
+    env.line(&format!(
+        "archbuilder.property.set objects={wall} field=height value=3.1"
+    ))
+    .unwrap();
+    let height = meters(&spatial::get(&env.snapshot(), wall).unwrap().values, 6);
+    assert!(height.is_some_and(|h| (h - 3.1).abs() < 1e-9), "{height:?}");
+    // The creating commands read a bare number the same way.
+    env.line("archbuilder.wall.create start=0,2 end=4,2 height=2.8")
+        .unwrap();
+}
+
+#[test]
+fn a_text_that_is_no_length_is_still_refused_on_the_command_line() {
+    let env = started();
+    let wall = Env::id(
+        &env.ok(
+            "archbuilder.wall.create",
+            json!({"start": [0, 0], "end": [4, 0]}),
+        )["wall"],
+    );
+    let before = env.dump();
+    let refused = env
+        .line(&format!(
+            "archbuilder.property.set objects={wall} field=height value=\"tall\""
+        ))
+        .unwrap_err();
+    assert_eq!(refused.code(), "ab.cmd.value_invalid");
+    assert_eq!(env.dump(), before);
+}

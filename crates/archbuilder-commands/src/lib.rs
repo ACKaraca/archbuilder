@@ -43,6 +43,24 @@ use arc_doc::graph::Evaluators;
 use arc_doc::package::LockOwner;
 use arc_doc::{Document, TypeRegistry};
 
+/// A length parameter as a quantity. A bare number, a JSON number or a text without a unit
+/// such as `"0.35"`, is meters on every surface; a text with a unit says its own.
+///
+/// # Errors
+/// The errors of [`arc_command::Context::quantity`] for any other text.
+pub(crate) fn length(
+    ctx: &arc_command::Context<'_>,
+    param: &arc_command::QuantityParam,
+) -> Result<arc_base::Quantity> {
+    if let arc_command::QuantityParam::Text(text) = param
+        && let Ok(meters) = text.trim().parse::<f64>()
+        && meters.is_finite()
+    {
+        return Ok(arc_base::Quantity::new(meters, arc_base::Dimension::LENGTH));
+    }
+    ctx.quantity(param, arc_base::Dimension::LENGTH)
+}
+
 /// The name the product's headless runner reports.
 pub const PRODUCT_NAME: &str = "archbuilder";
 

@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Object, Snapshot, Value};
 use archbuilder_model::element_type::{
@@ -580,7 +580,7 @@ pub(crate) fn layered_for(
     let Some(param) = thickness else {
         return Ok(chosen);
     };
-    let thickness = ctx.quantity(param, Dimension::LENGTH)?.value();
+    let thickness = crate::length(ctx, param)?.value();
     let total = spatial::get(ctx.txn()?.snapshot(), chosen)
         .and_then(|t| Layers::from_values(&t.values))
         .map(|l| l.total());
@@ -1032,7 +1032,7 @@ pub struct TypeChanged {
 
 fn meters(ctx: &Context<'_>, param: Option<&QuantityParam>) -> Result<Option<f64>> {
     param
-        .map(|p| ctx.quantity(p, Dimension::LENGTH).map(|q| q.value()))
+        .map(|p| crate::length(ctx, p).map(|q| q.value()))
         .transpose()
 }
 
@@ -1057,7 +1057,7 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
             }
             let mut new = Vec::with_capacity(list.len());
             for l in list {
-                let thickness = ctx.quantity(&l.thickness, Dimension::LENGTH)?.value();
+                let thickness = crate::length(ctx, &l.thickness)?.value();
                 new.push(Layer::new(l.function.into(), &l.material, thickness));
             }
             layers.layers = new;
