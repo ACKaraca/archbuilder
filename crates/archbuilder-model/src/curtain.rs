@@ -1446,6 +1446,9 @@ pub struct PanelInfo {
     pub outline: Option<Vec<[f64; 2]>>,
     /// The door or window that fills it, as an insert of the wall.
     pub insert: Option<Insert>,
+    /// How far the arc of the wall's middle lies from the flat panel that spans the cell, in
+    /// meters; 0 on a straight wall.
+    pub deviation: f64,
 }
 
 impl PanelInfo {
@@ -1586,7 +1589,15 @@ impl Derived {
         let mut layout = Layout::of(&ty, &edits, wall.length(), wall.height);
         let joined = corners(snapshot, object, &wall);
         let mullions = mullions(&ty, &layout, &wall, joined);
-        let panels = panels(snapshot, &ty, &layout, &overrides, joined);
+        let mut panels = panels(snapshot, &ty, &layout, &overrides, joined);
+        // On an arc wall a panel is flat between its vertical lines: report how far the arc of
+        // the wall's middle bows from it.
+        if let Some(r) = wall.radius_at((wall.extent().0 + wall.extent().1) / 2.0) {
+            for p in &mut panels {
+                let half = (p.width() / 2.0).min(r);
+                p.deviation = r - (r * r - half * half).sqrt();
+            }
+        }
         layout.orphans.overrides = overrides
             .iter()
             .filter(|o| !layout.cells.iter().any(|c| c.key == o.cell))
@@ -1688,6 +1699,37 @@ impl Derived {
                     axes.base + m.span.0,
                     m.span.1 - m.span.0,
                 )?,
+                (false, Profile::Rectangular) if self.wall.is_arc() => {
+                    // A bar along an arc is made of a flat piece for each facet it crosses.
+                    for (k, run) in facet_runs(&self.wall, m.span).into_iter().enumerate() {
+                        let piece = boxed(
+                            &axes,
+                            run,
+                            (across - d / 2.0, across + d / 2.0),
+                            (axes.base + m.at - w / 2.0, axes.base + m.at + w / 2.0),
+                        )?;
+                        add(
+                            format!("m:{}#{k}", m.key),
+                            MULLION_ROLE,
+                            Class::Mullion,
+                            piece,
+                        );
+                    }
+                    continue;
+                }
+                (false, Profile::Circular) if self.wall.is_arc() => {
+                    // shortcut: a round bar along an arc is faceted per piece too.
+                    for (k, run) in facet_runs(&self.wall, m.span).into_iter().enumerate() {
+                        let piece = bar_run(&axes, run, across, m.at, w)?;
+                        add(
+                            format!("m:{}#{k}", m.key),
+                            MULLION_ROLE,
+                            Class::Mullion,
+                            piece,
+                        );
+                    }
+                    continue;
+                }
                 (false, Profile::Rectangular) => boxed(
                     &axes,
                     m.span,
@@ -1824,6 +1866,61 @@ fn bar(axes: &crate::insert::Axes, m: &Mullion, across: f64) -> Result<Polyhedro
             Point2::new(across - d / 2.0, w / 2.0),
         ],
     };
+    extrude(
+        &Boundary::polygons(vec![ring_points(&ring)]).region()?,
+        &frame,
+        length,
+        CHORD,
+        &tolerance,
+        &Limits::DEFAULT,
+    )
+}
+
+/// The chord tolerance of a bar along an arc wall, in meters.
+const BAR_CHORD: f64 = 0.01;
+
+/// The stretch `span` of an arc wall's baseline cut into equal runs that are flat within
+/// [`BAR_CHORD`] of the arc.
+fn facet_runs(wall: &Wall, span: (f64, f64)) -> Vec<(f64, f64)> {
+    let r = wall
+        .arc()
+        .map_or(f64::MAX, |a| a.radius)
+        .max(crate::wall::MIN_RADIUS);
+    let step = if BAR_CHORD >= r {
+        std::f64::consts::FRAC_PI_2
+    } else {
+        2.0 * (1.0 - BAR_CHORD / r).acos()
+    };
+    let n = count_of(((span.1 - span.0) / (r * step)).ceil().clamp(1.0, 512.0));
+    (0..n)
+        .map(|k| {
+            let at = |i: usize| span.0 + (span.1 - span.0) * i as f64 / n as f64;
+            (at(k), at(k + 1))
+        })
+        .collect()
+}
+
+/// A round bar along the stretch `run` of an arc wall, straight between the two points of its
+/// axis, `above` the base at the height `at`.
+fn bar_run(
+    axes: &crate::insert::Axes,
+    run: (f64, f64),
+    across: f64,
+    at: f64,
+    width: f64,
+) -> Result<Polyhedron> {
+    let tolerance = Tolerance::DEFAULT;
+    let (a, b) = (axes.at(run.0, across), axes.at(run.1, across));
+    let direction = Vector3::new(b.x - a.x, b.y - a.y, 0.0);
+    let length = direction.norm();
+    let unit = direction / length.max(f64::MIN_POSITIVE);
+    let frame = PlaneFrame::new(
+        Point3::new(a.x, a.y, axes.base + at),
+        unit,
+        Vector3::z(),
+        &tolerance,
+    )?;
+    let ring = circle(Point2::new, width / 2.0);
     extrude(
         &Boundary::polygons(vec![ring_points(&ring)]).region()?,
         &frame,
@@ -2105,6 +2202,7 @@ fn panels(
                 w,
                 outline,
                 insert,
+                deviation: 0.0,
             }
         })
         .collect()
@@ -2162,6 +2260,10 @@ fn leaf(
 /// along the host with both ends within its length and its baseline within its thickness, and rise
 /// no higher than the host. The opening is the curtain wall's width and height.
 fn opening_of(host: &Wall, curtain: &Wall) -> Option<Insert> {
+    // shortcut: a curtain wall is embedded in a straight basic wall only.
+    if host.is_arc() || curtain.is_arc() {
+        return None;
+    }
     let length = host.length();
     if length < types::MIN_WALL_LENGTH {
         return None;
@@ -2270,7 +2372,15 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
         let edits = GridEdit::list(&object.values);
         let layout = Layout::of(&ty, &edits, w.length(), w.height);
         if merge_is_split(&layout, &edits) {
-            out.push(Error::new(codes::CURTAIN_CELL_SHAPE).with_arg("name", name));
+            out.push(Error::new(codes::CURTAIN_CELL_SHAPE).with_arg("name", name.clone()));
+        }
+        if w.is_arc() && (ty.vertical.angle != 0.0 || ty.horizontal.angle != 0.0) {
+            out.push(
+                Error::new(codes::WALL_SHAPE_COMBINATION)
+                    .with_arg("name", name)
+                    .with_arg("first", "curtain grid angle")
+                    .with_arg("second", "arc"),
+            );
         }
     }
     out

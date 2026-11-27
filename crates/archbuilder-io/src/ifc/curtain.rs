@@ -152,14 +152,18 @@ impl Mapper<'_> {
                     ));
                     plate
                 }
-                (Class::Mullion, Some(("m", key))) => {
+                (Class::Mullion, Some(("m", full))) => {
+                    // A bar along an arc is several pieces: `<key>#<piece>`.
+                    let (key, piece) = full
+                        .split_once('#')
+                        .map_or((full, false), |(k, _)| (k, true));
                     let Some(mullion) = derived.mullions.iter().find(|m| m.key == key) else {
                         continue;
                     };
                     let mut member = Element::new(
                         solid.id,
                         ElementKind::Member,
-                        &format!("{name} mullion {key}"),
+                        &format!("{name} mullion {full}"),
                         storey_id,
                     );
                     member.predefined_type = Some("MULLION".to_owned());
@@ -179,7 +183,17 @@ impl Mapper<'_> {
                         "Pset_MemberCommon",
                         common(external, load_bearing),
                     ));
-                    let long = mullion.length();
+                    let long = if piece {
+                        let section = match mullion.spec.profile {
+                            archbuilder_model::curtain::Profile::Circular => {
+                                std::f64::consts::PI * (mullion.spec.width / 2.0).powi(2)
+                            }
+                            _ => mullion.spec.width * mullion.spec.depth,
+                        };
+                        volume / section.max(f64::MIN_POSITIVE)
+                    } else {
+                        mullion.length()
+                    };
                     member.quantity_sets.push(QuantitySet::new(
                         "Qto_MemberBaseQuantities",
                         vec![
@@ -234,14 +248,38 @@ impl Mapper<'_> {
                 name: format!("{} {}", name_of(object), panel.key),
                 type_id: type_id.map(|t| t.as_u128()),
             };
-            self.insert_as(
-                object,
-                item,
-                (object, &derived.wall, &frame),
-                storey,
-                level,
-                Some(own),
-            );
+            // A door or window panel of an arc wall is on its tangent frame.
+            let (straight, local) = archbuilder_model::insert::on_arc(&derived.wall, item);
+            let tangent = Frame::new(
+                straight.start,
+                [
+                    straight.end[0] - straight.start[0],
+                    straight.end[1] - straight.start[1],
+                ],
+            )
+            .filter(|_| derived.wall.is_arc());
+            match tangent {
+                Some(f) => {
+                    self.insert_as(
+                        object,
+                        &local,
+                        (object, &straight, &f),
+                        storey,
+                        level,
+                        Some(own),
+                    );
+                }
+                None => {
+                    self.insert_as(
+                        object,
+                        item,
+                        (object, &derived.wall, &frame),
+                        storey,
+                        level,
+                        Some(own),
+                    );
+                }
+            }
             leaves += 1;
         }
         if leaves > 0 {

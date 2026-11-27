@@ -634,6 +634,9 @@ pub struct PanelRow {
     pub overridden: bool,
     /// Whether the cell is cut by a turned grid, so that it is not a rectangle.
     pub turned: bool,
+    /// How far the arc of an arc wall's middle bows from the flat panel, in meters; 0 for a
+    /// panel of a straight wall.
+    pub chord_deviation: f64,
 }
 
 /// One mullion row of a schedule.
@@ -708,6 +711,7 @@ pub fn schedule(
                     area: p.area(),
                     overridden: p.overridden,
                     turned: p.outline.is_some(),
+                    chord_deviation: p.deviation,
                 })
                 .collect();
             let mullions: Vec<MullionRow> = d
