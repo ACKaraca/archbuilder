@@ -539,3 +539,60 @@ fn undo_inside_a_chain_takes_back_the_last_wall_and_goes_on_from_its_start() {
         "nothing left to take back; the host cancels the tool"
     );
 }
+
+#[test]
+fn a_change_of_a_door_type_extracts_the_curtain_walls_with_a_panel_of_it_again() {
+    use arc_doc::events::{ChangeGroups, Changes};
+    use arc_doc::schema::TypeKey;
+    use archbuilder_model::element_type::{self as et, TypeKind};
+    let rig = Rig::new();
+    rig.invoke(
+        "archbuilder.curtain.type",
+        json!({"name": "CW", "vertical": {"kind": "fixed_distance", "value": 1.0},
+               "horizontal": {"kind": "fixed_number", "value": 1}}),
+    );
+    let snapshot = rig.document.snapshot();
+    let curtain_type = et::of_kind(&snapshot, TypeKind::Wall)
+        .iter()
+        .find(|t| et::name(t) == "CW")
+        .unwrap()
+        .id;
+    rig.invoke(
+        "archbuilder.wall.create",
+        json!({"start": [0.0, 0.0], "end": [3.0, 0.0], "type": curtain_type.to_string(),
+               "height": 3.0}),
+    );
+    let snapshot = rig.document.snapshot();
+    let walls: Vec<_> = spatial::objects(&snapshot, WALL)
+        .iter()
+        .map(|w| w.id)
+        .collect();
+    let door = et::of_kind(&snapshot, TypeKind::Door)[0].id;
+    let cell = archbuilder_model::curtain::Derived::of(
+        &snapshot,
+        &spatial::get(&snapshot, walls[0]).unwrap(),
+    )
+    .unwrap()
+    .layout
+    .cells[0]
+        .key
+        .clone();
+    let changed = Changes::Listed(
+        [(
+            TypeKey::new(archbuilder_model::types::DOOR_TYPE).unwrap(),
+            ChangeGroups {
+                modified: [door].into(),
+                ..ChangeGroups::default()
+            },
+        )]
+        .into(),
+    );
+    // Without a door panel the curtain wall does not depend on the door type.
+    let dependents = archbuilder::extract_wall::dependents;
+    assert!(dependents(&rig.document.snapshot(), &changed).is_empty());
+    rig.invoke(
+        "archbuilder.curtain.panel",
+        json!({"wall": walls[0], "cell": cell, "panel": "door", "type": door}),
+    );
+    assert_eq!(dependents(&rig.document.snapshot(), &changed), walls);
+}

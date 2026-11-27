@@ -160,7 +160,8 @@ pub fn extract_wall(snapshot: &Snapshot, object: &Object, _cancel: &Cancel) -> R
 /// The walls to extract again after a commit: those of a storey that the commit changed or whose
 /// level it changed (the elevation of the level places the solid), those of the storeys of walls
 /// the commit created, changed or deleted (the ends of walls that meet follow each other), and
-/// the walls whose top follows a changed level. A deleted wall is gone from the snapshot, so its
+/// the walls whose top follows a changed level, the curtain walls of a changed wall type and those
+/// with a panel of a changed door or window type. A deleted wall is gone from the snapshot, so its
 /// storey is the one remembered when it was extracted; a deleted wall never extracted extracts
 /// the walls of every storey again.
 #[must_use]
@@ -188,6 +189,31 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
                 .filter(|w| {
                     archbuilder_model::element_type::type_id(TypeKind::Wall, &w.values)
                         .is_some_and(|t| retyped.contains(&t))
+                })
+                .map(|w| w.id),
+        );
+    }
+    // A door or window type that changed: the curtain walls with a panel of that type draw it again
+    // (the wall record names the type in its override and does not change).
+    let retyped_panels: BTreeSet<ObjectId> = [
+        archbuilder_model::types::DOOR_TYPE,
+        archbuilder_model::types::WINDOW_TYPE,
+    ]
+    .into_iter()
+    .flat_map(live)
+    .collect();
+    if !retyped_panels.is_empty() {
+        changed_walls.extend(
+            spatial::objects(snapshot, WALL)
+                .into_iter()
+                .filter(|w| {
+                    archbuilder_model::curtain::Derived::of(snapshot, w).is_some_and(|d| {
+                        d.panels.iter().any(|p| {
+                            p.type_ref
+                                .as_ref()
+                                .is_some_and(|(t, _)| retyped_panels.contains(t))
+                        })
+                    })
                 })
                 .map(|w| w.id),
         );

@@ -32,7 +32,7 @@ crates/archbuilder-model/     spatial, wall, insert, floor, roof, room and eleme
 crates/archbuilder-commands/  type set and the commands (headless)
 crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, floor edges, roofs (footprint and extrusion), ceilings, openings, rooms with a loss report; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, panels, extractors, tools
-apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window and floor lists, `export-ifc`
+apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window, floor and curtain wall (panels, mullions) lists, `export-ifc`
 xtask/                        layers, catalogs, ci
 locales/en-US/                message catalogs, one per crate that has messages
 locales/tr-TR/                Turkish catalogs of the same crates

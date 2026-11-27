@@ -1,4 +1,5 @@
-//! `inspect` prints the model statistics and the selection sets of a saved file.
+//! `inspect` prints the model statistics, the selection sets and the panels and mullions of the
+//! curtain walls of a saved file.
 
 #![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
@@ -75,5 +76,40 @@ fn inspect_prints_statistics_and_selection_sets_after_reopen() {
     assert_eq!(dump["statistics"]["selection_sets"], 1);
     assert_eq!(dump["selection_sets"][0]["name"], "Exterior");
     assert_eq!(dump["selection_sets"][0]["members"][0], wall);
+    assert_eq!(dump["curtain_walls"], json!([]));
+
+    // A curtain wall: 3 by 2 cells, one of them a door.
+    let ty = run(
+        false,
+        "archbuilder.curtain.type",
+        &json!({"name": "CW", "vertical": {"kind": "fixed_distance", "value": 1.0},
+               "horizontal": {"kind": "fixed_number", "value": 1}}),
+    );
+    let ty = ty["value"]["type"]
+        .as_str()
+        .or_else(|| ty["outcome"]["value"]["type"].as_str())
+        .unwrap()
+        .to_owned();
+    run(
+        false,
+        "archbuilder.wall.create",
+        &json!({"start": [0.0, 5.0], "end": [3.0, 5.0], "type": ty, "height": 3.0}),
+    );
+    let (_, dump) = cli(&["inspect", file]);
+    let curtain = &dump["curtain_walls"][0];
+    let panels = curtain["panels"].as_array().unwrap();
+    assert_eq!(panels.len(), 6);
+    assert!(
+        panels
+            .iter()
+            .all(|p| p["kind"] == "glazed" && p["area"].as_f64().unwrap() > 0.0)
+    );
+    let mullions = curtain["mullions"].as_array().unwrap();
+    assert!(mullions.iter().any(|m| m["role"] == "interior"));
+    assert!(
+        mullions
+            .iter()
+            .any(|m| m["role"] == "border" && m["length"].as_f64().unwrap() > 0.0)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
