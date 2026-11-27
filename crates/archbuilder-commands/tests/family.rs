@@ -663,3 +663,149 @@ fn hiding_the_components_category_hides_components_in_a_plan_view() {
     let settings = archbuilder_model::view::PlanView::from_values(&values).unwrap();
     assert!(settings.shows(archbuilder_model::view::Category::Component));
 }
+
+#[test]
+fn nested_families_place_with_derived_shared_ids_and_profile_families_are_not_placed() {
+    use archbuilder_model::family::def::{
+        Anchor, ArrayDef, ArrayKind, Category, NestedUse, Version,
+    };
+    use archbuilder_model::family::fixtures::{cabinet, len};
+    let child = table();
+    let mut parent = cabinet();
+    parent.header.id = arc_base::id::Identifier::from_u128(0x7001);
+    parent.nested = vec![NestedUse {
+        key: "tbl".into(),
+        family: child.header.id,
+        version: Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        },
+        type_name: Some("1400x800".into()),
+        type_param: None,
+        shared: true,
+        at: [Anchor::default(), Anchor::default(), Anchor::default()],
+        rotation: None,
+        params: std::collections::BTreeMap::new(),
+    }];
+    parent.arrays = vec![ArrayDef {
+        key: "pair".into(),
+        target: "tbl".into(),
+        kind: ArrayKind::Linear,
+        count: len(2.0),
+        spacing: Some(len(2.0)),
+        axis: archbuilder_model::family::def::Axis::X,
+        angle: None,
+        center: [None, None],
+    }];
+    parent.tests.clear();
+    let mut profile = variant(table(), |d| {
+        d.header.id = arc_base::id::Identifier::from_u128(0x7002);
+        d.header.category = Category::Profile;
+        d.header.name = "Strip".into();
+    });
+    profile.forms.clear();
+    profile.tests.clear();
+    profile.parameters.retain(|p| p.role != Role::Reporting);
+    let env = Env::new("nested", true);
+    let pkg = env.package(
+        "n.archbfam",
+        &[(&child, "1.0.0"), (&parent, "1.0.0"), (&profile, "1.0.0")],
+    );
+    env.load(&pkg, json!({})).unwrap();
+    let place = |name: &str| {
+        env.run(
+            "archbuilder.component.place",
+            json!({"type": name, "point": [1.0, 1.0]}),
+        )
+    };
+    let id = place("Cabinet: 600").unwrap();
+    let snapshot = env.snapshot();
+    let component = loaded::components(&snapshot).remove(0);
+    let first = loaded::place(&snapshot, &component).unwrap();
+    assert_eq!(first.shared.len(), 2);
+    assert!(first.shared.iter().all(|s| !s.solids.is_empty()));
+    let again = loaded::place(&env.snapshot(), &component).unwrap();
+    let ids = |p: &loaded::Placed| p.shared.iter().map(|s| s.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(&first),
+        ids(&again),
+        "identifiers are stable across regeneration"
+    );
+    assert_ne!(first.shared[0].id, first.shared[1].id);
+    assert_ne!(first.shared[0].id, component.id);
+    // The second copy is 2 m beyond the first.
+    let x = |s: &loaded::PlacedShared| s.solids[0].solid.bounding_box().min()[0];
+    assert!((x(&first.shared[1]) - x(&first.shared[0]) - 2.0).abs() < 1e-9);
+    let _ = id;
+    // A profile family is not placed as a component.
+    assert_eq!(code(place("Strip: 1400x800")), "ab.family.invalid");
+}
+
+#[test]
+fn a_hosted_door_cuts_its_wall_and_refuses_what_a_built_in_insert_refuses() {
+    use archbuilder_model::family::fixtures::hosted_door;
+    use archbuilder_model::types::{FAMILY_INSERT, WALL};
+    let env = Env::new("hosted", true);
+    env.load(
+        &env.package(
+            "h.archbfam",
+            &[(&hosted_door(), "1.0.0"), (&table(), "1.0.0")],
+        ),
+        json!({}),
+    )
+    .unwrap();
+    let wall = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [6.0, 0.0], "height": 3.0, "thickness": 0.2}),
+        )
+        .unwrap()
+        .value["wall"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let volume_of_wall = |env: &Env| {
+        let s = env.snapshot();
+        let o = spatial::objects(&s, WALL).remove(0);
+        archbuilder_model::insert::wall_solid(&s, &o)
+            .unwrap()
+            .unwrap()
+            .volume()
+    };
+    let before = volume_of_wall(&env);
+    let place = |distance: f64, ty: &str| {
+        env.run(
+            "archbuilder.family_insert.place",
+            json!({"host": wall, "type": ty, "distance": distance}),
+        )
+    };
+    place(3.0, "Wall door: 0900x2100").unwrap();
+    assert_eq!(env.count(FAMILY_INSERT), 1);
+    // Host volume net of the void: the opening is 0.9 x 2.1 through the 0.2 thick wall.
+    assert!((volume_of_wall(&env) - (before - 0.9 * 2.1 * 0.2)).abs() < 1e-9);
+    // The refusals of built-in inserts: too close to the end, overlapping another opening.
+    assert_eq!(
+        code(place(0.0, "Wall door: 0900x2100")),
+        "ab.model.insert_outside"
+    );
+    assert_eq!(
+        code(place(3.5, "Wall door: 1000x2100")),
+        "ab.model.insert_overlap"
+    );
+    // A family that is not hosted, and a host of the wrong kind.
+    assert_eq!(code(place(1.0, "Table: 1400x800")), "ab.family.invalid");
+    let storey = spatial::objects(&env.snapshot(), archbuilder_model::types::STOREY)[0].id;
+    let wrong = env.run(
+        "archbuilder.family_insert.place",
+        json!({"host": storey.to_string(), "type": "Wall door: 0900x2100", "distance": 1.0}),
+    );
+    assert_eq!(code(wrong), "ab.family.invalid");
+    assert_eq!(env.count(FAMILY_INSERT), 1);
+    env.undo();
+    assert_eq!(env.count(FAMILY_INSERT), 0);
+    assert!(
+        (volume_of_wall(&env) - before).abs() < 1e-9,
+        "one undo restores the wall"
+    );
+}

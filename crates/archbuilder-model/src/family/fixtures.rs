@@ -46,7 +46,7 @@ fn header(n: u128, name: &str, category: Category, hosting: Hosting) -> Header {
         flags: BTreeSet::new(),
         ifc_entity: String::new(),
         ifc_type: String::new(),
-        functions: crate::expr::FUNCTION_SET_VERSION,
+        functions: (1, 0),
         source: "ArchBuilder fixtures".into(),
         license: "Apache-2.0".into(),
     }
@@ -110,6 +110,7 @@ fn form(key: &str, kind: FormKind, profile: &str, from: &str, to: &str) -> FormD
         material: "body".into(),
         subcategory: String::new(),
         visibility: Visibility::default(),
+        cut_host: false,
     }
 }
 
@@ -133,6 +134,9 @@ fn empty(header: Header) -> Definition {
         profiles: Vec::new(),
         forms: Vec::new(),
         symbols: Vec::new(),
+        tables: Vec::new(),
+        arrays: Vec::new(),
+        nested: Vec::new(),
         tests: Vec::new(),
     }
 }
@@ -245,6 +249,7 @@ pub fn table() -> Definition {
         ]
     };
     d.profiles.push(ProfileDef {
+        open: false,
         key: "top_outline".into(),
         axis: Axis::Z,
         vertices: rect(
@@ -287,6 +292,7 @@ pub fn table() -> Definition {
     ];
     for (key, a, b, c, e) in legs {
         d.profiles.push(ProfileDef {
+            open: false,
             key: format!("{key}_outline"),
             axis: Axis::Z,
             vertices: rect(a, b, c, e),
@@ -413,6 +419,7 @@ pub fn door() -> Definition {
     // A plane perpendicular to y: the profile axes are (z, x).
     let zx = |z: (&str, Option<Stored>), x: (&str, Option<Stored>)| vx(z.0, z.1, x.0, x.1);
     d.profiles.push(ProfileDef {
+        open: false,
         key: "frame_outline".into(),
         axis: Axis::Y,
         vertices: vec![
@@ -427,6 +434,7 @@ pub fn door() -> Definition {
         ],
     });
     d.profiles.push(ProfileDef {
+        open: false,
         key: "leaf_outline".into(),
         axis: Axis::Y,
         vertices: vec![
@@ -579,6 +587,7 @@ pub fn cabinet() -> Definition {
         plane("through_back", Axis::Y, fm("Depth + 0.1"), PlaneRole::None),
     ];
     d.profiles.push(ProfileDef {
+        open: false,
         key: "body_outline".into(),
         axis: Axis::Z,
         vertices: vec![
@@ -590,6 +599,7 @@ pub fn cabinet() -> Definition {
     });
     // The notch profile lies in a plane perpendicular to y: axes (z, x).
     d.profiles.push(ProfileDef {
+        open: false,
         key: "notch_outline".into(),
         axis: Axis::Y,
         vertices: vec![
@@ -625,5 +635,71 @@ pub fn cabinet() -> Definition {
         case("1200", Some("1200"), Some(full(1.2))),
         zero,
     ];
+    d
+}
+
+/// A door hosted by walls: a leaf panel and a void through the host, centered on the wall's
+/// axis. Types `0900x2100` and `1000x2100`.
+#[must_use]
+pub fn hosted_door() -> Definition {
+    let mut d = empty(header(0x70, "Wall door", Category::Door, Hosting::Wall));
+    d.parameters = vec![
+        param(
+            0x71,
+            "Width",
+            "Width",
+            DataType::Length,
+            Scope::Type,
+            Some(len(0.9)),
+        ),
+        param(
+            0x72,
+            "Height",
+            "Height",
+            DataType::Length,
+            Scope::Type,
+            Some(len(2.1)),
+        ),
+    ];
+    d.types = vec![
+        ty(0x73, "0900x2100", &[("Width", 0.9), ("Height", 2.1)]),
+        ty(0x74, "1000x2100", &[("Width", 1.0), ("Height", 2.1)]),
+    ];
+    d.planes = vec![
+        plane("left", Axis::X, len(0.0), PlaneRole::Left),
+        plane("right", Axis::X, fm("Width"), PlaneRole::Right),
+        plane("leaf_front", Axis::Y, len(-0.02), PlaneRole::None),
+        plane("leaf_back", Axis::Y, len(0.02), PlaneRole::None),
+        plane("through_front", Axis::Y, len(-0.5), PlaneRole::None),
+        plane("through_back", Axis::Y, len(0.5), PlaneRole::None),
+        plane("head", Axis::Z, fm("Height"), PlaneRole::Top),
+    ];
+    for (key, front, back) in [
+        ("leaf_outline", "leaf_front", "leaf_back"),
+        ("opening_outline", "through_front", "through_back"),
+    ] {
+        d.profiles.push(ProfileDef {
+            open: false,
+            key: key.into(),
+            axis: Axis::Z,
+            vertices: vec![
+                vx("left", None, front, None),
+                vx("right", None, front, None),
+                vx("right", None, back, None),
+                vx("left", None, back, None),
+            ],
+        });
+    }
+    d.forms = vec![
+        form("leaf", FormKind::Solid, "leaf_outline", "origin_z", "head"),
+        form(
+            "opening",
+            FormKind::Void,
+            "opening_outline",
+            "origin_z",
+            "head",
+        ),
+    ];
+    d.forms[1].cut_host = true;
     d
 }

@@ -15,10 +15,11 @@ use std::fmt::Write as _;
 use arc_base::{ObjectId, Result, Unit};
 
 use super::def::{
-    Axis, Category, Definition, Detail, FormDef, FormKind, Header, Hosting, ParamDef, PlaneDef,
-    PlaneRole, ProfileDef, Role, Scope, SymbolDef, SymbolKind, TestCase, TypeDef, Version, Vertex,
-    ViewKind, Visibility, limits,
+    Anchor, ArrayDef, ArrayKind, Axis, Category, Definition, Detail, FormDef, FormKind, Header,
+    Hosting, NestedUse, ParamDef, PlaneDef, PlaneRole, ProfileDef, Role, Scope, SymbolDef,
+    SymbolKind, TestCase, TypeDef, Version, Vertex, ViewKind, Visibility, limits,
 };
+use super::table::{ColumnDef, TableDef};
 use crate::error::codes;
 use crate::expr::{DataType, Evaluated, Formula, Stored};
 
@@ -216,6 +217,9 @@ impl Definition {
             o.begin("profile");
             o.word("key", &p.key);
             o.word("axis", p.axis.name());
+            if p.open {
+                o.word("open", "true");
+            }
             o.vertices(&p.vertices);
         }
         let mut forms: Vec<&FormDef> = self.forms.iter().collect();
@@ -233,6 +237,9 @@ impl Definition {
             o.string("material", &f.material);
             o.string("subcategory", &f.subcategory);
             o.visibility(&f.visibility);
+            if f.cut_host {
+                o.word("cut_host", "true");
+            }
         }
         let mut symbols: Vec<&SymbolDef> = self.symbols.iter().collect();
         symbols.sort_by(|a, b| a.key.cmp(&b.key));
@@ -244,6 +251,65 @@ impl Definition {
             o.string("subcategory", &s.subcategory);
             o.visibility(&s.visibility);
             o.vertices(&s.vertices);
+        }
+        let mut tables: Vec<&TableDef> = self.tables.iter().collect();
+        tables.sort_by(|a, b| a.name.cmp(&b.name));
+        for t in tables {
+            o.begin("table");
+            o.word("name", &t.name);
+            o.word("keys", &t.keys.to_string());
+            for c in &t.columns {
+                o.begin("column");
+                o.word("name", &c.name);
+                o.word("data", c.data.name());
+            }
+            for row in &t.rows {
+                o.begin("row");
+                for (i, cell) in row.iter().enumerate() {
+                    o.stored(&format!("c{i}"), Some(&Stored::Literal(cell.clone())));
+                }
+            }
+        }
+        let mut nested: Vec<&NestedUse> = self.nested.iter().collect();
+        nested.sort_by(|a, b| a.key.cmp(&b.key));
+        for n in nested {
+            o.begin("nested");
+            o.word("key", &n.key);
+            o.word("family", &n.family.to_string());
+            o.word("version", &n.version.to_string());
+            o.word("shared", &n.shared.to_string());
+            if let Some(t) = &n.type_name {
+                o.string("type", t);
+            }
+            if let Some(t) = &n.type_param {
+                o.word("type_param", t);
+            }
+            for (axis, a) in ["x", "y", "z"].into_iter().zip(&n.at) {
+                if let Some(p) = &a.plane {
+                    o.word(&format!("p{axis}"), p);
+                }
+                o.stored(&format!("d{axis}"), a.offset.as_ref());
+            }
+            o.stored("rot", n.rotation.as_ref());
+            for (key, v) in &n.params {
+                o.begin("nparam");
+                o.word("key", key);
+                o.stored("v", Some(v));
+            }
+        }
+        let mut arrays: Vec<&ArrayDef> = self.arrays.iter().collect();
+        arrays.sort_by(|a, b| a.key.cmp(&b.key));
+        for a in arrays {
+            o.begin("array");
+            o.word("key", &a.key);
+            o.word("target", &a.target);
+            o.word("kind", a.kind.name());
+            o.word("axis", a.axis.name());
+            o.stored("count", Some(&a.count));
+            o.stored("spacing", a.spacing.as_ref());
+            o.stored("angle", a.angle.as_ref());
+            o.stored("cx", a.center[0].as_ref());
+            o.stored("cy", a.center[1].as_ref());
         }
         let mut tests: Vec<&TestCase> = self.tests.iter().collect();
         tests.sort_by(|a, b| a.name.cmp(&b.name));
@@ -602,6 +668,9 @@ impl Reader {
             profiles: Vec::new(),
             forms: Vec::new(),
             symbols: Vec::new(),
+            tables: Vec::new(),
+            arrays: Vec::new(),
+            nested: Vec::new(),
             tests: Vec::new(),
         };
         while let Some(mut l) = self.next_if("parameter") {
@@ -674,11 +743,13 @@ impl Reader {
         while let Some(mut l) = self.next_if("profile") {
             let key = l.word("key")?;
             let axis = l.coded("axis", Axis::parse)?;
+            let open = l.opt_string("open")?.is_some_and(|v| v == "true");
             l.finish()?;
             let vertices = self.vertices()?;
             def.profiles.push(ProfileDef {
                 key,
                 axis,
+                open,
                 vertices,
             });
         }
@@ -693,6 +764,7 @@ impl Reader {
                 material: l.string("material")?,
                 subcategory: l.string("subcategory")?,
                 visibility: l.visibility()?,
+                cut_host: l.opt_string("cut_host")?.is_some_and(|v| v == "true"),
             };
             l.finish()?;
             def.forms.push(form);
@@ -713,6 +785,94 @@ impl Reader {
                 visibility,
                 vertices,
             });
+        }
+        while let Some(mut l) = self.next_if("table") {
+            let name = l.word("name")?;
+            let keys = l.word("keys")?.parse().map_err(|_| bad(l.line, "keys"))?;
+            l.finish()?;
+            let mut columns = Vec::new();
+            while let Some(mut c) = self.next_if("column") {
+                if columns.len() > super::table::limits::COLUMNS {
+                    return Err(arc_base::Error::new(codes::FAMILY_LIMIT)
+                        .with_arg("limit", "table_columns"));
+                }
+                columns.push(ColumnDef {
+                    name: c.word("name")?,
+                    data: c.coded("data", data_type_parse)?,
+                });
+                c.finish()?;
+            }
+            let mut rows = Vec::new();
+            while let Some(mut r) = self.next_if("row") {
+                if rows.len() >= super::table::limits::ROWS {
+                    return Err(
+                        arc_base::Error::new(codes::FAMILY_LIMIT).with_arg("limit", "table_rows")
+                    );
+                }
+                let mut row = Vec::new();
+                for i in 0..columns.len() {
+                    match r.stored(&format!("c{i}"))? {
+                        Some(Stored::Literal(v)) => row.push(v),
+                        _ => return Err(bad(r.line, "cell")),
+                    }
+                }
+                r.finish()?;
+                rows.push(row);
+            }
+            def.tables.push(TableDef {
+                name,
+                keys,
+                columns,
+                rows,
+            });
+        }
+        while let Some(mut l) = self.next_if("nested") {
+            let key = l.word("key")?;
+            let family = l.id("family")?;
+            let version =
+                Version::parse(&l.word("version")?).ok_or_else(|| bad(l.line, "version"))?;
+            let shared = l.word("shared")? == "true";
+            let type_name = l.opt_string("type")?;
+            let type_param = l.opt_string("type_param")?;
+            let mut at: [Anchor; 3] = Default::default();
+            for (axis, a) in ["x", "y", "z"].into_iter().zip(at.iter_mut()) {
+                a.plane = l.opt_string(&format!("p{axis}"))?;
+                a.offset = l.stored(&format!("d{axis}"))?;
+            }
+            let rotation = l.stored("rot")?;
+            l.finish()?;
+            let mut params = BTreeMap::new();
+            while let Some(mut p) = self.next_if("nparam") {
+                let k = p.word("key")?;
+                let v = p.stored("v")?.ok_or_else(|| bad(p.line, "value"))?;
+                p.finish()?;
+                params.insert(k, v);
+            }
+            def.nested.push(NestedUse {
+                key,
+                family,
+                version,
+                type_name,
+                type_param,
+                shared,
+                at,
+                rotation,
+                params,
+            });
+        }
+        while let Some(mut l) = self.next_if("array") {
+            let a = ArrayDef {
+                key: l.word("key")?,
+                target: l.word("target")?,
+                kind: l.coded("kind", ArrayKind::parse)?,
+                axis: l.coded("axis", Axis::parse)?,
+                count: l.stored("count")?.ok_or_else(|| bad(l.line, "count"))?,
+                spacing: l.stored("spacing")?,
+                angle: l.stored("angle")?,
+                center: [l.stored("cx")?, l.stored("cy")?],
+            };
+            l.finish()?;
+            def.arrays.push(a);
         }
         while let Some(mut l) = self.next_if("test") {
             let mut t = TestCase {

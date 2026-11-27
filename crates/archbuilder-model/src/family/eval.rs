@@ -12,15 +12,16 @@
 //! their nodes, instead of the steps `arc-solve` takes; replace when `arc-solve` reports steps.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use arc_base::math::{Point3, Vector3};
-use arc_base::{Error, Limits, Result, Tolerance};
+use arc_base::math::{Matrix4, Point3, Transform3, Vector3};
+use arc_base::{Error, Limits, ObjectId, Result, Tolerance};
 use arc_geom::{FaceTag, PlaneFrame, Polyhedron, PrismTool, extrude};
-use arc_solve::Value as SolveValue;
+use arc_solve::{Functions, Value as SolveValue};
 
 use super::def::{
-    Axis, Definition, Detail, FormKind, Role, Scope, SymbolKind, Vertex, ViewKind, Visibility,
-    origin_key,
+    ArrayDef, ArrayKind, Axis, Definition, Detail, FormKind, NestedUse, Role, Scope, SymbolKind,
+    Version, Vertex, ViewKind, Visibility, limits as def_limits, origin_key,
 };
 use crate::error::codes;
 use crate::expr::{self, DataType, Evaluated, Node, Stored};
@@ -101,6 +102,52 @@ pub struct Evaluation {
     pub volume: f64,
     /// The size of the bounding box of the solids, `[x, y, z]`.
     pub size: [f64; 3],
+    /// The shared nested children: derived elements of their own, in this family's frame.
+    pub shared: Vec<SharedOut>,
+    /// The evaluated profiles of a profile family (empty for other categories).
+    pub profiles: Vec<ProfileOut>,
+    /// The host-cutting voids of a hosted family: the box of each, in the family's frame.
+    pub host_cuts: Vec<HostCut>,
+}
+
+/// A host-cutting void: its form key and its bounding box in the family's frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostCut {
+    /// The form's key.
+    pub form: String,
+    /// The least corner.
+    pub min: [f64; 3],
+    /// The greatest corner.
+    pub max: [f64; 3],
+}
+
+/// A shared nested child: its key (with `#index` for an array copy), the child family, the
+/// evaluation of the child in its own frame and where the child lies in the parent's frame.
+#[derive(Debug, Clone)]
+pub struct SharedOut {
+    /// The nested-use key, `key#i` for copy `i` of an array.
+    pub key: String,
+    /// The child family's identifier.
+    pub family: ObjectId,
+    /// The child's type name, when it has one.
+    pub type_name: Option<String>,
+    /// The child's evaluation (shared by the copies of an array).
+    pub evaluation: Arc<Evaluation>,
+    /// The child's frame in the parent's frame, row-major.
+    pub matrix: [[f64; 4]; 4],
+}
+
+/// An evaluated profile of a profile family, in the plane's `(u, v)` coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileOut {
+    /// The key.
+    pub key: String,
+    /// The axis the plane is perpendicular to.
+    pub axis: Axis,
+    /// Whether the polyline is open; a closed one does not repeat its first point.
+    pub open: bool,
+    /// The points, arcs faceted.
+    pub points: Vec<[f64; 2]>,
 }
 
 /// What an evaluation reads besides the definition: the type, the instance's own values and the
@@ -112,6 +159,17 @@ pub struct Inputs<'a> {
     pub instance: &'a BTreeMap<String, Stored>,
     /// The document variables by formula identifier.
     pub variables: &'a dyn Fn(&str) -> Option<SolveValue>,
+    /// The definition of a pinned child family and version, for nested uses.
+    pub children: &'a dyn Fn(ObjectId, Version) -> Option<Arc<Definition>>,
+}
+
+/// What nested evaluations share: the budget, the placed children and the families being
+/// evaluated (to refuse a cycle).
+#[derive(Default)]
+struct Shared {
+    spent: usize,
+    placed: usize,
+    stack: Vec<ObjectId>,
 }
 
 fn form_failed(form: &str, reason: &str) -> Error {
@@ -127,6 +185,7 @@ fn failed_in(form: &str, e: &Error) -> Error {
 struct Run<'a> {
     names: BTreeMap<String, SolveValue>,
     variables: &'a dyn Fn(&str) -> Option<SolveValue>,
+    functions: Functions,
     spent: usize,
 }
 
@@ -151,7 +210,7 @@ impl Run<'_> {
     fn eval(&mut self, s: &Stored, data: DataType) -> Result<Evaluated> {
         self.charge(s)?;
         let lookup = |n: &str| -> Result<Option<SolveValue>> { Ok(self.lookup(n)) };
-        s.evaluate(&lookup, data)
+        s.evaluate_with(&lookup, data, Some(&self.functions))
     }
 
     fn length(&mut self, s: Option<&Stored>, what: &str, form: &str) -> Result<f64> {
@@ -159,6 +218,15 @@ impl Run<'_> {
         match self.eval(s, DataType::Length) {
             Ok(Evaluated::Number(v)) => Ok(v),
             Ok(_) => Err(form_failed(form, what)),
+            Err(e) => Err(e.with_arg("form", form)),
+        }
+    }
+
+    fn length_of(&mut self, s: Option<&Stored>, data: DataType, form: &str) -> Result<f64> {
+        let Some(s) = s else { return Ok(0.0) };
+        match self.eval(s, data) {
+            Ok(Evaluated::Number(v)) if v.is_finite() => Ok(v),
+            Ok(_) => Err(form_failed(form, "value")),
             Err(e) => Err(e.with_arg("form", form)),
         }
     }
@@ -217,6 +285,131 @@ impl Run<'_> {
     }
 }
 
+type Matrix = [[f64; 4]; 4];
+
+const IDENTITY: Matrix = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+pub(super) fn multiply(a: &Matrix, b: &Matrix) -> Matrix {
+    let mut out = [[0.0; 4]; 4];
+    for (i, row) in out.iter_mut().enumerate() {
+        for (j, cell) in row.iter_mut().enumerate() {
+            *cell = (0..4).map(|k| a[i][k] * b[k][j]).sum();
+        }
+    }
+    out
+}
+
+pub(super) fn to_transform(m: &Matrix) -> Transform3 {
+    Transform3::from_matrix_unchecked(Matrix4::new(
+        m[0][0], m[0][1], m[0][2], m[0][3], m[1][0], m[1][1], m[1][2], m[1][3], m[2][0], m[2][1],
+        m[2][2], m[2][3], m[3][0], m[3][1], m[3][2], m[3][3],
+    ))
+}
+
+/// The turn by `angle` about the vertical axis, then the move by `at`.
+fn placement(angle: f64, at: [f64; 3]) -> Matrix {
+    let (s, c) = angle.sin_cos();
+    [
+        [c, -s, 0.0, at[0]],
+        [s, c, 0.0, at[1]],
+        [0.0, 0.0, 1.0, at[2]],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
+/// An array evaluated: how many copies and how copy `i` is placed.
+struct Layout {
+    kind: ArrayKind,
+    axis: Axis,
+    count: usize,
+    spacing: f64,
+    step: f64,
+    center: [f64; 2],
+}
+
+impl Layout {
+    fn matrix(&self, i: usize) -> Matrix {
+        #[allow(clippy::cast_precision_loss, reason = "a count is at most 10,000")]
+        let n = i as f64;
+        match self.kind {
+            ArrayKind::Linear => {
+                let mut at = [0.0; 3];
+                at[match self.axis {
+                    Axis::X => 0,
+                    Axis::Y => 1,
+                    Axis::Z => 2,
+                }] = n * self.spacing;
+                placement(0.0, at)
+            }
+            ArrayKind::Radial => {
+                // Turn about the center: move the center to the origin, turn, move back.
+                let turn = placement(n * self.step, [0.0; 3]);
+                let [cx, cy] = self.center;
+                let (s, c) = (n * self.step).sin_cos();
+                let at = [cx - (c * cx - s * cy), cy - (s * cx + c * cy), 0.0];
+                let mut m = turn;
+                m[0][3] = at[0];
+                m[1][3] = at[1];
+                m
+            }
+        }
+    }
+}
+
+impl Run<'_> {
+    /// The evaluated array `a` that repeats `owner`.
+    fn layout(&mut self, a: &ArrayDef, owner: &str) -> Result<Layout> {
+        let number = |run: &mut Self, s: &Stored, data| match run.eval(s, data) {
+            Ok(Evaluated::Number(v)) if v.is_finite() => Ok(v),
+            Ok(_) => Err(form_failed(owner, "array")),
+            Err(e) => Err(e.with_arg("form", owner)),
+        };
+        let count = number(self, &a.count, DataType::Integer)?;
+        if !(1.0..=to_f64(def_limits::PLACED_CHILDREN)).contains(&count) {
+            return Err(Error::new(codes::FAMILY_LIMIT).with_arg("limit", "array_count"));
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "checked above"
+        )]
+        let count = count as usize;
+        let spacing = match &a.spacing {
+            Some(s) => number(self, s, DataType::Length)?,
+            None => 0.0,
+        };
+        let full = std::f64::consts::TAU;
+        let angle = match &a.angle {
+            Some(s) => number(self, s, DataType::Angle)?,
+            None => full,
+        };
+        let mut center = [0.0; 2];
+        for (c, s) in center.iter_mut().zip(&a.center) {
+            if let Some(s) = s {
+                *c = number(self, s, DataType::Length)?;
+            }
+        }
+        Ok(Layout {
+            kind: a.kind,
+            axis: a.axis,
+            count,
+            spacing,
+            step: angle / to_f64(count),
+            center,
+        })
+    }
+}
+
+#[allow(clippy::cast_precision_loss, reason = "counts are small")]
+fn to_f64(n: usize) -> f64 {
+    n as f64
+}
+
 fn axis_vector(a: Axis) -> Vector3 {
     match a {
         Axis::X => Vector3::new(1.0, 0.0, 0.0),
@@ -262,6 +455,17 @@ fn suffix_of(tag: FaceTag, forward: bool, voids: &[String], index: usize) -> Str
     reason = "one pass over the parts of a definition, in order"
 )]
 pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
+    let mut shared = Shared::default();
+    shared.stack.push(def.header.id);
+    evaluate_in(def, inputs, &mut shared)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "one pass over the parts of a definition, in order"
+)]
+fn evaluate_in(def: &Definition, inputs: &Inputs<'_>, ctx: &mut Shared) -> Result<Evaluation> {
     let tolerance = Tolerance::DEFAULT;
     let limits = Limits::DEFAULT;
     let ty = match inputs.type_name {
@@ -275,7 +479,8 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
     let mut run = Run {
         names: BTreeMap::new(),
         variables: inputs.variables,
-        spent: 0,
+        functions: super::table::functions(&def.tables)?,
+        spent: ctx.spent,
     };
     let mut values: BTreeMap<String, Evaluated> = BTreeMap::new();
     // Parameters: type scope reads variables only; instance scope also reads the type's.
@@ -307,7 +512,7 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
             })
             .collect();
         let outer = |n: &str| run.names.get(n).cloned().or_else(|| (inputs.variables)(n));
-        let results = expr::evaluate_scope(&nodes, &outer)?;
+        let results = expr::evaluate_scope_with(&nodes, &outer, Some(&run.functions))?;
         for ((p, _), v) in picked.iter().zip(results) {
             run.names.insert(p.key.clone(), v.to_solve(p.data));
             values.insert(p.key.clone(), v);
@@ -355,6 +560,7 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
     }
     let mut solids: Vec<(String, Polyhedron, bool, &super::def::FormDef)> = Vec::new();
     let mut voids: Vec<Void> = Vec::new();
+    let mut host_cuts: Vec<HostCut> = Vec::new();
     let mut ordered: Vec<&super::def::FormDef> = def.forms.iter().collect();
     ordered.sort_by(|a, b| a.key.cmp(&b.key));
     for f in ordered {
@@ -379,17 +585,55 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
             .map_err(|e| failed_in(&f.key, &e))?;
         let solid = extrude(&region, &frame, height, CHORD, &tolerance, &limits)
             .map_err(|e| failed_in(&f.key, &e))?;
-        match f.kind {
-            FormKind::Solid => solids.push((f.key.clone(), solid, height > 0.0, f)),
-            FormKind::Void => {
-                voids.push(Void {
-                    key: f.key.clone(),
-                    region,
-                    frame,
-                    start: height.min(0.0),
-                    end: height.max(0.0),
-                    bounds: solid.bounding_box(),
-                });
+        let layout = match def.arrays.iter().find(|a| a.target == f.key) {
+            Some(a) => Some(run.layout(a, &f.key)?),
+            None => None,
+        };
+        let count = layout.as_ref().map_or(1, |l| l.count);
+        ctx.placed += count;
+        if ctx.placed > def_limits::PLACED_CHILDREN {
+            return Err(Error::new(codes::FAMILY_LIMIT).with_arg("limit", "placed_children"));
+        }
+        for i in 0..count {
+            let m = layout.as_ref().map_or(IDENTITY, |l| l.matrix(i));
+            let (key, copy) = if i == 0 {
+                (f.key.clone(), solid.clone())
+            } else {
+                (
+                    format!("{}#{i}", f.key),
+                    solid
+                        .transformed(&to_transform(&m), &tolerance, &limits)
+                        .map_err(|e| failed_in(&f.key, &e))?,
+                )
+            };
+            match f.kind {
+                FormKind::Solid => solids.push((key, copy, height > 0.0, f)),
+                FormKind::Void if f.cut_host => {
+                    let b = copy.bounding_box();
+                    host_cuts.push(HostCut {
+                        form: key,
+                        min: [b.min()[0], b.min()[1], b.min()[2]],
+                        max: [b.max()[0], b.max()[1], b.max()[2]],
+                    });
+                }
+                FormKind::Void => {
+                    let at = frame.origin();
+                    let moved = PlaneFrame::new(
+                        Point3::new(at.x + m[0][3], at.y + m[1][3], at.z + m[2][3]),
+                        frame.u(),
+                        frame.v(),
+                        &tolerance,
+                    )
+                    .map_err(|e| failed_in(&f.key, &e))?;
+                    voids.push(Void {
+                        key,
+                        region: region.clone(),
+                        frame: moved,
+                        start: height.min(0.0),
+                        end: height.max(0.0),
+                        bounds: copy.bounding_box(),
+                    });
+                }
             }
         }
     }
@@ -439,6 +683,112 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
             subcategory: form.subcategory.clone(),
             shown,
         });
+    }
+    // Nested uses: a non-shared child is part of this family's body, a shared child is kept
+    // apart as an element of its own.
+    let mut shared_out = Vec::new();
+    let mut uses: Vec<&NestedUse> = def.nested.iter().collect();
+    uses.sort_by(|a, b| a.key.cmp(&b.key));
+    for n in uses {
+        let layout = match def.arrays.iter().find(|a| a.target == n.key) {
+            Some(a) => Some(run.layout(a, &n.key)?),
+            None => None,
+        };
+        let count = layout.as_ref().map_or(1, |l| l.count);
+        ctx.placed += count;
+        if ctx.placed > def_limits::PLACED_CHILDREN {
+            return Err(Error::new(codes::FAMILY_LIMIT).with_arg("limit", "placed_children"));
+        }
+        let child = (inputs.children)(n.family, n.version)
+            .ok_or_else(|| form_failed(&n.key, "child_missing"))?;
+        if ctx.stack.contains(&n.family) {
+            return Err(Error::new(codes::FAMILY_INVALID)
+                .with_arg("part", "nested")
+                .with_arg("reason", "cycle"));
+        }
+        if ctx.stack.len() >= def_limits::NESTING_DEPTH {
+            return Err(Error::new(codes::FAMILY_LIMIT).with_arg("limit", "nesting_depth"));
+        }
+        let type_name = match (&n.type_name, &n.type_param) {
+            (Some(t), _) => Some(t.clone()),
+            (None, Some(k)) => match values.get(k) {
+                Some(Evaluated::Text(t)) if !t.is_empty() => Some(t.clone()),
+                _ => return Err(form_failed(&n.key, "type")),
+            },
+            (None, None) => None,
+        };
+        let mut set = BTreeMap::new();
+        for (key, stored) in &n.params {
+            let p = child
+                .parameter(key)
+                .ok_or_else(|| form_failed(&n.key, "parameter"))?;
+            let v = run
+                .eval(stored, p.data)
+                .map_err(|e| e.with_arg("form", n.key.as_str()))?;
+            set.insert(key.clone(), Stored::Literal(v));
+        }
+        let (overlaid, instance, name) = child.overlaid(type_name.as_deref(), &set)?;
+        ctx.spent = run.spent;
+        ctx.stack.push(n.family);
+        let evaluated = evaluate_in(
+            &overlaid,
+            &Inputs {
+                type_name: name.as_deref(),
+                instance: &instance,
+                variables: inputs.variables,
+                children: inputs.children,
+            },
+            ctx,
+        );
+        ctx.stack.pop();
+        run.spent = ctx.spent;
+        let evaluated = Arc::new(evaluated.map_err(|e| e.with_arg("form", n.key.as_str()))?);
+        let at = |i: usize, run: &mut Run<'_>| -> Result<f64> {
+            let a = &n.at[i];
+            let base = a.plane.as_deref().map_or(0.0, |k| run.plane(k, &planes));
+            Ok(base + run.length(a.offset.as_ref(), "nested", &n.key)?)
+        };
+        let rotation = run.length_of(n.rotation.as_ref(), DataType::Angle, &n.key)?;
+        let base = placement(
+            rotation,
+            [at(0, &mut run)?, at(1, &mut run)?, at(2, &mut run)?],
+        );
+        for i in 0..count {
+            let m = multiply(&layout.as_ref().map_or(IDENTITY, |l| l.matrix(i)), &base);
+            let key = if layout.is_some() {
+                format!("{}#{i}", n.key)
+            } else {
+                n.key.clone()
+            };
+            if n.shared {
+                shared_out.push(SharedOut {
+                    key,
+                    family: n.family,
+                    type_name: type_name.clone(),
+                    evaluation: Arc::clone(&evaluated),
+                    matrix: m,
+                });
+                continue;
+            }
+            let transform = to_transform(&m);
+            for part in &evaluated.solids {
+                out_solids.push(FormSolid {
+                    form: format!("{key}/{}", part.form),
+                    solid: part
+                        .solid
+                        .transformed(&transform, &tolerance, &limits)
+                        .map_err(|e| failed_in(&n.key, &e))?,
+                    roles: part
+                        .roles
+                        .iter()
+                        .map(|r| format!("family.nested[{key}].{r}"))
+                        .collect(),
+                    material: part.material.clone(),
+                    subcategory: part.subcategory.clone(),
+                    shown: part.shown.clone(),
+                });
+            }
+        }
     }
     // Symbols.
     let mut symbols = Vec::new();
@@ -523,11 +873,38 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
                 .or_else(|| run.names.get(n).cloned())
                 .or_else(|| (inputs.variables)(n))
         };
-        let results = expr::evaluate_scope(&nodes, &outer)?;
+        let results = expr::evaluate_scope_with(&nodes, &outer, Some(&run.functions))?;
         for (p, v) in reporting.iter().zip(results) {
             values.insert(p.key.clone(), v);
         }
     }
+    let mut profiles = Vec::new();
+    if def.header.category == super::def::Category::Profile {
+        for p in &def.profiles {
+            let (points, bulges) = run.loop_of(&p.vertices, &planes, &p.key)?;
+            let n = points.len();
+            let mut flat = Vec::new();
+            for i in 0..n {
+                if p.open && i + 1 == n {
+                    flat.push(points[i]);
+                } else {
+                    flat.extend(flatten_edge(
+                        points[i],
+                        points[(i + 1) % n],
+                        bulges[i],
+                        CHORD,
+                    ));
+                }
+            }
+            profiles.push(ProfileOut {
+                key: p.key.clone(),
+                axis: p.axis,
+                open: p.open,
+                points: flat,
+            });
+        }
+    }
+    ctx.spent = run.spent;
     Ok(Evaluation {
         values,
         planes,
@@ -535,6 +912,9 @@ pub fn evaluate(def: &Definition, inputs: &Inputs<'_>) -> Result<Evaluation> {
         symbols,
         volume,
         size,
+        shared: shared_out,
+        profiles,
+        host_cuts,
     })
 }
 
@@ -554,6 +934,7 @@ impl Definition {
                 type_name,
                 instance,
                 variables: &|_| None,
+                children: &|_, _| None,
             },
         )
     }
@@ -568,6 +949,25 @@ impl Definition {
         type_name: Option<&str>,
         set: &BTreeMap<String, Stored>,
     ) -> Result<Evaluation> {
+        let (d, instance, name) = self.overlaid(type_name, set)?;
+        d.evaluate(name.as_deref(), &instance)
+    }
+
+    /// A copy of the definition with `set` laid over the type's values (type-scope parameters),
+    /// the instance values (instance-scope parameters) and the name of the added type.
+    ///
+    /// # Errors
+    /// `ab.family.type_unknown` for a type the definition lacks.
+    pub fn overlaid(
+        &self,
+        type_name: Option<&str>,
+        set: &BTreeMap<String, Stored>,
+    ) -> Result<(Self, BTreeMap<String, Stored>, Option<String>)> {
+        if let Some(n) = type_name
+            && self.type_named(n).is_none()
+        {
+            return Err(Error::new(codes::FAMILY_TYPE_UNKNOWN).with_arg("type", n));
+        }
         let mut d = self.clone();
         let mut instance = BTreeMap::new();
         let mut over = BTreeMap::new();
@@ -592,13 +992,7 @@ impl Definition {
             name: name.to_owned(),
             values,
         });
-        let known = type_name.is_none_or(|n| self.type_named(n).is_some());
-        if !known {
-            return Err(
-                Error::new(codes::FAMILY_TYPE_UNKNOWN).with_arg("type", type_name.unwrap_or(""))
-            );
-        }
-        d.evaluate(Some(name), &instance)
+        Ok((d, instance, Some(name.to_owned())))
     }
 
     /// Runs every test case: the type, the values set, and what the evaluation must give.

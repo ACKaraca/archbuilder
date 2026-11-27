@@ -33,6 +33,7 @@ use crate::error::{codes, reasons};
 
 mod curtain;
 mod datum;
+mod family;
 mod project;
 mod psets;
 mod stairs;
@@ -245,17 +246,13 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.elevator(&lift, storey, level);
         }
-        // A family instance is named in the loss report until its mapping is written: never a
-        // silent proxy.
+        // Family instances: the entity of the category or of the family's own assignment; an
+        // entity the writer cannot write is named in the loss report, never a silent proxy.
         for component in
             spatial::children(self.snapshot, archbuilder_model::types::COMPONENT, storey)
         {
             self.cancel.check()?;
-            self.lose(
-                reasons::FAMILY_NOT_WRITTEN,
-                "IFCBUILDINGELEMENTPROXY",
-                &component,
-            );
+            self.component(&component, storey, level);
         }
         Ok(())
     }
@@ -641,6 +638,15 @@ impl Mapper<'_> {
                 None => self.insert(&object, &item, (host, wall, frame), storey, level),
             }
             self.opening_pad = [0.0; 2];
+        }
+        // Hosted family instances: the opening their void cuts and, for doors and windows, what
+        // fills it.
+        for object in spatial::children(
+            self.snapshot,
+            archbuilder_model::types::FAMILY_INSERT,
+            host.id,
+        ) {
+            self.family_insert(&object, (host, wall, frame), storey);
         }
         // The openings that curtain walls inside this wall cut; each is named after its wall.
         for (id, item) in archbuilder_model::curtain::embedded(self.snapshot, host) {

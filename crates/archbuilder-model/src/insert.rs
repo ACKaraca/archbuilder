@@ -410,6 +410,11 @@ pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>
 #[must_use]
 pub fn openings_of(snapshot: &Snapshot, id: arc_base::ObjectId) -> Vec<Insert> {
     let mut out: Vec<Insert> = hosted(snapshot, id).into_iter().map(|(_, i)| i).collect();
+    out.extend(
+        crate::family::loaded::family_openings(snapshot, id)
+            .into_iter()
+            .map(|(_, i)| i),
+    );
     if let Some(host) = spatial::get(snapshot, id) {
         out.extend(
             crate::curtain::embedded(snapshot, &host)
@@ -534,6 +539,16 @@ fn meets_wall(
 /// containment rule reports it.
 #[must_use]
 pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
+    let Some(item) = Insert::of(snapshot, object) else {
+        return Vec::new();
+    };
+    problems_of(snapshot, object, item)
+}
+
+/// [`problems`] for `object` with the insert `item` it stands for: a hosted family instance
+/// passes the opening its host-cutting void makes.
+#[must_use]
+pub fn problems_of(snapshot: &Snapshot, object: &Object, item: Insert) -> Vec<Error> {
     let mut out = Vec::new();
     let Some(wall_object) = object
         .header
@@ -543,10 +558,7 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     else {
         return out;
     };
-    let (Some(item), Some(wall)) = (
-        Insert::of(snapshot, object),
-        Wall::of(snapshot, &wall_object),
-    ) else {
+    let Some(wall) = Wall::of(snapshot, &wall_object) else {
         return out;
     };
     let name = types::text(&object.values, 0)
@@ -613,7 +625,10 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
         meets_wall(snapshot, &wall_object, &wall, &item, &name)
             .map(|e| e.with_detail("object", object.id.to_string())),
     );
-    for (other, theirs) in hosted(snapshot, wall_object.id) {
+    let family = crate::family::loaded::family_openings(snapshot, wall_object.id)
+        .into_iter()
+        .filter_map(|(o, i)| spatial::get(snapshot, o).map(|o| (o, i)));
+    for (other, theirs) in hosted(snapshot, wall_object.id).into_iter().chain(family) {
         let (a, b) = (item.extent(), theirs.extent());
         let stacked = item.sill >= theirs.top() || theirs.sill >= item.top();
         if other.id != object.id && !stacked && a.0 < b.1 + MIN_GAP && b.0 < a.1 + MIN_GAP {

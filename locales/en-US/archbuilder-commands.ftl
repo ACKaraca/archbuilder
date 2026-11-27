@@ -602,3 +602,8 @@ ab-cmd-component-place-description = Places an instance of a family type on a st
 ab-prompt-family-package = Package or document to load families from
 ab-prompt-component-type = Family type
 ab-prompt-component-point = Insertion point
+
+ab-cmd-family-insert-place-label = Hosted component
+ab-cmd-family-insert-place-description = Places an instance of a family type in a host element; a family that cuts its host cuts it.
+
+ab-prompt-family-insert-type = Family type

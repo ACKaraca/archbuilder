@@ -11,7 +11,7 @@ use std::fmt;
 use arc_base::{Error, ObjectId, Result};
 
 use crate::error::codes;
-use crate::expr::{self, DataType, Formula, Node, Stored};
+use crate::expr::{self, DataType, Evaluated, Formula, Node, Stored};
 
 /// Limits of one definition and of its text.
 pub mod limits {
@@ -31,6 +31,16 @@ pub mod limits {
     pub const SYMBOLS: usize = 512;
     /// Test cases.
     pub const TESTS: usize = 256;
+    /// Tables.
+    pub const TABLES: usize = 64;
+    /// Arrays and nested uses.
+    pub const ARRAYS: usize = 256;
+    /// Nested uses.
+    pub const NESTED: usize = 256;
+    /// Nesting depth of nested uses.
+    pub const NESTING_DEPTH: usize = 8;
+    /// Placed children (nested uses and array copies) in one instance.
+    pub const PLACED_CHILDREN: usize = 10_000;
     /// Values one test case or type sets.
     pub const VALUES: usize = 1000;
     /// The bytes of a canonical text.
@@ -69,6 +79,20 @@ coded! {
         GenericModel = 9, "generic_model";
         /// Specialty equipment.
         SpecialtyEquipment = 10, "specialty_equipment";
+        /// A profile family: closed or open 2D profiles used by edges, bands and mullions; it
+        /// has no body of its own and is never placed.
+        Profile = 11, "profile";
+    }
+}
+
+coded! {
+    /// How an array lays out its copies.
+    ArrayKind {
+        /// Along an axis at a spacing.
+        #[default]
+        Linear = 0, "linear";
+        /// About the vertical axis through a point, over an angle.
+        Radial = 1, "radial";
     }
 }
 
@@ -218,7 +242,8 @@ macro_rules! parse_name {
     })* };
 }
 parse_name!(
-    Category, Hosting, Scope, Role, Axis, PlaneRole, FormKind, ViewKind, Detail, SymbolKind
+    Category, Hosting, Scope, Role, Axis, PlaneRole, FormKind, ViewKind, Detail, SymbolKind,
+    ArrayKind
 );
 
 impl Axis {
@@ -394,13 +419,15 @@ pub struct Vertex {
     pub bulge: Option<Stored>,
 }
 
-/// A closed loop of vertices in a plane perpendicular to `axis`.
+/// A loop of vertices in a plane perpendicular to `axis`; closed unless `open`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileDef {
     /// The key.
     pub key: String,
     /// The axis the profile's plane is perpendicular to.
     pub axis: Axis,
+    /// An open polyline (for edges, bands and railings) that no form extrudes.
+    pub open: bool,
     /// The vertices, at least three.
     pub vertices: Vec<Vertex>,
 }
@@ -437,6 +464,66 @@ pub struct FormDef {
     pub subcategory: String,
     /// Visibility.
     pub visibility: Visibility,
+    /// A void that cuts the host element (a hosted family) instead of the family's own solids.
+    pub cut_host: bool,
+}
+
+/// A position along one axis: a reference plane (the origin without one) plus an offset.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Anchor {
+    /// The reference plane.
+    pub plane: Option<String>,
+    /// The offset from it, a length.
+    pub offset: Option<Stored>,
+}
+
+/// A copy pattern of a form or a nested use (AB-FAM-017). Copy 0 is the original; copy `i` of a
+/// linear array is moved by `i` times the spacing along the axis, copy `i` of a radial array is
+/// turned by `i` times `angle / count` about the vertical axis through the center.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayDef {
+    /// The key.
+    pub key: String,
+    /// The key of the form or nested use that is repeated.
+    pub target: String,
+    /// Linear or radial.
+    pub kind: ArrayKind,
+    /// The number of copies including the original: an integer, literal or formula.
+    pub count: Stored,
+    /// Linear: the distance between copies, a length.
+    pub spacing: Option<Stored>,
+    /// Linear: the direction.
+    pub axis: Axis,
+    /// Radial: the angle the copies share (a full turn without one).
+    pub angle: Option<Stored>,
+    /// Radial: the center, `x` and `y` lengths.
+    pub center: [Option<Stored>; 2],
+}
+
+/// A use of another family inside this one (AB-FAM-015, AB-FAM-016): a pinned child definition,
+/// its type (fixed, or chosen by a family-type parameter), a placement on reference planes, the
+/// associations of child parameters with formulas of this family, and whether the child is shared.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NestedUse {
+    /// The key.
+    pub key: String,
+    /// The identifier of the child family.
+    pub family: ObjectId,
+    /// The pinned version of the child.
+    pub version: Version,
+    /// The child's type by name; without one and without `type_param` the child's defaults.
+    pub type_name: Option<String>,
+    /// The key of a family-type parameter of this family whose text names the child's type.
+    pub type_param: Option<String>,
+    /// A shared child is its own element (selectable, scheduled); otherwise it is part of the
+    /// parent's body.
+    pub shared: bool,
+    /// The position along x, y and z.
+    pub at: [Anchor; 3],
+    /// The turn about the vertical axis, an angle.
+    pub rotation: Option<Stored>,
+    /// Child parameters set from formulas of this family, by child parameter key.
+    pub params: BTreeMap<String, Stored>,
 }
 
 /// A symbolic element of one view orientation.
@@ -492,6 +579,12 @@ pub struct Definition {
     pub forms: Vec<FormDef>,
     /// The symbolic elements.
     pub symbols: Vec<SymbolDef>,
+    /// The embedded lookup tables.
+    pub tables: Vec<super::table::TableDef>,
+    /// The arrays.
+    pub arrays: Vec<ArrayDef>,
+    /// The nested uses.
+    pub nested: Vec<NestedUse>,
     /// The test cases.
     pub tests: Vec<TestCase>,
 }
@@ -569,8 +662,12 @@ impl Definition {
         self.check_parameters()?;
         self.check_types()?;
         self.check_geometry()?;
+        self.check_tables()?;
+        self.check_nested()?;
+        self.check_arrays()?;
         self.check_tests()?;
-        self.check_reads()
+        self.check_reads()?;
+        self.check_functions()
     }
 
     fn check_counts(&self) -> Result<()> {
@@ -583,6 +680,9 @@ impl Definition {
             over(self.forms.len(), limits::FORMS, "forms"),
             over(self.symbols.len(), limits::SYMBOLS, "symbols"),
             over(self.tests.len(), limits::TESTS, "tests"),
+            over(self.tables.len(), limits::TABLES, "tables"),
+            over(self.arrays.len(), limits::ARRAYS, "arrays"),
+            over(self.nested.len(), limits::NESTED, "nested"),
         ];
         if let Some(e) = sizes.into_iter().flatten().next() {
             return Err(e);
@@ -733,7 +833,7 @@ impl Definition {
             true,
         )?;
         for p in &self.profiles {
-            if p.vertices.len() < 3 {
+            if p.vertices.len() < if p.open { 2 } else { 3 } {
                 return Err(invalid("profile", "vertices"));
             }
             self.check_vertices("profile", &p.vertices, p.axis.plane_axes())?;
@@ -745,6 +845,9 @@ impl Definition {
                 .iter()
                 .find(|p| p.key == f.profile)
                 .ok_or_else(|| invalid("form", "profile"))?;
+            if profile.open {
+                return Err(invalid("form", "open_profile"));
+            }
             self.plane_ok("form", Some(&f.from), profile.axis)?;
             match (&f.to, &f.depth) {
                 (Some(to), None) => {
@@ -757,6 +860,9 @@ impl Definition {
                 _ => return Err(invalid("form", "extent")),
             }
             self.check_visibility("form", &f.visibility)?;
+            if f.cut_host && (f.kind != FormKind::Void || self.header.hosting == Hosting::None) {
+                return Err(invalid("form", "cut_host"));
+            }
         }
         Self::unique("symbol", self.symbols.iter().map(|s| s.key.as_str()), true)?;
         for s in &self.symbols {
@@ -767,6 +873,97 @@ impl Definition {
             }
             self.check_vertices("symbol", &s.vertices, axes)?;
             self.check_visibility("symbol", &s.visibility)?;
+        }
+        Ok(())
+    }
+
+    fn check_tables(&self) -> Result<()> {
+        Self::unique("table", self.tables.iter().map(|t| t.name.as_str()), true)?;
+        self.tables
+            .iter()
+            .try_for_each(super::table::TableDef::validate)
+    }
+
+    fn check_nested(&self) -> Result<()> {
+        Self::unique("nested", self.nested.iter().map(|n| n.key.as_str()), true)?;
+        for n in &self.nested {
+            if n.family == self.header.id {
+                return Err(invalid("nested", "cycle"));
+            }
+            if n.type_name.is_some() && n.type_param.is_some() {
+                return Err(invalid("nested", "type"));
+            }
+            if let Some(k) = &n.type_param
+                && self.parameter(k).map(|p| p.data) != Some(DataType::FamilyType)
+            {
+                return Err(invalid("nested", "type_param"));
+            }
+            for (axis, a) in Axis::ALL.into_iter().zip(&n.at) {
+                self.plane_ok("nested", a.plane.as_ref(), axis)?;
+                if let Some(o) = &a.offset {
+                    self.check_stored("nested", o, DataType::Length)?;
+                }
+            }
+            if let Some(r) = &n.rotation {
+                self.check_stored("nested", r, DataType::Angle)?;
+            }
+            for k in n.params.keys() {
+                expr::check_identifier(k).map_err(|_| invalid("nested", "param"))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_arrays(&self) -> Result<()> {
+        Self::unique("array", self.arrays.iter().map(|a| a.key.as_str()), true)?;
+        let mut targets = BTreeSet::new();
+        for a in &self.arrays {
+            let form = self.forms.iter().find(|f| f.key == a.target);
+            if form.is_none() && !self.nested.iter().any(|n| n.key == a.target) {
+                return Err(invalid("array", "target"));
+            }
+            if !targets.insert(a.target.as_str()) {
+                return Err(invalid("array", "duplicate_target"));
+            }
+            self.check_stored("array", &a.count, DataType::Integer)?;
+            if let Stored::Literal(Evaluated::Number(n)) = &a.count
+                && !(1.0..=(limits::PLACED_CHILDREN as f64)).contains(n)
+            {
+                return Err(limit("array_count"));
+            }
+            match a.kind {
+                ArrayKind::Linear => {
+                    let spacing = a
+                        .spacing
+                        .as_ref()
+                        .ok_or_else(|| invalid("array", "spacing"))?;
+                    self.check_stored("array", spacing, DataType::Length)?;
+                }
+                ArrayKind::Radial => {
+                    if form.is_some_and(|f| f.kind == FormKind::Void) {
+                        return Err(invalid("array", "void_radial"));
+                    }
+                    if let Some(an) = &a.angle {
+                        self.check_stored("array", an, DataType::Angle)?;
+                    }
+                    for c in a.center.iter().flatten() {
+                        self.check_stored("array", c, DataType::Length)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A definition that calls `lookup` declares function set 1.1 or later.
+    fn check_functions(&self) -> Result<()> {
+        let uses = self
+            .driving_formulas()
+            .iter()
+            .filter_map(|(_, s)| s.formula())
+            .any(|f| f.calls().contains("lookup"));
+        if uses && self.header.functions < expr::LOOKUP_SINCE {
+            return Err(invalid("definition", "functions"));
         }
         Ok(())
     }
@@ -838,6 +1035,24 @@ impl Definition {
                 .iter()
                 .flat_map(|t| t.values.values().map(|s| ("type", s))),
         );
+        for a in &self.arrays {
+            out.extend(
+                [Some(&a.count), a.spacing.as_ref(), a.angle.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .chain(a.center.iter().flatten())
+                    .map(|s| ("array", s)),
+            );
+        }
+        for n in &self.nested {
+            out.extend(
+                n.at.iter()
+                    .filter_map(|a| a.offset.as_ref())
+                    .chain(n.rotation.as_ref())
+                    .chain(n.params.values())
+                    .map(|s| ("nested", s)),
+            );
+        }
         out
     }
 

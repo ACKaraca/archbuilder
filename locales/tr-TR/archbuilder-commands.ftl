@@ -601,3 +601,8 @@ ab-cmd-component-place-description = Bir aile türünün örneğini bir kata yer
 ab-prompt-family-package = Ailelerin yükleneceği paket ya da belge
 ab-prompt-component-type = Aile türü
 ab-prompt-component-point = Yerleştirme noktası
+
+ab-cmd-family-insert-place-label = Konaklı bileşen
+ab-cmd-family-insert-place-description = Bir aile türünün örneğini bir ev sahibi öğeye yerleştirir; ana öğeyi kesen bir aile onu keser.
+
+ab-prompt-family-insert-type = Aile türü

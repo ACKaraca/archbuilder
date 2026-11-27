@@ -103,14 +103,28 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-floor-edge-orphan",
     };
-    /// A family instance: its IFC export (the defaults per category, types, property sets and
-    /// faceted bodies) is not written yet, so it is left out and named here instead of becoming a
-    /// proxy.
+    /// A family instance whose IFC entity the writer cannot write yet: it is left out and named
+    /// here with the entity, instead of becoming a proxy.
     pub const FAMILY_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.family_not_written",
         outcome: Outcome::Dropped,
         severity: Severity::Warning,
         message_id: "ab-io-loss-family-not-written",
+    };
+    /// The property sets of a family type are written on its occurrences: the writer has no
+    /// property sets on types.
+    pub const FAMILY_TYPE_SETS_ON_OCCURRENCE: Reason = Reason {
+        code: "ab.io.ifc.family_type_sets_on_occurrence",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-family-type-sets-on-occurrence",
+    };
+    /// Parameters of a type IFC cannot hold (family type) are written as text.
+    pub const FAMILY_PARAMETER_AS_TEXT: Reason = Reason {
+        code: "ab.io.ifc.family_parameter_as_text",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-family-parameter-as-text",
     };
     /// A dormer: IFC4 has no dormer element, so it is written as the opening in its roof, a wall
     /// for each of its front and cheek walls and a roof for its own small roof.
