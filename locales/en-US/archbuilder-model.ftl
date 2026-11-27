@@ -83,4 +83,3 @@ ab-model-curtain-insert = The curtain wall "{ $name }" hosts a door, window or o
 ab-model-curtain-cell-shape = The removed grid segments of the curtain wall "{ $name }" leave a cell that is not a rectangle. Remove the whole segment between two cells.
 ab-model-curtain-not-curtain = "{ $name }" is not a curtain wall.
 ab-model-curtain-unknown = "{ $name }" is not a grid line, cell or type of this curtain wall.
-ab-model-curtain-edited = The curtain wall "{ $name }" has grid edits or panel overrides that belong to its own grid, so it cannot be split or merged. Clear them first.

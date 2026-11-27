@@ -423,3 +423,136 @@ fn equal_division_rules_take_justification_and_offset_and_undo() {
     env.document.undo().wait().unwrap();
     assert_eq!(derived(&env, wall).layout.vertical.len(), 5);
 }
+
+fn four_meter_wall(env: &Env) -> ObjectId {
+    let ty = curtain_type(
+        env,
+        json!({"name": "Four",
+               "vertical": {"kind": "fixed_distance", "value": 1.0},
+               "horizontal": {"kind": "fixed_number", "value": 1}}),
+    );
+    env.wall(
+        [0.0, 0.0],
+        [4.0, 0.0],
+        json!({"type": ty.to_string(), "height": 3.0}),
+    )
+}
+
+fn edited(env: &Env, wall: ObjectId) -> (Vec<archbuilder_model::curtain::GridEdit>, Vec<String>) {
+    let s = env.snapshot();
+    let object = spatial::get(&s, wall).unwrap();
+    (
+        archbuilder_model::curtain::GridEdit::list(&object.values),
+        archbuilder_model::curtain::CellOverride::list(&object.values)
+            .into_iter()
+            .map(|o| o.cell)
+            .collect(),
+    )
+}
+
+#[test]
+fn splitting_a_curtain_wall_carries_its_edits_where_unambiguous_and_reports_the_rest() {
+    let env = Env::new();
+    let wall = four_meter_wall(&env);
+    for at in [0.5, 3.5] {
+        env.run(
+            "archbuilder.curtain.grid_add",
+            json!({"wall": wall, "direction": "vertical", "at": at}),
+        )
+        .unwrap();
+    }
+    // A horizontal line along the last meter only.
+    env.run(
+        "archbuilder.curtain.grid_add",
+        json!({"wall": wall, "direction": "horizontal", "at": 0.5, "from": 3.0, "until": 4.0}),
+    )
+    .unwrap();
+    for cell in ["start-a1.base-n1", "s3-a2.base-a3", "a2-end.base-a3"] {
+        env.run(
+            "archbuilder.curtain.panel",
+            json!({"wall": wall, "cell": cell, "panel": "solid"}),
+        )
+        .unwrap();
+    }
+    let split = env
+        .run("archbuilder.wall.split", json!({"at": [2.5, 0.0]}))
+        .unwrap()
+        .value;
+    let second: ObjectId = split["created"][0].as_str().unwrap().parse().unwrap();
+    // The first piece keeps the line and the override that lie in it.
+    let (edits, cells) = edited(&env, wall);
+    assert_eq!(edits.iter().map(|e| e.key).collect::<Vec<_>>(), vec![1]);
+    assert_eq!(cells, vec!["start-a1.base-n1"]);
+    // The second piece gets its line moved to its own start and the horizontal line's segment.
+    let (edits, cells) = edited(&env, second);
+    assert_eq!(edits.iter().map(|e| e.key).collect::<Vec<_>>(), vec![2, 3]);
+    assert!((edits[0].at - 1.0).abs() < 1e-9);
+    let span = edits[1].span.unwrap();
+    assert!((span.0 - 0.5).abs() < 1e-9 && (span.1 - 1.5).abs() < 1e-9);
+    assert_eq!(cells, vec!["a2-end.base-a3"]);
+    assert_eq!(
+        derived(&env, second)
+            .panels
+            .iter()
+            .filter(|p| p.overridden)
+            .count(),
+        1
+    );
+    // The override of the cell that the second piece's own grid dissolved is reported, not
+    // rebound to a neighbor.
+    let lost = split["unkept"].as_array().unwrap();
+    assert_eq!(lost.len(), 1);
+    assert_eq!(lost[0][1], "cell s3-a2.base-a3");
+    // One undo gives the single edited wall back.
+    env.document.undo().wait().unwrap();
+    let (edits, cells) = edited(&env, wall);
+    assert_eq!((edits.len(), cells.len()), (3, 3));
+    assert!(spatial::get(&env.snapshot(), second).is_none());
+}
+
+#[test]
+fn merging_curtain_walls_carries_the_edits_of_both_with_fresh_keys() {
+    let env = Env::new();
+    let wall = four_meter_wall(&env);
+    for at in [0.5, 3.5] {
+        env.run(
+            "archbuilder.curtain.grid_add",
+            json!({"wall": wall, "direction": "vertical", "at": at}),
+        )
+        .unwrap();
+    }
+    for cell in ["start-a1.base-n1", "a2-end.base-n1"] {
+        env.run(
+            "archbuilder.curtain.panel",
+            json!({"wall": wall, "cell": cell, "panel": "solid"}),
+        )
+        .unwrap();
+    }
+    let split = env
+        .run("archbuilder.wall.split", json!({"at": [2.5, 0.0]}))
+        .unwrap()
+        .value;
+    assert!(split.get("unkept").is_none());
+    let merged = env
+        .run(
+            "archbuilder.wall.merge",
+            json!({"first": [1.0, 0.0], "other": [3.0, 0.0]}),
+        )
+        .unwrap()
+        .value;
+    assert!(merged.get("unkept").is_none());
+    let (edits, cells) = edited(&env, wall);
+    // The second wall's key 2 is raised past the first wall's, so the two lines keep their places.
+    let at: Vec<_> = edits
+        .iter()
+        .map(|e| (e.key, (e.at * 1e6).round() / 1e6))
+        .collect();
+    assert_eq!(at, vec![(1, 0.5), (3, 3.5)]);
+    assert_eq!(cells, vec!["start-a1.base-n1", "a3-end.base-n1"]);
+    let d = derived(&env, wall);
+    assert_eq!(d.panels.iter().filter(|p| p.overridden).count(), 2);
+    assert!(d.layout.orphans.edits.is_empty() && d.layout.orphans.overrides.is_empty());
+    env.document.undo().wait().unwrap();
+    assert!(spatial::get(&env.snapshot(), wall).is_some());
+    assert_eq!(edited(&env, wall).0.len(), 1);
+}

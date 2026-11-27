@@ -2241,12 +2241,6 @@ pub fn is_embedded_in(snapshot: &Snapshot, curtain: &Object, host: &Object) -> b
             .any(|(id, _)| *id == curtain.id)
 }
 
-/// Whether the wall record holds grid edits or panel overrides, which belong to its own grid.
-#[must_use]
-pub fn is_edited(object: &Object) -> bool {
-    !GridEdit::list(&object.values).is_empty() || !CellOverride::list(&object.values).is_empty()
-}
-
 /// The rules of one wall record that is a curtain wall: its edits and overrides within bounds, no
 /// door or window hosted by it (a door or window fills a cell instead), and no cell merge that
 /// is not a rectangle.
@@ -2313,6 +2307,327 @@ fn merge_is_split(layout: &Layout, edits: &[GridEdit]) -> bool {
         }
     }
     false
+}
+
+// ----- carrying edits across a split or merge ---------------------------------------------------
+
+/// A curtain wall as it was before a split or merge: what its edits and overrides refer to.
+#[derive(Debug, Clone, Copy)]
+pub struct Source<'a> {
+    /// The grid edits.
+    pub edits: &'a [GridEdit],
+    /// The panel overrides.
+    pub overrides: &'a [CellOverride],
+    /// The length of its baseline.
+    pub length: f64,
+}
+
+/// Where a stretch of an old wall lies in the new one: the old position `u` in `from..=to` becomes
+/// `u + shift`, or `shift - u` when the stretch is reversed.
+#[derive(Debug, Clone, Copy)]
+pub struct Placement {
+    /// The start of the stretch in the old wall.
+    pub from: f64,
+    /// The end of the stretch in the old wall.
+    pub to: f64,
+    /// The shift.
+    pub shift: f64,
+    /// Whether the stretch runs the other way in the new wall.
+    pub reversed: bool,
+}
+
+impl Placement {
+    fn map(&self, u: f64) -> f64 {
+        if self.reversed {
+            self.shift - u
+        } else {
+            u + self.shift
+        }
+    }
+
+    /// Whether `u` lies inside the stretch, clear of its ends.
+    fn holds(&self, u: f64) -> bool {
+        u > self.from + TOL && u < self.to - TOL
+    }
+
+    /// Whether the range `a..b` lies within the stretch.
+    fn covers(&self, a: f64, b: f64) -> bool {
+        a >= self.from - TOL && b <= self.to + TOL
+    }
+
+    /// The part of the range `a..b` inside the stretch, in the new wall; `None` when it is too
+    /// short to matter.
+    fn clip(&self, a: f64, b: f64) -> Option<(f64, f64)> {
+        let (a, b) = (a.max(self.from), b.min(self.to));
+        (b - a > TOL).then(|| {
+            let (p, q) = (self.map(a), self.map(b));
+            (p.min(q), p.max(q))
+        })
+    }
+}
+
+/// What a split or merge carried over to a new wall.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Carried {
+    /// The grid edits of the new wall.
+    pub edits: Vec<GridEdit>,
+    /// The panel overrides of the new wall.
+    pub overrides: Vec<CellOverride>,
+    /// The edits of the sources it kept, as source index and key.
+    pub kept_edits: Vec<(usize, i64)>,
+    /// The overrides of the sources it kept, as source index and cell key.
+    pub kept_cells: Vec<(usize, String)>,
+}
+
+/// The number in the key of an added line (`a7` is 7).
+fn added_number(line: &str) -> Option<i64> {
+    line.strip_prefix('a')?.parse().ok()
+}
+
+/// The key a cell has when its lines are renamed and, for a reversed stretch, mirrored.
+fn cell_key(columns: (&str, &str), rows: (&str, &str)) -> String {
+    format!("{}-{}.{}-{}", columns.0, columns.1, rows.0, rows.1)
+}
+
+/// A move of a horizontal line: the line, its destination, and the parts and keys that hold it.
+type Move = (String, f64, Vec<(usize, i64)>);
+
+/// One edit a part offers the new wall: the part, the edit's key there and the edit; no edit when
+/// another one stands for it.
+type Offer = (usize, i64, Option<GridEdit>);
+
+/// What the edits and overrides of the old walls `parts` become in a new wall of `length` and
+/// `height` under `ty`: each edit is carried over only where its meaning is unambiguous.
+///
+/// - An added line keeps its place when it lies inside its stretch.
+/// - A move or removal of a rule's line is kept when the new wall's rule gives a line of the same
+///   key at the same place; a horizontal line is the same in every part of the wall.
+/// - A segment is cut to its stretch, and a segment or added line that covered a whole old wall
+///   covers only its stretch of the new one.
+/// - A move of a horizontal line belongs to the whole wall, so it is kept only when every part
+///   has it.
+/// - An override is kept when its cell exists in the new wall under the same key and in the same
+///   place.
+///
+/// Everything else is left out; the caller reports it from [`Carried::kept_edits`] and
+/// [`Carried::kept_cells`].
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the edits of every part, the moves, then the overrides"
+)]
+pub fn carry(
+    ty: &CurtainType,
+    length: f64,
+    height: f64,
+    parts: &[(Source<'_>, Placement)],
+) -> Carried {
+    let new_rule = ty.vertical.lines(length);
+    let mut offers: Vec<Offer> = Vec::new();
+    let mut bases = Vec::with_capacity(parts.len());
+    // The moves of horizontal lines: line, destination, and the parts and keys that hold it.
+    let mut moves: Vec<Move> = Vec::new();
+    let mut base = 0_i64;
+    for (index, (source, place)) in parts.iter().enumerate() {
+        bases.push(base);
+        let old_rule = ty.vertical.lines(source.length);
+        let same_line = |key: &str| -> bool {
+            let (Some(old), Some(new)) = (
+                old_rule.iter().find(|l| l.0 == key),
+                new_rule.iter().find(|l| l.0 == key),
+            ) else {
+                return false;
+            };
+            place.holds(old.1) && (place.map(old.1) - new.1).abs() < TOL
+        };
+        let mut added: Vec<i64> = Vec::new();
+        for e in source.edits {
+            let renamed = renamed(&e.line, base);
+            let edit = GridEdit {
+                key: e.key + base,
+                line: renamed.clone(),
+                ..e.clone()
+            };
+            let carried = match (e.direction, e.kind) {
+                (Direction::Vertical, EditKind::Add) => place.holds(e.at).then(|| GridEdit {
+                    at: place.map(e.at),
+                    ..edit
+                }),
+                (Direction::Vertical, kind) => {
+                    let known = match added_number(&e.line) {
+                        Some(n) => added.contains(&n),
+                        None => same_line(&e.line),
+                    };
+                    (known && (kind == EditKind::Remove || place.holds(e.at))).then(|| GridEdit {
+                        at: place.map(e.at),
+                        ..edit
+                    })
+                }
+                (Direction::Horizontal, EditKind::Move) => {
+                    match moves
+                        .iter_mut()
+                        .find(|m| m.0 == e.line && (m.1 - e.at).abs() < TOL)
+                    {
+                        Some(found) => found.2.push((index, e.key)),
+                        None => moves.push((e.line.clone(), e.at, vec![(index, e.key)])),
+                    }
+                    None
+                }
+                (Direction::Horizontal, kind) => {
+                    let known = kind == EditKind::Add
+                        || added_number(&e.line).is_none_or(|n| added.contains(&n));
+                    let span = e.span.unwrap_or((0.0, source.length));
+                    place
+                        .clip(span.0, span.1)
+                        .filter(|_| known)
+                        .map(|(a, b)| GridEdit {
+                            span: (!(a < TOL && b > length - TOL)).then_some((a, b)),
+                            ..edit
+                        })
+                }
+            };
+            if carried.is_some() && e.kind == EditKind::Add {
+                added.push(e.key);
+            }
+            if carried.is_some() {
+                offers.push((index, e.key, carried));
+            }
+        }
+        base += source.edits.iter().map(|e| e.key).max().unwrap_or(0).max(0);
+    }
+    // A move of a horizontal line is carried once, when every part holds it.
+    for (line, at, holders) in moves {
+        let parts_held: std::collections::BTreeSet<usize> = holders.iter().map(|h| h.0).collect();
+        if parts_held.len() != parts.len() {
+            continue;
+        }
+        for (k, (index, original)) in holders.into_iter().enumerate() {
+            offers.push((
+                index,
+                original,
+                (k == 0).then(|| GridEdit {
+                    key: original + bases[index],
+                    direction: Direction::Horizontal,
+                    kind: EditKind::Move,
+                    line: line.clone(),
+                    at,
+                    span: None,
+                }),
+            ));
+        }
+    }
+    join_added(&mut offers, length);
+    offers.truncate(MAX_EDITS);
+    let edits_of =
+        |offers: &[Offer]| -> Vec<GridEdit> { offers.iter().filter_map(|o| o.2.clone()).collect() };
+    let mut layout = Layout::of(ty, &edits_of(&offers), length, height);
+    // Removed segments that would leave a cell that is not a rectangle are left out.
+    if merge_is_split(&layout, &edits_of(&offers)) {
+        offers.retain(|o| {
+            !o.2.as_ref()
+                .is_some_and(|e| e.kind == EditKind::Remove && e.span.is_some())
+        });
+        layout = Layout::of(ty, &edits_of(&offers), length, height);
+    }
+    let mut carried = Carried {
+        edits: edits_of(&offers),
+        kept_edits: offers.iter().map(|o| (o.0, o.1)).collect(),
+        ..Carried::default()
+    };
+    for (index, (source, place)) in parts.iter().enumerate() {
+        let old = Layout::of(ty, source.edits, source.length, height);
+        for o in source.overrides {
+            let Some(cell) = old.cells.iter().find(|c| c.key == o.cell) else {
+                continue;
+            };
+            if !place.covers(cell.u.0, cell.u.1) {
+                continue;
+            }
+            let name = |i: usize| {
+                let line = renamed(&old.vertical[i].key, bases[index]);
+                match line.as_str() {
+                    "start" if place.reversed => "end".to_owned(),
+                    "end" if place.reversed => "start".to_owned(),
+                    _ => line,
+                }
+            };
+            let (left, right) = (name(cell.columns.0), name(cell.columns.1));
+            let (bottom, top) = (
+                &old.horizontal[cell.rows.0].key,
+                &old.horizontal[cell.rows.1].key,
+            );
+            let key = if place.reversed {
+                cell_key((&right, &left), (bottom, top))
+            } else {
+                cell_key((&left, &right), (bottom, top))
+            };
+            let (a, b) = (place.map(cell.u.0), place.map(cell.u.1));
+            let (a, b) = (a.min(b), a.max(b));
+            let found = layout.cells.iter().any(|n| {
+                n.key == key
+                    && (n.u.0 - a).abs() < TOL
+                    && (n.u.1 - b).abs() < TOL
+                    && (n.w.0 - cell.w.0).abs() < TOL
+                    && (n.w.1 - cell.w.1).abs() < TOL
+            });
+            if found {
+                carried.overrides.push(CellOverride {
+                    cell: key,
+                    ..o.clone()
+                });
+                carried.kept_cells.push((index, o.cell.clone()));
+            }
+        }
+    }
+    carried
+}
+
+/// The key of an added line of a part whose keys were raised by `base`; other keys stay.
+fn renamed(line: &str, base: i64) -> String {
+    match added_number(line) {
+        Some(n) => format!("a{}", n + base),
+        None => line.to_owned(),
+    }
+}
+
+/// Added horizontal lines at one height are one line, as the grid keeps one line per position:
+/// touching stretches join; a stretch that cannot join is left out.
+fn join_added(offers: &mut Vec<Offer>, length: f64) {
+    let mut joined: Vec<Offer> = Vec::with_capacity(offers.len());
+    for offer in offers.drain(..) {
+        let Some(edit) = offer
+            .2
+            .as_ref()
+            .filter(|e| e.direction == Direction::Horizontal && e.kind == EditKind::Add)
+        else {
+            joined.push(offer);
+            continue;
+        };
+        let twin = joined.iter().position(|o| {
+            o.2.as_ref().is_some_and(|t| {
+                t.direction == Direction::Horizontal
+                    && t.kind == EditKind::Add
+                    && (t.at - edit.at).abs() < TOL
+            })
+        });
+        let Some(t) = twin else {
+            joined.push(offer);
+            continue;
+        };
+        let theirs = joined[t].2.as_ref().and_then(|e| e.span);
+        let span = match (theirs, edit.span) {
+            (None, _) | (_, None) => Some(None),
+            (Some(a), Some(b)) if (a.1 - b.0).abs() < TOL || (b.1 - a.0).abs() < TOL => {
+                Some(Some((a.0.min(b.0), a.1.max(b.1))))
+            }
+            _ => None,
+        };
+        if let (Some(span), Some(target)) = (span, joined[t].2.as_mut()) {
+            target.span = span.filter(|s| !(s.0 < TOL && s.1 > length - TOL));
+            joined.push((offer.0, offer.1, None));
+        }
+    }
+    *offers = joined;
 }
 
 #[cfg(test)]

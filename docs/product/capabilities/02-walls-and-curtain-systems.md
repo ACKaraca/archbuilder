@@ -76,3 +76,11 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
   cells, and a line stands at each end of that stretch that does not reach a border. Their value
   is the number of interior lines of the stretch or the spacing measured over it. Without an
   offset nothing changes.
+- **Split and merge with grid edits (AB-WALL-018, AB-WALL-023).** A curtain wall that holds grid
+  edits or panel overrides can be split or merged. Edits are carried to the wall they belong to
+  only where that is unambiguous: an added line stays where it is, a segment is cut to the part
+  it lies in, and a move or removal of a rule's line, or a panel override, is kept only when the
+  new wall has the same line or cell, under the same key and in the same place. The first line of
+  a merged wall's second part gets a fresh key past the first part's. What cannot be kept without
+  guessing is left out and listed in the command result as `unkept`, never rebound to a neighbor.
+  Both commands are one undo step.
