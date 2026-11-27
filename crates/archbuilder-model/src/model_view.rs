@@ -44,11 +44,11 @@ coded! {
     ViewKind {
         /// The model in 3D through a camera.
         #[default]
-        ThreeD = 0, "three_d";
+        ThreeD = 0, "three_d_view";
         /// A vertical cut along a line.
-        Section = 1, "section";
+        Section = 1, "section_view";
         /// A building side seen from outside.
-        Elevation = 2, "elevation";
+        Elevation = 2, "elevation_view";
     }
 }
 

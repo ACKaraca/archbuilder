@@ -413,7 +413,7 @@ ab-cmd-view-create-elevations-description = Makes the four elevations of a build
 ab-cmd-view-set-camera-label = Save Camera to View
 ab-cmd-view-set-camera-description = Stores a camera (eye, target, projection, field of view) in a 3D view.
 ab-cmd-view-set-section-box-label = Section Box
-ab-cmd-view-set-section-box-description = Switches the section box of a 3D view on or off and sets its corners; switched on without corners, it takes the model's extent.
+ab-cmd-view-set-section-box-description = Switches the section box of a 3D view on or off and sets its corners; switched on without corners, it takes the extent of the walls.
 
 ab-cmd-set-create-label = Create Selection Set
 ab-cmd-set-create-description = Saves a named selection set in the document: the given elements, else the selected ones.
@@ -478,6 +478,8 @@ ab-cmd-datum-set-extent-label = Datum extent
 ab-cmd-datum-set-extent-description = Sets the levels a grid reaches between and whether each end shows its head.
 ab-cmd-datum-set-view-extent-label = Grid extent in views
 ab-cmd-datum-set-view-extent-description = Pulls grid ends in or pushes them out and shows or hides their heads in chosen plan views only, or copies those overrides from one view to others; the grid itself does not change.
+ab-prompt-section-start = Section: specify the start of the cut line.
+ab-prompt-section-end = Section: specify the end of the cut line; the section looks to its left.
 ab-prompt-grid-start = Grid: specify the start point.
 ab-prompt-grid-end = Grid: specify the end point.
 ab-prompt-reference-plane-start = Reference plane: specify the first point.

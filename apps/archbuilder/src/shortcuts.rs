@@ -57,6 +57,15 @@ pub mod ui {
     /// Makes a plan view (the `view` parameter), the plan view of the active storey (`plan`) or the
     /// 3D view (`3d`) the view of the viewport.
     pub const OPEN_VIEW: &str = "archbuilder.view.open";
+    /// Sets the visual style (the `style` parameter: `wireframe`, `hidden_line`, `shaded`,
+    /// `shaded_with_edges`, `consistent_colors`) of the open 3D view.
+    pub const VIEW_STYLE: &str = "archbuilder.view.visual_style";
+    /// Makes a saved 3D view of the viewport's camera and opens it.
+    pub const NEW_VIEW_3D: &str = "archbuilder.view.new_3d";
+    /// Stores the viewport's camera in the open saved 3D view.
+    pub const SAVE_CAMERA: &str = "archbuilder.view.save_camera";
+    /// Switches the section box of the open saved 3D view on or off.
+    pub const SECTION_BOX: &str = "archbuilder.view.toggle_section_box";
     /// Hides the selected elements in the plan view that is open: the view's own list, saved and
     /// undone with the document.
     pub const HIDE_IN_VIEW: &str = "archbuilder.view.hide_in_view";

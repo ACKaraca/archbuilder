@@ -7,6 +7,7 @@
 //! Each is one transaction, so one undo step. Coordinates are project coordinates in meters.
 
 use arc_base::{Error, ObjectId, Result};
+use arc_command::prompt::{Accept, PointDims, PromptSequence, PromptStep};
 use arc_command::{CommandSpec, Context, IdParam, Registry};
 use archbuilder_model::model_view::{
     self as mv, Camera, DEFAULT_FOV, DEPTH_RANGE, FOV_RANGE, ModelView, ViewKind,
@@ -359,6 +360,29 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             }
             .message_id,
             create_section,
+        )
+        .with_prompts(
+            PromptSequence::new()
+                .step(PromptStep::new(
+                    "start",
+                    Message {
+                        message_id: "ab-prompt-section-start",
+                    }
+                    .message_id,
+                    Accept::Point {
+                        dims: PointDims::Two,
+                    },
+                ))
+                .step(PromptStep::new(
+                    "end",
+                    Message {
+                        message_id: "ab-prompt-section-end",
+                    }
+                    .message_id,
+                    Accept::Point {
+                        dims: PointDims::Two,
+                    },
+                )),
         ),
         CommandSpec::new(
             VIEW_CREATE_ELEVATIONS,

@@ -96,16 +96,24 @@ pub(super) struct Habits {
     pub(super) pointer: Option<PointerEvent>,
     pub(super) rename: Option<Rename>,
     pub(super) banner: Option<String>,
-    view: Option<ViewRequest>,
+    pub(super) view: Option<ViewRequest>,
     /// The plan view this tab shows, refreshed each frame.
     pub(super) plan: Option<ObjectId>,
+    /// The model view (saved 3D view, section, elevation) this tab shows, refreshed each frame.
+    pub(super) model: Option<ObjectId>,
     /// The camera of the 3D view while a plan view is shown: switching back restores it.
-    camera_3d: Option<arc_geom::view::ViewFrame>,
-    /// The plan view the last frame showed, to notice when it is gone.
-    shown_plan: Option<ObjectId>,
+    pub(super) camera_3d: Option<arc_geom::view::ViewFrame>,
+    /// The plan or model view the last frame showed, to notice when it is gone.
+    pub(super) shown_plan: Option<ObjectId>,
+    /// The visual style of the default 3D view (a session setting; a saved view keeps its own).
+    pub(super) style_3d: archbuilder_model::model_view::VisualStyle,
+    /// The shading the viewport draws with this frame; `None` for the default.
+    pub(super) shading: Option<arc_gpu::ShadingMode>,
+    /// The section box of the open 3D view.
+    pub(super) section: Option<arc_gpu::display::Section>,
     /// The temporary lists alone (without what a plan view or a top view adds): the banner counts
     /// them.
-    temporary: Lists,
+    pub(super) temporary: Lists,
     /// Whether snapping to points is on.
     pub(super) snap_on: bool,
     /// The fine grid step, in meters.
@@ -141,8 +149,12 @@ impl Default for Habits {
             banner: None,
             view: None,
             plan: None,
+            model: None,
             camera_3d: None,
             shown_plan: None,
+            style_3d: archbuilder_model::model_view::VisualStyle::Shaded,
+            shading: None,
+            section: None,
             temporary: Lists::default(),
             snap_on: true,
             grid: GRID,
@@ -176,10 +188,25 @@ pub(super) fn rename_label() -> &'static str {
 }
 
 /// The command a typed word names that is not a command of the tools, with its arguments.
+/// The words of the model views: a visual style, a new saved 3D view, saving the camera and the
+/// section box.
+fn view_word(first: &str, rest: &[String]) -> Option<Intent> {
+    Some(match (first, rest) {
+        ("style" | "stil", [style]) => Intent::new(ui::VIEW_STYLE).with("style", style.clone()),
+        ("view3d" | "gorunum3b", []) => Intent::new(ui::NEW_VIEW_3D),
+        ("savecamera" | "kamerakaydet", []) => Intent::new(ui::SAVE_CAMERA),
+        ("sectionbox" | "kesitkutusu", []) => Intent::new(ui::SECTION_BOX),
+        _ => return None,
+    })
+}
+
 pub(super) fn typed_word(text: &str) -> Option<Intent> {
     let mut words = text.split_whitespace();
     let first = words.next()?.to_lowercase();
     let rest: Vec<String> = words.map(str::to_owned).collect();
+    if let Some(intent) = view_word(&first, &rest) {
+        return Some(intent);
+    }
     Some(match first.as_str() {
         "selectid" | "selid" if !rest.is_empty() => {
             Intent::new(ui::SELECT_ID).with("objects", rest)
@@ -411,6 +438,16 @@ impl WallInteraction {
         // The drawings of the plan views are objects of their own: the 3D view hides them, a plan
         // view shows only its own drawing, which the temporary state filters instead.
         self.habits.plan = crate::plan_state::current_in(cx.tab(), &snapshot);
+        self.habits.model = crate::plan_state::model_in(cx.tab(), &snapshot);
+        self.habits.shading = None;
+        self.habits.section = None;
+        if self.habits.plan.is_none()
+            && let Some(view) = self.habits.model
+        {
+            self.model_frame(cx, &snapshot, view);
+            self.habits.banner = self.banner(cx);
+            return;
+        }
         match self.habits.plan {
             Some(view) => {
                 self.habits.shown_plan = Some(view);
@@ -443,12 +480,11 @@ impl WallInteraction {
                     );
                 }
                 // The drawings are objects of their own (a storey's for its default view).
-                self.habits.lists.hidden.extend(
-                    archbuilder_model::view::all(&snapshot)
-                        .iter()
-                        .chain(spatial::objects(&snapshot, STOREY).iter())
-                        .map(|v| v.id),
-                );
+                self.habits
+                    .lists
+                    .hidden
+                    .extend(super::views::drawings(&snapshot));
+                self.habits.shading = Some(super::views::shading(self.habits.style_3d));
             }
         }
         self.habits.banner = self.banner(cx);
@@ -931,7 +967,7 @@ impl WallInteraction {
     /// with a `storey` parameter, that storey's first view, or its default view when it has none
     /// (a document from before plan views), which is not written to the document. A plan view looks straight down, framed on the
     /// storey's elements, and asks for its drawing; the 3D view gets its own camera back.
-    fn open_view(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
+    pub(super) fn open_view(&mut self, cx: &InteractionContext<'_>, intent: &Intent) -> Result<()> {
         let document = cx.document()?;
         let param = |k: &str| intent.params.get(k).and_then(serde_json::Value::as_str);
         let mismatch = || Error::new(codes::KIND_MISMATCH);
@@ -964,15 +1000,19 @@ impl WallInteraction {
             (Some("3d") | None, None) => None,
             (Some(text), None) => {
                 let id: ObjectId = text.parse().map_err(|_| mismatch())?;
-                if spatial::type_of(&document.snapshot(), id).as_deref()
-                    != Some(archbuilder_model::types::PLAN_VIEW)
-                {
+                if !matches!(
+                    spatial::type_of(&document.snapshot(), id).as_deref(),
+                    Some(
+                        archbuilder_model::types::PLAN_VIEW | archbuilder_model::types::MODEL_VIEW
+                    )
+                ) {
                     return Err(mismatch());
                 }
                 Some(id)
             }
         };
-        let was = self.habits.plan;
+        // The default 3D view's camera is kept while another view is shown.
+        let was = self.habits.plan.or(self.habits.model);
         crate::plan_state::set(cx.tab(), view);
         self.habits.plan = view;
         self.habits.shown_plan = view;
@@ -984,11 +1024,23 @@ impl WallInteraction {
                 if was.is_none() {
                     self.habits.camera_3d = Some(*cx.camera());
                 }
-                self.habits.view = Some(plan_framing(&document.snapshot(), id));
+                let snapshot = document.snapshot();
+                self.habits.model =
+                    archbuilder_model::model_view::is_model_view(&snapshot, id).then_some(id);
+                self.habits.view = Some(if self.habits.model.is_some() {
+                    super::views::framing(&snapshot, id)
+                } else {
+                    self.habits.plan = Some(id);
+                    plan_framing(&snapshot, id)
+                });
+                if self.habits.model.is_some() {
+                    self.habits.plan = None;
+                }
                 // A view is drawn only while it is open: it is built now.
                 cx.ask_extraction(&[id]);
             }
             None => {
+                self.habits.model = None;
                 self.habits.view = Some(
                     self.habits
                         .camera_3d
@@ -1065,6 +1117,10 @@ impl WallInteraction {
         let plain = intent.params.is_empty();
         let result = match command {
             ui::OPEN_VIEW => self.open_view(cx, intent),
+            ui::VIEW_STYLE => self.set_style(cx, intent),
+            ui::NEW_VIEW_3D => self.new_view_3d(cx),
+            ui::SAVE_CAMERA => self.save_camera(cx),
+            ui::SECTION_BOX => self.toggle_section_box(cx),
             ui::HIDE_IN_VIEW => self.hide_in_view(cx),
             ui::SHOW_IN_VIEW => self.show_in_view(cx),
             ui::REPEAT => self.repeat(cx),
@@ -1300,8 +1356,13 @@ fn plan_framing(snapshot: &arc_doc::Snapshot, view: ObjectId) -> ViewRequest {
         .flat_map(|k| spatial::children(snapshot, k, storey))
         .map(|o| o.id)
         .collect();
+    let turn = super::views::plan_rotation(snapshot, view);
     crate::warnings_panel::extent(snapshot, &ids).map_or(ViewRequest::Extents, |(a, b)| {
-        ViewRequest::Plan { a, b, z: level }
+        if turn.abs() < 1e-9 {
+            ViewRequest::Plan { a, b, z: level }
+        } else {
+            super::views::turned_plan(a, b, level, turn)
+        }
     })
 }
 

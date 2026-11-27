@@ -1336,6 +1336,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::MODEL_VIEW,
+        Message {
+            message_id: "ab-kind-model-view",
+        },
+    ),
+    (
         types::WALL_OPENING,
         Message {
             message_id: "ab-kind-wall-opening",
@@ -1576,6 +1582,166 @@ const ROOF_LABELS: [(&str, Message); 24] = [
     ),
 ];
 
+/// Labels of the fields and choices of model views (3D views, sections, elevations).
+const VIEW_LABELS: [(&str, Message); 26] = [
+    (
+        "kind",
+        Message {
+            message_id: "ab-prop-mv-kind",
+        },
+    ),
+    (
+        "perspective",
+        Message {
+            message_id: "ab-prop-mv-perspective",
+        },
+    ),
+    (
+        "eye_x",
+        Message {
+            message_id: "ab-prop-mv-eye-x",
+        },
+    ),
+    (
+        "eye_y",
+        Message {
+            message_id: "ab-prop-mv-eye-y",
+        },
+    ),
+    (
+        "eye_z",
+        Message {
+            message_id: "ab-prop-mv-eye-z",
+        },
+    ),
+    (
+        "target_x",
+        Message {
+            message_id: "ab-prop-mv-target-x",
+        },
+    ),
+    (
+        "target_y",
+        Message {
+            message_id: "ab-prop-mv-target-y",
+        },
+    ),
+    (
+        "target_z",
+        Message {
+            message_id: "ab-prop-mv-target-z",
+        },
+    ),
+    (
+        "fov",
+        Message {
+            message_id: "ab-prop-mv-fov",
+        },
+    ),
+    (
+        "section_box",
+        Message {
+            message_id: "ab-prop-mv-section-box",
+        },
+    ),
+    (
+        "box_min_x",
+        Message {
+            message_id: "ab-prop-mv-box-min-x",
+        },
+    ),
+    (
+        "box_min_y",
+        Message {
+            message_id: "ab-prop-mv-box-min-y",
+        },
+    ),
+    (
+        "box_min_z",
+        Message {
+            message_id: "ab-prop-mv-box-min-z",
+        },
+    ),
+    (
+        "box_max_x",
+        Message {
+            message_id: "ab-prop-mv-box-max-x",
+        },
+    ),
+    (
+        "box_max_y",
+        Message {
+            message_id: "ab-prop-mv-box-max-y",
+        },
+    ),
+    (
+        "box_max_z",
+        Message {
+            message_id: "ab-prop-mv-box-max-z",
+        },
+    ),
+    (
+        "crop",
+        Message {
+            message_id: "ab-prop-mv-crop",
+        },
+    ),
+    (
+        "camera",
+        Message {
+            message_id: "ab-prop-mv-camera",
+        },
+    ),
+    (
+        "three_d_view",
+        Message {
+            message_id: "ab-prop-mv-three-d",
+        },
+    ),
+    (
+        "section_view",
+        Message {
+            message_id: "ab-prop-mv-section",
+        },
+    ),
+    (
+        "elevation_view",
+        Message {
+            message_id: "ab-prop-mv-elevation",
+        },
+    ),
+    (
+        "wireframe",
+        Message {
+            message_id: "ab-prop-mv-wireframe",
+        },
+    ),
+    (
+        "hidden_line",
+        Message {
+            message_id: "ab-prop-mv-hidden-line",
+        },
+    ),
+    (
+        "shaded",
+        Message {
+            message_id: "ab-prop-mv-shaded",
+        },
+    ),
+    (
+        "shaded_with_edges",
+        Message {
+            message_id: "ab-prop-mv-shaded-edges",
+        },
+    ),
+    (
+        "consistent_colors",
+        Message {
+            message_id: "ab-prop-mv-consistent",
+        },
+    ),
+];
+
 /// Labels of the fields of ramps and railings.
 const CIRC_LABELS: [(&str, Message); 26] = [
     (
@@ -1768,6 +1934,7 @@ fn label_text(localize: &dyn Localize, name: &str) -> String {
         .iter()
         .chain(CIRC_LABELS.iter())
         .chain(ROOF_LABELS.iter())
+        .chain(VIEW_LABELS.iter())
         .find(|(n, _)| *n == name)
         .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
 }
@@ -1813,6 +1980,14 @@ fn shown(
     let mut values = object.values.clone();
     let mut read_only = Vec::new();
     match key {
+        // The hidden elements of a model view are counted by the view, not listed.
+        types::MODEL_VIEW
+            if fields.len() > types::model_view::HIDDEN
+                && values.len() > types::model_view::HIDDEN =>
+        {
+            fields.remove(types::model_view::HIDDEN);
+            values.remove(types::model_view::HIDDEN);
+        }
         types::PLAN_VIEW => {
             // The hidden elements are counted, not listed (Show hidden in view of the context
             // menu shows them again); the storey is shown for orientation.
@@ -3007,7 +3182,10 @@ impl Panel for PropertiesPanel {
         let open_view: Vec<arc_base::ObjectId> = cx
             .tab
             .filter(|_| view.selection().is_empty())
-            .and_then(|t| crate::plan_state::current_in(t, &snapshot))
+            .and_then(|t| {
+                crate::plan_state::current_in(t, &snapshot)
+                    .or_else(|| crate::plan_state::model_in(t, &snapshot))
+            })
             .into_iter()
             .collect();
         // A storey shown as its default view: its settings are those of a new view, and the first

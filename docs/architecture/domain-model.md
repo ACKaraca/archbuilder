@@ -1306,7 +1306,7 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | Type | Key properties | Relationships |
 |---|---|---|
 | `PlanView` | Cut height, top, overhead flag, scale, detail level, underlay flag, category flags, hidden elements, bottom, view depth | Owned by its storey; first slice of `ModelView` |
-| `ModelView` | Kind, definition (range, plane, camera), scale, detail level, style, phase, template, parent | Owns one `DetailLayer`; see [views-and-documentation.md](views-and-documentation.md) |
+| `ModelView` | Kind, definition (range, plane, camera), scale, detail level, style, phase, template, parent | Owns one `DetailLayer`; see [views-and-documentation.md](views-and-documentation.md). Stored today as `archbuilder.model_view` for saved 3D views (camera, visual style, section box, category flags, hidden elements; owned by the project) and for sections and elevations (line in plan, far clip, crop, vertical range; owned by their building) |
 | `ViewTemplate`, `ViewFilter` | Controlled properties, rule tree | Bound by views |
 | `DetailLayer` | Drafting entities, annotations | Owned by one model view |
 | `Annotation` | Kind, anchors, style, overrides, state | Owned by a detail layer, drafting view or sheet |

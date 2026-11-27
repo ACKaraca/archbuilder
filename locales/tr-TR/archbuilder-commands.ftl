@@ -412,7 +412,7 @@ ab-cmd-view-create-elevations-description = Bir binanın, her biri sınırların
 ab-cmd-view-set-camera-label = Kamerayı Görünüme Kaydet
 ab-cmd-view-set-camera-description = Bir 3B görünüme kamera (göz, hedef, izdüşüm, görüş açısı) kaydeder.
 ab-cmd-view-set-section-box-label = Kesit Kutusu
-ab-cmd-view-set-section-box-description = Bir 3B görünümün kesit kutusunu açar veya kapatır ve köşelerini belirler; köşesiz açıldığında modelin sınırlarını alır.
+ab-cmd-view-set-section-box-description = Bir 3B görünümün kesit kutusunu açar veya kapatır ve köşelerini belirler; köşesiz açıldığında duvarların sınırlarını alır.
 
 ab-cmd-set-create-label = Seçim Kümesi Oluştur
 ab-cmd-set-create-description = Belgede adlandırılmış bir seçim kümesi kaydeder: verilen öğeler, yoksa seçili öğeler.
@@ -477,6 +477,8 @@ ab-cmd-datum-set-extent-label = Datum uzantısı
 ab-cmd-datum-set-extent-description = Bir aksın hangi kotlar arasında uzandığını ve her ucun baş işaretini gösterip göstermediğini ayarlar.
 ab-cmd-datum-set-view-extent-label = Görünümlerde aks uzantısı
 ab-cmd-datum-set-view-extent-description = Aks uçlarını yalnızca seçilen plan görünümlerinde içeri çeker ya da dışarı iter, baş işaretlerini gösterir veya gizler; bu ayarları bir görünümden diğerlerine kopyalar. Aksın kendisi değişmez.
+ab-prompt-section-start = Kesit: kesit çizgisinin başlangıcını belirtin.
+ab-prompt-section-end = Kesit: kesit çizgisinin sonunu belirtin; kesit soluna bakar.
 ab-prompt-grid-start = Aks: başlangıç noktasını belirtin.
 ab-prompt-grid-end = Aks: bitiş noktasını belirtin.
 ab-prompt-reference-plane-start = Referans düzlemi: ilk noktayı belirtin.

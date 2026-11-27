@@ -486,7 +486,94 @@ fn builds_the_two_storey_house() {
         "archbuilder.wall.create",
         serde_json::json!({"start": [-2.0, 0.0], "end": [-2.0, 6.0], "height": 6.0, "storey": ground}),
     );
+    // A section across both rooms, looking west, and the four elevations.
+    run(
+        "archbuilder.view.create_section",
+        serde_json::json!({"start": [7.5, -3.0], "end": [7.5, 9.0]}),
+    );
+    run("archbuilder.view.create_elevations", serde_json::json!({}));
     app.save_as(tab, std::path::Path::new(&path)).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_section_opens_facing_its_drawing_and_a_saved_3d_view_keeps_its_camera_and_style() {
+    let dir = temp_dir("section");
+    let mut app = app(&dir, 60);
+    let tab = app.new_document().unwrap();
+    let document = app.tab(tab).unwrap().document();
+    let core = app.product().headless();
+    let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+    let run = |command: &str, params: serde_json::Value| {
+        Invoker::new(&core.registry)
+            .invoke(
+                document,
+                &session,
+                Invocation {
+                    seed: 9,
+                    ..Invocation::new(command, params)
+                },
+            )
+            .unwrap()
+            .value
+    };
+    let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]];
+    for k in 0..4 {
+        run(
+            "archbuilder.wall.create",
+            serde_json::json!({"start": corners[k], "end": corners[(k + 1) % 4]}),
+        );
+    }
+    let id = |v: serde_json::Value| v["view"].as_str().unwrap().parse::<ObjectId>().unwrap();
+    let section = id(run(
+        "archbuilder.view.create_section",
+        serde_json::json!({"start": [5.0, -2.0], "end": [5.0, 8.0]}),
+    ));
+    let saved = id(run(
+        "archbuilder.view.create_3d",
+        serde_json::json!({"eye": [20.0, -20.0, 12.0], "target": [5.0, 3.0, 1.0]}),
+    ));
+    let mut ui = Ui::new(app);
+    let camera_3d = ui.camera();
+    let drawing = |ui: &Ui| {
+        let object = spatial::get(&ui.snapshot(), section).unwrap();
+        archbuilder::extract_model_view::extract(&ui.snapshot(), &object, &arc_base::Cancel::new())
+            .unwrap()
+            .items
+            .len()
+    };
+    assert_eq!(drawing(&ui), 0);
+
+    // The section looks west, level, at its drawing, which is built once it is open.
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", section.to_string()));
+    assert_eq!(plan_state::current(ui.tab()), Some(section));
+    assert!(drawing(&ui) > 0);
+    let facing = ui.camera();
+    assert!((facing.forward() - arc_base::math::Vector3::new(-1.0, 0.0, 0.0)).norm() < 1e-9);
+    assert!(matches!(
+        facing.projection(),
+        arc_geom::view::Projection::Orthographic { .. }
+    ));
+
+    // A saved 3D view opens with its camera; a visual style is its own, as an undo step.
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", saved.to_string()));
+    let eye = ui.camera().eye();
+    assert!((eye - arc_base::math::Point3::new(20.0, -20.0, 12.0)).norm() < 1e-6);
+    let revision = ui.snapshot().revision();
+    ui.menu(Intent::new(ui::VIEW_STYLE).with("style", "hidden_line"));
+    assert_ne!(ui.snapshot().revision(), revision);
+    let style = archbuilder_model::model_view::settings(&ui.snapshot(), saved)
+        .unwrap()
+        .style;
+    assert_eq!(
+        style,
+        archbuilder_model::model_view::VisualStyle::HiddenLine
+    );
+
+    // The default 3D view gets its camera back.
+    ui.menu(Intent::new(ui::OPEN_VIEW).with("view", "3d"));
+    assert_eq!(plan_state::current(ui.tab()), None);
+    assert_eq!(ui.camera(), camera_3d);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
