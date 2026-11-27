@@ -105,6 +105,7 @@ impl Mapper<'_> {
                 Shape::Straight => "STRAIGHT_RUN_STAIR",
                 Shape::LTurn => "QUARTER_TURN_STAIR",
                 Shape::UTurn => "HALF_TURN_STAIR",
+                Shape::Sketch => "NOTDEFINED",
             }
             .to_owned(),
         );
