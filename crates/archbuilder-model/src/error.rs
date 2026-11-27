@@ -297,13 +297,6 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-curtain-cell-shape",
     };
-    /// A curtain wall with grid edits or panel overrides cannot be split or merged: they belong
-    /// to its own grid.
-    pub const CURTAIN_EDITED: ErrorCode = ErrorCode {
-        code: "ab.model.curtain_edited",
-        category: Category::Conflict,
-        message_id: "ab-model-curtain-edited",
-    };
     /// The wall is not a curtain wall.
     pub const CURTAIN_NOT_CURTAIN: ErrorCode = ErrorCode {
         code: "ab.model.curtain_not_curtain",

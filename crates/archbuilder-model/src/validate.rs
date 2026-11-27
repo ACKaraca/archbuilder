@@ -1092,8 +1092,9 @@ pub fn room_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
 }
 
 /// The fields of an element of type `key` that a pinned element may still change: its name, its
-/// flag, the values copied from its type (a type edit reaches every instance) and, for a room, its
-/// number and finishes.
+/// flag, the values copied from its type (a type edit reaches every instance), for a room its
+/// number and finishes, and for a curtain wall its grid edits and panel overrides (they fill and
+/// divide the wall but never move or reshape it).
 fn pin_free(key: &str) -> &'static [usize] {
     use types::{floor, insert, room, wall};
     match key {
@@ -1102,6 +1103,8 @@ fn pin_free(key: &str) -> &'static [usize] {
             wall::THICKNESS,
             wall::CORE_EXTERIOR,
             wall::CORE_INTERIOR,
+            wall::GRID_EDITS,
+            wall::CELL_OVERRIDES,
             wall::PINNED,
         ],
         DOOR | WINDOW => &[

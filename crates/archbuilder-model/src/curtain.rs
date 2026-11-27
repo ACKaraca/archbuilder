@@ -36,6 +36,10 @@ use crate::spatial;
 use crate::types::{self, DOOR_TYPE, WINDOW_TYPE, wall};
 use crate::wall::Wall;
 
+/// The largest angle a grid direction is turned by, in radians (60 degrees).
+pub const MAX_ANGLE: f64 = std::f64::consts::FRAC_PI_3;
+/// The least `1 - slope * slope` of the two families of a grid: below it they are nearly parallel.
+const MIN_CROSSING: f64 = 0.1;
 /// The most interior lines of one direction a grid has.
 pub const MAX_LINES: usize = 150;
 /// [`MAX_LINES`] as a signed number.
@@ -46,6 +50,8 @@ pub const MAX_EDITS: usize = 1_000;
 pub const MAX_OVERRIDES: usize = 2_000;
 /// Lines closer than this to each other or to a border are one line, in meters.
 const TOL: f64 = 1.0e-3;
+/// A cell of a turned grid smaller than this is not one, in square meters.
+const MIN_AREA: f64 = 1.0e-6;
 /// The chord of the prisms; every outline is straight.
 const CHORD: f64 = 0.01;
 /// The segments of a circular mullion's outline.
@@ -71,7 +77,8 @@ coded! {
 }
 
 coded! {
-    /// Where a fixed-distance grid starts counting.
+    /// Where a grid starts counting: a fixed distance, or the side an equal division's offset is
+    /// left free on.
     Justify {
         /// From the start of the baseline or the base.
         #[default]
@@ -171,6 +178,10 @@ pub mod slot {
     pub const CORNER: usize = 27;
     /// Which direction's mullions are continuous.
     pub const PRIORITY: usize = 30;
+    /// The angle of the vertical lines, appended in schema 1.3.
+    pub const VERTICAL_ANGLE: usize = 31;
+    /// The angle of the horizontal lines, appended in schema 1.3.
+    pub const HORIZONTAL_ANGLE: usize = 32;
 }
 
 /// Field positions of one grid edit record.
@@ -210,16 +221,32 @@ pub struct GridRule {
     pub kind: RuleKind,
     /// A distance in meters, or the number of lines for [`RuleKind::FixedNumber`].
     pub value: f64,
-    /// Where a fixed distance starts counting.
+    /// Where the rule starts counting: a fixed distance from the start, the middle or the end; an
+    /// equal division from the start, the middle or the end of the stretch the offset leaves.
     pub justify: Justify,
-    /// The shift of the origin of a fixed distance, in meters.
+    /// The shift of the origin of a fixed distance, or the stretch left free at the justified
+    /// side of an equal division, in meters.
     pub offset: f64,
+    /// How far the family of lines is turned, in radians: counter-clockwise in the elevation seen
+    /// with the start of the baseline on the left. Zero keeps the lines vertical (or horizontal).
+    pub angle: f64,
 }
 
 impl GridRule {
-    /// The rule of the four fields at `at`.
-    fn read(values: &[Option<Value>], at: usize) -> Self {
+    /// The slope of the lines of the family: how far a vertical line moves along the baseline per
+    /// meter of height, or a horizontal line up per meter along the baseline.
+    #[must_use]
+    pub fn slope(&self, direction: Direction) -> f64 {
+        match direction {
+            Direction::Vertical => -self.angle.tan(),
+            Direction::Horizontal => self.angle.tan(),
+        }
+    }
+
+    /// The rule of the four fields at `at`, turned by the angle field at `angle_at`.
+    fn read(values: &[Option<Value>], at: usize, angle_at: usize) -> Self {
         Self {
+            angle: types::meters(values, angle_at).unwrap_or(0.0),
             kind: RuleKind::of_field(values, at),
             value: match values.get(at + 1) {
                 Some(Some(Value::F64(v))) => *v,
@@ -246,6 +273,8 @@ impl GridRule {
         self.value.is_finite()
             && self.value > 0.0
             && self.offset.is_finite()
+            && self.angle.is_finite()
+            && self.angle.abs() <= MAX_ANGLE
             && (self.kind != RuleKind::FixedNumber || self.value <= MAX_LINES as f64)
     }
 
@@ -257,10 +286,24 @@ impl GridRule {
             return out;
         }
         let inside = |p: f64| p > TOL && p < extent - TOL;
+        // An equal division spreads its lines over the stretch the offset leaves free: from the
+        // offset to the end (start), up to the end less the offset (end), or between the two
+        // (center). A line stands at each end of the stretch that does not reach the border.
+        let free = self.offset.max(0.0);
+        let (lo, hi) = match self.justify {
+            Justify::Start => (free, extent),
+            Justify::End => (0.0, extent - free),
+            Justify::Center => (free, extent - free),
+        };
+        let span = hi - lo;
         let equal = |count: usize| -> Vec<(String, f64)> {
-            (1..=count)
-                .map(|i| (format!("n{i}"), extent * i as f64 / (count + 1) as f64))
-                .collect()
+            let mut lines: Vec<_> = (1..=count)
+                .map(|i| (format!("n{i}"), lo + span * i as f64 / (count + 1) as f64))
+                .collect();
+            lines.push(("lo".to_owned(), lo));
+            lines.push(("hi".to_owned(), hi));
+            lines.retain(|l| inside(l.1));
+            lines
         };
         match self.kind {
             RuleKind::FixedDistance => {
@@ -281,12 +324,13 @@ impl GridRule {
                     }
                 }
             }
+            _ if span <= 2.0 * TOL => {}
             RuleKind::FixedNumber => out = equal(count_of(self.value.round())),
             RuleKind::MaxSpacing => {
-                out = equal(count_of((extent / self.value - 1.0e-9).ceil() - 1.0));
+                out = equal(count_of((span / self.value - 1.0e-9).ceil() - 1.0));
             }
             RuleKind::MinSpacing => {
-                out = equal(count_of((extent / self.value + 1.0e-9).floor() - 1.0));
+                out = equal(count_of((span / self.value + 1.0e-9).floor() - 1.0));
             }
         }
         out.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -385,12 +429,14 @@ impl CurtainType {
                 value: 1.5,
                 justify: Justify::Start,
                 offset: 0.0,
+                angle: 0.0,
             },
             horizontal: GridRule {
                 kind: RuleKind::FixedDistance,
                 value: 3.0,
                 justify: Justify::Start,
                 offset: 0.0,
+                angle: 0.0,
             },
             panel: PanelKind::Glazed,
             panel_thickness: 0.024,
@@ -412,8 +458,8 @@ impl CurtainType {
             return None;
         }
         Some(Self {
-            vertical: GridRule::read(values, slot::VERTICAL),
-            horizontal: GridRule::read(values, slot::HORIZONTAL),
+            vertical: GridRule::read(values, slot::VERTICAL, slot::VERTICAL_ANGLE),
+            horizontal: GridRule::read(values, slot::HORIZONTAL, slot::HORIZONTAL_ANGLE),
             panel: PanelKind::of_field(values, slot::PANEL),
             panel_thickness: types::meters(values, slot::PANEL_THICKNESS).unwrap_or(0.024),
             material: types::text(values, slot::PANEL_MATERIAL)
@@ -441,6 +487,8 @@ impl CurtainType {
         out.extend(self.border.write());
         out.extend(self.corner.write());
         out.push(Some(Value::Enum(self.priority.code())));
+        out.push(Some(types::angle(self.vertical.angle)));
+        out.push(Some(types::angle(self.horizontal.angle)));
         out
     }
 
@@ -459,7 +507,11 @@ impl CurtainType {
     #[must_use]
     pub fn problems(&self) -> Vec<Error> {
         let mut out = Vec::new();
-        if !self.vertical.valid() || !self.horizontal.valid() {
+        // The two families must cross: turned the same way by 45 degrees they would be parallel.
+        let crossing = 1.0
+            - self.vertical.slope(Direction::Vertical)
+                * self.horizontal.slope(Direction::Horizontal);
+        if !self.vertical.valid() || !self.horizontal.valid() || crossing < MIN_CROSSING {
             out.push(Error::new(codes::CURTAIN_RULE));
         }
         if matches!(self.panel, PanelKind::Door | PanelKind::Window) {
@@ -577,6 +629,15 @@ pub fn type_fields() -> Vec<FieldDecl> {
         "priority".to_owned(),
         Priority::ALL.iter().map(|k| (k.name(), k.code())).collect(),
     ));
+    for name in ["vertical_angle", "horizontal_angle"] {
+        fields.push(
+            FieldDecl::new(name, ValueType::Quantity(arc_base::Dimension::ANGLE))
+                .optional()
+                .with_bound(types::real((-MAX_ANGLE, MAX_ANGLE)))
+                .in_aspect("curtain")
+                .since_minor(3),
+        );
+    }
     fields
 }
 
@@ -858,6 +919,10 @@ pub struct Line {
     pub removed: Vec<(f64, f64)>,
     /// The range an added line is limited to.
     pub only: Option<(f64, f64)>,
+    /// How far the line leans: along the baseline per meter of height for a vertical line, up per
+    /// meter along the baseline for a horizontal one. `at` is where it crosses the middle of the
+    /// wall. Zero for the borders and for a grid that is not turned.
+    pub slope: f64,
 }
 
 impl Line {
@@ -881,6 +946,7 @@ fn lines(
     border_keys: (&str, &str),
     orphans: &mut Vec<i64>,
 ) -> Vec<Line> {
+    let slope = rule.slope(direction);
     let mut found: Vec<Line> = rule
         .lines(extent)
         .into_iter()
@@ -890,6 +956,7 @@ fn lines(
             border: false,
             removed: Vec::new(),
             only: None,
+            slope,
         })
         .collect();
     for edit in edits.iter().filter(|e| e.direction == direction) {
@@ -900,6 +967,7 @@ fn lines(
                 border: false,
                 removed: Vec::new(),
                 only: edit.span,
+                slope,
             }),
             EditKind::Move => match found.iter_mut().find(|l| l.key == edit.line) {
                 Some(line) => line.at = edit.at,
@@ -924,6 +992,7 @@ fn lines(
         border: true,
         removed: Vec::new(),
         only: None,
+        slope: 0.0,
     };
     let mut out = vec![border(border_keys.0, 0.0)];
     out.extend(found);
@@ -937,10 +1006,13 @@ fn lines(
 pub struct Cell {
     /// The key: the keys of the lines that bound it.
     pub key: String,
-    /// The range along the baseline.
+    /// The range along the baseline (of the bounding box when the cell is not a rectangle).
     pub u: (f64, f64),
-    /// The range above the base.
+    /// The range above the base (of the bounding box when the cell is not a rectangle).
     pub w: (f64, f64),
+    /// The corners, as along the baseline and above the base, counter-clockwise, when a turned
+    /// grid makes the cell something other than the rectangle `u` by `w`; `None` for a rectangle.
+    pub outline: Option<Vec<[f64; 2]>>,
     /// The first and one past the last column of the grid it covers.
     pub columns: (usize, usize),
     /// The first and one past the last row of the grid it covers.
@@ -967,6 +1039,10 @@ pub struct Layout {
     pub cells: Vec<Cell>,
     /// The edits and overrides that found nothing.
     pub orphans: Orphans,
+    /// The length of the wall's baseline.
+    pub length: f64,
+    /// The height of the wall.
+    pub height: f64,
 }
 
 impl Layout {
@@ -990,34 +1066,207 @@ impl Layout {
             ("base", "top"),
             &mut orphans.edits,
         );
-        let cells = cells(&vertical, &horizontal);
-        Self {
+        let mut layout = Self {
             vertical,
             horizontal,
-            cells,
+            cells: Vec::new(),
             orphans,
+            length,
+            height,
+        };
+        layout.cells = cells(&layout);
+        layout
+    }
+
+    /// Where vertical line `i` crosses horizontal line `k`: along the baseline and above the base.
+    #[must_use]
+    pub fn cross(&self, i: usize, k: usize) -> (f64, f64) {
+        cross(
+            (self.vertical[i].at, self.vertical[i].slope),
+            (self.horizontal[k].at, self.horizontal[k].slope),
+            self.length,
+            self.height,
+        )
+    }
+
+    /// Whether any line that bounds the grid cells `columns` by `rows` is turned.
+    fn turned(&self, columns: (usize, usize), rows: (usize, usize)) -> bool {
+        [columns.0, columns.1]
+            .iter()
+            .any(|i| self.vertical[*i].slope != 0.0)
+            || [rows.0, rows.1]
+                .iter()
+                .any(|k| self.horizontal[*k].slope != 0.0)
+    }
+
+    /// The corners of the cell between vertical lines `columns` and horizontal lines `rows`, each
+    /// bounding line moved `inset` (left, right, below, above) toward the inside across it, and
+    /// the wall's own edges moved `frame` in, as along the baseline and above the base,
+    /// counter-clockwise. Empty when nothing is left.
+    fn polygon(
+        &self,
+        columns: (usize, usize),
+        rows: (usize, usize),
+        inset: [f64; 4],
+        frame: [f64; 4],
+    ) -> Vec<[f64; 2]> {
+        let (l, h) = (self.length, self.height);
+        let (u0, u1, w0, w1) = (frame[0], l - frame[1], frame[2], h - frame[3]);
+        if u1 <= u0 || w1 <= w0 {
+            return Vec::new();
         }
+        let mut ring = vec![[u0, w0], [u1, w0], [u1, w1], [u0, w1]];
+        let norm = |s: f64| s.hypot(1.0);
+        let (left, right) = (&self.vertical[columns.0], &self.vertical[columns.1]);
+        let (below, above) = (&self.horizontal[rows.0], &self.horizontal[rows.1]);
+        // A half-plane keeps the points with `a * u + b * w >= c`.
+        let at = |line: &Line, mid: f64| line.at - line.slope * mid;
+        let planes = [
+            (
+                1.0,
+                -left.slope,
+                at(left, h / 2.0) + inset[0] * norm(left.slope),
+            ),
+            (
+                -1.0,
+                right.slope,
+                -at(right, h / 2.0) + inset[1] * norm(right.slope),
+            ),
+            (
+                -below.slope,
+                1.0,
+                at(below, l / 2.0) + inset[2] * norm(below.slope),
+            ),
+            (
+                above.slope,
+                -1.0,
+                -at(above, l / 2.0) + inset[3] * norm(above.slope),
+            ),
+        ];
+        for (a, b, c) in planes {
+            ring = clip(&ring, a, b, c);
+            if ring.len() < 3 {
+                return Vec::new();
+            }
+        }
+        ring
     }
 
-    /// The center of grid column `c`.
-    fn mid_u(&self, c: usize) -> f64 {
-        (self.vertical[c].at + self.vertical[c + 1].at) / 2.0
+    /// The middle line of grid column `c` as (position, slope).
+    fn column_mid(&self, c: usize) -> (f64, f64) {
+        let (a, b) = (&self.vertical[c], &self.vertical[c + 1]);
+        ((a.at + b.at) / 2.0, (a.slope + b.slope) / 2.0)
     }
 
-    /// The center of grid row `r`.
-    fn mid_w(&self, r: usize) -> f64 {
-        (self.horizontal[r].at + self.horizontal[r + 1].at) / 2.0
+    /// The middle line of grid row `r` as (position, slope).
+    fn row_mid(&self, r: usize) -> (f64, f64) {
+        let (a, b) = (&self.horizontal[r], &self.horizontal[r + 1]);
+        ((a.at + b.at) / 2.0, (a.slope + b.slope) / 2.0)
     }
 
-    /// Whether vertical line `i` is present in row `r`.
+    /// Whether vertical line `i` is present in row `r`: judged where it crosses the row's middle.
     fn v_present(&self, i: usize, r: usize) -> bool {
-        self.vertical[i].present_at(self.mid_w(r))
+        let line = &self.vertical[i];
+        let (_, w) = cross(
+            (line.at, line.slope),
+            self.row_mid(r),
+            self.length,
+            self.height,
+        );
+        line.present_at(w)
     }
 
     /// Whether horizontal line `k` is present in column `c`.
     fn h_present(&self, k: usize, c: usize) -> bool {
-        self.horizontal[k].present_at(self.mid_u(c))
+        let line = &self.horizontal[k];
+        let (u, _) = cross(
+            self.column_mid(c),
+            (line.at, line.slope),
+            self.length,
+            self.height,
+        );
+        line.present_at(u)
     }
+
+    /// The stretch of vertical line `i` that lies inside the wall, above the base.
+    fn v_window(&self, i: usize) -> (f64, f64) {
+        let line = &self.vertical[i];
+        window(line.at, line.slope, self.length, self.height)
+    }
+
+    /// The stretch of horizontal line `k` that lies inside the wall, along the baseline.
+    fn h_window(&self, k: usize) -> (f64, f64) {
+        let line = &self.horizontal[k];
+        window(line.at, line.slope, self.height, self.length)
+    }
+}
+
+/// Where a vertical line `(p, tv)` crosses a horizontal line `(q, th)` of a wall `length` long and
+/// `height` high: along the baseline and above the base. The lines lean about the middle of the
+/// wall; without a lean this is `(p, q)` exactly.
+fn cross(v: (f64, f64), h: (f64, f64), length: f64, height: f64) -> (f64, f64) {
+    let ((p, tv), (q, th)) = (v, h);
+    let divisor = 1.0 - th * tv;
+    if divisor.abs() < 1.0e-9 {
+        return (p, q);
+    }
+    let u = (p + (q - th * length / 2.0 - height / 2.0) * tv) / divisor;
+    (u, q + (u - length / 2.0) * th)
+}
+
+/// The part of `0..extent` along a line that stays within `0..across`, when the line crosses the
+/// middle of the other axis at `at` and leans by `slope`.
+fn window(at: f64, slope: f64, across: f64, extent: f64) -> (f64, f64) {
+    if slope.abs() < 1.0e-12 {
+        return (0.0, extent);
+    }
+    let (a, b) = (
+        extent / 2.0 - at / slope,
+        extent / 2.0 + (across - at) / slope,
+    );
+    (a.min(b).max(0.0), a.max(b).min(extent))
+}
+
+/// The part of the convex `ring` where `a * u + b * w >= c`.
+fn clip(ring: &[[f64; 2]], a: f64, b: f64, c: f64) -> Vec<[f64; 2]> {
+    let side = |p: [f64; 2]| a * p[0] + b * p[1] - c;
+    let mut out = Vec::with_capacity(ring.len() + 1);
+    for (k, p) in ring.iter().enumerate() {
+        let q = ring[(k + 1) % ring.len()];
+        let (sp, sq) = (side(*p), side(q));
+        if sp >= 0.0 {
+            out.push(*p);
+        }
+        if (sp >= 0.0) != (sq >= 0.0) {
+            let t = sp / (sp - sq);
+            out.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]);
+        }
+    }
+    out
+}
+
+/// The area of a ring of corners.
+fn ring_area(ring: &[[f64; 2]]) -> f64 {
+    let n = ring.len();
+    (0..n)
+        .map(|k| {
+            let (p, q) = (ring[k], ring[(k + 1) % n]);
+            p[0] * q[1] - q[0] * p[1]
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.0
+}
+
+/// The bounding ranges of a ring of corners.
+fn ring_box(ring: &[[f64; 2]]) -> ((f64, f64), (f64, f64)) {
+    let range = |k: usize| {
+        ring.iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p[k]), hi.max(p[k]))
+            })
+    };
+    (range(0), range(1))
 }
 
 fn find(parent: &mut [usize], mut x: usize) -> usize {
@@ -1031,23 +1280,30 @@ fn find(parent: &mut [usize], mut x: usize) -> usize {
 /// The cells of the grid: each grid cell, merged with the neighbor across an absent segment. A
 /// merged group that is not a rectangle is not merged.
 #[allow(clippy::needless_range_loop, reason = "grid indices address both axes")]
-fn cells(vertical: &[Line], horizontal: &[Line]) -> Vec<Cell> {
+fn cells(layout: &Layout) -> Vec<Cell> {
+    let (vertical, horizontal) = (&layout.vertical, &layout.horizontal);
     let (nc, nr) = (vertical.len() - 1, horizontal.len() - 1);
     let at = |c: usize, r: usize| r * nc + c;
+    // A turned grid leaves some grid cells outside the wall: they have no cell.
+    let empty: Vec<bool> = (0..nc * nr)
+        .map(|k| {
+            let (c, r) = (k % nc, k / nc);
+            layout.turned((c, c + 1), (r, r + 1))
+                && ring_area(&layout.polygon((c, c + 1), (r, r + 1), [0.0; 4], [0.0; 4])) < MIN_AREA
+        })
+        .collect();
     let mut parent: Vec<usize> = (0..nc * nr).collect();
     for r in 0..nr {
-        let mid_w = (horizontal[r].at + horizontal[r + 1].at) / 2.0;
         for c in 1..nc {
-            if !vertical[c].present_at(mid_w) {
+            if !layout.v_present(c, r) && !empty[at(c - 1, r)] && !empty[at(c, r)] {
                 let (a, b) = (find(&mut parent, at(c - 1, r)), find(&mut parent, at(c, r)));
                 parent[a] = b;
             }
         }
     }
     for c in 0..nc {
-        let mid_u = (vertical[c].at + vertical[c + 1].at) / 2.0;
         for r in 1..nr {
-            if !horizontal[r].present_at(mid_u) {
+            if !layout.h_present(r, c) && !empty[at(c, r - 1)] && !empty[at(c, r)] {
                 let (a, b) = (find(&mut parent, at(c, r - 1)), find(&mut parent, at(c, r)));
                 parent[a] = b;
             }
@@ -1058,6 +1314,9 @@ fn cells(vertical: &[Line], horizontal: &[Line]) -> Vec<Cell> {
     let mut boxes: std::collections::BTreeMap<usize, Group> = std::collections::BTreeMap::new();
     for r in 0..nr {
         for c in 0..nc {
+            if empty[at(c, r)] {
+                continue;
+            }
             let root = find(&mut parent, at(c, r));
             let e = boxes.entry(root).or_insert((c, c + 1, r, r + 1, 0));
             *e = (
@@ -1071,19 +1330,34 @@ fn cells(vertical: &[Line], horizontal: &[Line]) -> Vec<Cell> {
     }
     let mut out: Vec<Cell> = Vec::new();
     let mut push = |c0: usize, c1: usize, r0: usize, r1: usize| {
+        let turned = layout.turned((c0, c1), (r0, r1));
+        let outline = turned.then(|| layout.polygon((c0, c1), (r0, r1), [0.0; 4], [0.0; 4]));
+        let (u, w) = outline.as_deref().map_or_else(
+            || {
+                (
+                    (vertical[c0].at, vertical[c1].at),
+                    (horizontal[r0].at, horizontal[r1].at),
+                )
+            },
+            ring_box,
+        );
         out.push(Cell {
             key: format!(
                 "{}-{}.{}-{}",
                 vertical[c0].key, vertical[c1].key, horizontal[r0].key, horizontal[r1].key
             ),
-            u: (vertical[c0].at, vertical[c1].at),
-            w: (horizontal[r0].at, horizontal[r1].at),
+            u,
+            w,
+            outline,
             columns: (c0, c1),
             rows: (r0, r1),
         });
     };
     for r in 0..nr {
         for c in 0..nc {
+            if empty[at(c, r)] {
+                continue;
+            }
             let root = find(&mut parent, at(c, r));
             let Some(&(c0, c1, r0, r1, count)) = boxes.get(&root) else {
                 continue;
@@ -1131,13 +1405,23 @@ pub struct Mullion {
     pub spec: MullionSpec,
     /// Whether it is centered on the baseline instead of the middle of the wall's thickness.
     pub on_baseline: bool,
+    /// How far it leans, as [`Line::slope`]; zero for a bar of a grid that is not turned.
+    pub slope: f64,
+    /// The position along its stretch at which `at` is measured (the middle of the wall).
+    pub reference: f64,
 }
 
 impl Mullion {
-    /// The length of the mullion.
+    /// The length of the mullion, along its axis.
     #[must_use]
     pub fn length(&self) -> f64 {
-        self.span.1 - self.span.0
+        (self.span.1 - self.span.0) * self.slope.hypot(1.0)
+    }
+
+    /// Where its axis lies at `t` along its stretch: the position along the baseline for an
+    /// upright bar, above the base for a horizontal one.
+    fn axis_at(&self, t: f64) -> f64 {
+        self.at + (t - self.reference) * self.slope
     }
 }
 
@@ -1154,10 +1438,12 @@ pub struct PanelInfo {
     pub overridden: bool,
     /// The cell.
     pub cell: Cell,
-    /// The clear range along the baseline.
+    /// The clear range along the baseline (of the bounding box when the panel is not a rectangle).
     pub u: (f64, f64),
-    /// The clear range above the base.
+    /// The clear range above the base (of the bounding box when the panel is not a rectangle).
     pub w: (f64, f64),
+    /// The corners of the clear panel, as [`Cell::outline`]; `None` for a rectangle.
+    pub outline: Option<Vec<[f64; 2]>>,
     /// The door or window that fills it, as an insert of the wall.
     pub insert: Option<Insert>,
 }
@@ -1178,7 +1464,9 @@ impl PanelInfo {
     /// The clear area.
     #[must_use]
     pub fn area(&self) -> f64 {
-        self.width() * self.height()
+        self.outline
+            .as_deref()
+            .map_or_else(|| self.width() * self.height(), ring_area)
     }
 }
 
@@ -1319,6 +1607,10 @@ impl Derived {
     ///
     /// # Errors
     /// The solid kernel's errors for numbers it cannot make solids of.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one pass over the panels and one over the mullions"
+    )]
     pub fn solids(&self) -> Result<Vec<Solid>> {
         let axes = crate::insert::Axes::new(&self.wall, self.level)?;
         let mid = (axes.low + axes.high) / 2.0;
@@ -1355,12 +1647,18 @@ impl Derived {
                         continue;
                     }
                     let half = self.ty.panel_thickness.min(axes.high - axes.low) / 2.0;
-                    let solid = boxed(
-                        &axes,
-                        p.u,
-                        (mid - half, mid + half),
-                        (axes.base + p.w.0, axes.base + p.w.1),
-                    )?;
+                    let solid = match &p.outline {
+                        None => boxed(
+                            &axes,
+                            p.u,
+                            (mid - half, mid + half),
+                            (axes.base + p.w.0, axes.base + p.w.1),
+                        )?,
+                        Some(ring) if p.area() >= MIN_AREA => {
+                            panel_prism(&axes, ring, (mid - half, mid + half))?
+                        }
+                        Some(_) => continue,
+                    };
                     let class = if kind == PanelKind::Solid {
                         Class::Solid
                     } else {
@@ -1378,6 +1676,7 @@ impl Derived {
             let (w, d) = (m.spec.width, m.spec.depth);
             let solid = match (m.vertical, m.spec.profile) {
                 (_, Profile::None) => continue,
+                _ if m.slope != 0.0 => bar(&axes, m, across)?,
                 (true, Profile::Rectangular) => boxed(
                     &axes,
                     (m.at - w / 2.0, m.at + w / 2.0),
@@ -1469,6 +1768,72 @@ fn prism_of(ring: &[Point2], z: f64, height: f64) -> Result<Polyhedron> {
     )
 }
 
+/// A panel of a turned grid: `ring` (along the baseline, above the base) through the thickness
+/// `y`, across the baseline.
+fn panel_prism(axes: &crate::insert::Axes, ring: &[[f64; 2]], y: (f64, f64)) -> Result<Polyhedron> {
+    let tolerance = Tolerance::DEFAULT;
+    let left = axes.at(0.0, y.1);
+    // The frame's normal points to the right of the baseline: the prism runs from the left face.
+    let frame = PlaneFrame::new(
+        Point3::new(left.x, left.y, 0.0),
+        Vector3::new(axes.u[0], axes.u[1], 0.0),
+        Vector3::z(),
+        &tolerance,
+    )?;
+    let points: Vec<[f64; 2]> = ring.iter().map(|p| [p[0], axes.base + p[1]]).collect();
+    extrude(
+        &Boundary::polygons(vec![points]).region()?,
+        &frame,
+        y.1 - y.0,
+        CHORD,
+        &tolerance,
+        &Limits::DEFAULT,
+    )
+}
+
+/// A leaning mullion: its section swept along its axis, which lies in the wall's plane; the ends
+/// are cut square to the axis.
+fn bar(axes: &crate::insert::Axes, m: &Mullion, across: f64) -> Result<Polyhedron> {
+    let tolerance = Tolerance::DEFAULT;
+    let end = |t: f64| {
+        if m.vertical {
+            (m.axis_at(t), t)
+        } else {
+            (t, m.axis_at(t))
+        }
+    };
+    let (a, b) = (end(m.span.0), end(m.span.1));
+    let start = axes.at(a.0, 0.0);
+    let along = Vector3::new(axes.u[0] * (b.0 - a.0), axes.u[1] * (b.0 - a.0), b.1 - a.1);
+    let length = along.norm();
+    let across_axis = Vector3::new(axes.n[0], axes.n[1], 0.0);
+    // Its axes are the across axis and its partner, so its normal is the bar's axis.
+    let frame = PlaneFrame::new(
+        Point3::new(start.x, start.y, axes.base + a.1),
+        across_axis,
+        (along / length).cross(&across_axis),
+        &tolerance,
+    )?;
+    let (w, d) = (m.spec.width, m.spec.depth);
+    let ring = match m.spec.profile {
+        Profile::Circular => circle(|x, y| Point2::new(across + x, y), w / 2.0),
+        _ => vec![
+            Point2::new(across - d / 2.0, -w / 2.0),
+            Point2::new(across + d / 2.0, -w / 2.0),
+            Point2::new(across + d / 2.0, w / 2.0),
+            Point2::new(across - d / 2.0, w / 2.0),
+        ],
+    };
+    extrude(
+        &Boundary::polygons(vec![ring_points(&ring)]).region()?,
+        &frame,
+        length,
+        CHORD,
+        &tolerance,
+        &Limits::DEFAULT,
+    )
+}
+
 /// A box: `x` along the baseline, `y` across it (to the left), `z` absolute.
 fn boxed(
     axes: &crate::insert::Axes,
@@ -1547,6 +1912,8 @@ fn mullions(
         }
         let (lo, hi) = r_v(i);
         let at = layout.vertical[i].at + (hi - lo) / 2.0;
+        let slope = layout.vertical[i].slope;
+        let window = layout.v_window(i);
         let mut r = 0;
         while r < nr {
             if !layout.v_present(i, r) {
@@ -1561,15 +1928,17 @@ fn mullions(
             } else {
                 r += 1;
             }
-            let (mut a, mut b) = (layout.horizontal[from].at, layout.horizontal[r].at);
+            let (mut a, mut b) = (layout.cross(i, from).1, layout.cross(i, r).1);
             if !vertical_first {
+                // A turned bar takes more height than its width.
                 if h_at(from, i) {
-                    a += r_h(from).1;
+                    a += r_h(from).1 * layout.horizontal[from].slope.hypot(1.0);
                 }
                 if h_at(r, i) {
-                    b -= r_h(r).0;
+                    b -= r_h(r).0 * layout.horizontal[r].slope.hypot(1.0);
                 }
             }
+            let (a, b) = (a.max(window.0), b.min(window.1));
             out.push(Mullion {
                 key: format!(
                     "v:{}:{}-{}",
@@ -1581,6 +1950,8 @@ fn mullions(
                 span: (a, b),
                 spec,
                 on_baseline: false,
+                slope,
+                reference: layout.height / 2.0,
             });
         }
     }
@@ -1591,6 +1962,8 @@ fn mullions(
         }
         let (lo, hi) = r_h(k);
         let at = layout.horizontal[k].at + (hi - lo) / 2.0;
+        let slope = layout.horizontal[k].slope;
+        let window = layout.h_window(k);
         let mut c = 0;
         while c < nc {
             if !layout.h_present(k, c) {
@@ -1605,15 +1978,16 @@ fn mullions(
                     c += 1;
                 }
             }
-            let (mut a, mut b) = (layout.vertical[from].at, layout.vertical[c].at);
+            let (mut a, mut b) = (layout.cross(from, k).0, layout.cross(c, k).0);
             if vertical_first {
                 if v_at(from, k) {
-                    a += r_v(from).1;
+                    a += r_v(from).1 * layout.vertical[from].slope.hypot(1.0);
                 }
                 if v_at(c, k) {
-                    b -= r_v(c).0;
+                    b -= r_v(c).0 * layout.vertical[c].slope.hypot(1.0);
                 }
             }
+            let (a, b) = (a.max(window.0), b.min(window.1));
             out.push(Mullion {
                 key: format!(
                     "h:{}:{}-{}",
@@ -1625,6 +1999,8 @@ fn mullions(
                 span: (a, b),
                 spec,
                 on_baseline: false,
+                slope,
+                reference: layout.length / 2.0,
             });
         }
     }
@@ -1638,6 +2014,8 @@ fn mullions(
                 span: (0.0, wall.height),
                 spec: ty.corner,
                 on_baseline: true,
+                slope: 0.0,
+                reference: 0.0,
             });
         }
     }
@@ -1676,13 +2054,43 @@ fn panels(
             };
             let lo_w = reach(&layout.horizontal, cell.rows.0, &ty.border, &ty.interior).1;
             let hi_w = reach(&layout.horizontal, cell.rows.1, &ty.border, &ty.interior).0;
-            let u = (cell.u.0 + lo_u, cell.u.1 - hi_u);
-            let w = (cell.w.0 + lo_w, cell.w.1 - hi_w);
+            let (u, w, outline) = if cell.outline.is_some() {
+                let nh = layout.horizontal.len();
+                let frame = [
+                    if corner(0) {
+                        ty.corner.extent() / 2.0
+                    } else {
+                        reach(&layout.vertical, 0, &ty.border, &ty.interior).1
+                    },
+                    if corner(nv - 1) {
+                        ty.corner.extent() / 2.0
+                    } else {
+                        reach(&layout.vertical, nv - 1, &ty.border, &ty.interior).0
+                    },
+                    reach(&layout.horizontal, 0, &ty.border, &ty.interior).1,
+                    reach(&layout.horizontal, nh - 1, &ty.border, &ty.interior).0,
+                ];
+                let ring = layout.polygon(cell.columns, cell.rows, [lo_u, hi_u, lo_w, hi_w], frame);
+                let (u, w) = if ring.is_empty() {
+                    ((cell.u.0, cell.u.0), (cell.w.0, cell.w.0))
+                } else {
+                    ring_box(&ring)
+                };
+                (u, w, Some(ring))
+            } else {
+                (
+                    (cell.u.0 + lo_u, cell.u.1 - hi_u),
+                    (cell.w.0 + lo_w, cell.w.1 - hi_w),
+                    None,
+                )
+            };
             let type_ref = found
                 .and_then(|o| o.type_id)
                 .and_then(|id| spatial::get(snapshot, id))
                 .map(|t| (t.id, crate::element_type::name(&t).to_owned()));
-            let insert = if matches!(kind, PanelKind::Door | PanelKind::Window) {
+            // A door or window needs a rectangle: a turned cell shows a plain panel instead.
+            let insert = if matches!(kind, PanelKind::Door | PanelKind::Window) && outline.is_none()
+            {
                 leaf(snapshot, kind, found.and_then(|o| o.type_id), u, w)
             } else {
                 None
@@ -1695,6 +2103,7 @@ fn panels(
                 cell: cell.clone(),
                 u,
                 w,
+                outline,
                 insert,
             }
         })
@@ -1832,12 +2241,6 @@ pub fn is_embedded_in(snapshot: &Snapshot, curtain: &Object, host: &Object) -> b
             .any(|(id, _)| *id == curtain.id)
 }
 
-/// Whether the wall record holds grid edits or panel overrides, which belong to its own grid.
-#[must_use]
-pub fn is_edited(object: &Object) -> bool {
-    !GridEdit::list(&object.values).is_empty() || !CellOverride::list(&object.values).is_empty()
-}
-
 /// The rules of one wall record that is a curtain wall: its edits and overrides within bounds, no
 /// door or window hosted by it (a door or window fills a cell instead), and no cell merge that
 /// is not a rectangle.
@@ -1906,6 +2309,327 @@ fn merge_is_split(layout: &Layout, edits: &[GridEdit]) -> bool {
     false
 }
 
+// ----- carrying edits across a split or merge ---------------------------------------------------
+
+/// A curtain wall as it was before a split or merge: what its edits and overrides refer to.
+#[derive(Debug, Clone, Copy)]
+pub struct Source<'a> {
+    /// The grid edits.
+    pub edits: &'a [GridEdit],
+    /// The panel overrides.
+    pub overrides: &'a [CellOverride],
+    /// The length of its baseline.
+    pub length: f64,
+}
+
+/// Where a stretch of an old wall lies in the new one: the old position `u` in `from..=to` becomes
+/// `u + shift`, or `shift - u` when the stretch is reversed.
+#[derive(Debug, Clone, Copy)]
+pub struct Placement {
+    /// The start of the stretch in the old wall.
+    pub from: f64,
+    /// The end of the stretch in the old wall.
+    pub to: f64,
+    /// The shift.
+    pub shift: f64,
+    /// Whether the stretch runs the other way in the new wall.
+    pub reversed: bool,
+}
+
+impl Placement {
+    fn map(&self, u: f64) -> f64 {
+        if self.reversed {
+            self.shift - u
+        } else {
+            u + self.shift
+        }
+    }
+
+    /// Whether `u` lies inside the stretch, clear of its ends.
+    fn holds(&self, u: f64) -> bool {
+        u > self.from + TOL && u < self.to - TOL
+    }
+
+    /// Whether the range `a..b` lies within the stretch.
+    fn covers(&self, a: f64, b: f64) -> bool {
+        a >= self.from - TOL && b <= self.to + TOL
+    }
+
+    /// The part of the range `a..b` inside the stretch, in the new wall; `None` when it is too
+    /// short to matter.
+    fn clip(&self, a: f64, b: f64) -> Option<(f64, f64)> {
+        let (a, b) = (a.max(self.from), b.min(self.to));
+        (b - a > TOL).then(|| {
+            let (p, q) = (self.map(a), self.map(b));
+            (p.min(q), p.max(q))
+        })
+    }
+}
+
+/// What a split or merge carried over to a new wall.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Carried {
+    /// The grid edits of the new wall.
+    pub edits: Vec<GridEdit>,
+    /// The panel overrides of the new wall.
+    pub overrides: Vec<CellOverride>,
+    /// The edits of the sources it kept, as source index and key.
+    pub kept_edits: Vec<(usize, i64)>,
+    /// The overrides of the sources it kept, as source index and cell key.
+    pub kept_cells: Vec<(usize, String)>,
+}
+
+/// The number in the key of an added line (`a7` is 7).
+fn added_number(line: &str) -> Option<i64> {
+    line.strip_prefix('a')?.parse().ok()
+}
+
+/// The key a cell has when its lines are renamed and, for a reversed stretch, mirrored.
+fn cell_key(columns: (&str, &str), rows: (&str, &str)) -> String {
+    format!("{}-{}.{}-{}", columns.0, columns.1, rows.0, rows.1)
+}
+
+/// A move of a horizontal line: the line, its destination, and the parts and keys that hold it.
+type Move = (String, f64, Vec<(usize, i64)>);
+
+/// One edit a part offers the new wall: the part, the edit's key there and the edit; no edit when
+/// another one stands for it.
+type Offer = (usize, i64, Option<GridEdit>);
+
+/// What the edits and overrides of the old walls `parts` become in a new wall of `length` and
+/// `height` under `ty`: each edit is carried over only where its meaning is unambiguous.
+///
+/// - An added line keeps its place when it lies inside its stretch.
+/// - A move or removal of a rule's line is kept when the new wall's rule gives a line of the same
+///   key at the same place; a horizontal line is the same in every part of the wall.
+/// - A segment is cut to its stretch, and a segment or added line that covered a whole old wall
+///   covers only its stretch of the new one.
+/// - A move of a horizontal line belongs to the whole wall, so it is kept only when every part
+///   has it.
+/// - An override is kept when its cell exists in the new wall under the same key and in the same
+///   place.
+///
+/// Everything else is left out; the caller reports it from [`Carried::kept_edits`] and
+/// [`Carried::kept_cells`].
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the edits of every part, the moves, then the overrides"
+)]
+pub fn carry(
+    ty: &CurtainType,
+    length: f64,
+    height: f64,
+    parts: &[(Source<'_>, Placement)],
+) -> Carried {
+    let new_rule = ty.vertical.lines(length);
+    let mut offers: Vec<Offer> = Vec::new();
+    let mut bases = Vec::with_capacity(parts.len());
+    // The moves of horizontal lines: line, destination, and the parts and keys that hold it.
+    let mut moves: Vec<Move> = Vec::new();
+    let mut base = 0_i64;
+    for (index, (source, place)) in parts.iter().enumerate() {
+        bases.push(base);
+        let old_rule = ty.vertical.lines(source.length);
+        let same_line = |key: &str| -> bool {
+            let (Some(old), Some(new)) = (
+                old_rule.iter().find(|l| l.0 == key),
+                new_rule.iter().find(|l| l.0 == key),
+            ) else {
+                return false;
+            };
+            place.holds(old.1) && (place.map(old.1) - new.1).abs() < TOL
+        };
+        let mut added: Vec<i64> = Vec::new();
+        for e in source.edits {
+            let renamed = renamed(&e.line, base);
+            let edit = GridEdit {
+                key: e.key + base,
+                line: renamed.clone(),
+                ..e.clone()
+            };
+            let carried = match (e.direction, e.kind) {
+                (Direction::Vertical, EditKind::Add) => place.holds(e.at).then(|| GridEdit {
+                    at: place.map(e.at),
+                    ..edit
+                }),
+                (Direction::Vertical, kind) => {
+                    let known = match added_number(&e.line) {
+                        Some(n) => added.contains(&n),
+                        None => same_line(&e.line),
+                    };
+                    (known && (kind == EditKind::Remove || place.holds(e.at))).then(|| GridEdit {
+                        at: place.map(e.at),
+                        ..edit
+                    })
+                }
+                (Direction::Horizontal, EditKind::Move) => {
+                    match moves
+                        .iter_mut()
+                        .find(|m| m.0 == e.line && (m.1 - e.at).abs() < TOL)
+                    {
+                        Some(found) => found.2.push((index, e.key)),
+                        None => moves.push((e.line.clone(), e.at, vec![(index, e.key)])),
+                    }
+                    None
+                }
+                (Direction::Horizontal, kind) => {
+                    let known = kind == EditKind::Add
+                        || added_number(&e.line).is_none_or(|n| added.contains(&n));
+                    let span = e.span.unwrap_or((0.0, source.length));
+                    place
+                        .clip(span.0, span.1)
+                        .filter(|_| known)
+                        .map(|(a, b)| GridEdit {
+                            span: (!(a < TOL && b > length - TOL)).then_some((a, b)),
+                            ..edit
+                        })
+                }
+            };
+            if carried.is_some() && e.kind == EditKind::Add {
+                added.push(e.key);
+            }
+            if carried.is_some() {
+                offers.push((index, e.key, carried));
+            }
+        }
+        base += source.edits.iter().map(|e| e.key).max().unwrap_or(0).max(0);
+    }
+    // A move of a horizontal line is carried once, when every part holds it.
+    for (line, at, holders) in moves {
+        let parts_held: std::collections::BTreeSet<usize> = holders.iter().map(|h| h.0).collect();
+        if parts_held.len() != parts.len() {
+            continue;
+        }
+        for (k, (index, original)) in holders.into_iter().enumerate() {
+            offers.push((
+                index,
+                original,
+                (k == 0).then(|| GridEdit {
+                    key: original + bases[index],
+                    direction: Direction::Horizontal,
+                    kind: EditKind::Move,
+                    line: line.clone(),
+                    at,
+                    span: None,
+                }),
+            ));
+        }
+    }
+    join_added(&mut offers, length);
+    offers.truncate(MAX_EDITS);
+    let edits_of =
+        |offers: &[Offer]| -> Vec<GridEdit> { offers.iter().filter_map(|o| o.2.clone()).collect() };
+    let mut layout = Layout::of(ty, &edits_of(&offers), length, height);
+    // Removed segments that would leave a cell that is not a rectangle are left out.
+    if merge_is_split(&layout, &edits_of(&offers)) {
+        offers.retain(|o| {
+            !o.2.as_ref()
+                .is_some_and(|e| e.kind == EditKind::Remove && e.span.is_some())
+        });
+        layout = Layout::of(ty, &edits_of(&offers), length, height);
+    }
+    let mut carried = Carried {
+        edits: edits_of(&offers),
+        kept_edits: offers.iter().map(|o| (o.0, o.1)).collect(),
+        ..Carried::default()
+    };
+    for (index, (source, place)) in parts.iter().enumerate() {
+        let old = Layout::of(ty, source.edits, source.length, height);
+        for o in source.overrides {
+            let Some(cell) = old.cells.iter().find(|c| c.key == o.cell) else {
+                continue;
+            };
+            if !place.covers(cell.u.0, cell.u.1) {
+                continue;
+            }
+            let name = |i: usize| {
+                let line = renamed(&old.vertical[i].key, bases[index]);
+                match line.as_str() {
+                    "start" if place.reversed => "end".to_owned(),
+                    "end" if place.reversed => "start".to_owned(),
+                    _ => line,
+                }
+            };
+            let (left, right) = (name(cell.columns.0), name(cell.columns.1));
+            let (bottom, top) = (
+                &old.horizontal[cell.rows.0].key,
+                &old.horizontal[cell.rows.1].key,
+            );
+            let key = if place.reversed {
+                cell_key((&right, &left), (bottom, top))
+            } else {
+                cell_key((&left, &right), (bottom, top))
+            };
+            let (a, b) = (place.map(cell.u.0), place.map(cell.u.1));
+            let (a, b) = (a.min(b), a.max(b));
+            let found = layout.cells.iter().any(|n| {
+                n.key == key
+                    && (n.u.0 - a).abs() < TOL
+                    && (n.u.1 - b).abs() < TOL
+                    && (n.w.0 - cell.w.0).abs() < TOL
+                    && (n.w.1 - cell.w.1).abs() < TOL
+            });
+            if found {
+                carried.overrides.push(CellOverride {
+                    cell: key,
+                    ..o.clone()
+                });
+                carried.kept_cells.push((index, o.cell.clone()));
+            }
+        }
+    }
+    carried
+}
+
+/// The key of an added line of a part whose keys were raised by `base`; other keys stay.
+fn renamed(line: &str, base: i64) -> String {
+    match added_number(line) {
+        Some(n) => format!("a{}", n + base),
+        None => line.to_owned(),
+    }
+}
+
+/// Added horizontal lines at one height are one line, as the grid keeps one line per position:
+/// touching stretches join; a stretch that cannot join is left out.
+fn join_added(offers: &mut Vec<Offer>, length: f64) {
+    let mut joined: Vec<Offer> = Vec::with_capacity(offers.len());
+    for offer in offers.drain(..) {
+        let Some(edit) = offer
+            .2
+            .as_ref()
+            .filter(|e| e.direction == Direction::Horizontal && e.kind == EditKind::Add)
+        else {
+            joined.push(offer);
+            continue;
+        };
+        let twin = joined.iter().position(|o| {
+            o.2.as_ref().is_some_and(|t| {
+                t.direction == Direction::Horizontal
+                    && t.kind == EditKind::Add
+                    && (t.at - edit.at).abs() < TOL
+            })
+        });
+        let Some(t) = twin else {
+            joined.push(offer);
+            continue;
+        };
+        let theirs = joined[t].2.as_ref().and_then(|e| e.span);
+        let span = match (theirs, edit.span) {
+            (None, _) | (_, None) => Some(None),
+            (Some(a), Some(b)) if (a.1 - b.0).abs() < TOL || (b.1 - a.0).abs() < TOL => {
+                Some(Some((a.0.min(b.0), a.1.max(b.1))))
+            }
+            _ => None,
+        };
+        if let (Some(span), Some(target)) = (span, joined[t].2.as_mut()) {
+            target.span = span.filter(|s| !(s.0 < TOL && s.1 > length - TOL));
+            joined.push((offer.0, offer.1, None));
+        }
+    }
+    *offers = joined;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1916,6 +2640,7 @@ mod tests {
             value,
             justify: Justify::Start,
             offset: 0.0,
+            angle: 0.0,
         }
     }
 
@@ -1948,6 +2673,39 @@ mod tests {
         assert_eq!(rule(RuleKind::MaxSpacing, 1.2).lines(5.0).len(), 4);
         assert_eq!(rule(RuleKind::MinSpacing, 1.2).lines(5.0).len(), 3);
         assert!(rule(RuleKind::FixedDistance, 0.0).lines(5.0).is_empty());
+    }
+
+    #[test]
+    fn equal_divisions_leave_the_offset_free_on_the_justified_side() {
+        let with = |kind, value, justify, offset| GridRule {
+            justify,
+            offset,
+            ..rule(kind, value)
+        };
+        // Two interior lines over 0.5 to 5: a line at the offset, then thirds of the rest.
+        let start = with(RuleKind::FixedNumber, 2.0, Justify::Start, 0.5).lines(5.0);
+        assert_eq!(at(&start), vec![0.5, 2.0, 3.5]);
+        assert_eq!(start[0].0, "lo");
+        let end = with(RuleKind::FixedNumber, 2.0, Justify::End, 0.5).lines(5.0);
+        assert_eq!(at(&end), vec![1.5, 3.0, 4.5]);
+        let center = with(RuleKind::FixedNumber, 1.0, Justify::Center, 0.5).lines(5.0);
+        assert_eq!(at(&center), vec![0.5, 2.5, 4.5]);
+        // The spacings count over the free stretch: at most 1.2 wide over 4.5 m needs four cells.
+        let max = with(RuleKind::MaxSpacing, 1.2, Justify::Start, 0.5).lines(5.0);
+        assert_eq!(max.len(), 4);
+        assert!((max[1].1 - max[0].1 - 4.5 / 4.0).abs() < 1e-9);
+        let min = with(RuleKind::MinSpacing, 1.2, Justify::End, 0.5).lines(5.0);
+        assert_eq!(min.len(), 3);
+        // No offset is the whole extent; an offset that leaves nothing gives no lines.
+        assert_eq!(
+            at(&with(RuleKind::FixedNumber, 3.0, Justify::End, 0.0).lines(4.0)),
+            vec![1.0, 2.0, 3.0]
+        );
+        assert!(
+            with(RuleKind::FixedNumber, 3.0, Justify::Start, 5.0)
+                .lines(5.0)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2045,6 +2803,38 @@ mod tests {
         let corner = mullions(&ty, &layout, &w, [(true, true), (false, false)]);
         assert!(corner.iter().any(|m| m.role == MullionRole::Corner));
         assert!(!corner.iter().any(|m| m.key.starts_with("v:start:")));
+    }
+
+    #[test]
+    fn a_turned_grid_makes_convex_cells_that_fill_the_wall() {
+        let mut ty = CurtainType::standard();
+        ty.vertical = GridRule {
+            angle: 30.0_f64.to_radians(),
+            ..rule(RuleKind::FixedDistance, 1.0)
+        };
+        ty.horizontal = rule(RuleKind::FixedNumber, 1.0);
+        let l = Layout::of(&ty, &[], 4.0, 3.0);
+        let area: f64 = l
+            .cells
+            .iter()
+            .filter_map(|c| c.outline.as_deref())
+            .map(ring_area)
+            .sum();
+        assert!((area - 12.0).abs() < 1e-9);
+        // The line named s1 crosses the middle of the wall at 1 m and leans toward the start as it
+        // rises, so it meets the base further along than the top.
+        let (at_base, _) = l.cross(1, 0);
+        let (at_top, _) = l.cross(1, l.horizontal.len() - 1);
+        assert!(at_base > 1.0 && at_top < 1.0);
+        // Cells that a leaning line leaves outside the wall are dropped, the others keep their keys.
+        let keys: Vec<_> = l.cells.iter().map(|c| c.key.as_str()).collect();
+        assert!(
+            keys.iter()
+                .all(|k| keys.iter().filter(|o| o == &k).count() == 1)
+        );
+        assert!(ty.problems().is_empty());
+        ty.vertical.angle = 70.0_f64.to_radians();
+        assert!(!ty.problems().is_empty());
     }
 
     #[test]

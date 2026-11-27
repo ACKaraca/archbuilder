@@ -56,3 +56,41 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
 | AB-WALL-025 | Curved curtain walls | Places curtain walls on arcs with planar panels between vertical grid lines, reporting chord deviation per panel. | T2 | 2 |
 | AB-WALL-026 | Curtain systems on faces | Applies curtain grids, panels and mullions to arbitrary planar or ruled faces of mass or generic elements with a UV grid, and regenerates when the face changes. | T2 | 3 |
 | AB-WALL-027 | Panel and mullion counts | Exposes per-panel width, height, area and type and per-mullion length to schedules and IFC, with cell keys that stay stable across regeneration. | T1 | 2 |
+
+### Behavior notes: curtain grids
+
+- **Grid angle (AB-WALL-020).** Each grid rule of a curtain type has an angle of at most 60 degrees
+  either way, counter-clockwise in the elevation seen with the start of the baseline on the left.
+  A turned family leans its lines about the middle of the wall; a line's position is where it
+  crosses the middle, and fixed distances and spacings are measured along the baseline (vertical
+  lines) or the height (horizontal lines). Cells and panels of a turned grid are convex polygons
+  cut to the wall, listed with their corners; width and height of such a panel are those of its
+  bounding box and its area is the polygon's. Leaning bars are cut square to their axis. A door or
+  window override needs a rectangular cell: in a turned cell the panel is drawn as a plain one.
+  Added lines lean with their family. The two families must cross at a clear angle; a rule pair
+  that makes them nearly parallel is refused. Older documents carry no angle and stay straight.
+- **Justification and offset (AB-WALL-020).** A fixed distance counts from the start, the middle
+  or the end of the baseline or the height, shifted by the offset. The other three rules divide
+  the stretch the offset leaves free (from the offset to the end for a start justification, up to
+  the end less the offset for an end justification, between the two for a center one) into equal
+  cells, and a line stands at each end of that stretch that does not reach a border. Their value
+  is the number of interior lines of the stretch or the spacing measured over it. Without an
+  offset nothing changes.
+- **Split and merge with grid edits (AB-WALL-018, AB-WALL-023).** A curtain wall that holds grid
+  edits or panel overrides can be split or merged. Edits are carried to the wall they belong to
+  only where that is unambiguous: an added line stays where it is, a segment is cut to the part
+  it lies in, and a move or removal of a rule's line, or a panel override, is kept only when the
+  new wall has the same line or cell, under the same key and in the same place. The first line of
+  a merged wall's second part gets a fresh key past the first part's. What cannot be kept without
+  guessing is left out and listed in the command result as `unkept`, never rebound to a neighbor.
+  Both commands are one undo step.
+- **Pin (AB-DATUM-022).** A pinned curtain wall still takes grid edits and panel overrides: they
+  divide and fill the wall but never move or reshape it, like the finishes of a pinned room.
+  Moving, splitting, merging or deleting it is refused, naming the wall.
+- **Schedule rows (AB-WALL-027).** `archbuilder.curtain.schedule` (read-only, not an undo step)
+  lists, for one curtain wall or all of them, a row per panel (cell key, kind, door or window type
+  name, material, thickness, clear width, height and area, whether overridden, whether the cell
+  is cut by a turned grid) and per mullion (key, role, upright or not, profile, width, depth,
+  length along its axis), with the wall's total panel area and mullion length. The rows are
+  derived from the wall, and `archbuilder-cli inspect` prints the same rows. A schedule view
+  built on them follows the keys, which stay the same when the grid regenerates.

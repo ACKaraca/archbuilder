@@ -162,6 +162,10 @@ pub struct Modified {
     /// Doors and windows that now open into another wall, as `[door or window, wall]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub meets: Vec<[String; 2]>,
+    /// The grid edits and panel overrides of curtain walls that a split or merge could not
+    /// carry to a resulting wall without guessing, as `[wall, what]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unkept: Vec<[String; 2]>,
 }
 
 /// The movable objects a command works on.
@@ -973,6 +977,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         reconnected: Some(joined.ends).filter(|n| *n > 0),
         unjoined: joined.unjoined,
         meets,
+        unkept: Vec::new(),
     })
 }
 
