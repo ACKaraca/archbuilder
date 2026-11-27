@@ -73,7 +73,8 @@ fn mixed(state: u64) -> u64 {
 }
 
 /// The commands whose button starts their prompts once, on the stair tool's machinery.
-const PROMPTED: [&str; 5] = [
+const PROMPTED: [&str; 6] = [
+    archbuilder_commands::family_project::COMPONENT_PLACE,
     FLOOR_SET_SLOPE,
     ROOF_EXTRUSION_CREATE,
     SET_CREATE,

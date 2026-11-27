@@ -178,6 +178,19 @@ pub fn stack(
             on_lines.push((f64::MIN, o.id));
         }
     }
+    // A component is picked over its footprint.
+    for o in spatial::objects(snapshot, crate::types::COMPONENT)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(c) = crate::family::loaded::Component::of(o) else {
+            continue;
+        };
+        let outline = crate::family::loaded::outline(snapshot, &c);
+        if outline.len() == 4 && crate::floor::Boundary::polygons(vec![outline]).contains(at) {
+            on_lines.push((f64::MIN, o.id));
+        }
+    }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));

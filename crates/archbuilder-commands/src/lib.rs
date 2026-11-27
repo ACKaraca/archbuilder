@@ -34,6 +34,7 @@ pub mod element_type;
 pub mod elevator;
 pub mod error;
 pub mod family;
+pub mod family_project;
 pub mod floor;
 pub mod floor_edge;
 pub mod floor_slope;
@@ -124,6 +125,7 @@ pub fn registry() -> Result<Registry> {
     parameter::register(&mut registry)?;
     project_parameter::register(&mut registry)?;
     family::register(&mut registry)?;
+    family_project::register(&mut registry)?;
     Ok(registry)
 }
 

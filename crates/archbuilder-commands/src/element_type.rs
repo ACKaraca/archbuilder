@@ -556,6 +556,8 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
             types::ceiling::THICKNESS,
             types::length(archbuilder_model::ceiling::DEFAULT_THICKNESS),
         )],
+        // A family type holds the values of a loaded family; a new one comes from loading.
+        TypeKind::Family => Vec::new(),
         TypeKind::Door | TypeKind::Window => {
             let window = kind == TypeKind::Window;
             let (width, height, operation) = if window {
@@ -786,6 +788,7 @@ fn wanted(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, Value)> {
         TypeKind::Floor => &[types::floor::THICKNESS],
         TypeKind::Roof => &[types::roof::THICKNESS],
         TypeKind::Ceiling => &[types::ceiling::THICKNESS],
+        TypeKind::Family => &[],
         TypeKind::Door | TypeKind::Window => &[
             types::insert::WIDTH,
             types::insert::HEIGHT,
@@ -904,6 +907,7 @@ pub fn ensure(
                 },
             )
         }
+        TypeKind::Family => return Err(Error::new(codes::KIND_MISMATCH)),
         TypeKind::Door | TypeKind::Window => {
             let t = InsertType {
                 width: length(types::insert::WIDTH),
@@ -1148,6 +1152,9 @@ pub struct SetType {
     /// Doors and windows: the sill height new instances get.
     #[serde(default)]
     pub sill: Option<QuantityParam>,
+    /// Family types: values by parameter key, each a literal or `{"formula", "unit"}`.
+    #[serde(default)]
+    pub values: Option<std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 /// What a type command returns.
@@ -1170,9 +1177,23 @@ fn meters(ctx: &Context<'_>, param: Option<&QuantityParam>) -> Result<Option<f64
 }
 
 /// Edits a type and, in the same transaction, every instance that takes values from it.
+#[allow(clippy::too_many_lines, reason = "one branch for each kind of type")]
 fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
     let IdParam(id) = p.element_type;
     let (kind, object) = type_record(ctx.snapshot(), id)?;
+    if kind == TypeKind::Family {
+        let empty = std::collections::BTreeMap::new();
+        crate::family_project::set_type_values(
+            ctx,
+            id,
+            p.name.as_deref(),
+            p.values.as_ref().unwrap_or(&empty),
+        )?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(id)),
+            ..TypeChanged::default()
+        });
+    }
     let mut fields: Vec<(&str, Option<Value>)> = Vec::new();
     if let Some(name) = &p.name {
         fields.push(("name", Some(Value::String(name.trim().to_owned()))));
@@ -1446,6 +1467,7 @@ fn kind_named(name: &str) -> Option<TypeKind> {
         TypeKind::Window => name == "window",
         TypeKind::Roof => name == "roof",
         TypeKind::Ceiling => name == "ceiling",
+        TypeKind::Family => name == "family",
     })
 }
 

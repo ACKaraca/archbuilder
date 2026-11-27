@@ -46,6 +46,14 @@ pub const VARIABLE: &str = "archbuilder.variable";
 /// owned by the project.
 pub const PARAMETER: &str = "archbuilder.parameter";
 
+/// The type key of a loaded family: a copy of a published definition (its canonical text, version
+/// and checksum), owned by the project.
+pub const FAMILY: &str = "archbuilder.family";
+/// The type key of a family type: a named value set of a loaded family, owned by the project.
+pub const FAMILY_TYPE: &str = "archbuilder.family_type";
+/// The type key of a component: a freestanding instance of a family type on a storey.
+pub const COMPONENT: &str = "archbuilder.component";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -139,7 +147,8 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 20] = [
+pub const ELEMENTS: [&str; 21] = [
+    COMPONENT,
     WALL,
     DOOR,
     WINDOW,
@@ -195,7 +204,8 @@ pub fn is_datum(key: &str) -> bool {
 }
 
 /// The elements a storey owns directly.
-pub const STOREY_ELEMENTS: [&str; 11] = [
+pub const STOREY_ELEMENTS: [&str; 12] = [
+    COMPONENT,
     WALL,
     FLOOR,
     ROOM,
@@ -225,7 +235,10 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 38] = [
+pub const KEYS: [&str; 41] = [
+    FAMILY,
+    FAMILY_TYPE,
+    COMPONENT,
     PROJECT,
     SITE,
     BUILDING,
@@ -293,6 +306,62 @@ pub const MIN_WALL_LENGTH: f64 = 0.001;
 pub const DEFAULT_THICKNESS: f64 = 0.2;
 /// The range of the thickness of the layers outside a wall's core on one side, in meters.
 pub const THICKNESS_RANGE_OR_ZERO: (f64, f64) = (0.0, 5.0);
+
+/// Field positions of `archbuilder.family`.
+pub mod family {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The family identifier (text).
+    pub const ID: usize = 1;
+    /// The version.
+    pub const VERSION: usize = 2;
+    /// The category.
+    pub const CATEGORY: usize = 3;
+    /// The hosting kind.
+    pub const HOSTING: usize = 4;
+    /// The checksum.
+    pub const CHECKSUM: usize = 5;
+    /// The IFC entity.
+    pub const IFC_ENTITY: usize = 6;
+    /// The IFC predefined type.
+    pub const IFC_TYPE: usize = 7;
+    /// The source.
+    pub const SOURCE: usize = 8;
+    /// The license.
+    pub const LICENSE: usize = 9;
+    /// The canonical text.
+    pub const TEXT: usize = 10;
+}
+
+/// Field positions of `archbuilder.family_type`.
+pub mod family_type {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The family record.
+    pub const FAMILY: usize = 1;
+    /// The values, keyed by parameter key.
+    pub const VALUES: usize = 2;
+}
+
+/// Field positions of `archbuilder.component`.
+pub mod component {
+    /// The name (a mark).
+    pub const NAME: usize = 0;
+    /// The family type.
+    pub const FAMILY_TYPE: usize = 1;
+    /// The distance above the storey's level, in meters.
+    pub const OFFSET: usize = 2;
+    /// The x coordinate of the insertion point, in meters.
+    pub const X: usize = 3;
+    /// The y coordinate of the insertion point, in meters.
+    pub const Y: usize = 4;
+    /// The rotation about the vertical axis, in radians.
+    pub const ROTATION: usize = 5;
+    /// Whether the component is mirrored across its own left-right axis.
+    pub const MIRROR: usize = 6;
+    /// The instance values, keyed by parameter key.
+    pub const VALUES: usize = 7;
+}
 
 /// Field positions of `archbuilder.project`.
 pub mod project {
@@ -1432,6 +1501,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (PLAN_VIEW, plan_view_fields()),
         (SELECTION_SET, selection_set_fields()),
         (VARIABLE, crate::variable::fields()),
+        (FAMILY, family_fields()),
+        (FAMILY_TYPE, family_type_fields()),
+        (COMPONENT, component_fields()),
         (PARAMETER, crate::parameter::fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
@@ -1491,6 +1563,84 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(decl)?;
     }
     Ok(())
+}
+
+/// A keyed list of (parameter key, stored value) as a field.
+fn keyed_values_field(name: &str) -> FieldDecl {
+    FieldDecl::new(
+        name,
+        ValueType::List(Box::new(ValueType::Record(vec![
+            FieldDecl::new("param", ValueType::String)
+                .with_bound(Bound::Length {
+                    max: crate::expr::MAX_IDENTIFIER as u64,
+                })
+                .optional(),
+            FieldDecl::new("value", ValueType::Record(crate::expr::stored_fields())).optional(),
+        ]))),
+    )
+    .with_bound(Bound::Length {
+        max: crate::expr::MAX_DEFINITIONS as u64,
+    })
+    .optional()
+    .in_aspect("data")
+}
+
+/// The fields of a loaded family: the identity and the canonical text it was loaded from.
+fn family_fields() -> Vec<FieldDecl> {
+    let t = |name: &str, max: u64| text_field(name, max);
+    vec![
+        name_field("identity"),
+        FieldDecl::new("family", ValueType::String)
+            .with_bound(Bound::Length { max: 64 })
+            .in_aspect("identity"),
+        FieldDecl::new("version", ValueType::String)
+            .with_bound(Bound::Length { max: 32 })
+            .in_aspect("identity"),
+        t("category", 64),
+        t("hosting", 64),
+        FieldDecl::new("checksum", ValueType::String)
+            .with_bound(Bound::Length { max: 64 })
+            .in_aspect("identity"),
+        t("ifc_entity", 64),
+        t("ifc_type", 64),
+        t("source", 1024),
+        t("license", 128),
+        FieldDecl::new("text", ValueType::String)
+            .with_bound(Bound::Length {
+                max: crate::family::def::limits::TEXT_BYTES as u64,
+            })
+            .in_aspect("data"),
+    ]
+}
+
+/// The fields of a family type: its name, its family and its values.
+fn family_type_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        FieldDecl::new("family", ValueType::Reference(reference_to(FAMILY))).in_aspect("identity"),
+        keyed_values_field("values"),
+    ]
+}
+
+/// The fields of a component: a mark, its family type, the placement and its values.
+fn component_fields() -> Vec<FieldDecl> {
+    let mut family_type = reference_to(FAMILY_TYPE);
+    family_type.rule.cardinality = Cardinality::One;
+    vec![
+        FieldDecl::new("name", ValueType::String)
+            .with_bound(Bound::Length { max: NAME_BYTES })
+            .optional()
+            .in_aspect("identity"),
+        FieldDecl::new("family_type", ValueType::Reference(family_type)).in_aspect("identity"),
+        length_field("offset", Some(real(BASE_OFFSET_RANGE))),
+        length_field("x", Some(real(COORDINATE_RANGE))),
+        length_field("y", Some(real(COORDINATE_RANGE))),
+        angle_field("rotation"),
+        FieldDecl::new("mirror", ValueType::Bool)
+            .with_default(Value::Bool(false))
+            .in_aspect("geometry"),
+        keyed_values_field("values"),
+    ]
 }
 
 /// The fields of a selection set: a name and its member elements. A deleted element leaves the

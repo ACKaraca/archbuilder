@@ -1248,6 +1248,12 @@ const LABELS: &[(&str, Message)] = &[
 /// The readable name of each kind of object, for the heading of the grid.
 const KINDS: &[(&str, Message)] = &[
     (
+        archbuilder_model::types::COMPONENT,
+        Message {
+            message_id: "ab-kind-component",
+        },
+    ),
+    (
         PROJECT,
         Message {
             message_id: "ab-kind-project",

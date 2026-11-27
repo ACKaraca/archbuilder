@@ -47,6 +47,7 @@ pub mod datum_view;
 pub mod direct;
 pub mod extract_ceiling;
 pub mod extract_circulation;
+pub mod extract_component;
 pub mod extract_datum;
 pub mod extract_floor;
 pub mod extract_floor_edge;
@@ -153,6 +154,23 @@ fn export_ifc_dialog() -> PathDialog {
     }
 }
 
+const FAMILY_LOAD_TITLE: Message = Message {
+    message_id: "ab-family-load-title",
+};
+
+/// The open dialog of Manage > Load family: a family package or a document.
+fn family_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: FAMILY_LOAD_TITLE.message_id.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-family-load-filter".into(),
+            extensions: vec!["archbfam".into(), "archb".into()],
+        }],
+        default_name: None,
+    }
+}
+
 /// The dialog of the shortcut file commands: a JSON file.
 fn shortcuts_dialog(mode: PathMode, title: &str) -> PathDialog {
     PathDialog {
@@ -219,6 +237,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_roof_extrusion::dependents(snapshot, changes));
         out.extend(extract_datum::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
+        out.extend(extract_component::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
         out
@@ -235,6 +254,11 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     builder.path_dialog(
         archbuilder_io::command::IMPORT_SHORTCUTS,
         shortcuts_dialog(PathMode::Open, SHORTCUTS_IMPORT_TITLE.message_id),
+    );
+    // Architecture > Component and Manage > Load family ask for the file in an open dialog.
+    builder.path_dialog(
+        archbuilder_commands::family_project::FAMILY_LOAD,
+        family_dialog(),
     );
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
@@ -465,6 +489,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_insert::extract_insert(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.component".into(),
+        types: vec![archbuilder_model::types::COMPONENT.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_component::extract_component(snapshot, object, cancel)
             })
         }),
     })?;

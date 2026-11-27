@@ -34,3 +34,4 @@ ab-io-loss-dormer-as-parts = IFC4'te çatı penceresi için bir eleman yok: çat
 ab-io-loss-fascia-as-covering = IFC4'te saçak silmesi için bir eleman yok: süpürülmüş gövdesiyle pervaz türünde bir kaplama olarak yazıldı.
 ab-io-loss-gutter-not-written = Bir oluk IFC dosyasında yok: oluk türünde bir boru parçasına karşılık gelir, bu henüz yazılamıyor.
 ab-io-loss-roof-edge-orphan = Bir çatı kenarı elemanı, çatısında artık bulunmayan ya da eğimi olmayan kenarları adlandırıyor: bu kenarlar dosyada yok.
+ab-io-loss-family-not-written = Bir aile örneği IFC dosyasında yok: aile örneklerinin eşlemesi henüz yazılmadı. Burada listelenir, vekil öğe olarak dışa aktarılmaz.

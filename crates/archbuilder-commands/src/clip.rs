@@ -173,6 +173,7 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
             | types::GRID
             | types::REFERENCE_PLANE
             | types::ELEVATOR
+            | types::COMPONENT
             | types::ROOF_EXTRUSION => push(
                 &mut items,
                 *id,
@@ -523,6 +524,28 @@ pub(crate) fn paste_content(
             Some(storey),
             moved.values(&name),
         )?);
+    }
+    // A component moves with the paste; its family type stays (the type must exist here).
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::COMPONENT {
+            continue;
+        }
+        let mut values = values;
+        let at = |i: usize, v: &[Option<Value>]| types::meters(v, i).unwrap_or(0.0);
+        let moved = xf.point([
+            at(types::component::X, &values),
+            at(types::component::Y, &values),
+        ]);
+        for (slot, m) in [
+            (types::component::X, moved[0]),
+            (types::component::Y, moved[1]),
+        ] {
+            if let Some(v) = values.get_mut(slot) {
+                *v = Some(types::length(m));
+            }
+        }
+        crate::element_type::rebind(ctx, types::COMPONENT, &mut values)?;
+        created.push(create(ctx, types::COMPONENT, Some(storey), values)?);
     }
     for (key, _, host, values) in decoded.iter().cloned() {
         if key != types::DORMER && key != types::ROOF_EDGE {

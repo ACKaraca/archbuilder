@@ -34,3 +34,4 @@ ab-io-loss-dormer-as-parts = IFC4 has no element for a dormer: it is written as 
 ab-io-loss-fascia-as-covering = IFC4 has no element for a fascia: it is written as a covering of the type molding with its swept body.
 ab-io-loss-gutter-not-written = A gutter is not in the IFC file: it belongs to a pipe segment of the type gutter, which cannot be written yet.
 ab-io-loss-roof-edge-orphan = A roof edge element names edges that its roof no longer has or that define no slope: those edges are not in the file.
+ab-io-loss-family-not-written = A family instance is not in the IFC file: the mapping of family instances is not written yet. It is listed here, and is not exported as a proxy.

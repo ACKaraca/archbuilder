@@ -940,6 +940,34 @@ empty text clears the own value); a type-scope value is read-only on an element.
 Parameters group adds a variable (name, data type, value or formula) or a project parameter bound
 to the categories of the selection.
 
+## Loaded families and components
+
+`archbuilder.family` (schema 1.0) is a family loaded into the project: the identifier, version,
+checksum, name, category, hosting, IFC assignment, source and license of a published definition, and
+its canonical text ([families.md](families.md#canonical-text-and-packages)); the project owns it and
+never refers to the library file. `archbuilder.family_type` is a named set of values (a keyed list
+of parameter identifier and literal or formula) of one family, unique by name within the family and
+the fifth kind of the type commands (`archbuilder.type.set` takes `values`; duplicate, delete,
+assign and match work as for the other kinds). `archbuilder.component` is a freestanding instance on
+a storey: a family type, a distance above the level, an insertion point, a rotation, a mirror flag
+and the instance's own values. A component copies nothing from its type: evaluation reads the
+definition, the type and the instance together, so its solids and plan symbols are derived and never
+stored, and a change that would leave a component unable to evaluate is refused with the form,
+parameter or reason named.
+
+`archbuilder.family.load` copies definitions and types from a `.archbfam` package or another
+document in one undo step; a type name the family has already is kept, replaced or renamed;
+another checksum at a loaded identifier and version is a conflict (it may be loaded as a new family
+that records the original as its source), another version is an update.
+`archbuilder.family.update` moves a family to a newer version: values follow by parameter
+identifier (a rename follows too), parameters that were removed or retyped need an entry in
+`mapping`, and the update is refused with the instances that would fail. `load_preview` and
+`update_preview` report without changing anything. `archbuilder.component.place` places an instance
+(the Component button of the Architecture tab); the Manage tab's Load family button opens a file
+dialog for `load`. A plan view draws a component's solids as cut parts and the symbolic geometry its
+definition shows at the view's detail level; the viewport draws the solids shown in 3D. Until the
+IFC mapping of family instances exists, the export lists each in the loss report.
+
 ## Selection and modify commands
 
 Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles
@@ -1349,6 +1377,7 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | `WorkItemCatalog`, `WorkItemMapping` | Item code, unit, measurement rule, rate; mapping from types, layers and materials | Feed bills of quantities through the quantity rules |
 | `UnitLibraryEntry` | Identity, version, group content, placement rules, derived descriptors | Stored in library packages and immutable per version; a group definition placed from it records its identity and version |
 | `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories (`archbuilder.parameter`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Values on elements and types (`parameters` field) |
+| `Family`, `FamilyType`, `Component` | Published text with version and checksum; named value set; family type, placement and values (`archbuilder.family`, `archbuilder.family_type`, `archbuilder.component`, see [Loaded families and components](#loaded-families-and-components)) | Evaluated to solids and plan symbols; listed in the IFC loss report until unit 8 |
 | `DocumentVariable` | Name, formula identifier, data type, literal or formula (`archbuilder.variable`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Read by formulas of parameters and other variables |
 | `Constraint` | Kind, references (persistent references), value | Solved in transactions |
 | `Phase`, `PhaseDisplayRule` | Order, status display | Elements, views |

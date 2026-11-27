@@ -202,6 +202,9 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
         Some(types::ELEVATOR) => archbuilder_model::elevator::span(snapshot, &object)
             .map(|s| s.outline)
             .unwrap_or_default(),
+        Some(types::COMPONENT) => archbuilder_model::family::loaded::Component::of(&object)
+            .map(|c| archbuilder_model::family::loaded::outline(snapshot, &c))
+            .unwrap_or_default(),
         Some(types::DORMER) => archbuilder_model::dormer::Dormer::from_values(&object.values)
             .map(|d| d.opening())
             .unwrap_or_default(),

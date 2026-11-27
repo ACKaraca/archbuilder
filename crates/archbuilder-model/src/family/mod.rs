@@ -6,6 +6,7 @@
 pub mod def;
 pub mod eval;
 pub mod fixtures;
+pub mod loaded;
 pub mod package;
 pub mod text;
 

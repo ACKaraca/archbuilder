@@ -142,3 +142,38 @@ Rules: checksums are verified on load; a package with unresolved dependencies or
 refused with a report; license and source travel with every definition into documents and are
 reported by model statistics; packages are read-only once published, and a change is a new package
 version.
+
+## Canonical text and packages
+
+The canonical text of a definition is line oriented: a first line `archbfam-text 1 functions 1.0`,
+then one line per part (`definition`, `parameter`, `type` with its `value` lines, `plane`,
+`profile` and `symbol` with their `vertex` lines, `form`, `test` with its `set` lines), ordered by
+kind and then by key, with `name=value` fields in schema order; a value is a bare word or a quoted
+string, and a stored value `x` is `x=<number>`, `x=true`, `x="text"` or `x_f="formula"` with an
+optional `x_u=<unit>`. Numbers are in the shortest form that reads back the same, lengths in meters.
+The reader is bounded (4 MiB, 100,000 lines, 4,096 bytes a line, 2,048 bytes a string, 1,000
+parameters, 5,000 types), refuses an unknown field, escape, function or a function set newer than
+the build's, and text read and written again is byte-identical. The checksum is the BLAKE3 hash of
+the text.
+
+M1 definitions hold extrusions and prism voids between reference planes (or by a signed depth),
+profiles whose vertices are anchored to reference planes with optional formula offsets and bulges,
+visibility by detail level, view orientation and a boolean formula, symbolic lines, regions and
+masks per view orientation, reporting parameters that read `solid_volume`, `size_x`, `size_y` and
+`size_z`, and test cases with expected volume, solid count or the form a failure must name. An
+evaluation gives the closed solids of each form (a void is subtracted from the solids it meets and
+must pass through two parallel faces), a role for every face (`family.form[<key>].start`, `end`,
+`side.<loop>.<curve>.<facet>`, `void[<void>].<curve>.<facet>`), and the plan symbols; a failure
+names the form. The budget of one evaluation counts the bytes of the formulas it runs.
+
+A `.archbfam` file is an Arc document package with a manifest record (`archbuilder.fam.manifest`)
+and one record per published version (`archbuilder.fam.definition`: family identifier, version,
+name, category, checksum and the canonical text). Publishing validates the definition, runs every
+test case, and refuses a version that is not newer or smaller than the change needs (a removed,
+retyped or renamed parameter or a hosting change is major, an added one minor). Reading verifies
+the checksum, the text, the function set, the test cases and the dependencies (`name>=version`
+against the packages available) and refuses with a report. `archbuilder-cli family check` and
+`family publish` run these; the commands are `archbuilder.family.manifest`, `publish` and `check`.
+Definitions are stored in a package as their canonical text; per-part records for the family
+editing context come with that context.
+
