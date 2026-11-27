@@ -15,6 +15,7 @@ arc-geom = { workspace = true }
 arc-draft = { workspace = true }
 arc-view = { workspace = true }
 arc-solve = { workspace = true }
+blake3 = { workspace = true }
 
 [lints]
 workspace = true

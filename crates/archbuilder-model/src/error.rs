@@ -586,4 +586,94 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-param-category",
     };
+    /// A family definition is invalid; the arguments `part` and `reason` name what.
+    pub const FAMILY_INVALID: ErrorCode = ErrorCode {
+        code: "ab.family.invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-invalid",
+    };
+    /// A family definition, text or evaluation passes a limit; `limit` names it.
+    pub const FAMILY_LIMIT: ErrorCode = ErrorCode {
+        code: "ab.family.limit_exceeded",
+        category: Category::LimitExceeded,
+        message_id: "ab-family-limit-exceeded",
+    };
+    /// A canonical family text is malformed; `line` and `reason` say where and why.
+    pub const FAMILY_TEXT: ErrorCode = ErrorCode {
+        code: "ab.family.text_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-text-invalid",
+    };
+    /// A form of a family cannot be built; `form` names it and `reason` the cause.
+    pub const FAMILY_FORM: ErrorCode = ErrorCode {
+        code: "ab.family.form_failed",
+        category: Category::InvalidInput,
+        message_id: "ab-family-form-failed",
+    };
+    /// A reference plane of a family does not evaluate to a position; `plane` names it.
+    pub const FAMILY_PLANE: ErrorCode = ErrorCode {
+        code: "ab.family.plane_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-plane-invalid",
+    };
+    /// The family has no type of that name.
+    pub const FAMILY_TYPE_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.family.type_unknown",
+        category: Category::NotFound,
+        message_id: "ab-family-type-unknown",
+    };
+    /// A test case of a family failed; `test` and `reason` say which and why.
+    pub const FAMILY_TEST: ErrorCode = ErrorCode {
+        code: "ab.family.test_failed",
+        category: Category::Conflict,
+        message_id: "ab-family-test-failed",
+    };
+    /// The family needs a newer function set than this build has.
+    pub const FAMILY_FUNCTIONS: ErrorCode = ErrorCode {
+        code: "ab.family.functions_newer",
+        category: Category::Conflict,
+        message_id: "ab-family-functions-newer",
+    };
+    /// The checksum of a family definition does not match its text.
+    pub const FAMILY_CHECKSUM: ErrorCode = ErrorCode {
+        code: "ab.family.checksum_mismatch",
+        category: Category::Conflict,
+        message_id: "ab-family-checksum-mismatch",
+    };
+    /// A package depends on a package that is not available.
+    pub const FAMILY_DEPENDENCY: ErrorCode = ErrorCode {
+        code: "ab.family.dependency_missing",
+        category: Category::Conflict,
+        message_id: "ab-family-dependency-missing",
+    };
+    /// A family package is malformed or incomplete.
+    pub const FAMILY_PACKAGE: ErrorCode = ErrorCode {
+        code: "ab.family.package_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-package-invalid",
+    };
+    /// The family and version are loaded already with another checksum.
+    pub const FAMILY_CONFLICT: ErrorCode = ErrorCode {
+        code: "ab.family.family_conflict",
+        category: Category::Conflict,
+        message_id: "ab-family-family-conflict",
+    };
+    /// A major update needs a value mapping for parameters that were removed or retyped.
+    pub const FAMILY_MAPPING: ErrorCode = ErrorCode {
+        code: "ab.family.mapping_required",
+        category: Category::Conflict,
+        message_id: "ab-family-mapping-required",
+    };
+    /// The version is not newer than the loaded one, or is larger than the step chosen.
+    pub const FAMILY_VERSION: ErrorCode = ErrorCode {
+        code: "ab.family.version_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-version-invalid",
+    };
+    /// A family instance would not evaluate.
+    pub const FAMILY_EVALUATION: ErrorCode = ErrorCode {
+        code: "ab.family.evaluation_failed",
+        category: Category::Conflict,
+        message_id: "ab-family-evaluation-failed",
+    };
 }

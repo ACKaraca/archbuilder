@@ -1,0 +1,50 @@
+archbfam-text 1 functions 1.0
+definition id=00000000-0000-0000-0000-000000000030 version=1.0.0 name="Door" category=door hosting=none flags="" ifc_entity="" ifc_type="" source="ArchBuilder fixtures" license="Apache-2.0"
+parameter key=FrameDepth id=00000000-0000-0000-0000-000000000034 name="Frame depth" data=length scope=type role=driving group="Dimensions" order=52 default=0.1
+parameter key=FrameWidth id=00000000-0000-0000-0000-000000000033 name="Frame width" data=length scope=type role=driving group="Dimensions" order=51 default=0.05
+parameter key=Height id=00000000-0000-0000-0000-000000000032 name="Height" data=length scope=type role=driving group="Dimensions" order=50 default=2.1
+parameter key=LeafThickness id=00000000-0000-0000-0000-000000000035 name="Leaf thickness" data=length scope=type role=driving group="Dimensions" order=53 default=0.04
+parameter key=ShowSwing id=00000000-0000-0000-0000-000000000036 name="Show swing" data=boolean scope=instance role=driving group="Dimensions" order=54 default=true
+parameter key=Width id=00000000-0000-0000-0000-000000000031 name="Width" data=length scope=type role=driving group="Dimensions" order=49 default=0.9
+type id=00000000-0000-0000-0000-000000000041 name="0900x2100"
+value param=Height v=2.1
+value param=Width v=0.9
+type id=00000000-0000-0000-0000-000000000042 name="1000x2100"
+value param=Height v=2.1
+value param=Width v=1
+plane key=back name="back" axis=y role=back strong=true offset_f="FrameDepth" offset_u=m
+plane key=front name="front" axis=y role=front strong=true offset=0
+plane key=head name="head" axis=z role=top strong=true offset_f="Height" offset_u=m
+plane key=head_inner name="head_inner" axis=z role=none strong=true offset_f="Height - FrameWidth" offset_u=m
+plane key=inner_left name="inner_left" axis=x role=none strong=true offset_f="FrameWidth" offset_u=m
+plane key=inner_right name="inner_right" axis=x role=none strong=true offset_f="Width - FrameWidth" offset_u=m
+plane key=leaf_back name="leaf_back" axis=y role=none strong=true offset_f="(FrameDepth + LeafThickness) / 2" offset_u=m
+plane key=leaf_front name="leaf_front" axis=y role=none strong=true offset_f="(FrameDepth - LeafThickness) / 2" offset_u=m
+plane key=left name="left" axis=x role=left strong=true offset=0
+plane key=right name="right" axis=x role=right strong=true offset_f="Width" offset_u=m
+profile key=frame_outline axis=y
+vertex u=origin_z v=left
+vertex u=origin_z v=inner_left
+vertex u=head_inner v=inner_left
+vertex u=head_inner v=inner_right
+vertex u=origin_z v=inner_right
+vertex u=origin_z v=right
+vertex u=head v=right
+vertex u=head v=left
+profile key=leaf_outline axis=y
+vertex u=origin_z v=inner_left
+vertex u=origin_z v=inner_right
+vertex u=head_inner v=inner_right
+vertex u=head_inner v=inner_left
+form key=frame kind=solid profile=frame_outline from=front to=back material="frame" subcategory=""
+form key=leaf kind=solid profile=leaf_outline from=leaf_front to=leaf_back material="leaf" subcategory=""
+symbol key=swing view=plan kind=line subcategory="swing" detail=medium,high views=plan when="ShowSwing"
+vertex u=inner_left v=front dv_f="-(Width - 2 * FrameWidth)" dv_u=m bulge_f="tan(22.5 deg)"
+vertex u=inner_right v=front
+symbol key=swing_leaf view=plan kind=line subcategory="swing" detail=medium,high views=plan when="ShowSwing"
+vertex u=inner_left v=front
+vertex u=inner_left v=front dv_f="-(Width - 2 * FrameWidth)" dv_u=m
+test name="0900x2100" type="0900x2100" volume=0.0906 tolerance=0.000000001
+test name="1000x2100" type="1000x2100" volume=0.0993 tolerance=0.000000001
+test name="frame wider than the door" type="0900x2100" tolerance=0.000000001 fails=frame
+set param=FrameWidth v=0.5
