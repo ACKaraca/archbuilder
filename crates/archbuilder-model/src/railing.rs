@@ -697,11 +697,8 @@ impl Derived {
             .sum()
     }
 
-    /// The posts: one at each end and at every corner of the path, each as its foot and its top
-    /// (heights above the level).
-    #[must_use]
-    pub fn posts(&self) -> Vec<Post> {
-        let top = self.kind.height - self.kind.rail_depth / 2.0;
+    /// The numbers of the surface points that carry a post: both ends and every corner.
+    fn post_points(&self) -> Vec<usize> {
         let last = self.surface.len().saturating_sub(1);
         self.surface
             .iter()
@@ -716,7 +713,19 @@ impl Derived {
                                 .is_some_and(|b| turn(b.0, *p, n.0) >= STRAIGHT)
                         }))
             })
-            .map(|(_, (p, _))| (*p, [p[0], p[1], p[2] + top]))
+            .map(|(k, _)| k)
+            .collect()
+    }
+
+    /// The posts: one at each end and at every corner of the path, each as its foot and its top
+    /// (heights above the level).
+    #[must_use]
+    pub fn posts(&self) -> Vec<Post> {
+        let top = self.kind.height - self.kind.rail_depth / 2.0;
+        self.post_points()
+            .into_iter()
+            .filter_map(|k| self.surface.get(k))
+            .map(|(p, _)| (*p, [p[0], p[1], p[2] + top]))
             .collect()
     }
 
@@ -746,16 +755,11 @@ impl Derived {
                 },
             )
         };
+        // The posts once, by point number: a long path has many points (arcs are flattened).
         let mut stops: Vec<f64> = self
-            .surface
-            .iter()
-            .enumerate()
-            .filter(|(k, _)| {
-                self.posts()
-                    .iter()
-                    .any(|(foot, _)| *foot == self.surface[*k].0)
-            })
-            .map(|(k, _)| cumulative[k])
+            .post_points()
+            .into_iter()
+            .filter_map(|k| cumulative.get(k).copied())
             .collect();
         stops.dedup_by(|a, b| (*a - *b).abs() < 1.0e-9);
         let mut out = Vec::new();
@@ -901,6 +905,22 @@ mod tests {
             base: 0.0,
             surface,
         }
+    }
+
+    #[test]
+    fn balusters_of_a_path_with_many_points_take_linear_time() {
+        // The flattened arcs of a long path: 500 points, each arc up to 256 pieces. The stops
+        // used to look up every point among all posts, recomputed per point: hours, not
+        // milliseconds.
+        let points: Vec<[f64; 3]> = (0..100_000)
+            .map(|k| [f64::from(k) * 0.01, f64::from(k % 2) * 0.01, 0.0])
+            .collect();
+        let d = derived(&points, RailingType::default());
+        let started = std::time::Instant::now();
+        let (balusters, _) = d.balusters();
+        assert!(started.elapsed().as_secs() < 20, "{:?}", started.elapsed());
+        assert_eq!(d.posts().len(), 100_000);
+        assert!(balusters.is_empty());
     }
 
     #[test]
