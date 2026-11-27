@@ -525,13 +525,13 @@ struct Msg {
     message_id: &'static str,
 }
 
-fn two_points(first: &'static str, second: &'static str) -> PromptSequence {
+fn two_points(first: Msg, second: Msg) -> PromptSequence {
     let point = || Accept::Point {
         dims: PointDims::Two,
     };
     PromptSequence::new()
-        .step(PromptStep::new("start", first, point()))
-        .step(PromptStep::new("end", second, point()))
+        .step(PromptStep::new("start", first.message_id, point()))
+        .step(PromptStep::new("end", second.message_id, point()))
 }
 
 /// Registers the commands of this module.
@@ -556,7 +556,14 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             description,
             |ctx: &mut Context<'_>, p: CreateGrid| create_grid(ctx, p),
         )
-        .with_prompts(two_points("ab-prompt-grid-start", "ab-prompt-grid-end")),
+        .with_prompts(two_points(
+            Msg {
+                message_id: "ab-prompt-grid-start",
+            },
+            Msg {
+                message_id: "ab-prompt-grid-end",
+            },
+        )),
     )?;
     let (id, label, description) = spec(
         REFERENCE_PLANE_CREATE,
@@ -575,8 +582,12 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             |ctx: &mut Context<'_>, p: CreateReferencePlane| create_reference_plane(ctx, p),
         )
         .with_prompts(two_points(
-            "ab-prompt-reference-plane-start",
-            "ab-prompt-reference-plane-end",
+            Msg {
+                message_id: "ab-prompt-reference-plane-start",
+            },
+            Msg {
+                message_id: "ab-prompt-reference-plane-end",
+            },
         )),
     )?;
     let (id, label, description) = spec(
