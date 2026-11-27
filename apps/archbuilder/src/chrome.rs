@@ -198,6 +198,39 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             "ceiling",
                             ButtonSize::Large,
                         ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-floor-slope",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-floor-slope-hint",
+                            }),
+                            archbuilder_commands::floor_slope::FLOOR_SET_SLOPE,
+                            "floor-slope",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-floor-edge",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-floor-edge-hint",
+                            }),
+                            archbuilder_commands::floor_edge::FLOOR_EDGE_CREATE,
+                            "floor-edge",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-roof-extrusion",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-roof-extrusion-hint",
+                            }),
+                            archbuilder_commands::roof_extrusion::ROOF_EXTRUSION_CREATE,
+                            "roof-extrusion",
+                            ButtonSize::Small,
+                        ),
                     ],
                 ),
                 group(
@@ -762,6 +795,51 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-sets",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-set-create",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-set-create-hint",
+                            }),
+                            archbuilder_commands::selection::SET_CREATE,
+                            "set",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-set-select",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-set-select-hint",
+                            }),
+                            archbuilder_commands::selection::SET_SELECT,
+                            "select",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-model",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-statistics",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-statistics-hint",
+                        }),
+                        archbuilder_commands::stats::STATISTICS,
+                        "statistics",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-shortcuts",
                     },
                     vec![
@@ -1159,6 +1237,11 @@ pub fn icons() -> Vec<(String, String)> {
         "opening-shaft",
         "opening-vertical",
         "stair",
+        "floor-slope",
+        "floor-edge",
+        "roof-extrusion",
+        "set",
+        "statistics",
         "railing",
         "ramp",
         "grid",
