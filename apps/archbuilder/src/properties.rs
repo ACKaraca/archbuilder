@@ -1060,6 +1060,18 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::RAILING,
+        Message {
+            message_id: "ab-kind-railing",
+        },
+    ),
+    (
+        types::RAMP,
+        Message {
+            message_id: "ab-kind-ramp",
+        },
+    ),
+    (
         ROOF,
         Message {
             message_id: "ab-kind-roof",
@@ -1113,6 +1125,160 @@ const DEFAULT_VIEW: Message = Message {
     message_id: "ab-prop-view-default-note",
 };
 
+/// Labels of the fields of ramps and railings.
+const CIRC_LABELS: [(&str, Message); 25] = [
+    (
+        "length",
+        Message {
+            message_id: "ab-prop-circ-length",
+        },
+    ),
+    (
+        "landing_start",
+        Message {
+            message_id: "ab-prop-circ-landing-start",
+        },
+    ),
+    (
+        "landing_end",
+        Message {
+            message_id: "ab-prop-circ-landing-end",
+        },
+    ),
+    (
+        "form",
+        Message {
+            message_id: "ab-prop-circ-form",
+        },
+    ),
+    (
+        "slab",
+        Message {
+            message_id: "ab-prop-circ-slab",
+        },
+    ),
+    (
+        "solid",
+        Message {
+            message_id: "ab-prop-circ-solid",
+        },
+    ),
+    (
+        "side",
+        Message {
+            message_id: "ab-prop-circ-side",
+        },
+    ),
+    (
+        "none",
+        Message {
+            message_id: "ab-prop-circ-none",
+        },
+    ),
+    (
+        "start_extension",
+        Message {
+            message_id: "ab-prop-circ-start-extension",
+        },
+    ),
+    (
+        "end_extension",
+        Message {
+            message_id: "ab-prop-circ-end-extension",
+        },
+    ),
+    (
+        "extension_length",
+        Message {
+            message_id: "ab-prop-circ-extension-length",
+        },
+    ),
+    (
+        "horizontal",
+        Message {
+            message_id: "ab-prop-circ-horizontal",
+        },
+    ),
+    (
+        "return_wall",
+        Message {
+            message_id: "ab-prop-circ-return-wall",
+        },
+    ),
+    (
+        "return_floor",
+        Message {
+            message_id: "ab-prop-circ-return-floor",
+        },
+    ),
+    (
+        "ramp_slope",
+        Message {
+            message_id: "ab-prop-circ-ramp-slope",
+        },
+    ),
+    (
+        "ramp_rise",
+        Message {
+            message_id: "ab-prop-circ-ramp-rise",
+        },
+    ),
+    (
+        "ramp_volume",
+        Message {
+            message_id: "ab-prop-circ-ramp-volume",
+        },
+    ),
+    (
+        "ramp_type_name",
+        Message {
+            message_id: "ab-prop-circ-ramp-type-name",
+        },
+    ),
+    (
+        "railing_type_name",
+        Message {
+            message_id: "ab-prop-circ-railing-type-name",
+        },
+    ),
+    (
+        "railing_host",
+        Message {
+            message_id: "ab-prop-circ-railing-host",
+        },
+    ),
+    (
+        "railing_length",
+        Message {
+            message_id: "ab-prop-circ-railing-length",
+        },
+    ),
+    (
+        "railing_posts",
+        Message {
+            message_id: "ab-prop-circ-railing-posts",
+        },
+    ),
+    (
+        "railing_balusters",
+        Message {
+            message_id: "ab-prop-circ-railing-balusters",
+        },
+    ),
+    (
+        "railing_gap",
+        Message {
+            message_id: "ab-prop-circ-railing-gap",
+        },
+    ),
+    (
+        "railing_continues",
+        Message {
+            message_id: "ab-prop-circ-railing-continues",
+        },
+    ),
+];
+
 /// The readable name of a field or variant; the rows of a roof's edges are numbered from 1.
 fn label_text(localize: &dyn Localize, name: &str) -> String {
     const SLOPED: Message = Message {
@@ -1143,6 +1309,7 @@ fn label_text(localize: &dyn Localize, name: &str) -> String {
     }
     LABELS
         .iter()
+        .chain(CIRC_LABELS.iter())
         .find(|(n, _)| *n == name)
         .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
 }
@@ -1612,6 +1779,110 @@ fn shown(
                 (
                     "stair_volume",
                     layout.map(|l| format!("{:.3} m³", l.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A ramp shows its record and what its levels make of it.
+        types::RAMP => {
+            use archbuilder_model::types::ramp as rp;
+            let order = [
+                rp::NAME,
+                rp::WIDTH,
+                rp::LENGTH,
+                rp::LANDING_START,
+                rp::LANDING_END,
+                rp::THICKNESS,
+                rp::FORM,
+                rp::RISE,
+                rp::X,
+                rp::Y,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            let placed = archbuilder_model::ramp::Placed::of(snapshot, object);
+            let layout = placed.as_ref().and_then(|p| p.layout.as_ref().ok());
+            let kind = placed
+                .as_ref()
+                .and_then(|p| p.ramp.ramp_type)
+                .and_then(|t| spatial::get(snapshot, t))
+                .and_then(|t| types::text(&t.values, 0).map(str::to_owned));
+            for (name, value) in [
+                (
+                    "ramp_slope",
+                    layout.map(|l| {
+                        let warn = if l.exceeds() { " ⚠" } else { "" };
+                        format!("{:.1} %{warn}", l.slope() * 100.0)
+                    }),
+                ),
+                ("ramp_rise", layout.map(|l| format!("{:.3} m", l.height))),
+                (
+                    "ramp_volume",
+                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                ),
+                ("ramp_type_name", kind),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A railing shows its side and extensions, and what its path and type make of it.
+        types::RAILING => {
+            use archbuilder_model::types::railing as rl;
+            let order = [
+                rl::NAME,
+                rl::SIDE,
+                rl::START_EXTENSION,
+                rl::END_EXTENSION,
+                rl::EXTENSION_LENGTH,
+            ];
+            let (decls, vals) = (fields.clone(), values.clone());
+            fields = order
+                .iter()
+                .filter_map(|k| decls.get(*k).cloned())
+                .collect();
+            values = order.iter().filter_map(|k| vals.get(*k).cloned()).collect();
+            let derived = archbuilder_model::railing::Derived::of(snapshot, object).ok();
+            let name_of = |at: usize| match object.values.get(at) {
+                Some(Some(Value::Reference(id))) => spatial::get(snapshot, *id)
+                    .and_then(|o| types::text(&o.values, 0).map(str::to_owned)),
+                _ => None,
+            };
+            for (name, value) in [
+                ("railing_type_name", name_of(rl::RAILING_TYPE)),
+                ("railing_host", name_of(rl::HOST)),
+                ("railing_continues", name_of(rl::CONTINUES_TO)),
+                (
+                    "railing_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "railing_posts",
+                    derived.as_ref().map(|d| d.posts().len().to_string()),
+                ),
+                (
+                    "railing_balusters",
+                    derived.as_ref().map(|d| d.balusters().0.len().to_string()),
+                ),
+                (
+                    "railing_gap",
+                    derived.as_ref().map(|d| {
+                        let gap = d.widest_gap();
+                        let warn = if gap > archbuilder_model::railing::CLEAR_GAP_LIMIT {
+                            " ⚠"
+                        } else {
+                            ""
+                        };
+                        format!("{:.0} mm{warn}", gap * 1000.0)
+                    }),
                 ),
             ] {
                 fields.push(text_field(name));

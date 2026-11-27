@@ -11,6 +11,7 @@ use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Snapshot};
 use archbuilder::stair_tool::StairTool;
 use archbuilder::wall_tool::Env;
+use archbuilder_commands::stair::STAIR_CREATE;
 use archbuilder_model::spatial;
 use archbuilder_model::stair::{Placed, Shape};
 use archbuilder_model::types::STAIR;
@@ -114,7 +115,7 @@ impl Rig {
 #[test]
 fn two_clicks_make_a_stair_and_the_keywords_change_it() {
     let mut rig = Rig::new("en-US");
-    rig.step(|t, env, run| t.begin(env, run));
+    rig.step(|t, env, run| t.begin(env, run, STAIR_CREATE));
     assert!(rig.tool.running());
     let text = rig.prompt_text("en-US");
     assert!(text.contains("17 risers"), "{text}");
@@ -143,7 +144,7 @@ fn two_clicks_make_a_stair_and_the_keywords_change_it() {
 #[test]
 fn the_next_stair_keeps_the_options_and_a_stray_turn_answer_is_refused() {
     let mut rig = Rig::new("en-US");
-    rig.step(|t, env, run| t.begin(env, run));
+    rig.step(|t, env, run| t.begin(env, run, STAIR_CREATE));
     rig.step(|t, env, run| t.text(env, run, "u_turn"));
     // A letter that names no side is not taken: the side is asked again with the answers.
     rig.step(|t, env, run| t.text(env, run, "x"));
@@ -175,7 +176,7 @@ fn the_next_stair_keeps_the_options_and_a_stray_turn_answer_is_refused() {
 #[test]
 fn the_move_tool_takes_a_selected_stair() {
     let mut rig = Rig::new("en-US");
-    rig.step(|t, env, run| t.begin(env, run));
+    rig.step(|t, env, run| t.begin(env, run, STAIR_CREATE));
     rig.step(|t, env, run| t.click(env, run, [1.0, 1.0]));
     rig.step(|t, env, run| t.click(env, run, [2.0, 1.0]));
     let id = rig.stairs()[0].id;
@@ -206,7 +207,7 @@ fn the_move_tool_takes_a_selected_stair() {
 #[test]
 fn the_prompt_speaks_turkish() {
     let mut rig = Rig::new("tr-TR");
-    rig.step(|t, env, run| t.begin(env, run));
+    rig.step(|t, env, run| t.begin(env, run, STAIR_CREATE));
     let text = rig.prompt_text("tr-TR");
     assert!(text.contains("17 rıht") && text.contains("düz"), "{text}");
     rig.step(|t, env, run| t.text(env, run, "u"));

@@ -2106,9 +2106,17 @@ impl WallInteraction {
             self.stop_all();
             return self.with_rooms(cx, |tool, env, run| tool.begin(env, run));
         }
-        if command == STAIR_CREATE && intent.params.is_empty() {
+        if let Some(command) = [
+            STAIR_CREATE,
+            archbuilder_commands::circulation::RAILING_CREATE,
+            archbuilder_commands::circulation::RAMP_CREATE,
+        ]
+        .into_iter()
+        .find(|c| *c == command)
+        .filter(|_| intent.params.is_empty())
+        {
             self.stop_all();
-            return self.with_stairs(cx, |tool, env, run| tool.begin(env, run));
+            return self.with_stairs(cx, |tool, env, run| tool.begin(env, run, command));
         }
         if command == archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY && intent.params.is_empty() {
             return self.start_sketch(cx, None);

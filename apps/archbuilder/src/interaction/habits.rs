@@ -305,7 +305,7 @@ impl WallInteraction {
         } else if self.rooms.running() {
             Some(ROOM_PLACE)
         } else if self.stairs.running() {
-            Some(archbuilder_commands::stair::STAIR_CREATE)
+            Some(self.stairs.command())
         } else if self.floors.running() {
             Some(self.floors.state().map_or(FLOOR_CREATE, |s| {
                 if s.roof {
