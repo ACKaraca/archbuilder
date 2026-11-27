@@ -875,6 +875,9 @@ pub mod railing {
     pub const CONTINUES_TO: usize = 8;
     /// Whether the railing is pinned.
     pub const PINNED: usize = 9;
+    /// The edge of a floor the railing stands on (the number of the vertex it starts at), or, for
+    /// a floor edge element, the number of its chain; the whole outer boundary without it.
+    pub const HOST_EDGE: usize = 10;
 }
 
 /// The field positions of a railing type record.
@@ -1636,11 +1639,11 @@ fn railing_fields() -> Vec<FieldDecl> {
     use crate::railing::{DEFAULT_EXTENSION, EXTENSION_RANGE, Extension, MAX_POINTS, Side};
     let host = {
         let mut spec = reference_to(STAIR);
-        spec.targets = [STAIR, RAMP]
+        spec.targets = [STAIR, RAMP, FLOOR, FLOOR_EDGE]
             .iter()
             .filter_map(|k| TypeKey::new(*k).ok())
             .collect();
-        // A railing hosted on a stair or ramp goes with it.
+        // A railing hosted on a stair, ramp, floor or floor edge goes with it.
         spec.rule.on_delete = OnDelete::Cascade;
         spec.rule.cardinality = Cardinality::Optional;
         spec
@@ -1710,6 +1713,14 @@ fn railing_fields() -> Vec<FieldDecl> {
             .optional()
             .in_aspect("geometry"),
         pinned_field(0),
+        FieldDecl::new("host_edge", ValueType::I64)
+            .with_bound(Bound::Int {
+                min: 0,
+                max: i64::try_from(crate::floor::MAX_VERTICES).unwrap_or(i64::MAX),
+            })
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
     ]
 }
 

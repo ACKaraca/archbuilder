@@ -230,6 +230,10 @@ pub struct Railing {
     pub extension: f64,
     /// The railing whose start the top rail continues to.
     pub continues_to: Option<ObjectId>,
+    /// On a floor: the edge the railing stands on (the number of the vertex it starts at); on a
+    /// floor edge element: the number of its chain. The whole outer boundary of a floor, or the
+    /// first chain of a floor edge, without it.
+    pub host_edge: Option<usize>,
 }
 
 fn reference(values: &[Option<Value>], at: usize) -> Option<ObjectId> {
@@ -272,6 +276,10 @@ impl Railing {
             end: Extension::from_code(code(values, railing::END_EXTENSION)),
             extension: types::meters(values, railing::EXTENSION_LENGTH)?,
             continues_to: reference(values, railing::CONTINUES_TO),
+            host_edge: match values.get(railing::HOST_EDGE) {
+                Some(Some(Value::I64(n))) => usize::try_from(*n).ok(),
+                _ => None,
+            },
         })
     }
 
@@ -295,7 +303,7 @@ impl Railing {
     /// The field values of a record of this railing named `name`.
     #[must_use]
     pub fn values(&self, name: &str) -> Vec<Option<Value>> {
-        let mut values: Vec<Option<Value>> = vec![None; railing::PINNED + 1];
+        let mut values: Vec<Option<Value>> = vec![None; railing::HOST_EDGE + 1];
         values[railing::NAME] = Some(Value::String(name.to_owned()));
         values[railing::PATH] = Some(Self::path_value(&self.path));
         values[railing::RAILING_TYPE] = self.railing_type.map(Value::Reference);
@@ -305,6 +313,10 @@ impl Railing {
         values[railing::END_EXTENSION] = Some(Value::Enum(self.end.code()));
         values[railing::EXTENSION_LENGTH] = Some(types::length(self.extension));
         values[railing::CONTINUES_TO] = self.continues_to.map(Value::Reference);
+        values[railing::HOST_EDGE] = self
+            .host_edge
+            .and_then(|n| i64::try_from(n).ok())
+            .map(Value::I64);
         values
     }
 
@@ -574,8 +586,59 @@ pub struct Derived {
     pub handrail: Vec<[f64; 3]>,
 }
 
+/// The path along the chain of a floor edge: the slab's top at the edge, [`ramp::RAIL_INSET`] in
+/// from it toward the slab, heights above `base`. A corner is offset along its miter.
+fn along_chain(chain: &crate::floor_edge::Chain, base: f64) -> Vec<[f64; 3]> {
+    let n = chain.normals.len();
+    let normal_at = |k: usize| -> [f64; 2] {
+        let (before, after) = if k == 0 {
+            (
+                if chain.closed {
+                    chain.normals.get(n - 1)
+                } else {
+                    None
+                },
+                chain.normals.first(),
+            )
+        } else {
+            (chain.normals.get(k - 1), chain.normals.get(k))
+        };
+        match (before, after) {
+            (Some(a), Some(b)) => {
+                let c = 1.0 + a[0] * b[0] + a[1] * b[1];
+                if c > 0.25 {
+                    [(a[0] + b[0]) / c, (a[1] + b[1]) / c]
+                } else {
+                    *a
+                }
+            }
+            (Some(a), None) | (None, Some(a)) => *a,
+            (None, None) => [0.0, 0.0],
+        }
+    };
+    chain
+        .points
+        .iter()
+        .enumerate()
+        .map(|(k, p)| {
+            let m = normal_at(if chain.closed && k == n { 0 } else { k });
+            [
+                p[0] - m[0] * crate::ramp::RAIL_INSET,
+                p[1] - m[1] * crate::ramp::RAIL_INSET,
+                p[2] - base,
+            ]
+        })
+        .collect()
+}
+
 /// The surface polyline of a hosted railing: the host's side, lowered to the walking surface.
-fn hosted(snapshot: &Snapshot, host: ObjectId, side: Side) -> Option<Vec<Node>> {
+fn hosted(
+    snapshot: &Snapshot,
+    host: ObjectId,
+    side: Side,
+    edge: Option<usize>,
+    base: f64,
+) -> Option<Vec<Node>> {
     let object = spatial::get(snapshot, host)?;
     let left = side == Side::Left;
     let path: Vec<[f64; 3]> = match spatial::type_of(snapshot, host).as_deref() {
@@ -591,6 +654,14 @@ fn hosted(snapshot: &Snapshot, host: ObjectId, side: Side) -> Option<Vec<Node>> 
         Some(types::RAMP) => {
             let layout = crate::ramp::Placed::of(snapshot, &object)?.layout.ok()?;
             layout.side_path(left)
+        }
+        Some(types::FLOOR) => along_chain(
+            &crate::floor_edge::boundary_chain(snapshot, &object, edge)?,
+            base,
+        ),
+        Some(types::FLOOR_EDGE) => {
+            let derived = crate::floor_edge::Derived::of(snapshot, &object)?;
+            along_chain(derived.chains.get(edge.unwrap_or(0))?, base)
         }
         _ => return None,
     };
@@ -612,8 +683,14 @@ impl Derived {
         follow: bool,
     ) -> std::result::Result<Self, Refusal> {
         let railing = Railing::from_values(&object.values).ok_or(Refusal::Malformed)?;
+        let base = object
+            .header
+            .owner
+            .and_then(|s| spatial::get(snapshot, s))
+            .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
         let surface: Vec<Node> = match railing.host {
-            Some(host) => hosted(snapshot, host, railing.side).ok_or(Refusal::Malformed)?,
+            Some(host) => hosted(snapshot, host, railing.side, railing.host_edge, base)
+                .ok_or(Refusal::Malformed)?,
             None => {
                 if railing.path.len() < 2 {
                     return Err(Refusal::NoPath);
@@ -640,11 +717,6 @@ impl Derived {
             .and_then(|t| spatial::get(snapshot, t))
             .and_then(|t| RailingType::from_values(&t.values))
             .unwrap_or_default();
-        let base = object
-            .header
-            .owner
-            .and_then(|s| spatial::get(snapshot, s))
-            .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
         let next = if follow {
             railing
                 .continues_to
@@ -895,6 +967,7 @@ mod tests {
                 end: Extension::None,
                 extension: 0.3,
                 continues_to: None,
+                host_edge: None,
             },
             rail: surface
                 .iter()
@@ -1025,6 +1098,7 @@ mod tests {
             end: Extension::Horizontal,
             extension: 0.4,
             continues_to: None,
+            host_edge: Some(3),
         };
         assert_eq!(Railing::from_values(&r.values("R")), Some(r.clone()));
         let t = RailingType {
@@ -1053,6 +1127,7 @@ mod tests {
         assert_eq!(at(types::RAILING, railing::PATH), "path");
         assert_eq!(at(types::RAILING, railing::CONTINUES_TO), "continues_to");
         assert_eq!(at(types::RAILING, railing::PINNED), "pinned");
+        assert_eq!(at(types::RAILING, railing::HOST_EDGE), "host_edge");
         assert_eq!(
             at(types::RAILING_TYPE, railing_type::FILLET_RADIUS),
             "fillet_radius"

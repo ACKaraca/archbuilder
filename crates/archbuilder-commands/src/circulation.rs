@@ -2,7 +2,8 @@
 //!
 //! - `archbuilder.railing.create`: a railing from a sketched path (`points` as `[x, y]` or
 //!   `[x, y, z]` with the height of the walking surface above the level, `arcs` as pairs of vertex
-//!   number and bulge) or hosted on a stair or ramp (`host` and `side`; the path follows the host).
+//!   number and bulge) or hosted on a stair, a ramp, a floor (an edge of its boundary, `host_edge`)
+//!   or a floor edge element (`host` and `side`; the path follows the host).
 //!   Extensions at both ends (`start_extension`, `end_extension`: `none`, `horizontal`,
 //!   `return_wall`, `return_floor`) and `continues_to`, the railing whose start the top rail
 //!   continues to, are authored on it.
@@ -28,7 +29,9 @@ use archbuilder_model::railing::{
     Corner, Derived, Extension, Profile, Railing, RailingType, Side, Vertex,
 };
 use archbuilder_model::ramp::{self, Form, Placed, Ramp};
-use archbuilder_model::types::{self, RAILING, RAILING_TYPE, RAMP, RAMP_TYPE, STAIR};
+use archbuilder_model::types::{
+    self, FLOOR, FLOOR_EDGE, RAILING, RAILING_TYPE, RAMP, RAMP_TYPE, STAIR,
+};
 use archbuilder_model::{defaults, names, spatial};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -492,7 +495,7 @@ pub struct CreateRailing {
     /// Arcs of the path: pairs of the vertex number and the bulge of the edge that starts there.
     #[serde(default)]
     pub arcs: Option<Vec<[f64; 2]>>,
-    /// The stair or ramp the railing is hosted on; the path follows it.
+    /// The stair, ramp, floor or floor edge the railing is hosted on; the path follows it.
     #[serde(default)]
     pub host: Option<IdParam>,
     /// `left` or `right`: the side of the host, or the side the wall is on for a return.
@@ -513,6 +516,10 @@ pub struct CreateRailing {
     /// The railing whose start the top rail continues to.
     #[serde(default)]
     pub continues_to: Option<IdParam>,
+    /// With a floor as `host`: the edge the railing stands on, by the number of the vertex it
+    /// starts at (the whole outer boundary without it); with a floor edge: its chain.
+    #[serde(default)]
+    pub host_edge: Option<u32>,
     /// The name; else the first free `Railing <n>`.
     #[serde(default)]
     pub name: Option<String>,
@@ -574,12 +581,20 @@ fn path_of(p: &CreateRailing) -> Result<Vec<Vertex>> {
 fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCreated> {
     let host = match &p.host {
         Some(IdParam(id)) => match spatial::type_of(ctx.snapshot(), *id).as_deref() {
-            Some(STAIR | RAMP) => Some(*id),
+            Some(STAIR | RAMP | FLOOR | FLOOR_EDGE) => Some(*id),
             _ => return Err(Error::new(crate::error::codes::KIND_MISMATCH)),
         },
         None => None,
     };
     let storey = match host {
+        // A floor edge is owned by its floor; the railing is in the floor's storey.
+        Some(h) if spatial::type_of(ctx.snapshot(), h).as_deref() == Some(FLOOR_EDGE) => {
+            spatial::get(ctx.snapshot(), h)
+                .and_then(|o| o.header.owner)
+                .and_then(|f| spatial::get(ctx.snapshot(), f))
+                .and_then(|f| f.header.owner)
+                .ok_or_else(invalid)?
+        }
         Some(h) => spatial::get(ctx.snapshot(), h)
             .and_then(|o| o.header.owner)
             .ok_or_else(invalid)?,
@@ -617,6 +632,7 @@ fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCrea
         extension: meters(ctx, p.extension_length.as_ref())?
             .unwrap_or(archbuilder_model::railing::DEFAULT_EXTENSION),
         continues_to,
+        host_edge: host.and(p.host_edge).and_then(|n| usize::try_from(n).ok()),
     };
     let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         Some(name) => name.to_owned(),
@@ -786,6 +802,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
                 end_extension: None,
                 extension_length: None,
                 continues_to: None,
+                host_edge: None,
                 name: None,
             },
         )?;

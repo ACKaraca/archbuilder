@@ -429,6 +429,15 @@ Create similar starts the railing or ramp tool with the type of the selected one
 (`archbuilder.type.match`) gives the railings or ramps picked after the source its type, and
 leaves objects of another kind alone.
 
+Hosts. A railing is hosted on a stair, a ramp, a floor or a floor edge element (`host`, with
+`side`). On a floor it stands on one edge of the boundary (`host_edge`, the number of the vertex
+the edge starts at) or, without a number, on the whole outer boundary; on a floor edge element it
+stands on one of its chains (`host_edge`, the first chain without it). The rail is on the top of
+the slab, 0.05 m in from the edge, so it follows the floor whenever the boundary moves (edges that
+follow walls included), and an edge the floor no longer has leaves the railing without a path,
+reported as such and never moved to another edge. A railing goes with its host when the host is
+deleted. Known limit: copying or pasting a floor does not copy the railings hosted on it.
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored

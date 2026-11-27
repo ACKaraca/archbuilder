@@ -579,3 +579,90 @@ fn ramp_types_duplicate_and_match_and_a_ramp_type_does_not_retype_a_railing() {
     env.document.undo().wait().unwrap();
     assert_eq!(kind(r2), ramp_type);
 }
+
+fn quantity(env: &Env, id: ObjectId, f: impl Fn(&Derived) -> f64) -> f64 {
+    f(&env.railing(id))
+}
+
+#[test]
+fn a_railing_on_a_floor_edge_or_boundary_follows_the_floor_and_goes_with_it() {
+    let env = Env::new();
+    let floor = env.house();
+    let host = |params: Json| {
+        id_at(
+            &env.run("archbuilder.railing.create", params).unwrap(),
+            "railing",
+        )
+    };
+    // The whole outer boundary, one boundary edge, and a floor edge element's chain.
+    let all = host(json!({"host": floor.to_string()}));
+    let one = host(json!({"host": floor.to_string(), "host_edge": 0}));
+    let element = id_at(
+        &env.run(
+            "archbuilder.floor_edge.create",
+            json!({"floor": floor.to_string(), "edges": [1]}),
+        )
+        .unwrap(),
+        "floor_edge",
+    );
+    let chain = host(json!({"host": element.to_string()}));
+    // Closed loop of 10 x 6 stood in 0.05 m, a single edge, a single edge.
+    assert!(close(
+        quantity(&env, all, Derived::length),
+        2.0 * (9.9 + 5.9)
+    ));
+    assert!(close(quantity(&env, one, Derived::length), 10.0));
+    assert!(close(quantity(&env, chain, Derived::length), 6.0));
+    // The rail stands on the slab's top and 0.05 m inside the edge (edge 0 runs along y = 0).
+    let d = env.railing(one);
+    assert!(close(d.surface[0].0[1], 0.05) && close(d.surface[1].0[1], 0.05));
+    assert!(close(d.surface[0].0[2], d.surface[1].0[2]));
+    let z = d.surface[0].0[2];
+    // The railing is in the storey of the floor.
+    let storey = spatial::get(&env.snapshot(), one).unwrap().header.owner;
+    assert_eq!(storey, Some(env.storey("Floor 1")));
+    // It follows the floor: moving the floor moves the rail; the length stays.
+    env.run(
+        "archbuilder.modify.move",
+        json!({"objects": [floor.to_string()], "displacement": [1.0, 2.0]}),
+    )
+    .unwrap();
+    let moved = env.railing(one);
+    assert!(close(moved.surface[0].0[0], d.surface[0].0[0] + 1.0));
+    assert!(close(moved.surface[0].0[1], 2.05));
+    assert!(close(moved.surface[0].0[2], z));
+    env.document.undo().wait().unwrap();
+    assert!(close(env.railing(one).surface[0].0[0], d.surface[0].0[0]));
+    // An edge the floor does not have is refused.
+    assert!(
+        env.run(
+            "archbuilder.railing.create",
+            json!({"host": floor.to_string(), "host_edge": 99})
+        )
+        .is_err()
+    );
+    // A railing is not a host.
+    assert!(
+        env.run(
+            "archbuilder.railing.create",
+            json!({"host": one.to_string()})
+        )
+        .is_err()
+    );
+    // Deleting the floor takes its railings, and those of its floor edge, with it; undo brings
+    // them back in one step.
+    let before = count(&env, RAILING);
+    assert_eq!(before, 3);
+    let invocation = Invocation {
+        seed: 7,
+        selection: vec![floor],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert_eq!(count(&env, RAILING), 0);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env, RAILING), 3);
+    assert!(close(env.railing(chain).length(), 6.0));
+}
