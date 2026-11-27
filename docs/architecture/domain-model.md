@@ -882,6 +882,30 @@ plan view as in the 3D view: they are the tab's state, never saved or undone, an
 through object overrides of its definition. Hide in view is the view's own list, a document edit;
 Unhide all ends only the temporary state, and Show hidden in view empties the view's list.
 
+#### Document variables
+
+`archbuilder.variable` (schema 1.0) is a named value of the whole document, owned by the project
+([ADR 0009](../adr/0009-parameters-expressions-and-family-documents.md)). The record holds a display
+name (unique among the variables, case folded), a formula identifier (ASCII letters, digits and `_`,
+not a function, unit, `true` or `false`, unique among the variables and project parameters), a data
+type (length, area, volume, angle, slope, number, integer, boolean, text, enumeration, material,
+family type) and a stored value. A stored value is a record of which one field is set: a literal
+number in SI base units (`number`), a truth value (`flag`), a text (`text`), or a formula (`formula`,
+its canonical text with `.` as the decimal separator, with `unit`, the symbol of the unit its bare
+numbers take, so a change of the project's display units never changes what it means). The parsed
+formula, the names it reads and every result are derived and never stored; the record's canonical
+encoding is that of `arc-doc` for these fields. A formula of a variable reads other variables only,
+with the version 1 function set and limits of
+[families.md](families.md#bounded-expression-language) (`archbuilder_model::expr`). Variables
+evaluate in dependency order, ties broken by identifier; a formula that closes a cycle is refused
+with the cycle named by display name. `archbuilder.variable.create`, `set`, `rename` and `delete`
+are each one undo step and evaluate every formula of the document before they commit: a change that
+leaves a formula failing (an unknown name, a dimension error, a deleted variable still read) is
+refused with the parameter, the span and the reason. A new formula identifier is written into every
+formula that reads the old one, token by token from the parsed spans, in the same step. Formulas typed
+in a language with a decimal comma are stored with `.`. `archbuilder.variable.list` and
+`archbuilder-cli inspect` (`variables`) list each variable with its formula and derived value.
+
 ## Selection and modify commands
 
 Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles
@@ -1291,7 +1315,7 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | `WorkItemCatalog`, `WorkItemMapping` | Item code, unit, measurement rule, rate; mapping from types, layers and materials | Feed bills of quantities through the quantity rules |
 | `UnitLibraryEntry` | Identity, version, group content, placement rules, derived descriptors | Stored in library packages and immutable per version; a group definition placed from it records its identity and version |
 | `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories | Values on elements and types |
-| `DocumentVariable` | Name, value or expression | Drives parameters |
+| `DocumentVariable` | Name, formula identifier, data type, literal or formula (`archbuilder.variable`, see [Document variables](#document-variables)) | Read by formulas of parameters and other variables |
 | `Constraint` | Kind, references (persistent references), value | Solved in transactions |
 | `Phase`, `PhaseDisplayRule` | Order, status display | Elements, views |
 | `OptionSet`, `DesignOption` | Primary flag | Elements |

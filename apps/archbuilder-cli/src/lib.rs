@@ -15,7 +15,8 @@
 //! the `curtain_walls` list: each curtain wall with its panels and mullions, the rows of
 //! `archbuilder.curtain.schedule` (panel: key, kind, door or window type, material, thickness,
 //! width, height, area, whether overridden; mullion: key, role, upright or not, profile, size,
-//! length).
+//! length), and the `variables` list: each document variable with its identifier, data type,
+//! formula and value (derived).
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`.
@@ -200,6 +201,16 @@ fn stats_and_sets(args: &[OsString], product: &Product) -> (Value, Value) {
     (stats, Value::Array(sets))
 }
 
+/// The document variables of the file named in `args` with their formulas and values, as
+/// JSON; an empty list when the file cannot be opened.
+fn variables(args: &[OsString], product: &Product) -> Value {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return Value::Array(Vec::new());
+    };
+    serde_json::to_value(archbuilder_commands::parameter::variable_list(&snapshot).variables)
+        .unwrap_or_else(|_| Value::Array(Vec::new()))
+}
+
 /// The curtain walls of the file named in `args` with their derived panels and mullions (the rows
 /// of `archbuilder.curtain.schedule`), as JSON; an empty list when the file cannot be opened.
 fn curtain_walls(args: &[OsString], product: &Product) -> Value {
@@ -230,6 +241,7 @@ where
     let nets = room_nets(&args, product);
     let (stats, sets) = stats_and_sets(&args, product);
     let curtains = curtain_walls(&args, product);
+    let variables = variables(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
@@ -252,6 +264,7 @@ where
         map.insert("statistics".into(), stats);
         map.insert("selection_sets".into(), sets);
         map.insert("curtain_walls".into(), curtains);
+        map.insert("variables".into(), variables);
         map.insert("floors".into(), floors.into());
         map.insert("rooms".into(), rooms.into());
         map.insert("stairs".into(), stairs.into());

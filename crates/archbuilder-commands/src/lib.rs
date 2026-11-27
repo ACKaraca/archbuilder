@@ -14,7 +14,8 @@
 //! `delete`, `assign`, `match` and `upgrade`; [`curtain`]: `archbuilder.curtain.type`, `wall`, `grid_add`, `grid_remove`, `grid_move` and `panel`; [`view`]: `archbuilder.view.duplicate`, `rename`, `delete`,
 //! `hide_elements`, `show_elements` and `ensure_defaults` (plan views); [`selection`]:
 //! `archbuilder.set.create`, `update`, `rename`, `delete` and `select` (selection sets); [`stats`]:
-//! `archbuilder.model.statistics` (counts of the model, derived).
+//! `archbuilder.model.statistics` (counts of the model, derived); [`parameter`]:
+//! `archbuilder.variable.create`, `set`, `rename`, `delete` and `list` (document variables).
 //! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
@@ -36,6 +37,7 @@ pub mod floor_slope;
 pub mod insert;
 pub mod modify;
 pub mod opening;
+pub mod parameter;
 pub mod roof;
 pub mod roof_extrusion;
 pub mod roof_parts;
@@ -115,6 +117,7 @@ pub fn registry() -> Result<Registry> {
     view::register(&mut registry)?;
     selection::register(&mut registry)?;
     stats::register(&mut registry)?;
+    parameter::register(&mut registry)?;
     Ok(registry)
 }
 

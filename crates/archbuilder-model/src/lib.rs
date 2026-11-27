@@ -89,6 +89,7 @@ pub mod transform;
 pub mod types;
 pub mod units;
 pub mod validate;
+pub mod variable;
 pub mod view;
 pub mod wall;
 

@@ -45,7 +45,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         STOREY | LEVEL => Some(&[BUILDING]),
         k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
-        types::SELECTION_SET => Some(&[PROJECT]),
+        types::SELECTION_SET | types::VARIABLE => Some(&[PROJECT]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
@@ -56,6 +56,18 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         }
         _ => None,
     }
+}
+
+/// A formula identifier that cannot name a value, or that another definition uses.
+fn identifier_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    let own = types::text(&object.values, types::variable::IDENTIFIER).unwrap_or_default();
+    if let Err(error) = crate::expr::check_identifier(own) {
+        return Some(error);
+    }
+    crate::variable::identifiers(candidate, Some(object.id))
+        .iter()
+        .any(|i| i == own)
+        .then(|| Error::new(codes::PARAM_IDENTIFIER_TAKEN).with_arg("identifier", own))
 }
 
 fn name_taken(object: &Object) -> Error {
@@ -110,6 +122,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));
     }
     out.extend(type_problem(candidate, key, object));
+    if key == types::VARIABLE {
+        out.extend(identifier_problem(candidate, object));
+    }
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT

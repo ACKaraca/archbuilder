@@ -39,6 +39,9 @@ pub const PLAN_VIEW: &str = "archbuilder.plan_view";
 /// The type key of a selection set: a named list of elements, owned by the project.
 pub const SELECTION_SET: &str = "archbuilder.selection_set";
 
+/// The type key of a document variable: a named value formulas read, owned by the project.
+pub const VARIABLE: &str = "archbuilder.variable";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -195,7 +198,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 36] = [
+pub const KEYS: [&str; 37] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -232,6 +235,7 @@ pub const KEYS: [&str; 36] = [
     ELEVATOR,
     DORMER,
     ROOF_EDGE,
+    VARIABLE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -636,6 +640,18 @@ pub mod plan_view {
     pub const SHOW_RAILINGS: usize = 21;
     /// Whether ramps are drawn; appended in schema 1.3.
     pub const SHOW_RAMPS: usize = 22;
+}
+
+/// Field positions of `archbuilder.variable`.
+pub mod variable {
+    /// The display name.
+    pub const NAME: usize = 0;
+    /// The formula identifier.
+    pub const IDENTIFIER: usize = 1;
+    /// The data type.
+    pub const DATA_TYPE: usize = 2;
+    /// The stored value: a literal or a formula.
+    pub const VALUE: usize = 3;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1365,6 +1381,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
         (SELECTION_SET, selection_set_fields()),
+        (VARIABLE, crate::variable::fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
         (GRID, grid_fields()),
