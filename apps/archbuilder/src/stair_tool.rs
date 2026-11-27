@@ -5,12 +5,17 @@
 //! created in one step and the tool asks for the next one, until Escape or Enter. A refusal (no
 //! level above the storey, too few risers) is kept as the pending error and the tool keeps
 //! waiting.
+//!
+//! The same machinery runs the prompts of one-shot commands a button starts (floor slope, roof by
+//! extrusion, selection sets): [`StairTool::begin_once`] starts them with given parameters, and
+//! the tool ends once the command ran.
 
 use std::collections::BTreeMap;
 
 use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{Accept, Point, PromptInput};
 use arc_command::{CommandLine, LineStep, Submitted, Target};
+use archbuilder_commands::roof_extrusion::PROFILE_PROMPT;
 use archbuilder_commands::stair::{STAIR_CREATE, previewed};
 use archbuilder_model::stair::Stair;
 use serde_json::{Map, Value};
@@ -27,6 +32,8 @@ pub struct StairTool {
     error: Option<Error>,
     /// The shape, turn, width and tread of the last stair made, which the next one starts with.
     last: Map<String, Value>,
+    /// The parameters of a one-shot command; `None` for the repeating stair, railing and ramp.
+    once: Option<Map<String, Value>>,
 }
 
 fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -98,7 +105,33 @@ impl StairTool {
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, command: &'static str) -> Result<()> {
+        self.begin_with(env, run, command, None)
+    }
+
+    /// Starts the prompts of `command` once, with the parameters `preset`; the tool ends when the
+    /// command ran.
+    ///
+    /// # Errors
+    /// `ab.cmd.no_building` without a storey; the errors of the command line.
+    pub fn begin_once(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        preset: Map<String, Value>,
+    ) -> Result<()> {
+        self.begin_with(env, run, command, Some(preset))
+    }
+
+    fn begin_with(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        once: Option<Map<String, Value>>,
+    ) -> Result<()> {
         self.command = command;
+        self.once = once;
         self.line.cancel();
         let storey = storey_for(&env.document.snapshot(), env.selection)
             .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_BUILDING))?;
@@ -111,12 +144,17 @@ impl StairTool {
         let Some((storey, _)) = self.storey else {
             return Ok(());
         };
-        let mut preset = if self.command == STAIR_CREATE {
-            self.last.clone()
+        let preset = if let Some(once) = &self.once {
+            once.clone()
         } else {
-            Map::new()
+            let mut preset = if self.command == STAIR_CREATE {
+                self.last.clone()
+            } else {
+                Map::new()
+            };
+            preset.insert("storey".into(), Value::from(storey.to_string()));
+            preset
         };
-        preset.insert("storey".into(), Value::from(storey.to_string()));
         let localized = BTreeMap::new();
         let step = LineStep::Start {
             command: self.command,
@@ -140,6 +178,10 @@ impl StairTool {
             }
             Ok(Submitted::Rejected { error, .. }) => {
                 self.error = Some(error);
+                Ok(())
+            }
+            Ok(Submitted::Ran(_)) if self.once.is_some() => {
+                self.stop();
                 Ok(())
             }
             Ok(Submitted::Ran(outcome)) => {
@@ -186,7 +228,11 @@ impl StairTool {
             .line
             .active()
             .and_then(|s| s.prompt())
-            .is_some_and(|p| p.accepts.iter().any(|a| matches!(a, Accept::Point { .. })));
+            .is_some_and(|p| {
+                // A profile point is typed in its vertical plane; a click in plan is no answer.
+                !p.key.starts_with(PROFILE_PROMPT)
+                    && p.accepts.iter().any(|a| matches!(a, Accept::Point { .. }))
+            });
         if !takes_point {
             return Ok(());
         }

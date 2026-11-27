@@ -473,3 +473,16 @@ ab-cmd-curtain-panel-label = Set Panel
 ab-cmd-curtain-panel-description = Gives one cell of a curtain wall a glazed, solid or empty panel, or a door or window, or clears the choice.
 ab-cmd-curtain-wall-label = Curtain Wall
 ab-cmd-curtain-wall-description = Places a curtain wall on a storey from a baseline of two points, with the first curtain wall type of the document unless a type is given.
+
+## Prompts of the floor slope, roof by extrusion and selection set commands
+ab-prompt-floor-slope-from = Floor slope: specify the start of the arrow (the floor keeps its top offset along the line square to the arrow there).
+ab-prompt-floor-slope-to = Floor slope: specify the end of the arrow (the direction the floor rises toward).
+ab-prompt-floor-slope-value = Floor slope: type the slope: an angle (2°), a percentage (2%) or a rise over a run (1:50); a bare number is in the project's slope unit.
+ab-prompt-roof-extrusion-plane-start = Roof by extrusion: specify the first point of the vertical plane the profile is drawn in.
+ab-prompt-roof-extrusion-plane-end = Roof by extrusion: specify a second point of the plane, along its horizontal axis.
+ab-prompt-roof-extrusion-profile = Roof by extrusion: type the next point of the profile as u,z (along the plane's axis, height above the level), or press Enter to finish ({ $count } points).
+ab-keyword-roof-extrusion-done = Done
+ab-prompt-roof-extrusion-end = Roof by extrusion: type the depth of the extrusion from the plane (negative goes to the other side).
+ab-prompt-set-name = Name of the new selection set (the selected elements become its members):
+ab-prompt-set-select = Name of the selection set to select ({ $count } sets; Enter takes the first):
+ab-cmd-set-unknown = No selection set has that name. Save a selection set first, or type the name of one.

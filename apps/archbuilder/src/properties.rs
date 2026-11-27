@@ -1277,6 +1277,15 @@ const KINDS: &[(&str, Message)] = &[
     ),
 ];
 
+/// The message identifier of the readable name of the kind `key`.
+#[must_use]
+pub fn kind_message(key: &str) -> Option<&'static str> {
+    KINDS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, m)| m.message_id)
+}
+
 /// The heading of a selection of several kinds of object.
 const OBJECTS: Message = Message {
     message_id: "ab-prop-objects",

@@ -330,4 +330,10 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-last-view",
     };
+    /// No selection set has the given name, or the document has none.
+    pub const SET_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.cmd.set_unknown",
+        category: Category::NotFound,
+        message_id: "ab-cmd-set-unknown",
+    };
 }

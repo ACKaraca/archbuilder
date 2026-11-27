@@ -621,3 +621,4 @@ ab-tool-set-select-hint = Bir seçim kümesinin üyelerini seç
 ab-group-model = Model
 ab-tool-statistics = İstatistik
 ab-tool-statistics-hint = Modelin öğelerini tür, tip ve kata göre say
+ab-statistics-report = Model istatistikleri: { $elements } eleman ({ $kinds }); { $types } tip, { $views } görünüş, { $sets } seçim kümesi.

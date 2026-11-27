@@ -39,9 +39,13 @@ use arc_ui::{
     ProductOverlay, PromptControls, WorkPlane,
 };
 use archbuilder_commands::floor::{FLOOR_ADD_HOLE, FLOOR_CREATE};
+use archbuilder_commands::floor_slope::FLOOR_SET_SLOPE;
 use archbuilder_commands::roof::ROOF_CREATE;
+use archbuilder_commands::roof_extrusion::ROOF_EXTRUSION_CREATE;
 use archbuilder_commands::room::ROOM_PLACE;
+use archbuilder_commands::selection::{SET_CREATE, SET_SELECT};
 use archbuilder_commands::stair::STAIR_CREATE;
+use archbuilder_commands::stats::STATISTICS;
 use archbuilder_commands::structure::LANGUAGE_SETTING;
 use archbuilder_commands::wall::{OBJECT_DELETE, WALL_CREATE, WALL_DELETE};
 use archbuilder_io::command::EXPORT_IFC;
@@ -56,6 +60,57 @@ use crate::picker::Picker;
 use crate::room_tool::RoomTool;
 use crate::stair_tool::StairTool;
 use crate::wall_tool::{Env, Tool, storey_for};
+
+/// The commands whose button starts their prompts once, on the stair tool's machinery.
+const PROMPTED: [&str; 4] = [
+    FLOOR_SET_SLOPE,
+    ROOF_EXTRUSION_CREATE,
+    SET_CREATE,
+    SET_SELECT,
+];
+
+/// The report of `archbuilder.model.statistics` as one line: the elements by kind, then the
+/// types, views and selection sets.
+fn statistics_text(localizer: &arc_app::locale::Localizer, value: &serde_json::Value) -> String {
+    let count = |key: &str| {
+        arc_base::error::Value::Int(
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0),
+        )
+    };
+    let kinds: Vec<String> = value
+        .get("by_kind")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|k| {
+            let key = k.get("kind")?.as_str()?;
+            let n = k.get("count")?.as_i64()?;
+            let name = crate::properties::kind_message(key)
+                .map_or_else(|| key.to_owned(), |id| localizer.format(id, &[]).text);
+            Some(format!("{name} {n}"))
+        })
+        .collect();
+    localizer
+        .format(
+            STATISTICS_REPORT.message_id,
+            &[
+                ("elements", count("elements")),
+                ("kinds", arc_base::error::Value::Text(kinds.join(", "))),
+                ("types", count("element_types")),
+                ("views", count("views")),
+                ("sets", count("selection_sets")),
+            ],
+        )
+        .text
+}
+
+const STATISTICS_REPORT: Message = Message {
+    message_id: "ab-statistics-report",
+};
 
 /// A message of the application, named by identifier.
 struct Message {
@@ -758,9 +813,20 @@ impl WallInteraction {
             selection: cx.selection(),
             seed: self.seed,
         };
-        step(&mut self.stairs, &env, &mut |invocation| {
-            cx.invoke(invocation)
-        })
+        // The members a selection set command chose become the tab's selection, which the shell
+        // applies only for commands it runs itself.
+        let mut chosen: Option<Vec<arc_base::ObjectId>> = None;
+        let result = step(&mut self.stairs, &env, &mut |invocation| {
+            let outcome = cx.invoke(invocation)?;
+            if outcome.command == SET_SELECT {
+                chosen.clone_from(&outcome.selection);
+            }
+            Ok(outcome)
+        });
+        if let Some(ids) = chosen {
+            cx.ask(habits::select_intent(&ids, "replace"));
+        }
+        result
     }
 
     /// Runs `step` of the datum tool with the pieces the context gives.
@@ -1342,6 +1408,13 @@ impl Interaction for WallInteraction {
             }
             LineAction::Invoke(intent) if intent.command == arc_app::commands::EDIT_UNDO => {
                 self.undo(cx)
+            }
+            // A button of these commands starts its prompts (or, for statistics, its report).
+            LineAction::Submit(text)
+                if PROMPTED.contains(&text.trim()) || text.trim() == STATISTICS =>
+            {
+                self.stop_all();
+                self.intent(cx, &Intent::new(text.trim()))
             }
             LineAction::Submit(_) if shortcut.is_some() => {
                 let command = shortcut.clone().unwrap_or_default();
@@ -2196,6 +2269,14 @@ impl WallInteraction {
             self.stop_all();
             return self.with_datums(cx, |tool, env, run| tool.begin(env, run, made));
         }
+        if let Some(command) = PROMPTED
+            .iter()
+            .copied()
+            .find(|c| *c == command)
+            .filter(|_| intent.params.is_empty())
+        {
+            return self.start_prompted(cx, command);
+        }
         if let Some(command) = [
             STAIR_CREATE,
             archbuilder_commands::circulation::RAILING_CREATE,
@@ -2264,6 +2345,34 @@ impl WallInteraction {
         Ok(())
     }
 
+    /// Starts the prompts of a one-shot command a button started: the floor slope of the
+    /// selected floor, a roof by extrusion on the storey of the selection, a selection set.
+    fn start_prompted(&mut self, cx: &InteractionContext<'_>, command: &'static str) -> Result<()> {
+        self.stop_all();
+        let snapshot = cx.document()?.snapshot();
+        let mut preset = serde_json::Map::new();
+        if command == FLOOR_SET_SLOPE {
+            let floor = cx
+                .selection()
+                .iter()
+                .copied()
+                .find(|id| {
+                    spatial::type_of(&snapshot, *id).as_deref()
+                        == Some(archbuilder_model::types::FLOOR)
+                })
+                .ok_or_else(|| Error::new(archbuilder_commands::error::codes::NO_FLOOR_SELECTED))?;
+            preset.insert("floor".into(), serde_json::Value::from(floor.to_string()));
+        }
+        if command == ROOF_EXTRUSION_CREATE
+            && let Some((storey, _)) = storey_for(&snapshot, cx.selection())
+        {
+            preset.insert("storey".into(), serde_json::Value::from(storey.to_string()));
+        }
+        self.with_stairs(cx, |tool, env, run| {
+            tool.begin_once(env, run, command, preset)
+        })
+    }
+
     /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
     fn say_outcome(
         &mut self,
@@ -2271,6 +2380,12 @@ impl WallInteraction {
         command: &str,
         value: &serde_json::Value,
     ) {
+        if command == STATISTICS
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let text = statistics_text(localizer, value);
+            self.push_notice(text);
+        }
         self.say_slivers(cx, value);
         // Floor edges that followed a deleted wall stay put: say so.
         let frozen = value

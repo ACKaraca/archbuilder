@@ -9,8 +9,15 @@
 //! normal (the axis turned a quarter counterclockwise), that the profile is extruded between.
 //! One call is one transaction, one undo step. A roof by extrusion is deleted with
 //! `archbuilder.object.delete`.
+//!
+//! The prompts ([`RoofExtrusionPrompts`]) ask for the two points of the plane in plan, then for
+//! the points of the profile typed as `u,z` (a plan cannot show heights), until Enter, then for
+//! the end of the extrusion.
 
 use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_command::prompt::{
+    Accept, KeywordOption, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
+};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Snapshot};
 use archbuilder_model::element_type::TypeKind;
@@ -19,6 +26,7 @@ use archbuilder_model::types::{self, ROOF_EXTRUSION};
 use archbuilder_model::{defaults, names, spatial};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value as Json};
 
 use crate::error::codes;
 use crate::structure::{create, ensure_valid, expect, language, named};
@@ -226,23 +234,152 @@ struct Msg {
     message_id: &'static str,
 }
 
+/// The key prefix of the profile prompts: their points are typed `u,z` in the vertical plane, so
+/// a host does not answer them with a click in plan.
+pub const PROFILE_PROMPT: &str = "profile-";
+
+const PROMPT_PLANE_START: Msg = Msg {
+    message_id: "ab-prompt-roof-extrusion-plane-start",
+};
+const PROMPT_PLANE_END: Msg = Msg {
+    message_id: "ab-prompt-roof-extrusion-plane-end",
+};
+const PROMPT_PROFILE: Msg = Msg {
+    message_id: "ab-prompt-roof-extrusion-profile",
+};
+const PROMPT_END: Msg = Msg {
+    message_id: "ab-prompt-roof-extrusion-end",
+};
+const KEY_DONE: Msg = Msg {
+    message_id: "ab-keyword-roof-extrusion-done",
+};
+
+/// What the answers of the prompts give so far.
+#[derive(Default)]
+struct Answers {
+    plane: Vec<[f64; 2]>,
+    profile: Vec<[f64; 2]>,
+    closed: bool,
+    end: Option<f64>,
+}
+
+fn answers(state: &PromptState<'_>) -> Answers {
+    let mut out = Answers::default();
+    for answer in state.answers {
+        match &answer.input {
+            PromptInput::Point(p) if out.plane.len() < 2 => out.plane.push([p.x, p.y]),
+            PromptInput::Point(p) if !out.closed => out.profile.push([p.x, p.y]),
+            PromptInput::Keyword(k) if k == "done" && out.profile.len() >= 2 => out.closed = true,
+            PromptInput::Distance(d) if out.closed => out.end = Some(*d),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn points(list: &[[f64; 2]]) -> Json {
+    Json::Array(list.iter().map(|p| Json::from(p.to_vec())).collect())
+}
+
+/// The prompts of `archbuilder.roof_extrusion.create`: the plane, the profile, the end.
+#[derive(Debug)]
+pub struct RoofExtrusionPrompts;
+
+impl PromptMachine for RoofExtrusionPrompts {
+    fn next(&self, state: &PromptState<'_>) -> Result<Step> {
+        let got = answers(state);
+        if let Some(end) = got.end {
+            let mut params = Map::new();
+            params.insert("plane".into(), points(&got.plane));
+            params.insert("profile".into(), points(&got.profile));
+            params.insert("end".into(), Json::from(end));
+            return Ok(Step::Done(params));
+        }
+        let at = state.answers.len();
+        let point = Accept::Point {
+            dims: PointDims::Two,
+        };
+        let prompt = if got.plane.len() < 2 {
+            let message = if got.plane.is_empty() {
+                PROMPT_PLANE_START
+            } else {
+                PROMPT_PLANE_END
+            };
+            Prompt::new(format!("plane-{at}"), message.message_id, point)
+        } else if !got.closed {
+            let mut prompt = Prompt::new(
+                format!("{PROFILE_PROMPT}{at}"),
+                PROMPT_PROFILE.message_id,
+                point,
+            )
+            .with_arg("count", got.profile.len().to_string());
+            if got.profile.len() >= 2 {
+                prompt = prompt
+                    .or(Accept::keywords([KeywordOption::new(
+                        "done",
+                        KEY_DONE.message_id,
+                    )
+                    .with_shortcut('d')]))
+                    .with_default(PromptInput::Keyword("done".to_owned()));
+            }
+            prompt
+        } else {
+            Prompt::new(
+                format!("end-{at}"),
+                PROMPT_END.message_id,
+                Accept::Distance {
+                    min: None,
+                    max: None,
+                },
+            )
+        };
+        Ok(Step::Ask(prompt))
+    }
+
+    fn check(&self, state: &PromptState<'_>, _: &Prompt, input: &PromptInput) -> Result<()> {
+        let got = answers(state);
+        let refused = match input {
+            PromptInput::Point(p) if got.plane.len() == 1 => {
+                let [x, y] = got.plane[0];
+                (p.x - x).hypot(p.y - y) < types::MIN_WALL_LENGTH
+            }
+            PromptInput::Point(p) if got.plane.len() == 2 && !got.closed => {
+                got.profile.len() >= MAX_PROFILE
+                    || got
+                        .profile
+                        .last()
+                        .is_some_and(|[u, z]| (p.x - u).hypot(p.y - z) < 1.0e-3)
+            }
+            PromptInput::Distance(d) => !d.is_finite() || d.abs() < 1.0e-3,
+            _ => false,
+        };
+        if refused {
+            return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+        }
+        Ok(())
+    }
+}
+
 /// Registers the commands of this module.
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
-    registry.register(CommandSpec::new(
-        ROOF_EXTRUSION_CREATE,
-        Msg {
-            message_id: "ab-cmd-roof-extrusion-create-label",
-        }
-        .message_id,
-        Msg {
-            message_id: "ab-cmd-roof-extrusion-create-description",
-        }
-        .message_id,
-        |ctx: &mut Context<'_>, p: CreateRoofExtrusion| create_roof(ctx, p),
-    ))?;
+    registry.register(
+        CommandSpec::new(
+            ROOF_EXTRUSION_CREATE,
+            Msg {
+                message_id: "ab-cmd-roof-extrusion-create-label",
+            }
+            .message_id,
+            Msg {
+                message_id: "ab-cmd-roof-extrusion-create-description",
+            }
+            .message_id,
+            |ctx: &mut Context<'_>, p: CreateRoofExtrusion| create_roof(ctx, p),
+        )
+        .with_prompt(std::sync::Arc::new(RoofExtrusionPrompts)),
+    )?;
     registry.register(CommandSpec::new(
         ROOF_EXTRUSION_EDIT,
         Msg {

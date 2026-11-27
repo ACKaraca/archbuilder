@@ -646,3 +646,4 @@ ab-tool-set-select-hint = Select the members of a selection set
 ab-group-model = Model
 ab-tool-statistics = Statistics
 ab-tool-statistics-hint = Count the elements of the model by kind, type and storey
+ab-statistics-report = Model statistics: { $elements } elements ({ $kinds }); { $types } types, { $views } views, { $sets } selection sets.

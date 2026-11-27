@@ -472,3 +472,16 @@ ab-cmd-curtain-panel-label = Panel Ata
 ab-cmd-curtain-panel-description = Perde duvarın bir gözüne camlı, dolu ya da boş panel ya da kapı veya pencere verir; seçimi temizler.
 ab-cmd-curtain-wall-label = Perde Duvar
 ab-cmd-curtain-wall-description = Bir kata iki noktalı bir eksen çizgisinden perde duvar yerleştirir; tip verilmedikçe belgedeki ilk perde duvar tipini kullanır.
+
+## Döşeme eğimi, ekstrüzyonla çatı ve seçim kümesi komutlarının istemleri
+ab-prompt-floor-slope-from = Döşeme eğimi: okun başlangıcını belirtin (döşeme oradaki oka dik çizgi boyunca üst kotunu korur).
+ab-prompt-floor-slope-to = Döşeme eğimi: okun ucunu belirtin (döşemenin yükseldiği yön).
+ab-prompt-floor-slope-value = Döşeme eğimi: eğimi yazın: açı (2°), yüzde (2%) veya yükselti:yatay (1:50); yalın sayı projenin eğim birimindedir.
+ab-prompt-roof-extrusion-plane-start = Ekstrüzyonla çatı: profilin çizildiği düşey düzlemin ilk noktasını belirtin.
+ab-prompt-roof-extrusion-plane-end = Ekstrüzyonla çatı: düzlemin yatay ekseni üzerinde ikinci bir nokta belirtin.
+ab-prompt-roof-extrusion-profile = Ekstrüzyonla çatı: profilin sonraki noktasını u,z olarak yazın (düzlem ekseni boyunca, kotun üstündeki yükseklik) veya bitirmek için Enter'a basın ({ $count } nokta).
+ab-keyword-roof-extrusion-done = Bitti
+ab-prompt-roof-extrusion-end = Ekstrüzyonla çatı: ekstrüzyonun düzlemden derinliğini yazın (eksi değer diğer tarafa gider).
+ab-prompt-set-name = Yeni seçim kümesinin adı (seçili elemanlar üyeleri olur):
+ab-prompt-set-select = Seçilecek seçim kümesinin adı ({ $count } küme; Enter ilkini alır):
+ab-cmd-set-unknown = Bu adda bir seçim kümesi yok. Önce bir seçim kümesi kaydedin veya mevcut birinin adını yazın.

@@ -650,12 +650,14 @@ elements, else the selected ones), `archbuilder.set.update` (add and remove memb
 `archbuilder.set.rename` and `archbuilder.set.delete` are each one undo step;
 `archbuilder.set.select` makes the members the selection (or adds them) and changes no document.
 Rule-based sets (category and parameter conditions) and a report of the members dropped by a delete
-are not built yet.
+are not built yet. In the window, the Save set button asks for a name and saves the selection; the
+Select set button asks for the name of a set (the first by default) and selects its members.
 
 `archbuilder.model.statistics` returns a report derived from the document and never stored: element
 counts by kind, by type (instances without a type under an empty name) and by storey, and the number
 of plan views, selection sets and element types. `archbuilder-cli inspect` prints it as `statistics`
-beside the `selection_sets` list. Stored size by table, the largest families and measured
+beside the `selection_sets` list; the window's Statistics button says it in one line above the
+command line. Stored size by table, the largest families and measured
 regeneration time are not part of it yet.
 
 The drawing is derived ([`archbuilder_model::plan`]) and never stored: an implementation of the

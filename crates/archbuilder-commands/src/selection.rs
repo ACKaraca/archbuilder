@@ -6,6 +6,9 @@
 //! A set stores element identifiers; deleting an element removes it from every set.
 
 use arc_base::{Error, ObjectId, Result};
+use arc_command::prompt::{
+    Accept, Prompt, PromptInput, PromptMachine, PromptSequence, PromptState, PromptStep, Step,
+};
 use arc_command::{CommandSpec, Context, IdParam, Permission, Registry, UndoBehavior};
 use arc_doc::{FieldPath, Snapshot};
 use archbuilder_model::selection;
@@ -212,23 +215,96 @@ fn select(ctx: &mut Context<'_>, p: SelectSet) -> Result<()> {
     )
 }
 
+/// A name prompt: one to 256 characters.
+fn name_accept() -> Accept {
+    Accept::Text {
+        min_chars: 1,
+        max_chars: Some(256),
+    }
+}
+
+/// The set named `name`, by the folded comparison of names.
+fn set_named(snapshot: &Snapshot, name: &str) -> Option<ObjectId> {
+    selection::all(snapshot)
+        .iter()
+        .find(|s| {
+            types::text(&s.values, 0).is_some_and(|n| archbuilder_model::names::same(n, name))
+        })
+        .map(|s| s.id)
+}
+
+/// The prompts of `archbuilder.set.select`: the name of a set (the first set by default); the
+/// answer becomes the set's identifier.
+#[derive(Debug)]
+pub struct SelectSetPrompts;
+
+impl PromptMachine for SelectSetPrompts {
+    fn next(&self, state: &PromptState<'_>) -> Result<Step> {
+        if let Some(PromptInput::Text(name)) = state.answers.last().map(|a| &a.input) {
+            let set =
+                set_named(state.snapshot, name).ok_or_else(|| Error::new(codes::SET_UNKNOWN))?;
+            let mut params = serde_json::Map::new();
+            params.insert("set".into(), serde_json::Value::from(set.to_string()));
+            return Ok(Step::Done(params));
+        }
+        let sets = selection::all(state.snapshot);
+        let first = sets
+            .first()
+            .and_then(|s| types::text(&s.values, 0))
+            .ok_or_else(|| Error::new(codes::SET_UNKNOWN))?;
+        Ok(Step::Ask(
+            Prompt::new(
+                "set",
+                MessageId {
+                    message_id: "ab-prompt-set-select",
+                }
+                .message_id,
+                name_accept(),
+            )
+            .with_default(PromptInput::Text(first.to_owned()))
+            .with_arg("count", sets.len().to_string()),
+        ))
+    }
+
+    fn check(&self, state: &PromptState<'_>, _: &Prompt, input: &PromptInput) -> Result<()> {
+        match input {
+            PromptInput::Text(name) if set_named(state.snapshot, name).is_none() => {
+                Err(Error::new(codes::SET_UNKNOWN))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Registers the commands of this module.
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
-    registry.register(CommandSpec::new(
-        SET_CREATE,
-        MessageId {
-            message_id: "ab-cmd-set-create-label",
-        }
-        .message_id,
-        MessageId {
-            message_id: "ab-cmd-set-create-description",
-        }
-        .message_id,
-        make,
-    ))?;
+    registry.register(
+        CommandSpec::new(
+            SET_CREATE,
+            MessageId {
+                message_id: "ab-cmd-set-create-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-set-create-description",
+            }
+            .message_id,
+            make,
+        )
+        .with_prompts(
+            PromptSequence::new().step(PromptStep::new(
+                "name",
+                MessageId {
+                    message_id: "ab-prompt-set-name",
+                }
+                .message_id,
+                name_accept(),
+            )),
+        ),
+    )?;
     registry.register(CommandSpec::new(
         SET_UPDATE,
         MessageId {
@@ -278,6 +354,7 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             .message_id,
             select,
         )
+        .with_prompt(std::sync::Arc::new(SelectSetPrompts))
         .with_undo(UndoBehavior::NotUndoable)
         .with_permissions([Permission::Read]),
     )?;

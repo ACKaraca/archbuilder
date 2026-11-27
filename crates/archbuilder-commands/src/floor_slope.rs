@@ -8,6 +8,7 @@
 //! elevations of the top at three points of the plan.
 
 use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_command::prompt::{Accept, PointDims, PromptInput, PromptSequence, PromptStep};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::FieldPath;
 use archbuilder_model::floor::{Floor, signed_area};
@@ -235,23 +236,68 @@ struct Msg {
     message_id: &'static str,
 }
 
+/// The prompts of `archbuilder.floor.set_slope`: the start of the arrow, its end and the slope
+/// (an angle, a percentage or a ratio, checked as it is typed).
+fn slope_prompts() -> PromptSequence {
+    let point = || Accept::Point {
+        dims: PointDims::Two,
+    };
+    PromptSequence::new()
+        .step(PromptStep::new(
+            "from",
+            Msg {
+                message_id: "ab-prompt-floor-slope-from",
+            }
+            .message_id,
+            point(),
+        ))
+        .step(PromptStep::new(
+            "to",
+            Msg {
+                message_id: "ab-prompt-floor-slope-to",
+            }
+            .message_id,
+            point(),
+        ))
+        .step(
+            PromptStep::new(
+                "slope",
+                Msg {
+                    message_id: "ab-prompt-floor-slope-value",
+                }
+                .message_id,
+                Accept::Text {
+                    min_chars: 1,
+                    max_chars: Some(32),
+                },
+            )
+            .with_check(|snapshot, input| match input {
+                PromptInput::Text(text) => crate::roof::parse_slope(snapshot, text).map(|_| ()),
+                _ => Ok(()),
+            }),
+        )
+}
+
 /// Registers the commands of this module.
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
-    registry.register(CommandSpec::new(
-        FLOOR_SET_SLOPE,
-        Msg {
-            message_id: "ab-cmd-floor-slope-label",
-        }
-        .message_id,
-        Msg {
-            message_id: "ab-cmd-floor-slope-description",
-        }
-        .message_id,
-        |ctx: &mut Context<'_>, p: SetSlope| set_slope(ctx, p),
-    ))?;
+    registry.register(
+        CommandSpec::new(
+            FLOOR_SET_SLOPE,
+            Msg {
+                message_id: "ab-cmd-floor-slope-label",
+            }
+            .message_id,
+            Msg {
+                message_id: "ab-cmd-floor-slope-description",
+            }
+            .message_id,
+            |ctx: &mut Context<'_>, p: SetSlope| set_slope(ctx, p),
+        )
+        .with_prompts(slope_prompts()),
+    )?;
     registry.register(CommandSpec::new(
         FLOOR_SET_SLOPE_EDGE,
         Msg {
