@@ -806,3 +806,10 @@ ab-notice-standards = { $count ->
     [one] Copied 1 type, kept or skipped { $skipped }.
    *[other] Copied { $count } types, kept or skipped { $skipped }.
 }
+ab-group-parameters = Parameters
+ab-tool-variables = Variables
+ab-tool-variables-hint = Add a document variable: a named value or formula that other formulas read
+ab-tool-project-parameters = Project parameters
+ab-tool-project-parameters-hint = Add a project parameter to the categories of the selected elements; its values show in the properties
+ab-prop-parameters = Parameters
+ab-prop-parameter-value = { $name } (value)

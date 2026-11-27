@@ -39,6 +39,13 @@ pub const PLAN_VIEW: &str = "archbuilder.plan_view";
 /// The type key of a selection set: a named list of elements, owned by the project.
 pub const SELECTION_SET: &str = "archbuilder.selection_set";
 
+/// The type key of a document variable: a named value formulas read, owned by the project.
+pub const VARIABLE: &str = "archbuilder.variable";
+
+/// The type key of a project parameter: a definition bound to categories of physical elements,
+/// owned by the project.
+pub const PARAMETER: &str = "archbuilder.parameter";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -155,6 +162,29 @@ pub const ELEMENTS: [&str; 20] = [
     ROOF_EDGE,
 ];
 
+/// The physical elements: the elements that carry project parameter values in their
+/// `parameters` field (every element but grids and reference planes).
+pub const PARAMETER_HOSTS: [&str; 18] = [
+    WALL,
+    DOOR,
+    WINDOW,
+    FLOOR,
+    ROOM,
+    STAIR,
+    RAILING,
+    RAMP,
+    ROOF,
+    CEILING,
+    WALL_OPENING,
+    SHAFT,
+    VERTICAL_OPENING,
+    FLOOR_EDGE,
+    ROOF_EXTRUSION,
+    ELEVATOR,
+    DORMER,
+    ROOF_EDGE,
+];
+
 /// The datums a building owns directly: they have no storey and span levels.
 pub const DATUMS: [&str; 3] = [GRID, REFERENCE_PLANE, WORK_PLANE];
 
@@ -195,7 +225,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 36] = [
+pub const KEYS: [&str; 38] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -232,6 +262,8 @@ pub const KEYS: [&str; 36] = [
     ELEVATOR,
     DORMER,
     ROOF_EDGE,
+    VARIABLE,
+    PARAMETER,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -689,6 +721,40 @@ pub mod plan_view {
     pub const SHOW_RAILINGS: usize = 21;
     /// Whether ramps are drawn; appended in schema 1.3.
     pub const SHOW_RAMPS: usize = 22;
+}
+
+/// Field positions of `archbuilder.variable`.
+pub mod variable {
+    /// The display name.
+    pub const NAME: usize = 0;
+    /// The formula identifier.
+    pub const IDENTIFIER: usize = 1;
+    /// The data type.
+    pub const DATA_TYPE: usize = 2;
+    /// The stored value: a literal or a formula.
+    pub const VALUE: usize = 3;
+}
+
+/// Field positions of `archbuilder.parameter`.
+pub mod parameter {
+    /// The display name.
+    pub const NAME: usize = 0;
+    /// The formula identifier.
+    pub const IDENTIFIER: usize = 1;
+    /// The data type.
+    pub const DATA_TYPE: usize = 2;
+    /// Type or instance.
+    pub const SCOPE: usize = 3;
+    /// The bound categories (element type keys).
+    pub const CATEGORIES: usize = 4;
+    /// The group it is shown in.
+    pub const GROUP: usize = 5;
+    /// The order within the group.
+    pub const ORDER: usize = 6;
+    /// The default value.
+    pub const DEFAULT: usize = 7;
+    /// The rule.
+    pub const RULE: usize = 8;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1545,6 +1611,8 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
         (SELECTION_SET, selection_set_fields()),
+        (VARIABLE, crate::variable::fields()),
+        (PARAMETER, crate::parameter::fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
         (GRID, grid_fields()),
@@ -1583,6 +1651,10 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         let mut fields = fields;
         if ON_WORK_PLANE.contains(&key) {
             let field = work_plane_ref(&fields);
+            fields.push(field);
+        }
+        if PARAMETER_HOSTS.contains(&key) || TYPE_KEYS.contains(&key) {
+            let field = crate::parameter::values_field(&fields);
             fields.push(field);
         }
         let mut decl = declaration(key, fields)?;
@@ -3032,11 +3104,24 @@ mod tests {
             for (name, at) in fields {
                 assert_eq!(decl.schema.fields[*at].name, *name, "{key}");
             }
-            // A type whose sketch is made on a work plane ends with the reference to it.
+            // A type whose sketch is made on a work plane ends with the reference to it, then a
+            // physical element or element type with its parameter values.
             let stored = usize::from(ON_WORK_PLANE.contains(&key));
-            assert_eq!(decl.schema.fields.len(), fields.len() + stored, "{key}");
+            let values = usize::from(PARAMETER_HOSTS.contains(&key) || TYPE_KEYS.contains(&key));
+            assert_eq!(
+                decl.schema.fields.len(),
+                fields.len() + stored + values,
+                "{key}"
+            );
             if stored == 1 {
                 assert_eq!(decl.schema.fields[fields.len()].name, "work_plane", "{key}");
+            }
+            if values == 1 {
+                assert_eq!(
+                    decl.schema.fields.last().unwrap().name,
+                    "parameters",
+                    "{key}"
+                );
             }
         }
         assert_eq!(

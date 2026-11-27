@@ -781,3 +781,10 @@ ab-notice-standards = { $count ->
     [one] 1 tip kopyalandı, { $skipped } tip korundu ya da atlandı.
    *[other] { $count } tip kopyalandı, { $skipped } tip korundu ya da atlandı.
 }
+ab-group-parameters = Parametreler
+ab-tool-variables = Değişkenler
+ab-tool-variables-hint = Bir belge değişkeni ekle: diğer formüllerin okuduğu adlandırılmış bir değer ya da formül
+ab-tool-project-parameters = Proje parametreleri
+ab-tool-project-parameters-hint = Seçili elemanların kategorilerine bir proje parametresi ekle; değerleri özelliklerde görünür
+ab-prop-parameters = Parametreler
+ab-prop-parameter-value = { $name } (değer)

@@ -366,6 +366,7 @@ dependencies = [
  "arc-doc",
  "arc-draft",
  "arc-geom",
+ "arc-solve",
  "arc-view",
 ]
 

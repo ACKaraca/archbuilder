@@ -14,6 +14,7 @@ arc-doc = { workspace = true }
 arc-geom = { workspace = true }
 arc-draft = { workspace = true }
 arc-view = { workspace = true }
+arc-solve = { workspace = true }
 
 [lints]
 workspace = true

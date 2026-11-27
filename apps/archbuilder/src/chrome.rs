@@ -862,6 +862,35 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-parameters",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-variables",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-variables-hint",
+                            }),
+                            archbuilder_commands::parameter::VARIABLE_CREATE,
+                            "variables",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-parameters",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-parameters-hint",
+                            }),
+                            archbuilder_commands::project_parameter::PARAMETER_CREATE,
+                            "parameters",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-sets",
                     },
                     vec![
@@ -1424,6 +1453,8 @@ pub fn icons() -> Vec<(String, String)> {
         "stair-sketch",
         "set",
         "statistics",
+        "variables",
+        "parameters",
         "project-location",
         "coordinates",
         "recenter",

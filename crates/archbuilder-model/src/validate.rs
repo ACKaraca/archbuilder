@@ -45,7 +45,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         STOREY | LEVEL => Some(&[BUILDING]),
         k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
-        types::SELECTION_SET => Some(&[PROJECT]),
+        types::SELECTION_SET | types::VARIABLE | types::PARAMETER => Some(&[PROJECT]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
@@ -56,6 +56,18 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         }
         _ => None,
     }
+}
+
+/// A formula identifier that cannot name a value, or that another definition uses.
+fn identifier_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    let own = types::text(&object.values, types::variable::IDENTIFIER).unwrap_or_default();
+    if let Err(error) = crate::expr::check_identifier(own) {
+        return Some(error);
+    }
+    crate::variable::identifiers(candidate, Some(object.id))
+        .iter()
+        .any(|i| i == own)
+        .then(|| Error::new(codes::PARAM_IDENTIFIER_TAKEN).with_arg("identifier", own))
 }
 
 fn name_taken(object: &Object) -> Error {
@@ -110,6 +122,18 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));
     }
     out.extend(type_problem(candidate, key, object));
+    if key == types::VARIABLE || key == types::PARAMETER {
+        out.extend(identifier_problem(candidate, object));
+    }
+    if key == types::PARAMETER {
+        let p = crate::parameter::Parameter::of(object);
+        if p.categories
+            .iter()
+            .any(|c| !crate::parameter::is_category(c))
+        {
+            out.push(Error::new(codes::PARAM_CATEGORY).with_arg("parameter", p.name));
+        }
+    }
     let own = folded(object);
     // Rooms are told apart by number, not by name.
     if key != PROJECT
@@ -1289,9 +1313,14 @@ pub fn pin_refusal(
             (Change::Deleted, _) | (_, None) => true,
             (_, Some(after)) => {
                 let free = pin_free(&key);
+                // Parameter values are data, not placement: a pinned element takes them.
+                let values = crate::parameter::field_at(base, &key);
                 after.header.owner != before.header.owner
-                    || (0..before.values.len().max(after.values.len()))
-                        .any(|k| !free.contains(&k) && before.values.get(k) != after.values.get(k))
+                    || (0..before.values.len().max(after.values.len())).any(|k| {
+                        !free.contains(&k)
+                            && Some(k) != values
+                            && before.values.get(k) != after.values.get(k)
+                    })
             }
         };
         if changed {

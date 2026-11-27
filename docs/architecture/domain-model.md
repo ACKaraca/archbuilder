@@ -902,6 +902,64 @@ plan view as in the 3D view: they are the tab's state, never saved or undone, an
 through object overrides of its definition. Hide in view is the view's own list, a document edit;
 Unhide all ends only the temporary state, and Show hidden in view empties the view's list.
 
+#### Document variables and project parameters
+
+`archbuilder.variable` (schema 1.0) is a named value of the whole document, owned by the project
+([ADR 0009](../adr/0009-parameters-expressions-and-family-documents.md)). The record holds a display
+name (unique among the variables, case folded), a formula identifier (ASCII letters, digits and `_`,
+not a function, unit, `true` or `false`, unique among the variables and project parameters), a data
+type (length, area, volume, angle, slope, number, integer, boolean, text, enumeration, material,
+family type) and a stored value. A stored value is a record of which one field is set: a literal
+number in SI base units (`number`), a truth value (`flag`), a text (`text`), or a formula (`formula`,
+its canonical text with `.` as the decimal separator, with `unit`, the symbol of the unit its bare
+numbers take, so a change of the project's display units never changes what it means). The parsed
+formula, the names it reads and every result are derived and never stored; the record's canonical
+encoding is that of `arc-doc` for these fields. A formula of a variable reads other variables only,
+with the version 1 function set and limits of
+[families.md](families.md#bounded-expression-language) (`archbuilder_model::expr`). Variables
+evaluate in dependency order, ties broken by identifier; a formula that closes a cycle is refused
+with the cycle named by display name. `archbuilder.variable.create`, `set`, `rename` and `delete`
+are each one undo step and evaluate every formula of the document before they commit: a change that
+leaves a formula failing (an unknown name, a dimension error, a deleted variable still read) is
+refused with the parameter, the span and the reason. A new formula identifier is written into every
+formula that reads the old one, token by token from the parsed spans, in the same step. Formulas typed
+in a language with a decimal comma are stored with `.`. `archbuilder.variable.list` and
+`archbuilder-cli inspect` (`variables`) list each variable with its formula and derived value.
+
+`archbuilder.parameter` (schema 1.0) is a project parameter: a display name, a formula identifier
+and a data type as for variables, a scope (`instance`, the default, or `type`), the categories it is
+bound to (the type keys of physical elements: every element but grids and reference planes), a
+group and an order (how the property grid shows it), an optional default (a stored value) and an
+optional rule (minimum, maximum, allowed texts, required; `reject` refuses a change that breaks
+it, otherwise it warns). Values live in the `parameters` field that every physical element and
+every element type record gained as a minor schema version (optional, so files from before load
+unchanged): a list of (parameter, stored value) kept in parameter identifier order, holding only
+values set on that object; deleting a parameter clears its entries. In instance scope values are
+set on the elements of the bound categories, in type scope on their element types. An element reads
+its own value, else its type's, else the default; a type formula reads type parameters and
+variables, an instance formula also the element's other parameters. Each scope evaluates in
+dependency order with cycles refused by name; nothing evaluated is stored. Built-in values of the
+element (a wall's thickness) are not readable by formulas yet.
+
+`archbuilder.parameter.create` (categories given, or those of the selected elements), `update`
+(scope, categories, group, order, default, rule), `rename`, `delete` (its values go with it) and
+`set` (a value or formula on elements or types, or clearing their own value) are each one undo step
+and, like the variable commands, evaluate every variable and parameter value of the document and
+check the rules before they commit: a failing formula or broken reject rule refuses the change and
+names up to 20 objects that fail; warnings come back in the result. A scope change keeps every
+stored value: going to type scope, a type without a value takes that of its first instance (by
+identifier) that has one, and the elements whose own value differs are reported (`diverging`);
+going to instance scope, an instance without a value takes its type's; the values left behind stay
+stored and apply again when the scope changes back.
+`archbuilder.parameter.list` and `inspect` (`parameters`) report the definitions and each object's
+value with its source (`own`, `type`, `default`, `unset`) and formula. The property grid shows the
+parameters of the selected objects in their groups (the common group is Parameters): a value, or a
+formula after `=` with a read-only row of what it gives; an edit goes through
+`archbuilder.property.set` with the field `parameter:<identifier>` (text after `=` is a formula, an
+empty text clears the own value); a type-scope value is read-only on an element. The Manage tab's
+Parameters group adds a variable (name, data type, value or formula) or a project parameter bound
+to the categories of the selection.
+
 ## Selection and modify commands
 
 Selection is the tab's transient state, never an undo step. A click selects, Shift adds, Ctrl toggles
@@ -1339,8 +1397,8 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | `RoomRuleTable`, `RequirementTable`, `DevelopmentLimits` | Rows by use and basis, limits, source and edition | Compared with rooms, area schemes and provided counts |
 | `WorkItemCatalog`, `WorkItemMapping` | Item code, unit, measurement rule, rate; mapping from types, layers and materials | Feed bills of quantities through the quantity rules |
 | `UnitLibraryEntry` | Identity, version, group content, placement rules, derived descriptors | Stored in library packages and immutable per version; a group definition placed from it records its identity and version |
-| `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories | Values on elements and types |
-| `DocumentVariable` | Name, value or expression | Drives parameters |
+| `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories (`archbuilder.parameter`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Values on elements and types (`parameters` field) |
+| `DocumentVariable` | Name, formula identifier, data type, literal or formula (`archbuilder.variable`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Read by formulas of parameters and other variables |
 | `Constraint` | Kind, references (persistent references), value | Solved in transactions |
 | `Phase`, `PhaseDisplayRule` | Order, status display | Elements, views |
 | `OptionSet`, `DesignOption` | Primary flag | Elements |
