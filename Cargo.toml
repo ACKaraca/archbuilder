@@ -15,18 +15,18 @@ publish = false
 # Third-party versions follow the arc-core lock; every crate listed must also appear in
 # xtask/layers.toml.
 [workspace.dependencies]
-arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-draft = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-view = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
-arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "1d3fd251a64bd4e692f69e1587455adcdb10e602" }
+arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-draft = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-view = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
 
 # Formats the names of the default element types from the message catalogs.
 fluent-bundle = { version = "0.16.0", default-features = false }
