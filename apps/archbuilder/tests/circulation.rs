@@ -143,3 +143,75 @@ fn two_clicks_make_a_ramp_with_railings_and_the_prompts_are_turkish_too() {
     rig.document.undo().wait().unwrap();
     assert_eq!((rig.count(RAMP), rig.count(RAILING)), (0, 0));
 }
+
+#[test]
+fn create_similar_starts_the_tool_with_the_type_of_the_selected_railing_or_ramp() {
+    let mut rig = Rig::new("en-US");
+    let run = |rig: &Rig, command: &str, params: serde_json::Value| {
+        Invoker::new(&rig.registry)
+            .invoke(
+                &rig.document,
+                &rig.session,
+                Invocation {
+                    seed: 5,
+                    ..Invocation::new(command, params)
+                },
+            )
+            .unwrap()
+    };
+    let tall = run(
+        &rig,
+        "archbuilder.railing_type.define",
+        json!({"name": "Tall", "height": 1.1}),
+    );
+    let steep = run(
+        &rig,
+        "archbuilder.ramp_type.define",
+        json!({"name": "Steep", "max_slope": 0.2}),
+    );
+    let id = |o: &arc_command::Outcome| -> arc_base::ObjectId {
+        o.value["type"].as_str().unwrap().parse().unwrap()
+    };
+    let (tall, steep) = (id(&tall), id(&steep));
+    // What the selection of a railing or a ramp gives to create similar.
+    let railing = run(
+        &rig,
+        "archbuilder.railing.create",
+        json!({"points": [[0.0, 5.0], [2.0, 5.0]], "railing_type": "Tall"}),
+    );
+    let railing: arc_base::ObjectId = railing.value["railing"].as_str().unwrap().parse().unwrap();
+    let (kind, found) =
+        archbuilder::circ_types::CircKind::of_object(&rig.document.snapshot(), railing).unwrap();
+    assert_eq!(
+        (kind, found),
+        (archbuilder::circ_types::CircKind::Railing, Some(tall))
+    );
+    rig.step(|t, env, run| t.begin_similar(env, run, RAILING_CREATE, "railing_type", tall));
+    rig.step(|t, env, run| t.click(env, run, [1.0, 1.0]));
+    rig.step(|t, env, run| t.click(env, run, [4.0, 1.0]));
+    rig.step(|t, env, run| t.text(env, run, ""));
+    let snapshot = rig.document.snapshot();
+    let made = spatial::objects(&snapshot, RAILING);
+    assert_eq!(made.len(), 2);
+    let kind_of =
+        |o: &arc_doc::Object| o.values[archbuilder_model::types::railing::RAILING_TYPE].clone();
+    assert!(
+        made.iter()
+            .all(|o| kind_of(o) == Some(arc_doc::Value::Reference(tall)))
+    );
+    rig.step(|t, env, run| t.text(env, run, ""));
+    // A ramp made the same way takes the ramp type; its railings keep the default type.
+    rig.step(|t, env, run| t.begin_similar(env, run, RAMP_CREATE, "ramp_type", steep));
+    rig.step(|t, env, run| t.click(env, run, [1.0, 8.0]));
+    rig.step(|t, env, run| t.click(env, run, [7.0, 8.0]));
+    let snapshot = rig.document.snapshot();
+    let ramps = spatial::objects(&snapshot, RAMP);
+    assert_eq!(ramps.len(), 1);
+    assert_eq!(
+        ramps[0].values[archbuilder_model::types::ramp::RAMP_TYPE],
+        Some(arc_doc::Value::Reference(steep))
+    );
+    rig.step(|t, env, run| t.text(env, run, ""));
+    rig.document.undo().wait().unwrap();
+    assert_eq!(rig.count(RAMP), 0);
+}

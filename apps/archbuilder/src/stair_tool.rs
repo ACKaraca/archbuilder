@@ -34,6 +34,9 @@ pub struct StairTool {
     last: Map<String, Value>,
     /// The parameters of a one-shot command; `None` for the repeating stair, railing and ramp.
     once: Option<Map<String, Value>>,
+    /// A railing or ramp type the tool gives what it creates (create similar): the parameter
+    /// name and the type's identifier.
+    similar: Option<(&'static str, String)>,
 }
 
 fn target<'a>(env: &'a Env<'_>, localized: &'a BTreeMap<String, String>) -> Target<'a> {
@@ -105,6 +108,24 @@ impl StairTool {
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>, command: &'static str) -> Result<()> {
+        self.similar = None;
+        self.begin_with(env, run, command, None)
+    }
+
+    /// Starts the railing or ramp tool with the type `type_id` as the preset `key`
+    /// (`railing_type` or `ramp_type`): create similar.
+    ///
+    /// # Errors
+    /// As [`Self::begin`].
+    pub fn begin_similar(
+        &mut self,
+        env: &Env<'_>,
+        run: Runner<'_>,
+        command: &'static str,
+        key: &'static str,
+        type_id: ObjectId,
+    ) -> Result<()> {
+        self.similar = Some((key, type_id.to_string()));
         self.begin_with(env, run, command, None)
     }
 
@@ -120,6 +141,7 @@ impl StairTool {
         command: &'static str,
         preset: Map<String, Value>,
     ) -> Result<()> {
+        self.similar = None;
         self.begin_with(env, run, command, Some(preset))
     }
 
@@ -153,6 +175,9 @@ impl StairTool {
                 Map::new()
             };
             preset.insert("storey".into(), Value::from(storey.to_string()));
+            if let Some((key, id)) = &self.similar {
+                preset.insert((*key).into(), Value::from(id.clone()));
+            }
             preset
         };
         let localized = BTreeMap::new();

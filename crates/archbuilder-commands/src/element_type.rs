@@ -1291,6 +1291,14 @@ pub struct DuplicateType {
 }
 
 fn duplicate_type(ctx: &mut Context<'_>, p: DuplicateType) -> Result<TypeChanged> {
+    if crate::circulation::instance_of_type(ctx.snapshot(), p.element_type.0).is_some() {
+        let id = crate::circulation::duplicate_type(ctx, p.element_type.0, p.name.as_deref())?;
+        ensure_valid(ctx)?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(id)),
+            ..TypeChanged::default()
+        });
+    }
     let (kind, object) = type_record(ctx.snapshot(), p.element_type.0)?;
     let n = Names::new(&language(ctx));
     let base = p
@@ -1328,6 +1336,9 @@ pub struct DeleteType {
 
 fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
     let IdParam(id) = p.element_type;
+    if crate::circulation::instance_of_type(ctx.snapshot(), id).is_some() {
+        return delete_circulation_type(ctx, id, p.replacement.map(|r| r.0));
+    }
     let (kind, object) = type_record(ctx.snapshot(), id)?;
     if spatial::objects(ctx.snapshot(), kind.key()).len() <= 1 {
         return Err(Error::new(codes::TYPE_LAST).with_arg("name", et::name(&object).to_owned()));
@@ -1351,6 +1362,41 @@ fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
     if let Some(r) = replacement {
         for user in &users {
             assign(ctx, user.id, kind, r)?;
+        }
+    }
+    ctx.txn()?.delete(id)?;
+    ensure_valid(ctx)?;
+    Ok(TypeChanged {
+        element_type: replacement.map(IdParam),
+        instances: users.len(),
+        resynced: None,
+    })
+}
+
+/// Deletes the railing type or ramp type `id`; its railings or ramps get `replacement`, a type
+/// of the same kind, which is required while it has users.
+fn delete_circulation_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    replacement: Option<ObjectId>,
+) -> Result<TypeChanged> {
+    let key = spatial::type_of(ctx.snapshot(), id).ok_or_else(|| Error::new(codes::TYPE_KIND))?;
+    let object = spatial::get(ctx.snapshot(), id)
+        .ok_or_else(|| Error::new(codes::TYPE_UNKNOWN).with_arg("name", id.to_string()))?;
+    if spatial::objects(ctx.snapshot(), &key).len() <= 1 {
+        return Err(Error::new(codes::TYPE_LAST).with_arg("name", et::name(&object).to_owned()));
+    }
+    let users = crate::circulation::type_users(ctx.snapshot(), id);
+    match replacement {
+        Some(r) if r != id && spatial::type_of(ctx.snapshot(), r).as_deref() == Some(&key) => {
+            crate::circulation::retype(ctx, r, &users)?;
+        }
+        Some(_) => return Err(Error::new(codes::TYPE_KIND)),
+        None if users.is_empty() => {}
+        None => {
+            return Err(Error::new(codes::TYPE_IN_USE)
+                .with_arg("name", et::name(&object).to_owned())
+                .with_arg("count", i64::try_from(users.len()).unwrap_or(i64::MAX)));
         }
     }
     ctx.txn()?.delete(id)?;
@@ -1474,6 +1520,21 @@ fn match_type(ctx: &mut Context<'_>, p: MatchType) -> Result<TypeChanged> {
     let objects = targets(ctx, p.objects)?;
     let source =
         spatial::get(ctx.snapshot(), p.source.0).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    // A railing or a ramp: its type goes to the railings or ramps among the objects.
+    let circulation = match spatial::type_of(ctx.snapshot(), source.id).as_deref() {
+        Some(types::RAILING) => types::railing::RAILING_TYPE,
+        Some(types::RAMP) => types::ramp::RAMP_TYPE,
+        _ => usize::MAX,
+    };
+    if let Some(Some(Value::Reference(type_id))) = source.values.get(circulation) {
+        let others: Vec<ObjectId> = objects.into_iter().filter(|id| *id != source.id).collect();
+        let n = crate::circulation::retype(ctx, *type_id, &others)?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(*type_id)),
+            instances: n,
+            resynced: None,
+        });
+    }
     let (kind, found) =
         et::type_of_object(ctx.snapshot(), &source).ok_or_else(|| Error::new(codes::TYPE_KIND))?;
     let objects: Vec<ObjectId> = objects.into_iter().filter(|id| *id != source.id).collect();

@@ -433,3 +433,149 @@ fn ramps_and_hosted_railings_move_copy_and_delete_together() {
     env.document.undo().wait().unwrap();
     assert_eq!((count(&env, RAMP), count(&env, RAILING)), (2, 5));
 }
+
+fn type_of_railing(env: &Env, id: ObjectId) -> ObjectId {
+    match spatial::get(&env.snapshot(), id).unwrap().values
+        [archbuilder_model::types::railing::RAILING_TYPE]
+    {
+        Some(arc_doc::Value::Reference(t)) => t,
+        _ => panic!("no type"),
+    }
+}
+
+#[test]
+fn railing_and_ramp_types_duplicate_match_and_delete_with_undo() {
+    let env = Env::new();
+    let a = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [2.0, 0.0]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let b = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 1.0], [2.0, 1.0]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let first = type_of_railing(&env, a);
+    // Duplicate: the copy has the values of the original and the next free name.
+    let copy = id_at(
+        &env.run(
+            "archbuilder.type.duplicate",
+            json!({"type": first.to_string()}),
+        )
+        .unwrap(),
+        "type",
+    );
+    assert_eq!(count(&env, RAILING_TYPE), 2);
+    let snapshot = env.snapshot();
+    let (o, c) = (
+        spatial::get(&snapshot, first).unwrap(),
+        spatial::get(&snapshot, copy).unwrap(),
+    );
+    assert_eq!(text(&c.values, 0), Some("Railing 900 (2)"));
+    assert_eq!(o.values[1..], c.values[1..]);
+    // Editing the copy through the define command, then matching a railing to it.
+    env.run(
+        "archbuilder.railing_type.define",
+        json!({"type": copy.to_string(), "height": 1.1}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [b.to_string()], "field": "railing_type", "value": copy.to_string()}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.type.match",
+        json!({"source": b.to_string(), "objects": [a.to_string()]}),
+    )
+    .unwrap();
+    assert_eq!(type_of_railing(&env, a), copy);
+    assert!(close(env.railing(a).kind.height, 1.1));
+    env.document.undo().wait().unwrap();
+    assert_eq!(type_of_railing(&env, a), first);
+    // A type in use is not deleted without a replacement; with one its users move over.
+    let refused = env.run("archbuilder.type.delete", json!({"type": copy.to_string()}));
+    assert!(refused.is_err());
+    env.run(
+        "archbuilder.type.delete",
+        json!({"type": copy.to_string(), "replacement": first.to_string()}),
+    )
+    .unwrap();
+    assert_eq!(count(&env, RAILING_TYPE), 1);
+    assert_eq!(type_of_railing(&env, b), first);
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env, RAILING_TYPE), 2);
+    assert_eq!(type_of_railing(&env, b), copy);
+}
+
+#[test]
+fn ramp_types_duplicate_and_match_and_a_ramp_type_does_not_retype_a_railing() {
+    let env = Env::new();
+    let a = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [2.0, 0.0]]}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let first = type_of_railing(&env, a);
+    let r1 = id_at(
+        &env.ramp(json!({"start": [0.0, 0.0], "to": [6.0, 0.0], "rise": 0.5}))
+            .unwrap(),
+        "ramp",
+    );
+    let r2 = id_at(
+        &env.ramp(json!({"start": [0.0, 3.0], "to": [6.0, 3.0], "rise": 0.5}))
+            .unwrap(),
+        "ramp",
+    );
+    let kind = |id: ObjectId| match spatial::get(&env.snapshot(), id).unwrap().values
+        [archbuilder_model::types::ramp::RAMP_TYPE]
+    {
+        Some(arc_doc::Value::Reference(t)) => t,
+        _ => panic!("no type"),
+    };
+    let ramp_type = kind(r1);
+    let copy = id_at(
+        &env.run(
+            "archbuilder.type.duplicate",
+            json!({"type": ramp_type.to_string(), "name": "Steep"}),
+        )
+        .unwrap(),
+        "type",
+    );
+    env.run(
+        "archbuilder.ramp_type.define",
+        json!({"type": "Steep", "max_slope": 0.2}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [r1.to_string()], "field": "ramp_type", "value": "Steep"}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.type.match",
+        json!({"source": r1.to_string(), "objects": [r2.to_string()]}),
+    )
+    .unwrap();
+    assert_eq!((kind(r1), kind(r2)), (copy, copy));
+    // A railing is not retyped by a ramp's type.
+    env.run(
+        "archbuilder.type.match",
+        json!({"source": r1.to_string(), "objects": [a.to_string()]}),
+    )
+    .unwrap();
+    assert_eq!(type_of_railing(&env, a), first);
+    env.document.undo().wait().unwrap();
+    env.document.undo().wait().unwrap();
+    assert_eq!(kind(r2), ramp_type);
+}

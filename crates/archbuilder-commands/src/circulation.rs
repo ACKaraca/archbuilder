@@ -319,6 +319,82 @@ fn define_ramp_type(ctx: &mut Context<'_>, p: DefineRampType) -> Result<TypeDefi
     })
 }
 
+/// The key of the instances and the name of their reference field for a railing or ramp type
+/// record `id`; `None` for any other record.
+pub fn instance_of_type(snapshot: &Snapshot, id: ObjectId) -> Option<(&'static str, &'static str)> {
+    match spatial::type_of(snapshot, id).as_deref() {
+        Some(RAILING_TYPE) => Some((RAILING, "railing_type")),
+        Some(RAMP_TYPE) => Some((RAMP, "ramp_type")),
+        _ => None,
+    }
+}
+
+/// The railings or ramps that have the type `id`.
+pub fn type_users(snapshot: &Snapshot, id: ObjectId) -> Vec<ObjectId> {
+    let Some((key, _)) = instance_of_type(snapshot, id) else {
+        return Vec::new();
+    };
+    let at = if key == RAILING {
+        types::railing::RAILING_TYPE
+    } else {
+        types::ramp::RAMP_TYPE
+    };
+    spatial::objects(snapshot, key)
+        .iter()
+        .filter(|o| matches!(o.values.get(at), Some(Some(Value::Reference(t))) if *t == id))
+        .map(|o| o.id)
+        .collect()
+}
+
+/// A copy of the railing type or ramp type `id`, named `name` or, without one, like it with the
+/// next free number.
+pub(crate) fn duplicate_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    name: Option<&str>,
+) -> Result<ObjectId> {
+    let (key, _) = instance_of_type(ctx.snapshot(), id).ok_or_else(invalid)?;
+    let object = spatial::get(ctx.snapshot(), id).ok_or_else(invalid)?;
+    let base = name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .or_else(|| types::text(&object.values, 0))
+        .unwrap_or_default()
+        .to_owned();
+    let kind = if key == RAILING {
+        RAILING_TYPE
+    } else {
+        RAMP_TYPE
+    };
+    let name = free_name(ctx.snapshot(), kind, &base);
+    let mut values = object.values.clone();
+    if let Some(slot) = values.get_mut(0) {
+        *slot = Some(Value::String(name));
+    }
+    let owner = crate::element_type::project(ctx.snapshot())?;
+    create(ctx, kind, Some(owner), values)
+}
+
+/// Gives each of `objects` that is a railing (for a railing type) or a ramp (for a ramp type) the
+/// type `type_id`; returns how many. Objects of another kind are left alone.
+pub(crate) fn retype(
+    ctx: &mut Context<'_>,
+    type_id: ObjectId,
+    objects: &[ObjectId],
+) -> Result<usize> {
+    let (key, field) = instance_of_type(ctx.snapshot(), type_id).ok_or_else(invalid)?;
+    let mut count = 0;
+    for id in objects {
+        if spatial::type_of(ctx.snapshot(), *id).as_deref() == Some(key) {
+            ctx.txn()?
+                .modify(*id, FieldPath::new(field), Some(Value::Reference(type_id)))?;
+            count += 1;
+        }
+    }
+    ensure_valid(ctx)?;
+    Ok(count)
+}
+
 /// The railing type `given` names, else the default one (made when the document has none).
 fn railing_type_for(ctx: &mut Context<'_>, given: Option<&str>) -> Result<ObjectId> {
     if let Some(text) = given {
@@ -991,8 +1067,10 @@ impl PromptMachine for RampPrompts {
             let mut params = Map::new();
             params.insert("start".into(), Json::from(start.to_vec()));
             params.insert("to".into(), Json::from(to.to_vec()));
-            if let Some(v) = state.preset.get("storey") {
-                params.insert("storey".into(), v.clone());
+            for key in ["storey", "ramp_type", "railing_type"] {
+                if let Some(v) = state.preset.get(key) {
+                    params.insert(key.into(), v.clone());
+                }
             }
             return Ok(Step::Done(params));
         }

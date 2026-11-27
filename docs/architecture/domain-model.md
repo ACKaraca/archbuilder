@@ -409,6 +409,26 @@ loss report (`ab.io.ifc.stair_not_written`) and nothing is written in its place;
 written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
 have it taken out.
 
+#### Railings and ramps
+
+`archbuilder.railing` is a railing by path (points with a height above the level and the bulge of
+the arc to the next point) or hosted on another element, with a type, the extension at each end of
+the rail and the railing its top rail continues to. `archbuilder.ramp` is a straight run with a
+landing at each end, a width, a thickness and a form. `archbuilder.railing_type` holds the height
+of the top rail, the profiles, an optional handrail, the baluster spacing, the post size and how
+the rail turns at a corner (miter or fillet); `archbuilder.ramp_type` holds the largest slope and
+the thickness. Only these inputs are stored; the walking surface, the posts, the balusters, the
+rails and the solids are derived each time.
+
+Types. The type editor lists railing types and ramp types next to the element types: it shows the
+type of the selected railing or ramp, edits all its values (checked as typed, one
+`archbuilder.railing_type.define` or `archbuilder.ramp_type.define` on Apply, so every railing or
+ramp of the type changes in one undo step), duplicates it (`archbuilder.type.duplicate`) and
+deletes it, asking for the type its railings or ramps get instead (`archbuilder.type.delete`).
+Create similar starts the railing or ramp tool with the type of the selected one; match type
+(`archbuilder.type.match`) gives the railings or ramps picked after the source its type, and
+leaves objects of another kind alone.
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored

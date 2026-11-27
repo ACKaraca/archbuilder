@@ -40,6 +40,7 @@ use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 
 pub mod ceiling_view;
 pub mod chrome;
+pub mod circ_types;
 pub mod clipboard;
 pub mod datum_tool;
 pub mod datum_view;
