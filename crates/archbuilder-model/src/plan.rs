@@ -760,7 +760,7 @@ impl PlanSource<'_> {
             DetailLevel::Medium => Level::Medium,
             _ => Level::High,
         };
-        let mut out = SourceObject::new("archbuilder.component", styles(self.scale, self.tone));
+        let mut out = SourceObject::new(Category::Component.key(), styles(self.scale, self.tone));
         let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
         for (k, s) in placed
             .solids

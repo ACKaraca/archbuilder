@@ -632,7 +632,8 @@ Bounds and drawing. A railing gets at most 4 000 balusters ([`railing::MAX_BALUS
 would need more has none, keeps its rails and posts and is reported (`ab.model.railing_balusters`),
 and `archbuilder.railing.create` says so (`balusters_capped`); the count is computed before any
 baluster is. In a plan view ramps and railings are drawn under their own categories (`ramp`,
-`railing`, flags `show_ramps` and `show_railings`), not under stairs, and each run of a ramp has
+`railing`, flags `show_ramps` and `show_railings`), not under stairs; components are drawn under
+`component` (flag `show_components`, in plan and model views, absent in older files and then shown), and each run of a ramp has
 its slope in percent written at its middle (with the decimal separator of the language, marked when
 it passes the type's largest slope). While the railing or ramp tool asks for points, a dashed
 preview follows the pointer: the path so far for a railing, the outline and walking line of the

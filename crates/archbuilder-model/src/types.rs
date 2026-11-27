@@ -809,6 +809,8 @@ pub mod plan_view {
     pub const SHOW_RAILINGS: usize = 21;
     /// Whether ramps are drawn; appended in schema 1.3.
     pub const SHOW_RAMPS: usize = 22;
+    /// Whether components are drawn; appended in schema 1.4.
+    pub const SHOW_COMPONENTS: usize = 23;
 }
 
 /// Field positions of `archbuilder.variable`.
@@ -887,6 +889,8 @@ pub mod model_view {
     pub const BOTTOM: usize = 38;
     /// The highest elevation drawn.
     pub const TOP: usize = 39;
+    /// Whether components are drawn; appended in schema 1.1 after the other fields.
+    pub const SHOW_COMPONENTS: usize = 40;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1993,9 +1997,11 @@ fn model_view_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("graphics"),
     ];
+    // The components flag stands after the top, below; the others stay in their block.
     fields.extend(
         crate::view::Category::ALL
             .iter()
+            .filter(|c| **c != crate::view::Category::Component)
             .map(|c| flag(c.field(), true, "graphics")),
     );
     fields.push(
@@ -2036,6 +2042,7 @@ fn model_view_fields() -> Vec<FieldDecl> {
     fields.push(flag("crop", true, "range"));
     fields.push(optional_length("bottom", ELEVATION_RANGE).in_aspect("range"));
     fields.push(optional_length("top", ELEVATION_RANGE).in_aspect("range"));
+    fields.push(flag(crate::view::Category::Component.field(), true, "graphics").since_minor(1));
     fields
 }
 
@@ -2152,7 +2159,15 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         crate::view::Category::ALL
             .iter()
             .skip(plan_view::CATEGORY_COUNT)
-            .map(|c| flag(c.field(), c.shown_by_default()).since_minor(3)),
+            .map(|c| {
+                // Components came in schema 1.4, after railings and ramps in 1.3.
+                let minor = if *c == crate::view::Category::Component {
+                    4
+                } else {
+                    3
+                };
+                flag(c.field(), c.shown_by_default()).since_minor(minor)
+            }),
     );
     fields
 }

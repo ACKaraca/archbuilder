@@ -108,7 +108,7 @@ pub struct ModelView {
     /// The elements hidden in this view.
     pub hidden: Vec<ObjectId>,
     /// Which categories are drawn, in the order of [`Category::ALL`].
-    pub shown: [bool; 11],
+    pub shown: [bool; 12],
     /// The camera of a 3D view; `None` frames the whole model when it opens.
     pub camera: Option<Camera>,
     /// Whether the section box crops a 3D view.
@@ -160,7 +160,7 @@ impl ModelView {
             detail: Detail::Medium,
             style: VisualStyle::Shaded,
             hidden: Vec::new(),
-            shown: [true; 11],
+            shown: [true; 12],
             camera: None,
             section_box: false,
             corners: None,
@@ -193,10 +193,7 @@ impl ModelView {
                 .collect(),
             _ => Vec::new(),
         };
-        let mut shown = [true; 11];
-        for (k, slot) in shown.iter_mut().enumerate() {
-            *slot = flag(values, f::CATEGORIES + k, true);
-        }
+        let shown = Category::ALL.map(|c| flag(values, c.model_slot(), true));
         let camera = match (triple(values, f::EYE), triple(values, f::TARGET)) {
             (Some(eye), Some(target)) => Some(Camera {
                 eye,
@@ -243,7 +240,13 @@ impl ModelView {
             Some(Value::Enum(self.style.code())),
             (!self.hidden.is_empty()).then(|| crate::view::hidden_value(&self.hidden)),
         ];
-        out.extend(self.shown.iter().map(|b| Some(Value::Bool(*b))));
+        // The flags stand in their block; the components flag is written after the top.
+        out.extend(
+            Category::ALL
+                .iter()
+                .filter(|c| **c != Category::Component)
+                .map(|c| Some(Value::Bool(self.shows(*c)))),
+        );
         let camera = self.camera;
         out.push(camera.map(|c| Value::Bool(c.perspective)));
         for at in 0..3 {
@@ -268,6 +271,7 @@ impl ModelView {
         out.push(Some(Value::Bool(self.crop)));
         out.push(self.bottom.map(length));
         out.push(self.top.map(length));
+        out.push(Some(Value::Bool(self.shows(Category::Component))));
         out
     }
 
@@ -454,6 +458,23 @@ pub enum Side {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_components_flag_is_written_last_and_an_older_view_shows_components() {
+        let mut view = ModelView::new("3D 1", ViewKind::ThreeD);
+        view.shown[Category::ALL.len() - 1] = false;
+        let values = view.values();
+        assert_eq!(values.len(), crate::types::model_view::SHOW_COMPONENTS + 1);
+        assert_eq!(
+            values[crate::types::model_view::SHOW_COMPONENTS],
+            Some(Value::Bool(false))
+        );
+        assert_eq!(ModelView::from_values(&values).as_ref(), Some(&view));
+        // A view from before the flag shows components.
+        let older =
+            ModelView::from_values(&values[..crate::types::model_view::SHOW_COMPONENTS]).unwrap();
+        assert!(older.shows(Category::Component) && older.shows(Category::Wall));
+    }
 
     #[test]
     fn a_view_round_trips_through_its_values() {

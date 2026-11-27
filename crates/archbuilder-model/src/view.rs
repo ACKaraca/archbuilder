@@ -70,11 +70,13 @@ pub enum Category {
     Railing,
     /// Ramps.
     Ramp,
+    /// Components: placed instances of families.
+    Component,
 }
 
 impl Category {
     /// Every category, in the order of the flags of a view record.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Wall,
         Self::Floor,
         Self::Roof,
@@ -86,6 +88,7 @@ impl Category {
         Self::Opening,
         Self::Railing,
         Self::Ramp,
+        Self::Component,
     ];
 
     /// The name of the category in the drawing (the key of its graphic overrides).
@@ -103,6 +106,7 @@ impl Category {
             Self::Opening => "opening",
             Self::Railing => "railing",
             Self::Ramp => "ramp",
+            Self::Component => "component",
         }
     }
 
@@ -121,6 +125,7 @@ impl Category {
             Self::Opening => "show_openings",
             Self::Railing => "show_railings",
             Self::Ramp => "show_ramps",
+            Self::Component => "show_components",
         }
     }
 
@@ -139,7 +144,20 @@ impl Category {
             // the range.
             Self::Railing => plan_view::SHOW_RAILINGS,
             Self::Ramp => plan_view::SHOW_RAMPS,
+            Self::Component => plan_view::SHOW_COMPONENTS,
             _ => plan_view::CATEGORIES + Self::ALL.iter().position(|c| *c == self).unwrap_or(0),
+        }
+    }
+
+    /// The position of the category's flag in the record of a model view.
+    #[must_use]
+    pub fn model_slot(self) -> usize {
+        match self {
+            Self::Component => crate::types::model_view::SHOW_COMPONENTS,
+            _ => {
+                crate::types::model_view::CATEGORIES
+                    + Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+            }
         }
     }
 
@@ -156,6 +174,7 @@ impl Category {
             t::WINDOW => Self::Window,
             t::STAIR => Self::Stair,
             t::RAMP => Self::Ramp,
+            t::COMPONENT => Self::Component,
             t::RAILING => Self::Railing,
             t::ROOM => Self::Room,
             t::SHAFT | t::ELEVATOR | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
@@ -183,7 +202,7 @@ pub struct PlanView {
     /// Whether the storey below shows faint underneath.
     pub underlay: bool,
     /// Which categories are drawn, in the order of [`Category::ALL`].
-    pub shown: [bool; 11],
+    pub shown: [bool; 12],
     /// The elements hidden in this view.
     pub hidden: Vec<ObjectId>,
     /// The bottom of the range relative to the level (not above the cut).
