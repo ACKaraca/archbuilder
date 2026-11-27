@@ -263,6 +263,37 @@ fn free_name(snapshot: &Snapshot, kind: TypeKind, name: &str, names: &Names) -> 
         .unwrap_or_else(|| name.to_owned())
 }
 
+/// The type of `kind` a pasted instance takes whose type was `original`, a record with the field
+/// values `values` (perhaps of another document): `original` when this document has it, else a
+/// type of the same name with the same values, else a new type with those values under a free
+/// name.
+///
+/// # Errors
+/// The errors of the transaction.
+pub(crate) fn adopt(
+    ctx: &mut Context<'_>,
+    kind: TypeKind,
+    original: ObjectId,
+    mut values: Vec<Option<Value>>,
+) -> Result<ObjectId> {
+    let snapshot = ctx.txn()?.snapshot().clone();
+    if spatial::type_of(&snapshot, original).as_deref() == Some(kind.key()) {
+        return Ok(original);
+    }
+    let name = types::text(&values, 0).unwrap_or_default().to_owned();
+    if let Some(same) = et::of_kind(&snapshot, kind)
+        .iter()
+        .find(|t| names::same(et::name(t), &name) && t.values == values)
+    {
+        return Ok(same.id);
+    }
+    let free = free_name(&snapshot, kind, &name, &Names::new(&language(ctx)));
+    if let Some(slot) = values.get_mut(0) {
+        *slot = Some(Value::String(free));
+    }
+    create_type(ctx, kind, values)
+}
+
 /// Creates a type of `kind` owned by the project.
 fn create_type(
     ctx: &mut Context<'_>,

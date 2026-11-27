@@ -1,12 +1,17 @@
-//! Clipboard content: a copy of walls, doors and windows, floors, rooms and stairs that carries their field
-//! values, so it can be pasted after the originals are deleted and into another document of the
+//! Clipboard content: a copy of the elements of a selection (every kind `archbuilder.modify.copy`
+//! copies) that carries their field values, so it can be pasted after the originals are deleted and into another document of the
 //! same product. [`capture`] reads the objects of a snapshot into JSON; the paste commands
 //! (`archbuilder.clipboard.paste`, `paste_to_storey`, with the `content` parameter) create new
 //! objects from it in a storey, translated by a displacement.
 //!
 //! What is kept: every field value except references to objects outside the content. A wall's top
 //! constraint is replaced by its effective height (the top becomes unconnected); the edges of a
-//! floor follow the pasted walls they followed; a door or window needs its wall in the content.
+//! floor follow the pasted walls they followed; a door or window needs its wall in the content, a
+//! floor edge or vertical opening its host, a hosted railing its stair or ramp. Grids and reference
+//! planes go to the building of the storey pasted into, a grid with the label after its
+//! original's; a curtain wall keeps its grid edits and panel overrides (they are keyed per wall).
+//! A type, level or host that the document does not have is dropped (the default type, the
+//! storey's own levels).
 
 use std::collections::BTreeMap;
 
@@ -114,6 +119,24 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     Json::Array(values.iter().map(encode).collect()),
                     WALL,
                 );
+                // A curtain wall's grid and panels are its type's: the type goes with it.
+                if archbuilder_model::curtain::is_curtain(snapshot, &object)
+                    && let Some(ty) = archbuilder_model::element_type::type_of(
+                        snapshot,
+                        archbuilder_model::element_type::TypeKind::Wall,
+                        &object.values,
+                    )
+                    && let Some(item) = items.last_mut().and_then(Json::as_object_mut)
+                    && item.get("id").and_then(Json::as_str) == Some(id.to_string().as_str())
+                {
+                    item.insert(
+                        "type".into(),
+                        json!({
+                            "id": ty.id.to_string(),
+                            "values": ty.values.iter().map(encode).collect::<Vec<_>>(),
+                        }),
+                    );
+                }
             }
             STAIR => {
                 // The top follows the level above the storey the stair is pasted into.
@@ -129,7 +152,27 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     STAIR,
                 );
             }
-            FLOOR | ROOM | ROOF | CEILING | SHAFT => push(
+            types::RAILING
+                if archbuilder_model::railing::Railing::from_values(&object.values)
+                    .is_some_and(|r| r.host.is_none()) =>
+            {
+                push(
+                    &mut items,
+                    *id,
+                    None,
+                    Json::Array(object.values.iter().map(encode).collect()),
+                    &key,
+                );
+            }
+            FLOOR
+            | ROOM
+            | ROOF
+            | CEILING
+            | SHAFT
+            | types::RAMP
+            | types::GRID
+            | types::REFERENCE_PLANE
+            | types::ROOF_EXTRUSION => push(
                 &mut items,
                 *id,
                 None,
@@ -163,6 +206,22 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                     Json::Array(edge.values.iter().map(encode).collect()),
                     types::FLOOR_EDGE,
                 );
+            }
+        }
+        // The railings hosted on a stair or ramp go with it.
+        if key == STAIR || key == types::RAMP {
+            for railing in spatial::objects(snapshot, types::RAILING) {
+                let hosted = archbuilder_model::railing::Railing::from_values(&railing.values)
+                    .is_some_and(|r| r.host == Some(*id));
+                if hosted {
+                    push(
+                        &mut items,
+                        railing.id,
+                        Some(*id),
+                        Json::Array(railing.values.iter().map(encode).collect()),
+                        types::RAILING,
+                    );
+                }
             }
         }
         if types::VERTICAL_HOSTS.contains(&key.as_str()) {
@@ -242,6 +301,17 @@ pub(crate) fn paste_content(
         Some((key, id, host, values))
     };
     let decoded: Vec<_> = items.iter().filter_map(parts).collect();
+    // The types that curtain walls carry, by wall.
+    let wall_types: BTreeMap<ObjectId, (ObjectId, Vec<Option<Value>>)> = items
+        .iter()
+        .filter_map(|item| {
+            let wall: ObjectId = item.get("id")?.as_str()?.parse().ok()?;
+            let ty = item.get("type")?;
+            let id: ObjectId = ty.get("id")?.as_str()?.parse().ok()?;
+            let values = ty.get("values")?.as_array()?.iter().map(decode).collect();
+            Some((wall, (id, values)))
+        })
+        .collect();
     let mut map: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
     let mut created: Vec<ObjectId> = Vec::new();
     for (key, old, _, mut values) in decoded.iter().cloned() {
@@ -265,6 +335,11 @@ pub(crate) fn paste_content(
             (types::wall::END_Y, moved.end[1]),
         ] {
             put(at, types::length(v));
+        }
+        if let Some((original, type_values)) = wall_types.get(&old).cloned() {
+            let kind = archbuilder_model::element_type::TypeKind::Wall;
+            let ty = crate::element_type::adopt(ctx, kind, original, type_values)?;
+            put(kind.field(), Value::Reference(ty));
         }
         crate::element_type::rebind(ctx, WALL, &mut values)?;
         let new = create(ctx, WALL, Some(storey), values)?;
@@ -441,7 +516,9 @@ pub(crate) fn paste_content(
         }
         created.push(create(ctx, VERTICAL_OPENING, Some(host), values)?);
     }
-    for (key, _, _, values) in decoded.iter().cloned() {
+    // The stairs and ramps pasted, by original: their hosted railings follow.
+    let mut circulation: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
+    for (key, old, _, values) in decoded.iter().cloned() {
         if key != STAIR {
             continue;
         }
@@ -451,8 +528,91 @@ pub(crate) fn paste_content(
         moved.top_level = None;
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, storey, &tongue);
-        created.push(create(ctx, STAIR, Some(storey), moved.values(&name))?);
+        let new = create(ctx, STAIR, Some(storey), moved.values(&name))?;
+        circulation.insert(old, new);
+        created.push(new);
     }
+    for (key, old, _, values) in decoded.iter().cloned() {
+        if key != types::RAMP {
+            continue;
+        }
+        let mut moved = archbuilder_model::ramp::Ramp::from_values(&values)
+            .ok_or_else(invalid)?
+            .moved(&xf);
+        // The top follows the level above the storey the ramp is pasted into.
+        moved.top_level = None;
+        moved.ramp_type =
+            crate::circulation::own(ctx.snapshot(), moved.ramp_type, types::RAMP_TYPE);
+        let name =
+            crate::circulation::next_name(ctx.txn()?.snapshot(), types::RAMP, storey, &tongue);
+        let new = create(ctx, types::RAMP, Some(storey), moved.values(&name))?;
+        circulation.insert(old, new);
+        created.push(new);
+    }
+    for (key, _, host, values) in decoded.iter().cloned() {
+        if key != types::RAILING {
+            continue;
+        }
+        let railing =
+            archbuilder_model::railing::Railing::from_values(&values).ok_or_else(invalid)?;
+        match host {
+            Some(host) => {
+                let Some(new) = circulation.get(&host).copied() else {
+                    continue;
+                };
+                created.extend(crate::circulation::copy_hosted_railings(
+                    ctx,
+                    vec![railing],
+                    new,
+                    storey,
+                    false,
+                    &tongue,
+                )?);
+            }
+            None => {
+                let moved = archbuilder_model::railing::Railing {
+                    continues_to: None,
+                    railing_type: crate::circulation::own(
+                        ctx.snapshot(),
+                        railing.railing_type,
+                        types::RAILING_TYPE,
+                    ),
+                    ..railing.moved(&xf)
+                };
+                let name = crate::circulation::next_name(
+                    ctx.txn()?.snapshot(),
+                    types::RAILING,
+                    storey,
+                    &tongue,
+                );
+                created.push(create(
+                    ctx,
+                    types::RAILING,
+                    Some(storey),
+                    moved.values(&name),
+                )?);
+            }
+        }
+    }
+    let building = spatial::get(ctx.snapshot(), storey).and_then(|s| s.header.owner);
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::GRID && key != types::REFERENCE_PLANE {
+            continue;
+        }
+        let building = building.ok_or_else(invalid)?;
+        created.push(crate::datum::copy_datum(ctx, &key, values, building, &xf)?);
+    }
+    let extruded: Vec<_> = decoded
+        .iter()
+        .filter(|(key, ..)| key == types::ROOF_EXTRUSION)
+        .map(|(_, _, _, values)| (None, values.clone()))
+        .collect();
+    created.extend(crate::roof_extrusion::copy_roofs(
+        ctx,
+        extruded,
+        &xf,
+        Some(storey),
+    )?);
     if created.is_empty() {
         return Err(Error::new(codes::CLIPBOARD_EMPTY));
     }
@@ -466,8 +626,10 @@ pub(crate) fn paste_content(
     })
 }
 
-/// The plan outlines of the content, closed polygons at their original position: the footprint of
-/// each wall and the boundary points of each floor. A ghost of the paste draws them moved.
+/// The plan outlines of the content at their original position: the footprint of each wall and
+/// the boundary points of each floor (closed polygons), the paths and lines of railings, ramps,
+/// grids, reference planes and roofs by extrusion (open lines). A ghost of the paste draws them
+/// moved.
 #[must_use]
 pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
     let items = content.get("items").and_then(Json::as_array);
@@ -498,6 +660,37 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
             let mut l: Vec<[f64; 2]> = r.edges.iter().map(|e| e.vertex.point).collect();
             l.extend(l.first().copied());
             out.push(l);
+        } else if key == types::RAILING
+            && let Some(r) = archbuilder_model::railing::Railing::from_values(&values)
+            && r.path.len() >= 2
+        {
+            out.push(r.path.iter().map(|v| [v.point[0], v.point[1]]).collect());
+        } else if key == types::RAMP
+            && let Some(r) = archbuilder_model::ramp::Ramp::from_values(&values)
+        {
+            let (s, c) = r.direction.sin_cos();
+            let run = r.landing_start + r.length + r.landing_end;
+            out.push(vec![r.start, [r.start[0] + c * run, r.start[1] + s * run]]);
+        } else if key == types::GRID
+            && let Some(g) = archbuilder_model::datum::Grid::from_values(&values)
+        {
+            out.push(vec![g.start, g.end]);
+        } else if key == types::REFERENCE_PLANE
+            && let Some(r) = archbuilder_model::datum::RefPlane::from_values(&values)
+        {
+            out.push(vec![r.start, r.end]);
+        } else if key == types::ROOF_EXTRUSION
+            && let Some(r) = archbuilder_model::roof_extrusion::RoofExtrusion::from_values(&values)
+        {
+            // The plane's line in plan, as far as the profile reaches along it.
+            let (s, c) = r.direction.sin_cos();
+            let at = |u: f64| [r.origin[0] + c * u, r.origin[1] + s * u];
+            let (lo, hi) = r.profile.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+                (lo.min(p[0]), hi.max(p[0]))
+            });
+            if lo <= hi {
+                out.push(vec![at(lo), at(hi)]);
+            }
         } else if (key == FLOOR || key == CEILING)
             && let Some(f) = Floor::from_values(&values)
         {

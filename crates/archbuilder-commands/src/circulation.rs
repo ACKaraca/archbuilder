@@ -378,7 +378,12 @@ fn ramp_type_for(ctx: &mut Context<'_>, given: Option<&str>) -> Result<ObjectId>
     .0)
 }
 
-fn next_name(snapshot: &Snapshot, key: &str, storey: ObjectId, language: &str) -> String {
+pub(crate) fn next_name(
+    snapshot: &Snapshot,
+    key: &str,
+    storey: ObjectId,
+    language: &str,
+) -> String {
     let used = spatial::children(snapshot, key, storey);
     let make = |n: usize| {
         if key == RAMP {
@@ -785,6 +790,53 @@ pub(crate) fn move_circulation(
 
 /// Copies the ramps (with the railings hosted on them) and the railings by path of `set`,
 /// moved by `xf`, into `target` (else their own storey). Returns the new objects.
+/// The railings hosted on the stair or ramp `host`.
+pub(crate) fn hosted_railings(snapshot: &Snapshot, host: ObjectId) -> Vec<Railing> {
+    spatial::objects(snapshot, RAILING)
+        .iter()
+        .filter_map(|o| Railing::from_values(&o.values))
+        .filter(|r| r.host == Some(host))
+        .collect()
+}
+
+/// Creates copies of the hosted railings `railings` on `host` in `storey`; a reflection swaps
+/// their sides. A railing type the document does not have becomes the default type.
+pub(crate) fn copy_hosted_railings(
+    ctx: &mut Context<'_>,
+    railings: Vec<Railing>,
+    host: ObjectId,
+    storey: ObjectId,
+    reflects: bool,
+    tongue: &str,
+) -> Result<Vec<ObjectId>> {
+    let mut created = Vec::new();
+    for r in railings {
+        let side = if reflects {
+            match r.side {
+                Side::Left => Side::Right,
+                Side::Right => Side::Left,
+            }
+        } else {
+            r.side
+        };
+        let name = next_name(ctx.txn()?.snapshot(), RAILING, storey, tongue);
+        let copy = Railing {
+            host: Some(host),
+            side,
+            continues_to: None,
+            railing_type: own(ctx.snapshot(), r.railing_type, RAILING_TYPE),
+            ..r
+        };
+        created.push(create(ctx, RAILING, Some(storey), copy.values(&name))?);
+    }
+    Ok(created)
+}
+
+/// `id` when the document has it as an object of the kind `key`.
+pub(crate) fn own(snapshot: &Snapshot, id: Option<ObjectId>, key: &str) -> Option<ObjectId> {
+    id.filter(|t| spatial::type_of(snapshot, *t).as_deref() == Some(key))
+}
+
 pub(crate) fn copy_circulation(
     ctx: &mut Context<'_>,
     snapshot: &Snapshot,
@@ -808,28 +860,14 @@ pub(crate) fn copy_circulation(
         let name = next_name(ctx.txn()?.snapshot(), RAMP, storey, tongue);
         let new = create(ctx, RAMP, Some(storey), moved.values(&name))?;
         created.push(new);
-        for hosted in spatial::objects(snapshot, RAILING) {
-            let Some(r) = Railing::from_values(&hosted.values).filter(|r| r.host == Some(*id))
-            else {
-                continue;
-            };
-            let side = if xf.reflects() {
-                match r.side {
-                    Side::Left => Side::Right,
-                    Side::Right => Side::Left,
-                }
-            } else {
-                r.side
-            };
-            let name = next_name(ctx.txn()?.snapshot(), RAILING, storey, tongue);
-            let copy = Railing {
-                host: Some(new),
-                side,
-                continues_to: None,
-                ..r
-            };
-            created.push(create(ctx, RAILING, Some(storey), copy.values(&name))?);
-        }
+        created.extend(copy_hosted_railings(
+            ctx,
+            hosted_railings(snapshot, *id),
+            new,
+            storey,
+            xf.reflects(),
+            tongue,
+        )?);
     }
     for id in set.1 {
         let object = spatial::get(snapshot, *id).ok_or_else(kind)?;

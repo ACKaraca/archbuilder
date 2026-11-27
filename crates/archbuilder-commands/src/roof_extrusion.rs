@@ -21,7 +21,8 @@ use arc_command::prompt::{
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{FieldPath, Snapshot};
 use archbuilder_model::element_type::TypeKind;
-use archbuilder_model::roof_extrusion::{Derived, MAX_PROFILE};
+use archbuilder_model::roof_extrusion::{Derived, MAX_PROFILE, RoofExtrusion};
+use archbuilder_model::transform::Xform;
 use archbuilder_model::types::{self, ROOF_EXTRUSION};
 use archbuilder_model::{defaults, names, spatial};
 use schemars::JsonSchema;
@@ -232,6 +233,108 @@ fn edit_roof(ctx: &mut Context<'_>, p: EditRoofExtrusion) -> Result<RoofExtrusio
 /// A message of the catalog, named by identifier.
 struct Msg {
     message_id: &'static str,
+}
+
+/// The field values `values` of a roof by extrusion moved by `xf`: the plane's origin and axis
+/// follow. A reflection turns the plane's normal around, so the start and end change sign (and
+/// places); the profile, measured along the axis and up, stays as it is.
+pub(crate) fn moved_values(values: &mut [Option<arc_doc::Value>], xf: &Xform) -> Result<()> {
+    let roof =
+        RoofExtrusion::from_values(values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let (s, c) = roof.direction.sin_cos();
+    let origin = xf.point(roof.origin);
+    let ahead = xf.point([roof.origin[0] + c, roof.origin[1] + s]);
+    let direction = (ahead[1] - origin[1]).atan2(ahead[0] - origin[0]);
+    let (start, end) = if xf.reflects() {
+        (-roof.end, -roof.start)
+    } else {
+        (roof.start, roof.end)
+    };
+    for (at, value) in [
+        (types::roof_extrusion::X, types::length(origin[0])),
+        (types::roof_extrusion::Y, types::length(origin[1])),
+        (types::roof_extrusion::DIRECTION, types::angle(direction)),
+        (types::roof_extrusion::START, types::length(start)),
+        (types::roof_extrusion::END, types::length(end)),
+    ] {
+        if let Some(slot) = values.get_mut(at) {
+            *slot = Some(value);
+        }
+    }
+    Ok(())
+}
+
+/// Moves the roofs by extrusion `ids` by `xf` in place.
+pub(crate) fn move_roofs(
+    ctx: &mut Context<'_>,
+    snapshot: &Snapshot,
+    ids: &[ObjectId],
+    xf: &Xform,
+) -> Result<()> {
+    for id in ids {
+        let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let mut values = object.values.clone();
+        moved_values(&mut values, xf)?;
+        let txn = ctx.txn()?;
+        for (field, at) in [
+            ("x", types::roof_extrusion::X),
+            ("y", types::roof_extrusion::Y),
+            ("direction", types::roof_extrusion::DIRECTION),
+            ("start", types::roof_extrusion::START),
+            ("end", types::roof_extrusion::END),
+        ] {
+            txn.modify(
+                *id,
+                FieldPath::new(field),
+                values.get(at).cloned().flatten(),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies the roofs by extrusion `ids` moved by `xf` into their storey, or into `target`: each
+/// gets the next free name there and keeps its type when the document has it, else takes the
+/// default roof type.
+pub(crate) fn copy_roofs(
+    ctx: &mut Context<'_>,
+    sources: Vec<(Option<ObjectId>, Vec<Option<arc_doc::Value>>)>,
+    xf: &Xform,
+    target: Option<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    let tongue = language(ctx);
+    let mut out = Vec::new();
+    for (owner, mut values) in sources {
+        let storey = target
+            .or(owner)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        moved_values(&mut values, xf)?;
+        let name = next_name(ctx.txn()?.snapshot(), storey, &tongue);
+        if let Some(slot) = values.get_mut(types::roof_extrusion::NAME) {
+            *slot = Some(named(&name));
+        }
+        let roof_type = match values.get(types::roof_extrusion::ROOF_TYPE) {
+            Some(Some(arc_doc::Value::Reference(t))) => Some(*t),
+            _ => None,
+        };
+        let kept = roof_type.is_some_and(|t| {
+            spatial::type_of(ctx.snapshot(), t).as_deref() == Some(types::ROOF_TYPE)
+        });
+        if let Some(slot) = values.get_mut(types::roof_extrusion::ROOF_TYPE) {
+            *slot = None;
+        }
+        let id = create(ctx, ROOF_EXTRUSION, Some(storey), values)?;
+        let chosen = match roof_type.filter(|_| kept) {
+            Some(t) => t,
+            None => {
+                crate::element_type::ensure_roof_types(ctx)?;
+                crate::wall::choose_type(ctx, TypeKind::Roof, None)?
+            }
+        };
+        crate::element_type::assign(ctx, id, TypeKind::Roof, chosen)?;
+        out.push(id);
+    }
+    Ok(out)
 }
 
 /// The key prefix of the profile prompts: their points are typed `u,z` in the vertical plane, so

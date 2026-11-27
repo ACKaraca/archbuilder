@@ -191,6 +191,8 @@ pub(crate) struct Set {
     pub(crate) cuts: Vec<ObjectId>,
     /// The grids and reference planes.
     pub(crate) datums: Vec<ObjectId>,
+    /// The roofs by extrusion (their plane moves).
+    pub(crate) extruded: Vec<ObjectId>,
 }
 
 impl Set {
@@ -207,6 +209,7 @@ impl Set {
             + self.shafts.len()
             + self.cuts.len()
             + self.datums.len()
+            + self.extruded.len()
     }
 }
 
@@ -260,6 +263,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::SHAFT) => set.shafts.push(id),
             Some(types::VERTICAL_OPENING) => set.cuts.push(id),
             Some(types::GRID | types::REFERENCE_PLANE) => set.datums.push(id),
+            Some(types::ROOF_EXTRUSION) => set.extruded.push(id),
             Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -960,6 +964,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         xf,
     )?;
     crate::datum::move_datums(ctx, &snapshot, &set.datums, xf)?;
+    crate::roof_extrusion::move_roofs(ctx, &snapshot, &set.extruded, xf)?;
     let meets = ensure_valid_lenient(ctx)?;
     Ok(Modified {
         objects: count,
@@ -1146,7 +1151,17 @@ pub(crate) fn copy_set(
         }
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, s, &tongue);
-        created.push(create(ctx, types::STAIR, storey, moved.values(&name))?);
+        let new = create(ctx, types::STAIR, storey, moved.values(&name))?;
+        created.push(new);
+        // The railings hosted on the stair go with it.
+        created.extend(crate::circulation::copy_hosted_railings(
+            ctx,
+            crate::circulation::hosted_railings(&snapshot, *id),
+            new,
+            s,
+            xf.reflects(),
+            &tongue,
+        )?);
     }
     created.extend(crate::circulation::copy_circulation(
         ctx,
@@ -1197,6 +1212,18 @@ pub(crate) fn copy_set(
         target,
     )?);
     created.extend(crate::datum::copy_datums(ctx, &snapshot, &set.datums, xf)?);
+    let extruded = set
+        .extruded
+        .iter()
+        .map(|id| {
+            spatial::get(&snapshot, *id)
+                .map(|o| (o.header.owner, o.values.clone()))
+                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    created.extend(crate::roof_extrusion::copy_roofs(
+        ctx, extruded, xf, target,
+    )?);
     let meets = ensure_valid_lenient(ctx)?;
     ctx.set_selection_after(created.clone());
     Ok(Modified {

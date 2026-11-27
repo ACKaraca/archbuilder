@@ -13,7 +13,6 @@ use arc_ui::{Intent, Localize};
 use archbuilder_model::spatial;
 use archbuilder_model::types;
 use archbuilder_model::validate::{Warning, WarningKind, register};
-use archbuilder_model::wall::Wall;
 
 use crate::shortcuts::ui;
 
@@ -127,99 +126,22 @@ pub fn bounds(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 
 /// The most elements [`extent`] measures.
 const MAX_MEASURED: usize = 20_000;
 
-/// The rectangle in plan around the elements `ids`: walls by their footprint, floors by their
-/// boundary, rooms by their point, stairs by their outline, doors and windows by their place in
-/// their wall. `None` when none of them has a place.
+/// The rectangle in plan around the elements `ids` ([`crate::selection::plan_points`]). `None`
+/// when none of them has a place.
 #[must_use]
 pub fn extent(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<([f64; 2], [f64; 2])> {
-    let mut points: Vec<[f64; 2]> = Vec::new();
-    for id in ids.iter().take(MAX_MEASURED) {
-        let Some(object) = spatial::get(snapshot, *id) else {
-            continue;
-        };
-        match spatial::type_of(snapshot, *id).as_deref() {
-            Some(types::WALL) => {
-                if let Some(w) = Wall::from_values(&object.values) {
-                    points.extend(w.plain_footprint());
-                }
-            }
-            Some(types::FLOOR) => {
-                if let Some(b) = archbuilder_model::floor::Floor::from_values(&object.values)
-                    .and_then(|f| f.boundary_in(snapshot))
-                {
-                    points.extend(b.loops.into_iter().flatten());
-                }
-            }
-            Some(types::ROOM) => {
-                if let Some(r) = archbuilder_model::room::Room::from_values(&object.values) {
-                    points.push(r.point);
-                }
-            }
-            Some(types::STAIR) => {
-                if let Some(p) = archbuilder_model::stair::Placed::of(snapshot, &object) {
-                    points.extend(p.outline());
-                }
-            }
-            Some(types::ROOF) => {
-                if let Ok(d) = archbuilder_model::roof::Derived::of(snapshot, &object) {
-                    points.extend(d.surface.outline.iter().copied());
-                }
-            }
-            Some(types::ROOF_EXTRUSION) => {
-                if let Ok(d) = archbuilder_model::roof_extrusion::Derived::of(snapshot, &object) {
-                    points.extend(d.pieces().iter().flat_map(|p| p.points.iter().copied()));
-                }
-            }
-            Some(types::CEILING) => {
-                if let Some(b) = archbuilder_model::ceiling::Ceiling::from_values(&object.values)
-                    .and_then(|c| c.shape.boundary_in(snapshot))
-                {
-                    points.extend(b.loops.into_iter().flatten());
-                }
-            }
-            Some(types::SHAFT) => {
-                if let Some(s) = archbuilder_model::opening::shaft_span(snapshot, &object) {
-                    points.extend(s.outline);
-                }
-            }
-            Some(types::VERTICAL_OPENING) => {
-                if let Some(o) = archbuilder_model::opening::outline_of(
-                    snapshot,
-                    &object,
-                    archbuilder_model::floor::VERTICAL_SLOTS,
-                ) {
-                    points.extend(o);
-                }
-            }
-            Some(types::DOOR | types::WINDOW | types::WALL_OPENING) => {
-                let host = object
-                    .header
-                    .owner
-                    .and_then(|w| spatial::get(snapshot, w))
-                    .and_then(|w| Wall::from_values(&w.values));
-                let item = archbuilder_model::insert::Insert::of(snapshot, &object);
-                if let (Some(w), Some(item)) = (host, item) {
-                    let length = w.length().max(1e-9);
-                    let along = |d: f64| {
-                        [
-                            w.start[0] + (w.end[0] - w.start[0]) * d / length,
-                            w.start[1] + (w.end[1] - w.start[1]) * d / length,
-                        ]
-                    };
-                    let (low, high) = item.extent();
-                    points.extend([along(low), along(high)]);
-                }
-            }
-            _ => {}
-        }
-    }
-    let first = *points.first()?;
-    let (mut lo, mut hi) = (first, first);
-    for p in points {
-        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
-        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
-    }
-    Some((lo, hi))
+    ids.iter()
+        .take(MAX_MEASURED)
+        .flat_map(|id| crate::selection::plan_points(snapshot, *id))
+        .filter(|p| p[0].is_finite() && p[1].is_finite())
+        .fold(None, |acc: Option<([f64; 2], [f64; 2])>, p| {
+            Some(acc.map_or((p, p), |(lo, hi)| {
+                (
+                    [lo[0].min(p[0]), lo[1].min(p[1])],
+                    [hi[0].max(p[0]), hi[1].max(p[1])],
+                )
+            }))
+        })
 }
 
 /// One row as shown.

@@ -685,48 +685,76 @@ pub(crate) fn copy_datums(
     ids: &[ObjectId],
     xf: &archbuilder_model::transform::Xform,
 ) -> Result<Vec<ObjectId>> {
-    let tongue = language(ctx);
     let mut out = Vec::new();
     for id in ids {
-        let (key, start, end, bulge) = line_of(snapshot, *id)?;
+        let (key, ..) = line_of(snapshot, *id)?;
         let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-        let seen = ctx.txn()?.snapshot().clone();
-        let owner = object.header.owner;
-        let mut values = object.values.clone();
-        let (a, b) = (xf.point(start), xf.point(end));
-        let (x0, y0, x1, y1) = (
-            types::grid::START_X,
-            types::grid::START_Y,
-            types::grid::END_X,
-            types::grid::END_Y,
-        );
-        for (at, v) in [(x0, a[0]), (y0, a[1]), (x1, b[0]), (y1, b[1])] {
-            if let Some(slot) = values.get_mut(at) {
-                *slot = Some(types::length(v));
-            }
-        }
-        let name = if key == GRID {
-            if let Some(slot) = values.get_mut(types::grid::BULGE) {
-                *slot = Some(Value::F64(if xf.reflects() { -bulge } else { bulge }));
-            }
-            let used: Vec<String> = owner
-                .map(|o| datum::grids(&seen, o))
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|g| types::text(&g.values, 0).map(str::to_owned))
-                .collect();
-            let used: Vec<&str> = used.iter().map(String::as_str).collect();
-            let label = types::text(&object.values, 0).unwrap_or_default();
-            datum::next_label(&used, Some(label))
-        } else {
-            owner
-                .map(|o| next_name(&seen, REFERENCE_PLANE, o, &tongue))
-                .unwrap_or_default()
-        };
-        if let Some(slot) = values.get_mut(0) {
-            *slot = Some(Value::String(name));
-        }
-        out.push(create(ctx, &key, owner, values)?);
+        let owner = object
+            .header
+            .owner
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        out.push(copy_datum(ctx, &key, object.values.clone(), owner, xf)?);
     }
     Ok(out)
+}
+
+/// Creates in `building` a copy of the grid or reference plane (`key`) with the field values
+/// `values`, moved by `xf`: a grid gets the label after the original's, a reference plane the next
+/// free name. Levels the grid reaches that are not levels of `building` are dropped (the grid then
+/// reaches the building's lowest or highest level), as a pasted copy from another document has.
+pub(crate) fn copy_datum(
+    ctx: &mut Context<'_>,
+    key: &str,
+    mut values: Vec<Option<Value>>,
+    building: ObjectId,
+    xf: &archbuilder_model::transform::Xform,
+) -> Result<ObjectId> {
+    let invalid = || Error::new(codes::KIND_MISMATCH);
+    let (start, end, bulge) = match key {
+        GRID => datum::Grid::from_values(&values).map(|g| (g.start, g.end, g.bulge)),
+        REFERENCE_PLANE => datum::RefPlane::from_values(&values).map(|r| (r.start, r.end, 0.0)),
+        _ => None,
+    }
+    .ok_or_else(invalid)?;
+    let tongue = language(ctx);
+    let seen = ctx.txn()?.snapshot().clone();
+    let (a, b) = (xf.point(start), xf.point(end));
+    let (x0, y0, x1, y1) = (
+        types::grid::START_X,
+        types::grid::START_Y,
+        types::grid::END_X,
+        types::grid::END_Y,
+    );
+    for (at, v) in [(x0, a[0]), (y0, a[1]), (x1, b[0]), (y1, b[1])] {
+        if let Some(slot) = values.get_mut(at) {
+            *slot = Some(types::length(v));
+        }
+    }
+    let name = if key == GRID {
+        if let Some(slot) = values.get_mut(types::grid::BULGE) {
+            *slot = Some(Value::F64(if xf.reflects() { -bulge } else { bulge }));
+        }
+        let ours = spatial::children(&seen, LEVEL, building);
+        for at in [types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL] {
+            if let Some(slot) = values.get_mut(at)
+                && let Some(Value::Reference(level)) = slot
+                && !ours.iter().any(|l| l.id == *level)
+            {
+                *slot = None;
+            }
+        }
+        let used: Vec<String> = datum::grids(&seen, building)
+            .iter()
+            .filter_map(|g| types::text(&g.values, 0).map(str::to_owned))
+            .collect();
+        let used: Vec<&str> = used.iter().map(String::as_str).collect();
+        let label = types::text(&values, 0).unwrap_or_default().to_owned();
+        datum::next_label(&used, Some(&label))
+    } else {
+        next_name(&seen, REFERENCE_PLANE, building, &tongue)
+    };
+    if let Some(slot) = values.get_mut(0) {
+        *slot = Some(Value::String(name));
+    }
+    create(ctx, key, Some(building), values)
 }
