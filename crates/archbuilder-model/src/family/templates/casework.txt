@@ -1,0 +1,40 @@
+archbfam-text 1 functions 1.0
+definition id=00000000-0000-0000-0000-000000007104 version=1.0.0 name="Cabinet" category=casework hosting=none flags="" ifc_entity="" ifc_type="" source="ArchBuilder starter" license="Apache-2.0"
+parameter key=Depth id=00000000-0000-0000-0000-000000000052 name="Depth" data=length scope=type role=driving group="Dimensions" order=82 default=0.6
+parameter key=Height id=00000000-0000-0000-0000-000000000053 name="Height" data=length scope=type role=driving group="Dimensions" order=83 default=0.9
+parameter key=Plinth id=00000000-0000-0000-0000-000000000054 name="Plinth" data=length scope=type role=driving group="Dimensions" order=84 default=0.1
+parameter key=Volume id=00000000-0000-0000-0000-000000000055 name="Volume" data=volume scope=instance role=reporting group="Dimensions" order=85 default_f="solid_volume" default_u=m
+parameter key=Width id=00000000-0000-0000-0000-000000000051 name="Width" data=length scope=type role=driving group="Dimensions" order=81 default=0.6
+type id=00000000-0000-0000-0000-000000000063 name="1200"
+value param=Width v=1.2
+type id=00000000-0000-0000-0000-000000000061 name="600"
+value param=Width v=0.6
+type id=00000000-0000-0000-0000-000000000062 name="800"
+value param=Width v=0.8
+plane key=back name="back" axis=y role=back strong=true offset_f="Depth" offset_u=m
+plane key=front name="front" axis=y role=front strong=true offset=0
+plane key=left name="left" axis=x role=left strong=true offset=0
+plane key=notch_left name="notch_left" axis=x role=none strong=true offset_f="Width / 10" offset_u=m
+plane key=notch_right name="notch_right" axis=x role=none strong=true offset_f="Width - Width / 10" offset_u=m
+plane key=notch_top name="notch_top" axis=z role=none strong=true offset_f="Plinth" offset_u=m
+plane key=right name="right" axis=x role=right strong=true offset_f="Width" offset_u=m
+plane key=through_back name="through_back" axis=y role=none strong=true offset_f="Depth + 0.1" offset_u=m
+plane key=through_front name="through_front" axis=y role=none strong=true offset_f="-0.1" offset_u=m
+plane key=top name="top" axis=z role=top strong=true offset_f="Height" offset_u=m
+profile key=body_outline axis=z
+vertex u=left v=front
+vertex u=right v=front
+vertex u=right v=back
+vertex u=left v=back
+profile key=notch_outline axis=y
+vertex u=origin_z du_f="-0.1" du_u=m v=notch_left
+vertex u=notch_top v=notch_left
+vertex u=notch_top v=notch_right
+vertex u=origin_z du_f="-0.1" du_u=m v=notch_right
+form key=carcass kind=solid profile=body_outline from=origin_z to=top material="body" subcategory=""
+form key=notch kind=void profile=notch_outline from=through_front to=through_back material="body" subcategory=""
+test name="1200" type="1200" volume=0.5904 tolerance=0.000000001
+test name="600" type="600" volume=0.2952 tolerance=0.000000001
+test name="800" type="800" volume=0.3936 tolerance=0.000000001
+test name="zero width" type="600" tolerance=0.000000001 fails=carcass
+set param=Width v=0

@@ -974,3 +974,73 @@ fn a_placed_instance_takes_new_values_and_placement_in_one_undo_step() {
     assert_eq!((c.origin, c.name.as_str()), ([1.0, 2.0], ""));
     assert!(c.values.contains_key("LegSize"));
 }
+
+#[test]
+fn an_edited_definition_commits_as_the_next_version_and_a_starter_loads_as_a_family() {
+    use arc_base::id::Identifier;
+    use archbuilder_model::family::def::{Category, Definition, TypeDef};
+    use archbuilder_model::family::templates::starter;
+    let env = Env::new("commit", true);
+    env.load(
+        &env.package("t.archbfam", &[(&table(), "1.0.0")]),
+        json!({}),
+    )
+    .unwrap();
+    let family = loaded::families(&env.snapshot()).remove(0);
+    // A new type is a change to the values only: a patch step.
+    let mut def = Definition::from_text(&family.text).unwrap();
+    let values = def.types[0].values.clone();
+    def.types.push(TypeDef {
+        id: arc_base::ObjectId::from_u128(0x9001),
+        name: "2000x900".into(),
+        values,
+    });
+    let text = def.to_text().unwrap();
+    let revision = env.snapshot().revision();
+    let preview = env
+        .run(
+            "archbuilder.family.commit",
+            json!({"family": family.name, "text": text, "preview": true}),
+        )
+        .unwrap();
+    assert_eq!(preview.value["preview"], json!(true));
+    assert_eq!(
+        env.snapshot().revision(),
+        revision,
+        "a preview changes nothing"
+    );
+    env.run(
+        "archbuilder.family.commit",
+        json!({"family": family.name, "text": text}),
+    )
+    .unwrap();
+    let after = loaded::families(&env.snapshot()).remove(0);
+    assert_eq!(after.version.to_string(), "1.0.1");
+    // The text is the edited one with the version the commit assigned.
+    assert!(after.text.contains("name=\"2000x900\""));
+    assert_eq!(after.text, text.replace("version=1.0.0", "version=1.0.1"));
+    env.undo();
+    assert_eq!(
+        loaded::families(&env.snapshot())
+            .remove(0)
+            .version
+            .to_string(),
+        "1.0.0"
+    );
+    // An unchanged text is refused; a starter loads as a new family at 1.0.0.
+    let unchanged = env.run(
+        "archbuilder.family.commit",
+        json!({"family": family.name, "text": family.text}),
+    );
+    assert!(unchanged.is_err());
+    let door = starter(Category::Door).unwrap();
+    env.run("archbuilder.family.commit", json!({"text": door}))
+        .unwrap();
+    let families = loaded::families(&env.snapshot());
+    assert_eq!(families.len(), 2);
+    assert!(
+        families
+            .iter()
+            .any(|f| f.name == "Door" && f.version.to_string() == "1.0.0")
+    );
+}

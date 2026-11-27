@@ -60,6 +60,7 @@ pub mod extract_roof_parts;
 pub mod extract_stair;
 pub mod extract_view;
 pub mod extract_wall;
+pub mod family_editor;
 pub mod floor_sketch;
 pub mod floor_tool;
 pub mod insert_tool;
@@ -103,6 +104,8 @@ pub const SETTINGS: &str = "archbuilder.settings";
 pub const TYPES: &str = "archbuilder.types";
 /// The warnings panel.
 pub const WARNINGS: &str = "archbuilder.warnings";
+/// The family editor panel.
+pub const FAMILY_EDITOR: &str = "archbuilder.family_editor";
 
 /// A message of the application.
 struct Message {
@@ -366,6 +369,13 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
                 message_id: "ab-panel-types",
             },
             || shell::panel(type_panel::TypePanel::default()),
+        ),
+        entry(
+            FAMILY_EDITOR,
+            Message {
+                message_id: "ab-panel-family-editor",
+            },
+            || shell::panel(family_editor::FamilyEditorPanel::default()),
         ),
         entry(
             SETTINGS,

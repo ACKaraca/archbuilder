@@ -21,7 +21,7 @@ use arc_doc::package::{Mode, Package};
 use arc_doc::{FieldPath, LoadOptions, Snapshot, Value};
 use archbuilder_model::error::codes as model_codes;
 use archbuilder_model::expr::Stored;
-use archbuilder_model::family::def::{Category, Definition, Hosting, Scope, TypeDef};
+use archbuilder_model::family::def::{Category, Definition, Hosting, Scope, TypeDef, Version};
 use archbuilder_model::family::loaded::{
     self, Component, FamilyType, Loaded, components_of, family_types, values_value,
 };
@@ -49,6 +49,8 @@ pub const FAMILY_LOAD_PREVIEW: &str = "archbuilder.family.load_preview";
 pub const FAMILY_UPDATE: &str = "archbuilder.family.update";
 /// The identifier of the update preview (read-only).
 pub const FAMILY_UPDATE_PREVIEW: &str = "archbuilder.family.update_preview";
+/// The identifier of the family editor's commit: publishes an edited definition.
+pub const FAMILY_COMMIT: &str = "archbuilder.family.commit";
 /// The identifier of the component placement command.
 pub const COMPONENT_PLACE: &str = "archbuilder.component.place";
 
@@ -735,7 +737,22 @@ fn update_preview(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport
 
 fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
     let new = newer(ctx, &p)?;
-    let (have, new_def, mut report, plan) = plan_update(ctx.snapshot(), &p, &new)?;
+    let (have, new_def, report, plan) = plan_update(ctx.snapshot(), &p, &new)?;
+    apply_update(ctx, &p.add_types, &new, &have, &new_def, report, plan)
+}
+
+/// Applies a planned update to the loaded family `have`: the family record, its types and its
+/// components take the new version's values, and the types named in `add_types` are added.
+/// Refused while a parameter needs a mapping or an instance fails.
+fn apply_update(
+    ctx: &mut Context<'_>,
+    add_types: &[String],
+    new: &Published,
+    have: &Loaded,
+    new_def: &Definition,
+    mut report: UpdateReport,
+    plan: UpdatePlan,
+) -> Result<UpdateReport> {
     if !report.needs_mapping.is_empty() {
         return Err(Error::new(model_codes::FAMILY_MAPPING)
             .with_arg("parameters", report.needs_mapping.join(", ")));
@@ -750,7 +767,7 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
             ));
     }
     let project = spatial::project(ctx.snapshot()).map(|o| o.id);
-    let fields = Loaded::values(&new, &new_def);
+    let fields = Loaded::values(new, new_def);
     let names = [
         "name",
         "family",
@@ -781,11 +798,7 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
         .filter(|t| t.family == have.record)
         .map(|t| t.name)
         .collect();
-    for t in new_def
-        .types
-        .iter()
-        .filter(|t| p.add_types.contains(&t.name))
-    {
+    for t in new_def.types.iter().filter(|t| add_types.contains(&t.name)) {
         if mine.contains(&t.name) {
             continue;
         }
@@ -801,6 +814,191 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
     loaded::check_components(ctx.txn()?.snapshot(), None)?;
     report.preview = false;
     Ok(report)
+}
+
+/// Parameters of `archbuilder.family.commit`: the family editor's commit of a definition text.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommitFamily {
+    /// The loaded family the text replaces, by identifier or name; absent to load the text as a
+    /// new family at version 1.0.0.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 600))]
+    pub family: Option<String>,
+    /// The canonical text of the definition, as the family editor holds it.
+    #[schemars(length(min = 1, max = 1_048_576))]
+    pub text: String,
+    /// For parameters that are removed or retyped: the parameter of the new version that takes
+    /// the value (by formula identifier), or null to drop it.
+    #[serde(default)]
+    pub mapping: BTreeMap<String, Option<String>>,
+    /// Whether to report what the commit would do without changing anything.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+/// What a commit of an edited definition does, computed without changing anything.
+enum Commit {
+    /// A new version of the loaded family `have`.
+    Update {
+        new: Published,
+        have: Loaded,
+        new_def: Definition,
+        report: UpdateReport,
+        plan: UpdatePlan,
+    },
+    /// A definition loaded as a new family.
+    New {
+        published: Published,
+        def: Definition,
+        report: UpdateReport,
+    },
+}
+
+impl Commit {
+    fn into_report(self) -> UpdateReport {
+        match self {
+            Self::Update { report, .. } | Self::New { report, .. } => report,
+        }
+    }
+}
+
+/// Plans the commit of `p` against `snapshot`: the version the change needs, the report of what
+/// it affects, and the changes to apply.
+fn plan_commit(snapshot: &Snapshot, p: &CommitFamily) -> Result<Commit> {
+    let def = Definition::from_text(&p.text)?;
+    let Some(name) = p.family.clone() else {
+        return plan_new(snapshot, def);
+    };
+    let have = find_family(snapshot, &name)?;
+    let old = have.definition()?;
+    if def.header.id != have.family {
+        return Err(Error::new(model_codes::FAMILY_INVALID)
+            .with_arg("part", "header")
+            .with_arg("reason", "identifier"));
+    }
+    if p.text == have.text {
+        return Err(Error::new(model_codes::FAMILY_VERSION)
+            .with_arg("version", have.version.to_string())
+            .with_arg("reason", "unchanged"));
+    }
+    let mut next = have.version;
+    match step(&old, &def) {
+        Step::Major => {
+            next.major += 1;
+            (next.minor, next.patch) = (0, 0);
+        }
+        Step::Minor => {
+            next.minor += 1;
+            next.patch = 0;
+        }
+        Step::Patch => next.patch += 1,
+    }
+    let new = package::publish(&def, Some(&old), next)?;
+    let request = UpdateFamily {
+        family: name,
+        path: String::new(),
+        mapping: p.mapping.clone(),
+        add_types: Vec::new(),
+    };
+    let (have, new_def, report, plan) = plan_update(snapshot, &request, &new)?;
+    Ok(Commit::Update {
+        new,
+        have,
+        new_def,
+        report,
+        plan,
+    })
+}
+
+/// Plans the load of `def` as a new family at version 1.0.0 with all its types.
+fn plan_new(snapshot: &Snapshot, def: Definition) -> Result<Commit> {
+    let version = Version {
+        major: 1,
+        minor: 0,
+        patch: 0,
+    };
+    let published = package::publish(&def, None, version)?;
+    if loaded::families(snapshot)
+        .iter()
+        .any(|f| f.family == def.header.id)
+    {
+        return Err(Error::new(model_codes::FAMILY_VERSION)
+            .with_arg("version", version.to_string())
+            .with_arg("reason", "exists"));
+    }
+    let report = UpdateReport {
+        preview: true,
+        family: def.header.name.clone(),
+        from: String::new(),
+        to: version.to_string(),
+        major: false,
+        removed: Vec::new(),
+        retyped: Vec::new(),
+        added: def.parameters.iter().map(|p| p.name.clone()).collect(),
+        renamed: Vec::new(),
+        needs_mapping: Vec::new(),
+        types: def.types.len(),
+        instances: 0,
+        changes: Vec::new(),
+        failing: Vec::new(),
+    };
+    Ok(Commit::New {
+        published,
+        def,
+        report,
+    })
+}
+
+/// The report of the commit `p` would make, changing nothing: what the family editor shows
+/// before the person commits.
+///
+/// # Errors
+/// The errors of a commit that would be refused (a text that does not read, a version that
+/// cannot be chosen, a parameter that needs a mapping is reported, not refused).
+pub fn preview_commit(snapshot: &Snapshot, p: &CommitFamily) -> Result<UpdateReport> {
+    plan_commit(snapshot, p).map(Commit::into_report)
+}
+
+/// `archbuilder.family.commit`: publishes the edited definition as the next version of the loaded
+/// family (its version follows the change: patch, minor or major), or loads it as a new family.
+/// The report lists the types and instances the change affects; a preview changes nothing.
+fn commit(ctx: &mut Context<'_>, p: CommitFamily) -> Result<UpdateReport> {
+    let plan = plan_commit(ctx.snapshot(), &p)?;
+    if p.preview {
+        return Ok(plan.into_report());
+    }
+    match plan {
+        Commit::Update {
+            new,
+            have,
+            new_def,
+            report,
+            plan,
+        } => apply_update(ctx, &[], &new, &have, &new_def, report, plan),
+        Commit::New {
+            published,
+            def,
+            mut report,
+        } => {
+            let project = spatial::project(ctx.snapshot())
+                .map(|o| o.id)
+                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+            let family = create(ctx, FAMILY, Some(project), Loaded::values(&published, &def))?;
+            for t in &def.types {
+                create(
+                    ctx,
+                    FAMILY_TYPE,
+                    Some(project),
+                    FamilyType::record(&t.name, family, &t.values),
+                )?;
+            }
+            ensure_valid(ctx)?;
+            loaded::check_components(ctx.txn()?.snapshot(), None)?;
+            report.preview = false;
+            Ok(report)
+        }
+    }
 }
 
 /// Parameters of `archbuilder.component.place`.
@@ -1368,6 +1566,21 @@ pub fn register(registry: &mut Registry) -> Result<()> {
     )?;
     registry.register(
         CommandSpec::new(
+            FAMILY_COMMIT,
+            MessageId {
+                message_id: "ab-cmd-family-commit-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-family-commit-description",
+            }
+            .message_id,
+            commit,
+        )
+        .with_permissions([Permission::Read, Permission::Edit]),
+    )?;
+    registry.register(
+        CommandSpec::new(
             INSTANCE_SET,
             MessageId {
                 message_id: "ab-cmd-instance-set-label",
@@ -1515,7 +1728,10 @@ impl PromptMachine for FamilyInsertPrompts {
         let mut arg =
             Prompt::new(
                 format!("point-{}", state.answers.len()),
-                "ab-prompt-family-insert-point",
+                MessageId {
+                    message_id: "ab-prompt-family-insert-point",
+                }
+                .message_id,
                 Accept::Distance {
                     min: Some(0.0),
                     max: Some(types::DISTANCE_RANGE.1),
