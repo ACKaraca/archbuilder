@@ -97,6 +97,20 @@ in `arc-core`. The mapping principles below apply unchanged, with these addition
 8. **Coordinates are explicit.** Every export names its coordinate basis (internal, project or
    survey and map); IFC exports write map conversion and projected CRS from the coordinate record.
 
+### IFC4 export as implemented
+
+| Model kind | IFC4 | Notes |
+|---|---|---|
+| Stair | `IfcStair` aggregating `IfcStairFlight`, `IfcSlab` `LANDING`, `IfcRailing` | Predefined type from the shape; `Qto_StairFlightBaseQuantities` |
+| Ramp | `IfcRamp` aggregating `IfcRampFlight`, `IfcSlab` `LANDING`, `IfcRailing` | `Qto_RampFlightBaseQuantities` |
+| Railing | `IfcRailing` (`GUARDRAIL` on a stair or ramp, else `BALUSTRADE`) | `Qto_RailingBaseQuantities` |
+| Curtain wall | `IfcCurtainWall` aggregating `IfcPlate` (`CURTAIN_PANEL`) and `IfcMember` (`MULLION`), types `IfcCurtainWallType`, `IfcPlateType`, `IfcMemberType` | `Pset_CurtainWallCommon`, `Pset_PlateCommon`, `Pset_MemberCommon`, `Qto_CurtainWallQuantities`, `Qto_PlateBaseQuantities`, `Qto_MemberBaseQuantities`; door and window panels fill openings in the wall (reported as approximated) |
+| Grid | one `IfcGrid` per building with U and V `IfcGridAxis` | Labels are the axis tags |
+| Reference plane, work plane, selection set | not exported | Reported (`IFCANNOTATION`, `IFCGROUP`) |
+
+Standard property sets are written only with the value types the writer supports; a property whose
+definition asks for a count, positive length, plane angle or identifier is left out.
+
 ## Validation
 
 | Format | Validation in CI |

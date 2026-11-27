@@ -1,6 +1,7 @@
 //! The document as an IFC4 file: the project, site, building and storeys, and on each storey its
-//! walls, the doors and windows in them, its floors, its roofs and its enclosed rooms (spaces), mapped to the neutral description of
-//! [`arc_io_ifc::write`] and written by it. Lengths are meters. The result is deterministic for a
+//! walls, the doors and windows in them, its floors, its roofs, its enclosed rooms (spaces), its
+//! stairs, ramps, railings and curtain walls with their parts, and the grids of the building,
+//! mapped to the neutral description of [`arc_io_ifc::write`] and written by it. Lengths are meters. The result is deterministic for a
 //! document and options: every `GlobalId` comes from an `ObjectId`, and the time stamp is the
 //! caller's. The mapping is described in `docs/architecture/domain-model.md`.
 
@@ -29,6 +30,16 @@ use archbuilder_model::wall::Wall;
 use archbuilder_model::{cleanup, join, spatial};
 
 use crate::error::{codes, reasons};
+
+mod curtain;
+mod datum;
+mod stairs;
+
+/// The storey's own frame: the origin, the x axis along the storey's.
+const WORLD: Frame = Frame {
+    origin: [0.0, 0.0],
+    u: [1.0, 0.0],
+};
 
 /// What the caller decides about an export.
 #[derive(Debug, Clone)]
@@ -136,11 +147,20 @@ struct Loss {
     count: i64,
 }
 
+/// The identity of a door or window that has no record of its own.
+struct Own {
+    id: u128,
+    name: String,
+    type_id: Option<u128>,
+}
+
 /// The mapping in progress.
 struct Mapper<'a> {
     snapshot: &'a Snapshot,
     cancel: &'a Cancel,
     elements: Vec<Element>,
+    /// The types made for the parts of curtain walls (plates and mullions).
+    types: Vec<ElementType>,
     losses: Vec<Loss>,
     exported: usize,
 }
@@ -162,16 +182,6 @@ impl Mapper<'_> {
             name: name_of(object),
             count: i64::try_from(count).unwrap_or(i64::MAX),
         });
-    }
-
-    /// A curtain wall: the writer of the foundation has no `IfcCurtainWall`, `IfcPlate` or
-    /// `IfcMember`, so the wall, its panels and its mullions are named in the loss report, never
-    /// written as a wall or a proxy.
-    fn curtain_wall(&mut self, object: &Object, derived: &archbuilder_model::curtain::Derived) {
-        let (panels, mullions) = derived.counts();
-        self.lose(reasons::CURTAIN_NOT_WRITTEN, "IFCCURTAINWALL", object);
-        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCPLATE", object, panels);
-        self.lose_n(reasons::CURTAIN_NOT_WRITTEN, "IFCMEMBER", object, mullions);
     }
 
     /// The walls, then the floors of a storey whose level is at `level`.
@@ -204,18 +214,18 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.room(&entry, storey, level);
         }
-        // No stair entities in the writer: each stair is named in the loss report, never written
-        // as a proxy. Its shaft opening is already a hole in the floors above.
+        // Stairs and ramps before the railings: a railing hosted on one is a part of it.
         for stair in spatial::children(self.snapshot, archbuilder_model::types::STAIR, storey) {
-            self.lose(reasons::STAIR_NOT_WRITTEN, "IFCSTAIR", &stair);
+            self.cancel.check()?;
+            self.stair(&stair, storey, level);
         }
-        // Likewise ramps and railings: named in the loss report until the foundation's writer has
-        // ramp, ramp flight and railing entities.
         for ramp in spatial::children(self.snapshot, archbuilder_model::types::RAMP, storey) {
-            self.lose(reasons::RAMP_NOT_WRITTEN, "IFCRAMP", &ramp);
+            self.cancel.check()?;
+            self.ramp(&ramp, storey, level);
         }
         for railing in spatial::children(self.snapshot, archbuilder_model::types::RAILING, storey) {
-            self.lose(reasons::RAILING_NOT_WRITTEN, "IFCRAILING", &railing);
+            self.cancel.check()?;
+            self.railing(&railing, storey, level);
         }
         Ok(())
     }
@@ -310,15 +320,6 @@ impl Mapper<'_> {
                 Quantity::new("NetVolume", QuantityValue::Volume(volume)),
             ],
         ));
-        if let Some(number) = &entry.room.number {
-            element.property_sets.push(PropertySet::new(
-                "Pset_SpaceCommon",
-                vec![Property::new(
-                    "Reference",
-                    PropertyValue::Label(number.clone()),
-                )],
-            ));
-        }
         self.elements.push(element);
         self.exported += 1;
     }
@@ -329,7 +330,7 @@ impl Mapper<'_> {
     )]
     fn wall(&mut self, object: &Object, storey: ObjectId, level: f64) {
         if let Some(derived) = archbuilder_model::curtain::Derived::of(self.snapshot, object) {
-            return self.curtain_wall(object, &derived);
+            return self.curtain_wall(object, &derived, storey, level);
         }
         let Some(wall) = Wall::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCWALL", object);
@@ -490,9 +491,23 @@ impl Mapper<'_> {
         &mut self,
         object: &Object,
         item: &Insert,
+        placed: (&Object, &Wall, &Frame),
+        storey: ObjectId,
+        level: f64,
+    ) {
+        self.insert_as(object, item, placed, storey, level, None);
+    }
+
+    /// [`Self::insert`] for a door or window with no record of its own, such as a panel of a
+    /// curtain wall: `own` gives its identifier, name and type, and the losses name `object`.
+    fn insert_as(
+        &mut self,
+        object: &Object,
+        item: &Insert,
         (host, wall, wall_frame): (&Object, &Wall, &Frame),
         storey: ObjectId,
         level: f64,
+        own: Option<Own>,
     ) {
         if item.kind == Kind::Opening {
             return self.wall_opening(object, item, (host, wall, wall_frame), storey);
@@ -515,13 +530,12 @@ impl Mapper<'_> {
         let corners = [(-half, low), (half, low), (half, high), (-half, high)]
             .map(|(x, y)| frame.local(wall_frame.at(item.distance + x, y)));
         let storey_id = storey.as_u128();
-        let opening_id = derived_id(object.id.as_u128(), role::INSERT_OPENING, 0);
-        let mut opening = Element::new(
-            opening_id,
-            ElementKind::Opening,
-            &name_of(object),
-            storey_id,
+        let (id, name) = own.as_ref().map_or_else(
+            || (object.id.as_u128(), name_of(object)),
+            |o| (o.id, o.name.clone()),
         );
+        let opening_id = derived_id(id, role::INSERT_OPENING, 0);
+        let mut opening = Element::new(opening_id, ElementKind::Opening, &name, storey_id);
         opening.placement = frame.placement(z);
         opening.body = Some(Body::Extrusion {
             outer: profile(&corners, true),
@@ -532,13 +546,13 @@ impl Mapper<'_> {
         opening.predefined_type = Some("OPENING".to_owned());
         opening.host = Some(host.id.as_u128());
         let mut element = Element::new(
-            object.id.as_u128(),
+            id,
             if door {
                 ElementKind::Door
             } else {
                 ElementKind::Window
             },
-            &name_of(object),
+            &name,
             storey_id,
         );
         element.placement = frame.placement(z);
@@ -547,8 +561,10 @@ impl Mapper<'_> {
         } else {
             TypeKind::Window
         };
-        element.element_type =
-            et::type_of(self.snapshot, kind, &object.values).map(|t| t.id.as_u128());
+        element.element_type = match &own {
+            Some(o) => o.type_id,
+            None => et::type_of(self.snapshot, kind, &object.values).map(|t| t.id.as_u128()),
+        };
         element.predefined_type = Some(if door { "DOOR" } else { "WINDOW" }.to_owned());
         element.operation_type = Some(operation(item).to_owned());
         element.overall_width = Some(item.width);
@@ -1110,13 +1126,11 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
     let mut out = Vec::new();
     for kind in TypeKind::ALL {
         for object in et::of_kind(snapshot, kind) {
-            // A curtain wall type has no wall in the file to be the type of.
-            if kind == TypeKind::Wall
-                && archbuilder_model::curtain::CurtainType::from_values(&object.values).is_some()
-            {
-                continue;
-            }
+            // A wall type with the curtain fields is the `IfcCurtainWallType` of its curtain walls.
+            let curtain = kind == TypeKind::Wall
+                && archbuilder_model::curtain::CurtainType::from_values(&object.values).is_some();
             let (ifc_kind, predefined) = match kind {
+                TypeKind::Wall if curtain => (ElementKind::CurtainWall, ""),
                 TypeKind::Wall => (ElementKind::Wall, "STANDARD"),
                 TypeKind::Floor => (ElementKind::Slab, "FLOOR"),
                 TypeKind::Door => (ElementKind::Door, "DOOR"),
@@ -1128,13 +1142,15 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
             let mut t = ElementType::new(object.id.as_u128(), ifc_kind, et::name(&object));
             t.predefined_type = (!predefined.is_empty()).then(|| predefined.to_owned());
             if let Some(wall) =
-                WallType::from_values(&object.values).filter(|_| kind == TypeKind::Wall)
+                WallType::from_values(&object.values).filter(|_| kind == TypeKind::Wall && !curtain)
                 && wall.exposure == Exposure::Interior
                 && !wall.load_bearing
             {
                 t.predefined_type = Some("PARTITIONING".to_owned());
             }
-            if kind.layered() {
+            if curtain {
+                // Its panels and mullions are typed by their own types.
+            } else if kind.layered() {
                 t.layers = Layers::from_values(&object.values)
                     .map(|l| {
                         l.layers
@@ -1231,6 +1247,7 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         snapshot,
         cancel: &options.cancel,
         elements: Vec::new(),
+        types: Vec::new(),
         losses: Vec::new(),
         exported: 0,
     };
@@ -1246,30 +1263,33 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         ));
         mapper.storey(entry.storey.id, elevation)?;
     }
-    // The writer has no IfcGrid yet and a proxy would hide the loss: datums are reported.
+    mapper.grids(&mut model, building.id);
+    // Reference planes and work planes are drawing aids with no IFC entity; a selection set is a
+    // list of elements, which the writer cannot yet carry as an `IfcGroup`. Each is reported.
     for (key, kind, reason) in [
         (
-            archbuilder_model::types::GRID,
-            "IFCGRID",
-            reasons::GRID_NOT_WRITTEN,
-        ),
-        (
             archbuilder_model::types::REFERENCE_PLANE,
-            "IFCGRIDAXIS",
+            "IFCANNOTATION",
             reasons::DATUM_NOT_WRITTEN,
         ),
         (
             archbuilder_model::types::WORK_PLANE,
-            "IFCGRIDAXIS",
+            "IFCANNOTATION",
             reasons::DATUM_NOT_WRITTEN,
         ),
+        (
+            archbuilder_model::types::SELECTION_SET,
+            "IFCGROUP",
+            reasons::SET_NOT_WRITTEN,
+        ),
     ] {
-        for datum in spatial::objects(snapshot, key) {
-            mapper.lose(reason, kind, &datum);
+        for object in spatial::objects(snapshot, key) {
+            mapper.lose(reason, kind, &object);
         }
     }
     model.elements = std::mem::take(&mut mapper.elements);
     model.types = element_types(snapshot);
+    model.types.append(&mut mapper.types);
     let write_options = WriteOptions {
         limits: options.limits,
         cancel: options.cancel.clone(),

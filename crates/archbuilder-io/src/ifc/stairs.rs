@@ -1,0 +1,314 @@
+//! Stairs, ramps and railings. A stair is an `IfcStair` and a ramp an `IfcRamp` with no body of
+//! their own: each aggregates its parts (`IfcRelAggregates`), an `IfcStairFlight` for each run
+//! (an `IfcRampFlight` for the slope), an `IfcSlab` of the predefined type `LANDING` for each
+//! landing and an `IfcRailing` for each railing on it. A railing that is a record of its own and
+//! is hosted on the stair or ramp is one of those parts; a railing by path is contained in its
+//! storey. Every part has a body of its own as one faceted B-rep in the storey's frame, and the
+//! identifier of a part is derived from the identifier of its stair or ramp.
+//!
+//! The standard property sets of these elements (`Pset_StairCommon`, `Pset_StairFlightCommon`,
+//! `Pset_RampCommon`, `Pset_RampFlightCommon`, `Pset_RailingCommon`) hold counts, positive
+//! lengths, plane angles and identifiers only, value types the pinned writer cannot write, so no
+//! standard property set is written for them: the counts and dimensions of a stair flight are
+//! attributes of the `IfcStairFlight`, the rest is in the body.
+
+use arc_base::ObjectId;
+use arc_base::id::Identifier;
+use arc_doc::Object;
+use arc_io_ifc::write::{
+    Element, ElementKind, FlightDimensions, Quantity, QuantitySet, QuantityValue, derived_id, role,
+};
+use archbuilder_model::floor::signed_area;
+use archbuilder_model::railing::Derived as Railing;
+use archbuilder_model::ramp::{self, Part};
+use archbuilder_model::stair::{self, Layout, Shape};
+
+use super::{Mapper, WORLD, brep, name_of};
+use crate::error::reasons;
+
+/// The role of the flights of a stair or ramp in [`derived_id`]; the index is the run's.
+const FLIGHT: u32 = role::CALLER_FIRST + 1;
+/// The role of the landings; the index is 0 for a stair's landing, 0 and 1 for a ramp's foot and top.
+const LANDING: u32 = role::CALLER_FIRST + 2;
+/// The role of the railings a stair has on its own sides; the index is the side, left first.
+const RAIL: u32 = role::CALLER_FIRST + 3;
+
+fn length(v: f64) -> Quantity {
+    Quantity::new("Length", QuantityValue::Length(v))
+}
+
+fn volumes(v: f64) -> [Quantity; 2] {
+    [
+        Quantity::new("GrossVolume", QuantityValue::Volume(v)),
+        Quantity::new("NetVolume", QuantityValue::Volume(v)),
+    ]
+}
+
+/// The length of a path in three dimensions.
+fn path_length(path: &[[f64; 3]]) -> f64 {
+    path.windows(2)
+        .map(|w| {
+            (w[1][0] - w[0][0])
+                .hypot(w[1][1] - w[0][1])
+                .hypot(w[1][2] - w[0][2])
+        })
+        .sum()
+}
+
+/// A landing: an `IfcSlab` of the predefined type `LANDING`, a part of its stair or ramp.
+fn landing(id: u128, name: &str, storey: ObjectId, host: u128) -> Element {
+    let mut element = Element::new(id, ElementKind::Slab, name, storey.as_u128());
+    element.predefined_type = Some("LANDING".to_owned());
+    element.host = Some(host);
+    element
+}
+
+impl Mapper<'_> {
+    /// One part of a stair or ramp: `element` with its body from `solid`, which is reported when
+    /// it has none, and the quantities of the solid added by `quantities`.
+    fn part(
+        &mut self,
+        mut element: Element,
+        solid: arc_base::Result<arc_geom::Polyhedron>,
+        owner: &Object,
+        level: f64,
+        quantities: impl FnOnce(f64) -> QuantitySet,
+    ) {
+        let label = match element.kind {
+            ElementKind::StairFlight => "IFCSTAIRFLIGHT",
+            ElementKind::RampFlight => "IFCRAMPFLIGHT",
+            _ => "IFCSLAB",
+        };
+        match solid.ok().and_then(|s| {
+            let volume = s.volume();
+            brep([&s], &WORLD, level).map(|b| (b, volume))
+        }) {
+            Some((body, volume)) => {
+                element.body = Some(body);
+                element.quantity_sets.push(quantities(volume));
+            }
+            None => self.lose(reasons::BODY_NOT_EXPORTED, label, owner),
+        }
+        self.elements.push(element);
+    }
+
+    /// A stair: the `IfcStair`, its flights, its landing and the railings of its sides.
+    pub(super) fn stair(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(placed) = stair::Placed::of(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCSTAIR", object);
+        };
+        let id = object.id.as_u128();
+        let name = name_of(object);
+        let mut element = Element::new(id, ElementKind::Stair, &name, storey.as_u128());
+        element.predefined_type = Some(
+            match placed.stair.shape {
+                Shape::Straight => "STRAIGHT_RUN_STAIR",
+                Shape::LTurn => "QUARTER_TURN_STAIR",
+                Shape::UTurn => "HALF_TURN_STAIR",
+            }
+            .to_owned(),
+        );
+        self.elements.push(element);
+        self.exported += 1;
+        let Ok(layout) = &placed.layout else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCSTAIR", object);
+        };
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        for (k, run) in layout.runs.iter().enumerate() {
+            let mut flight = Element::new(
+                derived_id(id, FLIGHT, count(k)),
+                ElementKind::StairFlight,
+                &format!("{name} flight {}", k + 1),
+                storey.as_u128(),
+            );
+            flight.predefined_type = Some("STRAIGHT".to_owned());
+            flight.host = Some(id);
+            // The last riser meets the landing or the floor above, so a run has one tread less
+            // than it has risers.
+            flight.flight = Some(FlightDimensions::new(
+                count(run.risers),
+                count(run.risers.saturating_sub(1)),
+                layout.riser,
+                layout.stair.tread,
+            ));
+            // The walking line from the first tread to the last.
+            let walking =
+                run.risers.saturating_sub(1) as f64 * layout.riser.hypot(layout.stair.tread);
+            self.part(flight, layout.run_solid(run, level), object, level, |v| {
+                let [gross, net] = volumes(v);
+                QuantitySet::new(
+                    "Qto_StairFlightBaseQuantities",
+                    vec![length(walking), gross, net],
+                )
+            });
+        }
+        if let Some(solid) = layout.landing_solid(level) {
+            let thickness = layout.landing_thickness();
+            let area = signed_area(&layout.landing).abs();
+            let part = landing(
+                derived_id(id, LANDING, 0),
+                &format!("{name} landing"),
+                storey,
+                id,
+            );
+            self.part(part, solid, object, level, |v| {
+                landing_quantities(Some(thickness), area, v)
+            });
+        }
+        for (side, path) in layout.rails().into_iter().enumerate() {
+            if path.len() < 2 {
+                continue;
+            }
+            let mut rail = Element::new(
+                derived_id(id, RAIL, count(side)),
+                ElementKind::Railing,
+                &format!(
+                    "{name} railing {}",
+                    if side == 0 { "left" } else { "right" }
+                ),
+                storey.as_u128(),
+            );
+            rail.predefined_type = Some("GUARDRAIL".to_owned());
+            rail.host = Some(id);
+            rail.quantity_sets.push(QuantitySet::new(
+                "Qto_RailingBaseQuantities",
+                vec![length(path_length(&path))],
+            ));
+            match Layout::rail_solids(&path, level)
+                .ok()
+                .and_then(|s| brep(&s, &WORLD, level))
+            {
+                Some(body) => rail.body = Some(body),
+                None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCRAILING", object),
+            }
+            self.elements.push(rail);
+        }
+    }
+
+    /// A ramp: the `IfcRamp`, its flight and its landings; the railings on it are records of
+    /// their own.
+    pub(super) fn ramp(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Some(placed) = ramp::Placed::of(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCRAMP", object);
+        };
+        let id = object.id.as_u128();
+        let name = name_of(object);
+        let mut element = Element::new(id, ElementKind::Ramp, &name, storey.as_u128());
+        element.predefined_type = Some("STRAIGHT_RUN_RAMP".to_owned());
+        self.elements.push(element);
+        self.exported += 1;
+        let Ok(layout) = &placed.layout else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCRAMP", object);
+        };
+        let Ok(parts) = layout.parts(level) else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCRAMP", object);
+        };
+        let width = layout.ramp.width;
+        // The thickness is one number only for a slab of constant thickness.
+        let thickness = (layout.ramp.form == ramp::Form::Slab).then_some(layout.ramp.thickness);
+        for (part, solid) in parts {
+            let (landing_index, run) = match part {
+                Part::Foot => (0, 0.0),
+                Part::Top => (1, 0.0),
+                Part::Run => (0, layout.ramp.length),
+            };
+            if part == Part::Run {
+                let mut flight = Element::new(
+                    derived_id(id, FLIGHT, 0),
+                    ElementKind::RampFlight,
+                    &format!("{name} flight"),
+                    storey.as_u128(),
+                );
+                flight.predefined_type = Some("STRAIGHT".to_owned());
+                flight.host = Some(id);
+                let slope_length = run.hypot(layout.height);
+                self.part(flight, Ok(solid), object, level, |v| {
+                    let mut quantities = vec![length(slope_length)];
+                    quantities.extend(
+                        thickness.map(|t| Quantity::new("Width", QuantityValue::Length(t))),
+                    );
+                    let area = slope_length * width;
+                    quantities.extend([
+                        Quantity::new("GrossArea", QuantityValue::Area(area)),
+                        Quantity::new("NetArea", QuantityValue::Area(area)),
+                    ]);
+                    quantities.extend(volumes(v));
+                    QuantitySet::new("Qto_RampFlightBaseQuantities", quantities)
+                });
+            } else {
+                let long = match part {
+                    Part::Foot => layout.ramp.landing_start,
+                    _ => layout.ramp.landing_end,
+                };
+                let slab = landing(
+                    derived_id(id, LANDING, landing_index),
+                    &format!("{name} landing {}", landing_index + 1),
+                    storey,
+                    id,
+                );
+                self.part(slab, Ok(solid), object, level, |v| {
+                    landing_quantities(thickness, long * width, v)
+                });
+            }
+        }
+    }
+
+    /// A railing by path, or one hosted on a stair or ramp, as an `IfcRailing`: a guardrail when
+    /// it guards a stair or ramp, else a balustrade, contained in its storey; a hosted one is a
+    /// part of its stair or ramp. Its body is the bars of the rail and the handrail, the posts
+    /// and the balusters.
+    pub(super) fn railing(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        let Ok(derived) = Railing::of(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCRAILING", object);
+        };
+        let mut element = Element::new(
+            object.id.as_u128(),
+            ElementKind::Railing,
+            &name_of(object),
+            storey.as_u128(),
+        );
+        // The host is a part's container only when it is in the file.
+        let host = derived.railing.host.map(|h| h.as_u128()).filter(|h| {
+            self.elements
+                .iter()
+                .any(|e| e.id == *h && matches!(e.kind, ElementKind::Stair | ElementKind::Ramp))
+        });
+        element.host = host;
+        element.predefined_type = Some(
+            if derived.railing.host.is_some() {
+                "GUARDRAIL"
+            } else {
+                "BALUSTRADE"
+            }
+            .to_owned(),
+        );
+        element.quantity_sets.push(QuantitySet::new(
+            "Qto_RailingBaseQuantities",
+            vec![length(derived.length())],
+        ));
+        match derived
+            .solids()
+            .ok()
+            .and_then(|solids| brep(&solids, &WORLD, level))
+        {
+            Some(body) => element.body = Some(body),
+            None => self.lose(reasons::BODY_NOT_EXPORTED, "IFCRAILING", object),
+        }
+        self.elements.push(element);
+        self.exported += 1;
+    }
+}
+
+/// The base quantities of a landing: a flat top of `area` and a body of `volume`.
+fn landing_quantities(thickness: Option<f64>, area: f64, volume: f64) -> QuantitySet {
+    let mut quantities: Vec<Quantity> = thickness
+        .map(|t| Quantity::new("Width", QuantityValue::Length(t)))
+        .into_iter()
+        .collect();
+    quantities.extend([
+        Quantity::new("GrossArea", QuantityValue::Area(area)),
+        Quantity::new("NetArea", QuantityValue::Area(area)),
+    ]);
+    quantities.extend(volumes(volume));
+    QuantitySet::new("Qto_SlabBaseQuantities", quantities)
+}

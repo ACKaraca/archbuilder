@@ -1,5 +1,5 @@
-//! The IFC export of datums: the writer has no grid entity, so grids, reference planes and work
-//! planes are named in the loss report and never written as proxies.
+//! The IFC export of datums: a grid needs two directions of lines (see `parts.rs`); reference planes
+//! and work planes are named in the loss report and never written as proxies.
 
 #![allow(clippy::unwrap_used, clippy::too_many_lines, reason = "test code")]
 
@@ -24,7 +24,7 @@ fn run(document: &Document, registry: &arc_command::Registry, command: &str, par
 }
 
 #[test]
-fn grids_and_planes_are_reported_in_the_loss_report_and_not_written() {
+fn a_grid_of_one_direction_and_the_planes_are_reported_and_not_written() {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
         Arc::new(Evaluators::new()),
@@ -63,12 +63,14 @@ fn grids_and_planes_are_reported_in_the_loss_report_and_not_written() {
         .map(|i| i.reason.as_str())
         .collect();
     codes.sort_unstable();
+    // The one grid line has no cross direction, so there is no `IfcGrid`; the planes have no
+    // building element.
     assert_eq!(
         codes,
         [
             "ab.io.ifc.datum_not_written",
             "ab.io.ifc.datum_not_written",
-            "ab.io.ifc.grid_not_written"
+            "ab.io.ifc.grid_one_direction"
         ]
     );
     assert_eq!(exported.elements, 0);

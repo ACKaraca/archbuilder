@@ -6,8 +6,9 @@
 //! - every object of the model (project, site, building, storeys, elements, element types) is in
 //!   the file under its `GlobalId`;
 //! - no two rooted entities of the file share a `GlobalId`;
-//! - the products of the file (walls, slabs, roofs, coverings, doors, windows, spaces, openings)
-//!   number as many as the elements written.
+//! - the products of the file (walls, slabs, roofs, coverings, doors, windows, spaces, openings,
+//!   stairs and their flights, ramps and their flights, railings, curtain walls, plates, members
+//!   and grids) number as many as the elements and grids written.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,10 +31,16 @@ fn is_product(entity: &str) -> bool {
         "IFCCOVERING",
         "IFCSPACE",
         "IFCOPENINGELEMENT",
+        "IFCSTAIR",
+        "IFCRAMP",
+        "IFCRAILING",
+        "IFCCURTAINWALL",
+        "IFCPLATE",
+        "IFCMEMBER",
     ]
     .iter()
     .any(|p| entity.starts_with(p) && !entity.ends_with("TYPE"))
-        || matches!(entity, "IFCDOOR" | "IFCWINDOW")
+        || matches!(entity, "IFCDOOR" | "IFCWINDOW" | "IFCGRID")
 }
 
 /// Whether `entity` has a `GlobalId` as its first attribute and is one the writer makes.
@@ -111,6 +118,7 @@ pub(crate) fn validate(
                 ])
                 .chain(model.storeys.iter().map(|s| (&s.id, "IFCBUILDINGSTOREY")))
                 .chain(model.elements.iter().map(|e| (&e.id, kind_of(e.kind))))
+                .chain(model.grids.iter().map(|g| (&g.id, "IFCGRID")))
                 .chain(model.types.iter().map(|t| (&t.id, "IFCTYPEOBJECT")));
             for (id, kind) in expected {
                 if !seen.contains(&global_id(*id)) {
@@ -124,7 +132,7 @@ pub(crate) fn validate(
                     .insert("name".to_owned(), Argument::Text(id.clone()));
                 found.push(duplicate);
             }
-            let exported = model.elements.len();
+            let exported = model.elements.len() + model.grids.len();
             if products != exported {
                 let mut count = item(reasons::VALIDATION_COUNT, "IFC", None, 1);
                 count.arguments.insert(
@@ -154,7 +162,15 @@ fn kind_of(kind: ElementKind) -> &'static str {
         ElementKind::Opening => "IFCOPENINGELEMENT",
         ElementKind::Roof => "IFCROOF",
         ElementKind::Space => "IFCSPACE",
-        _ => "IFCBUILDINGELEMENTPROXY",
+        ElementKind::Covering => "IFCCOVERING",
+        ElementKind::Stair => "IFCSTAIR",
+        ElementKind::StairFlight => "IFCSTAIRFLIGHT",
+        ElementKind::Railing => "IFCRAILING",
+        ElementKind::Ramp => "IFCRAMP",
+        ElementKind::RampFlight => "IFCRAMPFLIGHT",
+        ElementKind::CurtainWall => "IFCCURTAINWALL",
+        ElementKind::Plate => "IFCPLATE",
+        ElementKind::Member => "IFCMEMBER",
     }
 }
 

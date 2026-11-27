@@ -138,6 +138,10 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         json!({"start": [-2.0, 0.0], "end": [-2.0, 10.0]}),
     );
     r(
+        "archbuilder.grid.create",
+        json!({"start": [-3.0, 8.0], "end": [14.0, 8.0]}),
+    );
+    r(
         "archbuilder.reference_plane.create",
         json!({"start": [0.0, -2.0], "end": [4.0, -2.0]}),
     );
@@ -162,21 +166,16 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     if let Ok(path) = std::env::var("AB_EVERY_KIND_IFC") {
         std::fs::write(path, &out.bytes).unwrap();
     }
-    // Each kind that has no entity of its own is named in the report.
-    for kind in [
-        "IFCCURTAINWALL",
-        "IFCSTAIR",
-        "IFCRAMP",
-        "IFCRAILING",
-        "IFCGRID",
-        "IFCGRIDAXIS",
-    ] {
-        assert!(
-            out.report
-                .items
-                .iter()
-                .any(|i| format!("{i:?}").contains(kind)),
-            "{kind} not reported"
-        );
-    }
+    // Only what has no IFC building element is named in the report.
+    let mut reasons: Vec<&str> = out.report.items.iter().map(|i| i.reason.as_str()).collect();
+    reasons.sort_unstable();
+    reasons.dedup();
+    assert!(
+        !reasons.iter().any(|r| r.ends_with("_not_written")
+            && !matches!(
+                *r,
+                "ab.io.ifc.datum_not_written" | "ab.io.ifc.selection_set_not_written"
+            )),
+        "{reasons:?}"
+    );
 }
