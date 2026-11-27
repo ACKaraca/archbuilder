@@ -151,6 +151,7 @@ fn ids_of(snapshot: &Snapshot, key: &str) -> Vec<ObjectId> {
 fn the_house_exports_without_loss_and_deterministically() {
     let house = House::new();
     let first = export_ifc(&house.snapshot(), &options()).unwrap();
+    assert!(first.valid, "{:?}", first.report.items);
     let second = export_ifc(&house.snapshot(), &options()).unwrap();
     assert_eq!(first.bytes, second.bytes);
     assert!(!first.report.has_loss(), "{:?}", first.report);
@@ -185,6 +186,7 @@ fn types_layer_sets_and_wall_flags_are_exported() {
     );
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -244,6 +246,7 @@ fn the_export_reads_back_as_the_model() {
     let house = House::new();
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -370,6 +373,7 @@ fn the_door_operation_names_the_side_of_the_hinge_in_the_exported_body() {
             }
         }
         let exported = export_ifc(&house.snapshot(), &options()).unwrap();
+        assert!(exported.valid, "{:?}", exported.report.items);
         let file = read(&exported.bytes, &mut ReadOptions::default())
             .unwrap()
             .file;
@@ -421,6 +425,7 @@ fn body_volumes_and_quantities_equal_the_derived_volumes() {
     let house = House::new();
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -533,6 +538,7 @@ fn a_casement_window_is_reported_as_approximated() {
         json!({"type": copy["type"], "objects": [window]}),
     );
     let exported = export_ifc(&house.snapshot(), &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss());
     assert_eq!(exported.report.summary.approximated, 1);
     let [item] = &exported.report.items[..] else {
@@ -596,6 +602,7 @@ fn enclosed_rooms_are_spaces_and_the_others_are_reported() {
         .collect();
     assert_eq!(enclosed.len(), 1);
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let reasons: Vec<_> = exported
         .report
         .items
@@ -721,6 +728,7 @@ fn a_room_around_a_courtyard_is_a_space_with_a_void() {
         12.0 * 12.0 - 4.0 * 4.0,
     );
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -760,6 +768,7 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     assert_eq!(derived.boundary.loops.len(), 3);
     near(derived.area(), 60.0 - 4.0 - 4.53 * 1.1);
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     let [item] = &exported.report.items[..] else {
         panic!("{:?}", exported.report.items);
     };
@@ -804,6 +813,7 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
     house.run("archbuilder.wall.attach_top", json!({"walls": upper_walls}));
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -888,6 +898,7 @@ fn a_floor_with_an_arc_edge_and_layered_walls_read_back() {
     );
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -930,6 +941,7 @@ fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
     let slab = House::id(&made["floor"]);
     let snapshot = house.snapshot();
     let exported = export_ifc(&snapshot, &options()).unwrap();
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(!exported.report.has_loss(), "{:?}", exported.report);
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()

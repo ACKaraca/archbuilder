@@ -44,6 +44,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         BUILDING => Some(&[SITE]),
         STOREY | LEVEL => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
+        types::SELECTION_SET => Some(&[PROJECT]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),

@@ -404,3 +404,16 @@ ab-cmd-view-defaults-label = Make Default Plan Views
 ab-cmd-view-defaults-description = Gives every storey without a plan view its default view.
 ab-cmd-view-set-label = Change View Setting
 ab-cmd-view-set-description = Sets one setting of a plan view; for a storey without a view, makes its view first.
+
+ab-cmd-set-create-label = Create Selection Set
+ab-cmd-set-create-description = Saves a named selection set in the document: the given elements, else the selected ones.
+ab-cmd-set-update-label = Change Selection Set
+ab-cmd-set-update-description = Adds elements to a selection set or removes members from it.
+ab-cmd-set-rename-label = Rename Selection Set
+ab-cmd-set-rename-description = Renames a selection set; the name must be unused by the other sets.
+ab-cmd-set-delete-label = Delete Selection Set
+ab-cmd-set-delete-description = Deletes a selection set; its elements stay in the model.
+ab-cmd-set-select-label = Select Set Members
+ab-cmd-set-select-description = Selects the members of a selection set, replacing the selection or joining it.
+ab-cmd-statistics-label = Model Statistics
+ab-cmd-statistics-description = Reports element counts by kind, type and storey, and the number of views, selection sets and element types.

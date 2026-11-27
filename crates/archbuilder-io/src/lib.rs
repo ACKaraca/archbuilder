@@ -9,6 +9,7 @@ pub mod command;
 pub mod error;
 pub mod ifc;
 pub mod time;
+mod validate;
 
 pub use command::register;
 pub use ifc::{Export, ExportOptions, export_ifc};

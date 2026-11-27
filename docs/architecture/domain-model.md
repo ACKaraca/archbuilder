@@ -639,6 +639,25 @@ undoing it shows the default view again and, back at the saved state, the docume
 It cannot be deleted. The record type is a backward-compatible addition to the `.archb`
 format: an older application reading a newer file sees the views as records it does not know.
 
+#### Selection sets and model statistics
+
+`archbuilder.selection_set` (schema 1.0) is a named, saved list of elements, owned by the project.
+The record holds a name (unique among the sets, case folded) and its members as one optional
+reference each; element identifiers never change, so a set stays valid across edits, and deleting an
+element removes it from every set (the delete is one undo step that also restores the entry). Only
+building elements are members (not levels, storeys or types). `archbuilder.set.create` (the given
+elements, else the selected ones), `archbuilder.set.update` (add and remove members),
+`archbuilder.set.rename` and `archbuilder.set.delete` are each one undo step;
+`archbuilder.set.select` makes the members the selection (or adds them) and changes no document.
+Rule-based sets (category and parameter conditions) and a report of the members dropped by a delete
+are not built yet.
+
+`archbuilder.model.statistics` returns a report derived from the document and never stored: element
+counts by kind, by type (instances without a type under an empty name) and by storey, and the number
+of plan views, selection sets and element types. `archbuilder-cli inspect` prints it as `statistics`
+beside the `selection_sets` list. Stored size by table, the largest families and measured
+regeneration time are not part of it yet.
+
 The drawing is derived ([`archbuilder_model::plan`]) and never stored: an implementation of the
 `arc-view` source interface for one view. A wall gives one part per layer of its cleaned solids, with
 the layer's material as the join key, so the layers of one material join across walls and a seam shows
@@ -951,6 +970,16 @@ save dialog for IFC files that starts with the document's name, then runs with t
 relative path resolves against the folder of the saved document, else the documents or home folder.
 When no file dialog opens or the user cancels, the history says that no file was chosen and the
 typed form with a path still works.
+
+Self-validation (AB-IO-019): after writing, `export_ifc` reads the bytes back with the reader of
+`arc-io-ifc` and checks that the file reads, that the project, site, building, storeys, elements and
+element types are each in the file under their `GlobalId`, that no two rooted entities share a
+`GlobalId`, and that the file holds as many products and openings as elements were written. Each
+problem is a loss item with the outcome `failed` (`ab.io.ifc.validation_unreadable`,
+`validation_missing`, `validation_duplicate_id`, `validation_count`) and `Export::valid` is false;
+`archbuilder.file.export_ifc` and `export-ifc` return it as `valid`. The file is still written, so
+`valid: false` is what marks it incomplete; it is not renamed or removed. Property sets, geometry
+and relationships are not re-checked yet.
 
 #### The element types of the first slice
 

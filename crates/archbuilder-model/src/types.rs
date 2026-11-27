@@ -36,6 +36,9 @@ pub const LEVEL: &str = "archbuilder.level";
 /// The type key of the plan view of a storey.
 pub const PLAN_VIEW: &str = "archbuilder.plan_view";
 
+/// The type key of a selection set: a named list of elements, owned by the project.
+pub const SELECTION_SET: &str = "archbuilder.selection_set";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -126,7 +129,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 23] = [
+pub const KEYS: [&str; 24] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -150,6 +153,7 @@ pub const KEYS: [&str; 23] = [
     VERTICAL_OPENING,
     CEILING_TYPE,
     PLAN_VIEW,
+    SELECTION_SET,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -488,6 +492,19 @@ pub mod plan_view {
     /// The view depth relative to the level, in meters: elements down to it draw beyond the cut.
     pub const DEPTH: usize = 18;
 }
+
+/// Field positions of `archbuilder.selection_set`.
+pub mod selection_set {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The members (records with one optional reference each).
+    pub const MEMBERS: usize = 1;
+    /// The field of the reference inside one entry of [`MEMBERS`].
+    pub const MEMBER_OBJECT: usize = 0;
+}
+
+/// The most members one selection set holds.
+pub const MAX_SET_MEMBERS: usize = 100_000;
 
 /// The range of a plan view's cut height and top, in meters above the level.
 pub const VIEW_HEIGHT_RANGE: (f64, f64) = (0.05, 1000.0);
@@ -845,6 +862,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
     ];
     for (key, fields) in [
         (PLAN_VIEW, plan_view_fields()),
+        (SELECTION_SET, selection_set_fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
         (SHAFT, shaft_fields()),
@@ -879,6 +897,32 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         registry.register(decl)?;
     }
     Ok(())
+}
+
+/// The fields of a selection set: a name and its member elements. A deleted element leaves the
+/// set (the reference clears).
+fn selection_set_fields() -> Vec<FieldDecl> {
+    let mut member = reference_to(ELEMENTS[0]);
+    member.targets = ELEMENTS
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    member.rule.on_delete = OnDelete::Clear;
+    member.rule.cardinality = Cardinality::Optional;
+    vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "members",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                FieldDecl::new("object", ValueType::Reference(member)).optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_SET_MEMBERS as u64,
+        })
+        .optional()
+        .in_aspect("data"),
+    ]
 }
 
 /// The fields of a plan view: the range, the scale, the detail level, the underlay, one flag per
