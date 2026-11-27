@@ -187,6 +187,7 @@ impl<'a> Structure<'a> {
                             archbuilder_model::types::ROOF_EXTRUSION,
                             archbuilder_model::types::CEILING,
                             archbuilder_model::types::SHAFT,
+                            archbuilder_model::types::ELEVATOR,
                         ] {
                             let mut found: Vec<_> = spatial::children(snapshot, key, s.storey.id)
                                 .iter()
@@ -214,7 +215,16 @@ impl<'a> Structure<'a> {
                             .iter()
                             .map(|c| (c.id, labelled(snapshot, c)))
                             .collect();
-                            let cuts: Vec<_> = cuts.into_iter().chain(edges).collect();
+                            let roof_parts: Vec<_> = [
+                                archbuilder_model::types::DORMER,
+                                archbuilder_model::types::ROOF_EDGE,
+                            ]
+                            .into_iter()
+                            .flat_map(|key| spatial::children(snapshot, key, host))
+                            .map(|c| (c.id, labelled(snapshot, &c)))
+                            .collect();
+                            let cuts: Vec<_> =
+                                cuts.into_iter().chain(edges).chain(roof_parts).collect();
                             if !cuts.is_empty() {
                                 children.insert(Some(host), cuts);
                             }

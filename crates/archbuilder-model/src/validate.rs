@@ -50,6 +50,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
         types::FLOOR_EDGE => Some(&[FLOOR]),
+        types::DORMER | types::ROOF_EDGE => Some(&[ROOF]),
         k if types::TYPE_KEYS.contains(&k) || k == types::RAILING_TYPE || k == types::RAMP_TYPE => {
             Some(&[PROJECT])
         }
@@ -301,6 +302,25 @@ pub fn stair_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
                 .with_arg("high", format!("{high:.2}")),
         );
     }
+    if let Some(found) = crate::headroom::minimum(candidate, &placed) {
+        let least = crate::stair::headroom_of(&object.values);
+        if found.clear < least - 1.0e-9 {
+            let by = get(candidate, found.by);
+            out.push(
+                Error::new(codes::STAIR_HEADROOM)
+                    .with_arg("name", display_name(object))
+                    .with_arg("clear", format!("{:.2}", found.clear))
+                    .with_arg("least", format!("{least:.2}"))
+                    .with_arg("x", format!("{:.2}", found.at[0]))
+                    .with_arg("y", format!("{:.2}", found.at[1]))
+                    .with_arg(
+                        "by",
+                        by.as_ref().map(|o| display_name(o)).unwrap_or_default(),
+                    )
+                    .with_detail(OTHER, found.by.to_string()),
+            );
+        }
+    }
     let Some(top) = placed.top_level else {
         return with_object(out, object.id);
     };
@@ -448,6 +468,7 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_ceilings(candidate, touched, &mut out);
     check_openings(candidate, touched, &mut out);
     check_floor_edges(candidate, touched, &mut out);
+    check_roof_elements(candidate, touched, &mut out);
     check_roof_extrusions(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
@@ -739,6 +760,44 @@ fn check_floor_edges(
     }
 }
 
+/// The elevators, dormers and roof edge elements that changed need sizes in their ranges and, for
+/// a roof edge element, a profile that can be swept and at least one edge.
+fn check_roof_elements(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        let (Some(key), Some(object)) = (type_of(candidate, *id), get(candidate, *id)) else {
+            continue;
+        };
+        let (ok, code) = match key.as_str() {
+            types::ELEVATOR => (
+                crate::elevator::Elevator::from_values(&object.values)
+                    .is_some_and(|e| e.sizes_ok()),
+                codes::ELEVATOR_INVALID,
+            ),
+            types::DORMER => (
+                crate::dormer::Dormer::from_values(&object.values).is_some_and(|d| d.sizes_ok()),
+                codes::DORMER_INVALID,
+            ),
+            types::ROOF_EDGE => (
+                crate::roof_edge::RoofEdge::from_values(&object.values).is_some_and(|e| {
+                    !e.edges.is_empty() && crate::floor_edge::FloorEdge::profile_ok(&e.profile)
+                }),
+                codes::ROOF_EDGE_PROFILE,
+            ),
+            _ => continue,
+        };
+        if !ok {
+            out.push(Error::new(code).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
 /// The error code of a boundary refusal.
 #[must_use]
 pub fn refusal_code(refusal: crate::floor::Refusal) -> arc_base::ErrorCode {
@@ -961,6 +1020,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
     }
     out.extend(ceiling_warnings(candidate, touched));
     out.extend(floor_edge_warnings(candidate, touched));
+    out.extend(roof_edge_warnings(candidate, touched));
     out
 }
 
@@ -995,6 +1055,35 @@ fn floor_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change
         }
     }
     out
+}
+
+/// The warnings about roof edge elements: edges the roof no longer has, or that have no slope.
+fn roof_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut edges: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(types::ROOF_EDGE) => edges.extend(get(candidate, *id)),
+            Some(ROOF) => edges.extend(crate::spatial::children(candidate, types::ROOF_EDGE, *id)),
+            _ => {}
+        }
+    }
+    edges.sort_by_key(|e| e.id);
+    edges.dedup_by_key(|e| e.id);
+    edges
+        .into_iter()
+        .filter_map(|edge| {
+            let orphans = crate::roof_edge::orphans_of(candidate, &edge);
+            (!orphans.is_empty()).then(|| {
+                Error::new(codes::ROOF_EDGE_ORPHAN)
+                    .with_arg("name", display_name(&edge))
+                    .with_arg("count", orphans.len().to_string())
+                    .with_detail(OBJECT, edge.id.to_string())
+            })
+        })
+        .collect()
 }
 
 /// The warnings about ceilings and vertical openings: an edge that follows a wall that no longer
@@ -1150,6 +1239,9 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::vertical_opening::PINNED,
         ],
         types::FLOOR_EDGE => &[types::floor_edge::NAME, types::floor_edge::PINNED],
+        types::ELEVATOR => &[types::elevator::NAME, types::elevator::PINNED],
+        types::DORMER => &[types::dormer::NAME, types::dormer::PINNED],
+        types::ROOF_EDGE => &[types::roof_edge::NAME, types::roof_edge::PINNED],
         types::ROOF_EXTRUSION => &[
             types::roof_extrusion::NAME,
             types::roof_extrusion::THICKNESS,
@@ -1237,7 +1329,7 @@ impl WarningKind {
             Self::Stair
         } else if code.starts_with("ab.model.room") {
             Self::Room
-        } else if code.starts_with("ab.model.floor") {
+        } else if code.starts_with("ab.model.floor") || code.starts_with("ab.model.roof_edge") {
             Self::Floor
         } else if code.starts_with("ab.model.ceiling") || code.starts_with("ab.model.opening") {
             Self::Ceiling
@@ -1405,6 +1497,7 @@ pub fn is_ceiling_range(error: &Error) -> bool {
 pub fn is_warning(error: &Error) -> bool {
     error.code() == codes::INSERT_MEETS_WALL.code
         || error.code() == codes::FLOOR_EDGE_ORPHAN.code
+        || error.code() == codes::ROOF_EDGE_ORPHAN.code
         || is_ceiling_range(error)
 }
 

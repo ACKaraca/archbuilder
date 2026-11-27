@@ -145,6 +145,39 @@ pub fn stack(
             on_lines.push((-z, o.id));
         }
     }
+    // A roof edge element lies along its roof's eave: picked on its line, like a floor edge.
+    for o in spatial::objects(snapshot, crate::types::ROOF_EDGE)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(d) = crate::roof_edge::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let near = d.chains.iter().any(|c| {
+            c.points
+                .windows(2)
+                .any(|w| segment_distance([w[0][0], w[0][1]], [w[1][0], w[1][1]], at) <= aperture)
+        });
+        let z = d
+            .chains
+            .iter()
+            .flat_map(|c| c.points.iter().map(|p| p[2]))
+            .fold(f64::MIN, f64::max);
+        if near {
+            on_lines.push((-z, o.id));
+        }
+    }
+    // A dormer is picked over its opening in the roof.
+    for o in spatial::objects(snapshot, crate::types::DORMER)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        if let Some(dormer) = crate::dormer::Dormer::from_values(&o.values)
+            && crate::floor::Boundary::polygons(vec![dormer.opening()]).contains(at)
+        {
+            on_lines.push((f64::MIN, o.id));
+        }
+    }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));
@@ -390,6 +423,21 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             .unwrap_or_default(),
         Some(crate::types::SHAFT) => crate::opening::shaft_span(snapshot, &object)
             .map(|s| vec![close(&s.outline, s.z.0), close(&s.outline, s.z.1)])
+            .unwrap_or_default(),
+        Some(crate::types::ELEVATOR) => crate::elevator::span(snapshot, &object)
+            .map(|s| vec![close(&s.outline, s.z.0), close(&s.outline, s.z.1)])
+            .unwrap_or_default(),
+        Some(crate::types::DORMER) => crate::dormer::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.parts
+                    .iter()
+                    .flat_map(|(_, s)| s.vertices().iter().map(|v| [v.x, v.y, v.z]))
+                    .collect::<Vec<_>>()
+            })
+            .map(|v| vec![v])
+            .unwrap_or_default(),
+        Some(crate::types::ROOF_EDGE) => crate::roof_edge::Derived::of(snapshot, &object)
+            .map(|d| d.chains.iter().map(|c| c.points.clone()).collect())
             .unwrap_or_default(),
         Some(crate::types::VERTICAL_OPENING) => {
             crate::opening::outline_of(snapshot, &object, crate::floor::VERTICAL_SLOTS)

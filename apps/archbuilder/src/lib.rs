@@ -53,6 +53,7 @@ pub mod extract_insert;
 pub mod extract_level;
 pub mod extract_roof;
 pub mod extract_roof_extrusion;
+pub mod extract_roof_parts;
 pub mod extract_stair;
 pub mod extract_view;
 pub mod extract_wall;
@@ -212,6 +213,7 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
         out.extend(extract_floor_edge::dependents(snapshot, changes));
+        out.extend(extract_roof_parts::dependents(snapshot, changes));
         out.extend(extract_roof_extrusion::dependents(snapshot, changes));
         out.extend(extract_datum::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
@@ -385,6 +387,33 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_floor_edge::extract_floor_edge(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.roof_edge".into(),
+        types: vec![archbuilder_model::types::ROOF_EDGE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_roof_edge(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.dormer".into(),
+        types: vec![archbuilder_model::types::DORMER.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_dormer(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.elevator".into(),
+        types: vec![archbuilder_model::types::ELEVATOR.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_elevator(snapshot, object, cancel)
             })
         }),
     })?;

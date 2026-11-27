@@ -58,10 +58,13 @@ pub mod ceiling;
 pub mod cleanup;
 pub mod curtain;
 pub mod datum;
+pub mod dormer;
 pub mod element_type;
+pub mod elevator;
 pub mod error;
 pub mod floor;
 pub mod floor_edge;
+pub mod headroom;
 pub mod insert;
 pub mod join;
 pub mod layered;
@@ -72,6 +75,7 @@ pub mod plan;
 pub mod railing;
 pub mod ramp;
 pub mod roof;
+pub mod roof_edge;
 pub mod roof_extrusion;
 pub mod room;
 pub mod selection;
@@ -305,6 +309,38 @@ pub mod defaults {
             format!("Ekstrüzyon çatı {n}")
         } else {
             format!("Extruded roof {n}")
+        }
+    }
+
+    /// The name of the elevator numbered `n` in `language`: `Elevator 2`, `Asansör 2`.
+    #[must_use]
+    pub fn elevator(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Asansör {n}")
+        } else {
+            format!("Elevator {n}")
+        }
+    }
+
+    /// The name of the dormer numbered `n` in `language`: `Dormer 2`, `Çatı penceresi 2`.
+    #[must_use]
+    pub fn dormer(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çatı penceresi {n}")
+        } else {
+            format!("Dormer {n}")
+        }
+    }
+
+    /// The name of the roof edge element of `role` numbered `n` in `language`: `Fascia 1`,
+    /// `Saçak silmesi 1`, `Gutter 1`, `Oluk 1`.
+    #[must_use]
+    pub fn roof_edge(language: &str, gutter: bool, n: usize) -> String {
+        match (turkish(language), gutter) {
+            (true, true) => format!("Oluk {n}"),
+            (true, false) => format!("Saçak silmesi {n}"),
+            (false, true) => format!("Gutter {n}"),
+            (false, false) => format!("Fascia {n}"),
         }
     }
 

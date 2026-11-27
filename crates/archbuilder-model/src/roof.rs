@@ -527,6 +527,30 @@ impl Surface {
             .map(|z| self.base - self.drop + z)
     }
 
+    /// The elevation of the top of the slab over `p`; `None` outside the outline.
+    #[must_use]
+    pub fn top_at(&self, p: [f64; 2]) -> Option<f64> {
+        let inside = Boundary {
+            loops: vec![self.outline.clone()],
+            ..Boundary::default()
+        }
+        .contains(p);
+        if !inside {
+            return None;
+        }
+        self.over
+            .height_at(&Point2::new(p[0], p[1]), &Tolerance::DEFAULT)
+            .map(|z| self.base - self.drop + z)
+    }
+
+    /// The elevation of the underside over `p`, which may lie on the outline itself (an eave).
+    #[must_use]
+    pub fn eave_at(&self, p: [f64; 2]) -> Option<f64> {
+        self.skeleton
+            .height_at(&Point2::new(p[0], p[1]), &Tolerance::DEFAULT)
+            .map(|z| self.base - self.drop + z)
+    }
+
     /// The underside over the outline as convex pieces with their planes.
     #[must_use]
     pub fn pieces(&self) -> Vec<Piece> {

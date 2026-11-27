@@ -16,6 +16,14 @@
 //! and the shaft opening the floors of the top level get ([`Layout::opening`]). The stride rule
 //! `2R + T` in [`STRIDE_RANGE`] is a warning, not a refusal.
 //!
+//! A stair by sketch (shape `sketch`) takes its runs from run lines instead: each run line is the
+//! walking line of one straight run, from the middle of its first riser. The risers are shared
+//! among the runs in proportion to their line lengths (two at least each), each run keeps the
+//! stair's width, tread and waist, and the landing between two runs is the convex hull of the
+//! last riser of one and the first riser of the next. Everything else (solids, rails, plan, shaft
+//! opening, headroom) follows the rules of the component stairs. The least clear height above the
+//! walking surface is the stair's `headroom`, [`DEFAULT_HEADROOM`] when absent.
+//!
 //! Coordinates: `a` runs along the first run from the start, `c` across it to the left (to the
 //! right for a right turn, so a right stair is the mirror image of a left one), `z` up from the
 //! base level.
@@ -57,6 +65,11 @@ pub const POST_SPACING: f64 = 1.2;
 pub const RAIL_SIZE: f64 = 0.05;
 /// The side of a post's square section, in meters.
 pub const POST_SIZE: f64 = 0.04;
+/// The most run lines of a stair by sketch.
+pub const MAX_RUN_LINES: usize = 16;
+/// The least clear height above treads and landings, in meters, when the stair names none.
+pub const DEFAULT_HEADROOM: f64 = 2.0;
+
 /// The chord of the solid kernel; stairs have no curves.
 const CHORD: f64 = 0.01;
 
@@ -70,11 +83,13 @@ pub enum Shape {
     LTurn,
     /// Two runs side by side in opposite directions with a landing across both.
     UTurn,
+    /// Straight runs along sketched run lines, with a landing between each two.
+    Sketch,
 }
 
 impl Shape {
     /// Every shape, in code order.
-    pub const ALL: [Self; 3] = [Self::Straight, Self::LTurn, Self::UTurn];
+    pub const ALL: [Self; 4] = [Self::Straight, Self::LTurn, Self::UTurn, Self::Sketch];
 
     /// The name in the record.
     #[must_use]
@@ -83,6 +98,7 @@ impl Shape {
             Self::Straight => "straight",
             Self::LTurn => "l_turn",
             Self::UTurn => "u_turn",
+            Self::Sketch => "sketch",
         }
     }
 
@@ -93,6 +109,7 @@ impl Shape {
             Self::Straight => 0,
             Self::LTurn => 1,
             Self::UTurn => 2,
+            Self::Sketch => 3,
         }
     }
 
@@ -106,7 +123,7 @@ impl Shape {
     #[must_use]
     pub const fn least_risers(self) -> usize {
         match self {
-            Self::Straight => 2,
+            Self::Straight | Self::Sketch => 2,
             Self::LTurn | Self::UTurn => 4,
         }
     }
@@ -271,6 +288,98 @@ impl Stair {
     }
 }
 
+/// One run line of a stair by sketch: the walking line of a straight run, from the middle of its
+/// first riser toward the middle of its last.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunLine {
+    /// The middle of the first riser.
+    pub from: [f64; 2],
+    /// The point the run heads toward; only the direction of the line is used.
+    pub to: [f64; 2],
+}
+
+/// The run lines of a record's field values; empty when it has none.
+#[must_use]
+pub fn run_lines(values: &[Option<Value>]) -> Vec<RunLine> {
+    let Some(Some(Value::List(items))) = values.get(stair::RUNS) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .take(MAX_RUN_LINES)
+        .filter_map(|item| {
+            let Value::Record(f) = item else {
+                return None;
+            };
+            let m = |at| types::meters(f, at);
+            Some(RunLine {
+                from: [m(0)?, m(1)?],
+                to: [m(2)?, m(3)?],
+            })
+        })
+        .collect()
+}
+
+/// The record's value of a list of run lines.
+#[must_use]
+pub fn run_values(lines: &[RunLine]) -> Value {
+    Value::List(
+        lines
+            .iter()
+            .map(|l| {
+                Value::Record(vec![
+                    Some(types::length(l.from[0])),
+                    Some(types::length(l.from[1])),
+                    Some(types::length(l.to[0])),
+                    Some(types::length(l.to[1])),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// The least clear height of a record: its own, else [`DEFAULT_HEADROOM`].
+#[must_use]
+pub fn headroom_of(values: &[Option<Value>]) -> f64 {
+    types::meters(values, stair::HEADROOM)
+        .filter(|h| h.is_finite() && *h > 0.0)
+        .unwrap_or(DEFAULT_HEADROOM)
+}
+
+impl Stair {
+    /// The field values of the stair of `values` under the plane motion `xf`, named `name`: the
+    /// moved stair ([`Stair::moved`]) with its run lines moved and its headroom kept; `None` when
+    /// the record is unreadable. `clear_top` drops the top level (a stair copied to another
+    /// storey arrives at that storey's level above).
+    #[must_use]
+    pub fn moved_values(
+        values: &[Option<Value>],
+        name: &str,
+        xf: &crate::transform::Xform,
+        clear_top: bool,
+    ) -> Option<Vec<Option<Value>>> {
+        let mut moved = Self::from_values(values)?.moved(xf);
+        if clear_top {
+            moved.top_level = None;
+        }
+        let mut out = moved.values(name);
+        out.resize(stair::HEADROOM + 1, None);
+        out[stair::HEADROOM] = values.get(stair::HEADROOM).cloned().flatten();
+        let lines = run_lines(values);
+        if !lines.is_empty() {
+            let lines: Vec<RunLine> = lines
+                .iter()
+                .map(|l| RunLine {
+                    from: xf.point(l.from),
+                    to: xf.point(l.to),
+                })
+                .collect();
+            out[stair::RUNS] = Some(run_values(&lines));
+        }
+        Some(out)
+    }
+}
+
 /// An angle as a field value.
 #[must_use]
 pub fn angle(radians: f64) -> Value {
@@ -326,6 +435,9 @@ pub struct Layout {
     pub landing: Vec<[f64; 2]>,
     /// The elevation of the landing's top above the base.
     pub landing_top: f64,
+    /// The landings of a stair by sketch, each its corners (counterclockwise) and the elevation
+    /// of its top above the base; empty for the other shapes.
+    pub landings: Vec<(Vec<[f64; 2]>, f64)>,
     /// The local frame: origin, along and across (to the left for a left turn).
     frame: Frame,
 }
@@ -342,11 +454,12 @@ struct Frame {
 impl Frame {
     fn new(stair: &Stair) -> Self {
         let (s, c) = crate::transform::sin_cos(stair.direction);
-        let side = if stair.turn == Turn::Right && stair.shape != Shape::Straight {
-            -1.0
-        } else {
-            1.0
-        };
+        let side =
+            if stair.turn == Turn::Right && matches!(stair.shape, Shape::LTurn | Shape::UTurn) {
+                -1.0
+            } else {
+                1.0
+            };
         Self {
             origin: stair.start,
             u: [c, s],
@@ -379,6 +492,37 @@ impl Frame {
 /// The signed area of a polygon (positive counterclockwise).
 fn signed_area(points: &[[f64; 2]]) -> f64 {
     crate::floor::signed_area(points)
+}
+
+/// The convex hull of `points`, counterclockwise (Andrew's monotone chain).
+fn hull(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    let mut p: Vec<[f64; 2]> = points.to_vec();
+    p.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    p.dedup_by(|a, b| (a[0] - b[0]).abs() < 1.0e-9 && (a[1] - b[1]).abs() < 1.0e-9);
+    if p.len() < 3 {
+        return p;
+    }
+    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    };
+    let mut out: Vec<[f64; 2]> = Vec::new();
+    for pass in 0..2 {
+        let start = out.len();
+        let iter: Box<dyn Iterator<Item = &[f64; 2]>> = if pass == 0 {
+            Box::new(p.iter())
+        } else {
+            Box::new(p.iter().rev())
+        };
+        for q in iter {
+            while out.len() >= start + 2 && cross(out[out.len() - 2], out[out.len() - 1], *q) <= 0.0
+            {
+                out.pop();
+            }
+            out.push(*q);
+        }
+        out.pop();
+    }
+    out
 }
 
 /// A region of one loop of straight edges.
@@ -454,6 +598,10 @@ impl Layout {
     ///
     /// # Errors
     /// [`Refusal`].
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one layout for the three component shapes"
+    )]
     pub fn new(stair: &Stair, height: f64) -> std::result::Result<Self, Refusal> {
         let finite = [
             height,
@@ -474,6 +622,10 @@ impl Layout {
             return Err(Refusal::NoTop);
         }
         if stair.max_riser <= 0.0 {
+            return Err(Refusal::Malformed);
+        }
+        if stair.shape == Shape::Sketch {
+            // A stair by sketch has run lines; without them it has no layout.
             return Err(Refusal::Malformed);
         }
         let least = stair.shape.least_risers();
@@ -503,7 +655,7 @@ impl Layout {
         let (t, w) = (stair.tread, stair.width);
         let h = w / 2.0;
         let first = match stair.shape {
-            Shape::Straight => risers,
+            Shape::Straight | Shape::Sketch => risers,
             // An L stair's first run takes the larger half; a U stair's the smaller one, so its
             // upper run reaches past the foot and the opening covers the whole lower run.
             Shape::LTurn => risers.div_ceil(2),
@@ -521,7 +673,7 @@ impl Layout {
         let landing_top = first as f64 * riser;
         let l1 = second.saturating_sub(1) as f64 * t;
         let (landing, second_run) = match stair.shape {
-            Shape::Straight => (Vec::new(), None),
+            Shape::Straight | Shape::Sketch => (Vec::new(), None),
             Shape::LTurn => (
                 vec![[l0, -h], [l0 + w, -h], [l0 + w, h], [l0, h]],
                 Some(([l0 + h, h], [0.0, 1.0])),
@@ -553,7 +705,168 @@ impl Layout {
             runs,
             landing: frame.polygon(&landing),
             landing_top,
+            landings: Vec::new(),
             frame,
+        })
+    }
+
+    /// The layout of `stair` rising `height`: along `lines` for a stair by sketch, else as
+    /// [`Layout::new`].
+    ///
+    /// # Errors
+    /// [`Refusal`].
+    pub fn build(
+        stair: &Stair,
+        lines: &[RunLine],
+        height: f64,
+    ) -> std::result::Result<Self, Refusal> {
+        if stair.shape == Shape::Sketch {
+            Self::sketch(stair, lines, height)
+        } else {
+            Self::new(stair, height)
+        }
+    }
+
+    /// The layout of a stair by sketch: one run along each line, the risers shared in proportion
+    /// to the lengths of the lines, and a landing between each two runs.
+    ///
+    /// # Errors
+    /// [`Refusal`].
+    #[allow(
+        clippy::too_many_lines,
+        reason = "validation, riser sharing, runs and landings"
+    )]
+    pub fn sketch(
+        stair: &Stair,
+        lines: &[RunLine],
+        height: f64,
+    ) -> std::result::Result<Self, Refusal> {
+        let finite = [
+            height,
+            stair.width,
+            stair.tread,
+            stair.max_riser,
+            stair.waist,
+        ]
+        .iter()
+        .all(|v| v.is_finite())
+            && lines
+                .iter()
+                .flat_map(|l| l.from.iter().chain(&l.to))
+                .all(|v| v.is_finite());
+        if !finite
+            || stair.width <= 0.0
+            || stair.tread <= 0.0
+            || stair.waist <= 0.0
+            || stair.max_riser <= 0.0
+            || lines.is_empty()
+            || lines.len() > MAX_RUN_LINES
+        {
+            return Err(Refusal::Malformed);
+        }
+        if height < types::HEIGHT_RANGE.0 {
+            return Err(Refusal::NoTop);
+        }
+        let dirs: Vec<([f64; 2], f64)> = lines
+            .iter()
+            .map(|l| {
+                let d = [l.to[0] - l.from[0], l.to[1] - l.from[1]];
+                let len = d[0].hypot(d[1]);
+                ([d[0] / len, d[1] / len], len)
+            })
+            .collect();
+        if dirs
+            .iter()
+            .any(|(_, len)| !len.is_finite() || *len < 1.0e-6)
+        {
+            return Err(Refusal::Malformed);
+        }
+        let least = 2 * lines.len();
+        let wanted = ((height / stair.max_riser) - 1.0e-9).ceil();
+        if !(1.0..=MAX_RISERS as f64).contains(&wanted) {
+            return Err(Refusal::Risers {
+                count: if wanted < 1.0 { 0 } else { MAX_RISERS + 1 },
+                least,
+            });
+        }
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a whole number between 1 and MAX_RISERS"
+        )]
+        let risers = wanted as usize;
+        if risers < least {
+            return Err(Refusal::Risers {
+                count: risers,
+                least,
+            });
+        }
+        // Two risers in each run, then one at a time to the run with the most line length per
+        // riser (the lowest first on a tie).
+        let mut counts = vec![2_usize; lines.len()];
+        for _ in 0..risers - least {
+            let mut best = 0;
+            for (k, (_, len)) in dirs.iter().enumerate() {
+                if len / counts[k] as f64 > dirs[best].1 / counts[best] as f64 + 1.0e-12 {
+                    best = k;
+                }
+            }
+            counts[best] += 1;
+        }
+        let riser = height / risers as f64;
+        let mut runs = Vec::with_capacity(lines.len());
+        let mut done = 0_usize;
+        for (k, line) in lines.iter().enumerate() {
+            runs.push(Run {
+                start: line.from,
+                dir: dirs[k].0,
+                risers: counts[k],
+                base: done as f64 * riser,
+                length: (counts[k] - 1) as f64 * stair.tread,
+            });
+            done += counts[k];
+        }
+        let h = stair.width / 2.0;
+        let mut landings = Vec::new();
+        for (k, pair) in runs.windows(2).enumerate() {
+            let end = |run: &Run, c: f64| {
+                let n = [-run.dir[1], run.dir[0]];
+                [
+                    run.start[0] + run.dir[0] * run.length + n[0] * c,
+                    run.start[1] + run.dir[1] * run.length + n[1] * c,
+                ]
+            };
+            let begin = |run: &Run, c: f64| {
+                let n = [-run.dir[1], run.dir[0]];
+                [run.start[0] + n[0] * c, run.start[1] + n[1] * c]
+            };
+            let corners = hull(&[
+                end(&pair[0], -h),
+                end(&pair[0], h),
+                begin(&pair[1], -h),
+                begin(&pair[1], h),
+            ]);
+            if corners.len() >= 3 && signed_area(&corners) > 1.0e-4 {
+                let top: usize = counts[..=k].iter().sum();
+                landings.push((corners, top as f64 * riser));
+            }
+        }
+        let first = runs[0];
+        let moved = Stair {
+            start: first.start,
+            direction: first.dir[1].atan2(first.dir[0]),
+            ..*stair
+        };
+        Ok(Self {
+            stair: moved,
+            height,
+            risers,
+            riser,
+            runs,
+            landing: Vec::new(),
+            landing_top: counts[0] as f64 * riser,
+            landings,
+            frame: Frame::new(&moved),
         })
     }
 
@@ -599,12 +912,15 @@ impl Layout {
     /// stair's outline has the gap between its runs as a notch).
     #[must_use]
     pub fn footprint(&self) -> Vec<[f64; 2]> {
+        if self.stair.shape == Shape::Sketch {
+            return self.sketch_footprint();
+        }
         let (w, h) = (self.stair.width, self.stair.width / 2.0);
         let l0 = self.runs[0].length;
         let l1 = self.runs.get(1).map_or(0.0, |r| r.length);
         let g = U_GAP;
         let local: Vec<[f64; 2]> = match self.stair.shape {
-            Shape::Straight => vec![[0.0, -h], [l0, -h], [l0, h], [0.0, h]],
+            Shape::Straight | Shape::Sketch => vec![[0.0, -h], [l0, -h], [l0, h], [0.0, h]],
             Shape::LTurn => vec![
                 [0.0, -h],
                 [l0 + w, -h],
@@ -633,12 +949,17 @@ impl Layout {
     /// last riser of the upper run (past the foot) to the landing.
     #[must_use]
     pub fn opening(&self) -> Vec<[f64; 2]> {
+        if self.stair.shape == Shape::Sketch {
+            return self.sketch_opening();
+        }
         let (w, h, k) = (self.stair.width, self.stair.width / 2.0, OPENING_CLEARANCE);
         let l0 = self.runs[0].length;
         let l1 = self.runs.get(1).map_or(0.0, |r| r.length);
         let g = U_GAP;
         let local: Vec<[f64; 2]> = match self.stair.shape {
-            Shape::Straight => vec![[-k, -h - k], [l0, -h - k], [l0, h + k], [-k, h + k]],
+            Shape::Straight | Shape::Sketch => {
+                vec![[-k, -h - k], [l0, -h - k], [l0, h + k], [-k, h + k]]
+            }
             Shape::LTurn => vec![
                 [-k, -h - k],
                 [l0 + w + k, -h - k],
@@ -655,6 +976,52 @@ impl Layout {
             ],
         };
         self.frame.polygon(&local)
+    }
+
+    /// The corner loops of the runs and the landings of a stair by sketch.
+    fn sketch_parts(&self) -> Vec<Vec<[f64; 2]>> {
+        let mut parts: Vec<Vec<[f64; 2]>> = self.runs.iter().map(|r| self.run_corners(r)).collect();
+        parts.extend(self.landings.iter().map(|(corners, _)| corners.clone()));
+        parts
+    }
+
+    /// The outline of a stair by sketch: the union of its runs and landings, the convex hull when
+    /// the kernel cannot unite them.
+    fn sketch_footprint(&self) -> Vec<[f64; 2]> {
+        let parts = self.sketch_parts();
+        let merged = crate::floor::merge_loops(&parts);
+        let outline = merged
+            .into_iter()
+            .max_by(|a, b| signed_area(a).abs().total_cmp(&signed_area(b).abs()));
+        match outline {
+            Some(mut o) if o.len() >= 3 => {
+                if signed_area(&o) < 0.0 {
+                    o.reverse();
+                }
+                o
+            }
+            _ => hull(&parts.concat()),
+        }
+    }
+
+    /// The shaft opening of a stair by sketch: the convex hull of its footprint, grown by
+    /// [`OPENING_CLEARANCE`] on every side.
+    fn sketch_opening(&self) -> Vec<[f64; 2]> {
+        let h = hull(&self.sketch_footprint());
+        let n = h.len().max(1) as f64;
+        let c = h
+            .iter()
+            .fold([0.0, 0.0], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n]);
+        h.iter()
+            .map(|p| {
+                let d = [p[0] - c[0], p[1] - c[1]];
+                let l = d[0].hypot(d[1]).max(1.0e-9);
+                [
+                    p[0] + d[0] / l * OPENING_CLEARANCE,
+                    p[1] + d[1] / l * OPENING_CLEARANCE,
+                ]
+            })
+            .collect()
     }
 
     /// The side profile area of a run times the width: the concrete of the run, in cubic meters.
@@ -679,7 +1046,13 @@ impl Layout {
     /// The volume of the concrete: the runs and the landing slab, in cubic meters.
     #[must_use]
     pub fn volume(&self) -> f64 {
-        let landing = signed_area(&self.landing).abs() * self.landing_thickness();
+        let landing = (signed_area(&self.landing).abs()
+            + self
+                .landings
+                .iter()
+                .map(|(p, _)| signed_area(p).abs())
+                .sum::<f64>())
+            * self.landing_thickness();
         self.runs.iter().map(|r| self.run_volume(r)).sum::<f64>() + landing
     }
 
@@ -746,6 +1119,19 @@ impl Layout {
         if let Some(landing) = self.landing_solid(base) {
             out.push(landing?);
         }
+        for (corners, top) in &self.landings {
+            let t = self.landing_thickness();
+            out.push(region(corners).and_then(|r| {
+                arc_geom::prism(
+                    &r,
+                    base + top - t,
+                    t,
+                    CHORD,
+                    &Tolerance::DEFAULT,
+                    &Limits::DEFAULT,
+                )
+            })?);
+        }
         Ok(out)
     }
 
@@ -753,6 +1139,9 @@ impl Layout {
     /// `z` above the base; an empty path for a side without a railing.
     #[must_use]
     pub fn rails(&self) -> [Vec<[f64; 3]>; 2] {
+        if self.stair.shape == Shape::Sketch {
+            return self.sketch_rails();
+        }
         let (w, h, e) = (self.stair.width, self.stair.width / 2.0, RAIL_INSET);
         let (r, hh) = (self.riser, RAIL_HEIGHT);
         let l0 = self.runs[0].length;
@@ -762,7 +1151,7 @@ impl Layout {
         let g = U_GAP;
         // In the frame: the side toward the turn (inner) and the other side (outer).
         let (inner, outer): (Vec<[f64; 3]>, Vec<[f64; 3]>) = match self.stair.shape {
-            Shape::Straight => (
+            Shape::Straight | Shape::Sketch => (
                 vec![[0.0, h - e, r + hh], [l0, h - e, top + hh]],
                 vec![[0.0, -(h - e), r + hh], [l0, -(h - e), top + hh]],
             ),
@@ -821,6 +1210,36 @@ impl Layout {
         [
             pick(self.stair.railings[0], left),
             pick(self.stair.railings[1], right),
+        ]
+    }
+
+    /// The top rails of a stair by sketch: along each run at the inset of each side, the rail of
+    /// one run continuing into the next at the landing.
+    fn sketch_rails(&self) -> [Vec<[f64; 3]>; 2] {
+        let (h, e, hh) = (self.stair.width / 2.0, RAIL_INSET, RAIL_HEIGHT);
+        let side = |c: f64| -> Vec<[f64; 3]> {
+            let mut path = Vec::new();
+            for run in &self.runs {
+                let n = [-run.dir[1], run.dir[0]];
+                let at = |a: f64, z: f64| {
+                    [
+                        run.start[0] + run.dir[0] * a + n[0] * c,
+                        run.start[1] + run.dir[1] * a + n[1] * c,
+                        z,
+                    ]
+                };
+                path.push(at(0.0, run.base + self.riser + hh));
+                path.push(at(
+                    run.length,
+                    run.base + run.risers as f64 * self.riser + hh,
+                ));
+            }
+            path
+        };
+        let pick = |on: bool, path: Vec<[f64; 3]>| if on { path } else { Vec::new() };
+        [
+            pick(self.stair.railings[0], side(h - e)),
+            pick(self.stair.railings[1], side(-(h - e))),
         ]
     }
 
@@ -937,6 +1356,16 @@ impl Layout {
         let l0 = self.runs[0].length;
         let w = self.stair.width;
         match self.stair.shape {
+            Shape::Sketch => {
+                walk.clear();
+                for run in &self.runs {
+                    walk.push(run.start);
+                    walk.push([
+                        run.start[0] + run.dir[0] * run.length,
+                        run.start[1] + run.dir[1] * run.length,
+                    ]);
+                }
+            }
             Shape::Straight => walk.push(self.frame.at(l0, 0.0)),
             Shape::LTurn => {
                 walk.push(self.frame.at(l0 + h, 0.0));
@@ -946,7 +1375,9 @@ impl Layout {
                 walk.push(self.frame.at(l0 + h, w + U_GAP));
             }
         }
-        if let Some(run) = self.runs.get(1) {
+        if let Some(run) = self.runs.get(1)
+            && self.stair.shape != Shape::Sketch
+        {
             walk.push([
                 run.start[0] + run.dir[0] * run.length,
                 run.start[1] + run.dir[1] * run.length,
@@ -1061,7 +1492,7 @@ impl Placed {
             .as_ref()
             .and_then(|l| types::meters(&l.values, level::ELEVATION));
         let layout = match elevation {
-            Some(e) => Layout::new(&stair, e - base),
+            Some(e) => Layout::build(&stair, &run_lines(&object.values), e - base),
             None => Err(Refusal::NoTop),
         };
         Some(Self {
@@ -1238,8 +1669,61 @@ mod tests {
     }
 
     #[test]
+    fn a_stair_by_sketch_with_one_line_is_the_straight_stair_and_two_lines_share_the_risers() {
+        let sketch = Stair {
+            shape: Shape::Sketch,
+            ..stair(Shape::Straight, Turn::Left)
+        };
+        let line = |x0, y0, x1, y1| RunLine {
+            from: [x0, y0],
+            to: [x1, y1],
+        };
+        let one = Layout::build(&sketch, &[line(0.0, 0.0, 5.0, 0.0)], 3.0).unwrap();
+        let straight = Layout::new(&stair(Shape::Straight, Turn::Left), 3.0).unwrap();
+        assert_eq!(one.risers, straight.risers);
+        assert!(close(one.runs[0].length, straight.runs[0].length));
+        assert!(close(
+            signed_area(&one.footprint()),
+            signed_area(&straight.footprint())
+        ));
+        assert!(one.landings.is_empty());
+        // Two lines of 3 m and 1 m: the longer run takes more risers; the landing is the hull
+        // of the end of the first run and the start of the second.
+        let two = Layout::build(
+            &sketch,
+            &[line(0.0, 0.0, 3.0, 0.0), line(3.5, 0.5, 3.5, 1.5)],
+            3.0,
+        )
+        .unwrap();
+        assert_eq!(two.runs.iter().map(|r| r.risers).sum::<usize>(), 17);
+        assert!(two.runs[0].risers > two.runs[1].risers);
+        assert_eq!(two.landings.len(), 1);
+        assert!(close(
+            two.runs[1].base,
+            two.runs[0].risers as f64 * two.riser
+        ));
+        let solids: f64 = two
+            .solids(0.0)
+            .unwrap()
+            .iter()
+            .map(Polyhedron::volume)
+            .sum();
+        assert!((solids - two.volume()).abs() < 1.0e-6);
+        // A stair that cannot give each run two risers is refused.
+        assert_eq!(
+            Layout::build(
+                &sketch,
+                &[line(0.0, 0.0, 3.0, 0.0), line(3.5, 0.5, 3.5, 1.5)],
+                0.5
+            ),
+            Err(Refusal::Risers { count: 3, least: 4 })
+        );
+        assert_eq!(Layout::build(&sketch, &[], 3.0), Err(Refusal::Malformed));
+    }
+
+    #[test]
     fn the_volume_is_the_profile_times_the_width_and_matches_the_solids() {
-        for shape in Shape::ALL {
+        for shape in [Shape::Straight, Shape::LTurn, Shape::UTurn] {
             let layout = Layout::new(&stair(shape, Turn::Right), 3.0).unwrap();
             let solids = layout.solids(3.0).unwrap();
             let total: f64 = solids.iter().map(Polyhedron::volume).sum();

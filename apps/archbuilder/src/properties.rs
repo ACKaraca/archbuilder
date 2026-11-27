@@ -1258,6 +1258,24 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::ELEVATOR,
+        Message {
+            message_id: "ab-kind-elevator",
+        },
+    ),
+    (
+        types::DORMER,
+        Message {
+            message_id: "ab-kind-dormer",
+        },
+    ),
+    (
+        types::ROOF_EDGE,
+        Message {
+            message_id: "ab-kind-roof-edge",
+        },
+    ),
+    (
         types::GRID,
         Message {
             message_id: "ab-kind-grid",
@@ -1301,6 +1319,154 @@ const NOT_EDITABLE: Message = Message {
 const DEFAULT_VIEW: Message = Message {
     message_id: "ab-prop-view-default-note",
 };
+
+/// Labels of the fields of elevators, dormers, roof edge elements and stairs by sketch.
+const ROOF_LABELS: [(&str, Message); 24] = [
+    (
+        "car_width",
+        Message {
+            message_id: "ab-prop-car-width",
+        },
+    ),
+    (
+        "car_depth",
+        Message {
+            message_id: "ab-prop-car-depth",
+        },
+    ),
+    (
+        "clearance",
+        Message {
+            message_id: "ab-prop-clearance",
+        },
+    ),
+    (
+        "door_width",
+        Message {
+            message_id: "ab-prop-door-width",
+        },
+    ),
+    (
+        "pit",
+        Message {
+            message_id: "ab-prop-pit",
+        },
+    ),
+    (
+        "overrun",
+        Message {
+            message_id: "ab-prop-overrun",
+        },
+    ),
+    (
+        "style",
+        Message {
+            message_id: "ab-prop-style",
+        },
+    ),
+    (
+        "wall_height",
+        Message {
+            message_id: "ab-prop-wall-height",
+        },
+    ),
+    (
+        "pitch",
+        Message {
+            message_id: "ab-prop-pitch",
+        },
+    ),
+    (
+        "role",
+        Message {
+            message_id: "ab-prop-role",
+        },
+    ),
+    (
+        "headroom",
+        Message {
+            message_id: "ab-prop-headroom",
+        },
+    ),
+    (
+        "direction",
+        Message {
+            message_id: "ab-prop-direction",
+        },
+    ),
+    (
+        "elevator_stops",
+        Message {
+            message_id: "ab-prop-elevator-stops",
+        },
+    ),
+    (
+        "elevator_shaft",
+        Message {
+            message_id: "ab-prop-elevator-shaft",
+        },
+    ),
+    (
+        "elevator_span",
+        Message {
+            message_id: "ab-prop-elevator-span",
+        },
+    ),
+    (
+        "dormer_roof",
+        Message {
+            message_id: "ab-prop-dormer-roof",
+        },
+    ),
+    (
+        "dormer_opening",
+        Message {
+            message_id: "ab-prop-dormer-opening",
+        },
+    ),
+    (
+        "dormer_volume",
+        Message {
+            message_id: "ab-prop-dormer-volume",
+        },
+    ),
+    (
+        "roof_edge_roof",
+        Message {
+            message_id: "ab-prop-roof-edge-roof",
+        },
+    ),
+    (
+        "gable",
+        Message {
+            message_id: "ab-prop-gable",
+        },
+    ),
+    (
+        "shed",
+        Message {
+            message_id: "ab-prop-shed",
+        },
+    ),
+    (
+        "fascia",
+        Message {
+            message_id: "ab-prop-fascia",
+        },
+    ),
+    (
+        "gutter",
+        Message {
+            message_id: "ab-prop-gutter",
+        },
+    ),
+    (
+        "sketch",
+        Message {
+            message_id: "ab-prop-sketch",
+        },
+    ),
+];
 
 /// Labels of the fields of ramps and railings.
 const CIRC_LABELS: [(&str, Message); 25] = [
@@ -1487,6 +1653,7 @@ fn label_text(localize: &dyn Localize, name: &str) -> String {
     LABELS
         .iter()
         .chain(CIRC_LABELS.iter())
+        .chain(ROOF_LABELS.iter())
         .find(|(n, _)| *n == name)
         .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
 }
@@ -1970,6 +2137,7 @@ fn shown(
                 st::RAILING_RIGHT,
                 st::X,
                 st::Y,
+                st::HEADROOM,
             ];
             let (decls, vals) = (fields.clone(), values.clone());
             fields = order
@@ -2309,6 +2477,96 @@ fn shown(
                 (
                     "extrusion_volume",
                     derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // An elevator shows its sizes, the levels it stops at and the span of its shaft.
+        types::ELEVATOR => {
+            let derived = archbuilder_model::elevator::derived(snapshot, object);
+            fields.truncate(types::elevator::TOP_LEVEL);
+            values.truncate(types::elevator::TOP_LEVEL);
+            for (name, value) in [
+                (
+                    "elevator_stops",
+                    derived.as_ref().map(|d| d.stops.len().to_string()),
+                ),
+                (
+                    "elevator_span",
+                    derived
+                        .as_ref()
+                        .map(|d| format!("{:.2} m … {:.2} m", d.z().0, d.z().1)),
+                ),
+                (
+                    "elevator_shaft",
+                    derived.as_ref().map(|d| {
+                        format!(
+                            "{:.3} m²",
+                            archbuilder_model::floor::signed_area(&d.elevator.shaft_outline())
+                                .abs()
+                        )
+                    }),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A dormer shows its roof, the area of its opening and the volume of its parts.
+        types::DORMER => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::dormer::Derived::of(snapshot, object).ok();
+            fields.truncate(types::dormer::PINNED);
+            values.truncate(types::dormer::PINNED);
+            for (name, value) in [
+                ("dormer_roof", host),
+                (
+                    "dormer_opening",
+                    archbuilder_model::dormer::Dormer::from_values(&object.values).map(|d| {
+                        format!(
+                            "{:.3} m²",
+                            archbuilder_model::floor::signed_area(&d.opening()).abs()
+                        )
+                    }),
+                ),
+                (
+                    "dormer_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A roof edge element shows its role, its roof, the length it runs along and the volume of
+        // its body; the edges are chosen by the command, the profile edited there.
+        types::ROOF_EDGE => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::roof_edge::Derived::of(snapshot, object);
+            fields.truncate(types::roof_edge::PROFILE);
+            values.truncate(types::roof_edge::PROFILE);
+            for (name, value) in [
+                ("roof_edge_roof", host),
+                (
+                    "edge_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "edge_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
                 ),
             ] {
                 fields.push(text_field(name));

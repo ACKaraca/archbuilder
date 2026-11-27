@@ -231,6 +231,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             "roof-extrusion",
                             ButtonSize::Small,
                         ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-dormer",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-dormer-hint",
+                            }),
+                            archbuilder_commands::roof_parts::DORMER_CREATE,
+                            "dormer",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-roof-edge",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-roof-edge-hint",
+                            }),
+                            archbuilder_commands::roof_parts::ROOF_EDGE_CREATE,
+                            "roof-edge",
+                            ButtonSize::Small,
+                        ),
                     ],
                 ),
                 group(
@@ -309,6 +331,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             }),
                             archbuilder_commands::circulation::RAMP_CREATE,
                             "ramp",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-elevator",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-elevator-hint",
+                            }),
+                            archbuilder_commands::elevator::ELEVATOR_CREATE,
+                            "elevator",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-stair-sketch",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-stair-sketch-hint",
+                            }),
+                            archbuilder_commands::stair::STAIR_CREATE_SKETCH,
+                            "stair-sketch",
                             ButtonSize::Small,
                         ),
                     ],
@@ -1240,6 +1284,10 @@ pub fn icons() -> Vec<(String, String)> {
         "floor-slope",
         "floor-edge",
         "roof-extrusion",
+        "elevator",
+        "dormer",
+        "roof-edge",
+        "stair-sketch",
         "set",
         "statistics",
         "railing",

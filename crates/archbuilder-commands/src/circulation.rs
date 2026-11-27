@@ -734,7 +734,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
 }
 
 /// Writes the fields of `new` that differ from the record `object` of kind `key`.
-fn write_changes(
+pub(crate) fn write_changes(
     ctx: &mut Context<'_>,
     key: &str,
     object: &arc_doc::Object,

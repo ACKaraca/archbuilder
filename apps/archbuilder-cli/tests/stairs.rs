@@ -112,3 +112,61 @@ fn inspect_lists_stairs_after_reopen_with_the_opening_in_the_floor_above() {
     assert!(codes.contains(&"ab.model.wall_overlap"), "{codes:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn inspect_takes_the_shafts_of_elevators_and_the_openings_of_stairs_by_sketch_out_of_the_floor() {
+    let dir = std::env::temp_dir().join(format!("archbuilder-cli-lifts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("house.archb");
+    let (file, dir_text) = (file.to_str().unwrap(), dir.to_str().unwrap());
+    let run = |create: bool, command: &str, params: &Value| {
+        let params = params.to_string();
+        let mut args = vec![
+            "run",
+            file,
+            "--save",
+            "--allow-edit",
+            "--write-root",
+            dir_text,
+        ];
+        if create {
+            args.push("--create");
+        }
+        args.extend(["--command", command, "--params", &params]);
+        assert_eq!(cli(&args).0, Exit::Success, "{command}");
+    };
+    run(true, "archbuilder.project.new", &json!({}));
+    let (_, dump) = cli(&["inspect", file]);
+    let floor1 = dump["objects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["type_key"] == "archbuilder.storey" && o["values"]["name"] == "Floor 1")
+        .unwrap()["id"]
+        .clone();
+    run(
+        false,
+        "archbuilder.floor.create",
+        &json!({"storey": floor1, "points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
+    );
+    run(
+        false,
+        "archbuilder.elevator.create",
+        &json!({"center": [8.0, 3.0]}),
+    );
+    let (_, dump) = cli(&["inspect", file]);
+    let area = dump["floors"][0]["area"].as_f64().unwrap();
+    assert!((area - (60.0 - 1.4 * 1.7)).abs() < 1e-9, "{area}");
+    run(
+        false,
+        "archbuilder.stair.create_sketch",
+        &json!({"runs": [[[1.0, 1.0], [4.0, 1.0]], [[4.5, 1.5], [4.5, 4.5]]]}),
+    );
+    let (_, dump) = cli(&["inspect", file]);
+    let stairs = dump["stairs"].as_array().unwrap();
+    assert_eq!(stairs.len(), 1);
+    assert_eq!(stairs[0]["risers"], 17);
+    assert!(dump["floors"][0]["area"].as_f64().unwrap() < area - 3.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

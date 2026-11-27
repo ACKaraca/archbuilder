@@ -40,6 +40,9 @@ use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect, language}
 /// The identifier of the create-stair command.
 pub const STAIR_CREATE: &str = "archbuilder.stair.create";
 
+/// The identifier of the create-stair-by-sketch command.
+pub const STAIR_CREATE_SKETCH: &str = "archbuilder.stair.create_sketch";
+
 /// A stair shape as a command parameter.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -116,6 +119,40 @@ pub struct CreateStair {
     /// The waist thickness; 0.15 m when absent.
     #[serde(default)]
     pub waist: Option<QuantityParam>,
+    /// The level the stair arrives at; else the level above the storey.
+    #[serde(default)]
+    pub top_level: Option<IdParam>,
+    /// The name; else the first free `Stair <n>` of the storey.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Parameters of `archbuilder.stair.create_sketch`: a stair along sketched run lines.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStairSketch {
+    /// The storey; else the storey of the selection, else the lowest storey.
+    #[serde(default)]
+    pub storey: Option<IdParam>,
+    /// The run lines, each `[[x0, y0], [x1, y1]]` in meters: the walking line of one straight run
+    /// from the middle of its first riser. A landing is made between each two runs.
+    pub runs: Vec<[[f64; 2]; 2]>,
+    /// The width; 1 m when absent.
+    #[serde(default)]
+    pub width: Option<QuantityParam>,
+    /// The tread depth; 0.28 m when absent.
+    #[serde(default)]
+    pub tread: Option<QuantityParam>,
+    /// The highest riser; 0.18 m when absent.
+    #[serde(default)]
+    pub max_riser: Option<QuantityParam>,
+    /// The waist thickness; 0.15 m when absent.
+    #[serde(default)]
+    pub waist: Option<QuantityParam>,
+    /// The least clear height above treads and landings the headroom check reports below; 2 m
+    /// when absent.
+    #[serde(default)]
+    pub headroom: Option<QuantityParam>,
     /// The level the stair arrives at; else the level above the storey.
     #[serde(default)]
     pub top_level: Option<IdParam>,
@@ -214,6 +251,83 @@ fn create_stair(ctx: &mut Context<'_>, p: CreateStair) -> Result<StairCreated> {
         let txn = ctx.txn()?;
         spatial::get(txn.snapshot(), id).and_then(|o| Placed::of(txn.snapshot(), &o))
     };
+    let layout = placed
+        .and_then(|p| p.layout.ok())
+        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    ctx.set_selection_after(vec![id]);
+    Ok(StairCreated {
+        stair: IdParam(id),
+        storey: IdParam(storey),
+        risers: layout.risers,
+        riser: layout.riser,
+        runs: layout.runs.iter().map(|r| r.length).collect(),
+        stride: layout.stride(),
+        stride_ok: layout.stride_ok(),
+        volume: layout.volume(),
+    })
+}
+
+fn create_stair_sketch(ctx: &mut Context<'_>, p: CreateStairSketch) -> Result<StairCreated> {
+    use archbuilder_model::stair::{MAX_RUN_LINES, RunLine, run_values};
+    let storey = crate::wall::storey_for(ctx, p.storey)?.id;
+    let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
+        Some(param) => crate::length(ctx, param).map(|q| q.value()),
+        None => Ok(default),
+    };
+    if p.runs.is_empty() || p.runs.len() > MAX_RUN_LINES {
+        return Err(invalid());
+    }
+    let lines: Vec<RunLine> = p
+        .runs
+        .iter()
+        .map(|r| RunLine {
+            from: r[0],
+            to: r[1],
+        })
+        .collect();
+    let first = lines[0];
+    let d = [first.to[0] - first.from[0], first.to[1] - first.from[1]];
+    if lines
+        .iter()
+        .any(|l| !l.from.iter().chain(&l.to).all(|v| v.is_finite()))
+        || d[0].hypot(d[1]) < 1.0e-6
+    {
+        return Err(invalid());
+    }
+    let top_level = match p.top_level {
+        Some(IdParam(id)) => Some(expect(ctx.snapshot(), id, LEVEL)?.id),
+        None => None,
+    };
+    let stair = Stair {
+        shape: Shape::Sketch,
+        turn: Turn::Left,
+        start: first.from,
+        direction: d[1].atan2(d[0]),
+        width: meters(ctx, &p.width, DEFAULT_WIDTH)?,
+        tread: meters(ctx, &p.tread, DEFAULT_TREAD)?,
+        max_riser: meters(ctx, &p.max_riser, DEFAULT_MAX_RISER)?,
+        waist: meters(ctx, &p.waist, DEFAULT_WAIST)?,
+        railings: [true, true],
+        top_level,
+    };
+    let tongue = language(ctx);
+    let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_owned(),
+        None => next_stair_name(ctx.snapshot(), storey, &tongue),
+    };
+    let mut values = stair.values(&name);
+    values.resize(types::stair::HEADROOM + 1, None);
+    values[types::stair::RUNS] = Some(run_values(&lines));
+    if p.headroom.is_some() {
+        values[types::stair::HEADROOM] = Some(types::length(meters(ctx, &p.headroom, 2.0)?));
+    }
+    let id = create(ctx, STAIR, Some(storey), values)?;
+    ensure_valid(ctx)?;
+    let placed = {
+        let txn = ctx.txn()?;
+        spatial::get(txn.snapshot(), id).and_then(|o| Placed::of(txn.snapshot(), &o))
+    };
+    // A sketch that the levels cannot carry (too few risers for its runs) is refused here.
     let layout = placed
         .and_then(|p| p.layout.ok())
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
@@ -614,5 +728,17 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             |ctx: &mut Context<'_>, p: CreateStair| create_stair(ctx, p),
         )
         .with_prompt(Arc::new(StairPrompts)),
-    )
+    )?;
+    registry.register(CommandSpec::new(
+        STAIR_CREATE_SKETCH,
+        Msg {
+            message_id: "ab-cmd-stair-create-sketch-label",
+        }
+        .message_id,
+        Msg {
+            message_id: "ab-cmd-stair-create-sketch-description",
+        }
+        .message_id,
+        |ctx: &mut Context<'_>, p: CreateStairSketch| create_stair_sketch(ctx, p),
+    ))
 }

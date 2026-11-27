@@ -3,7 +3,12 @@
 //! clipboard's base point), its name in the property grid, the plan's picking, the statistics,
 //! Delete (one undo step, never the storey) and the clipboard.
 
-#![allow(clippy::unwrap_used, clippy::panic, reason = "tests")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::too_many_lines,
+    reason = "tests"
+)]
 
 use std::sync::Arc;
 
@@ -119,6 +124,22 @@ impl Rig {
         self.run(
             "archbuilder.roof.create",
             json!({"picks": [[3.0, 2.0]], "base_offset": 3.0}),
+            &[],
+        );
+        let roof = self.first(types::ROOF);
+        self.run(
+            "archbuilder.dormer.create",
+            json!({"roof": roof.to_string(), "center": [3.0, 0.8], "width": 1.0, "depth": 1.0}),
+            &[],
+        );
+        self.run(
+            "archbuilder.roof_edge.create",
+            json!({"roof": roof.to_string()}),
+            &[],
+        );
+        self.run(
+            "archbuilder.elevator.create",
+            json!({"center": [20.0, 8.0]}),
             &[],
         );
         self.run(

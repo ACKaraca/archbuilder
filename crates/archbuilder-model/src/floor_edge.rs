@@ -127,8 +127,9 @@ pub struct Chain {
     /// The outward normal of the segment that starts at each point but the last.
     pub normals: Vec<[f64; 2]>,
     /// The plane of the slab's top, which the profile's `v` is measured from, also outward of the
-    /// edge (a sheared profile keeps every face planar).
-    pub top: crate::terrain::Plane,
+    /// edge (a sheared profile keeps every face planar); `None` measures `v` from the `z` of each
+    /// corner point (a roof edge element, whose eave line is not one plane).
+    pub top: Option<crate::terrain::Plane>,
 }
 
 /// The floor that owns `object`, read.
@@ -205,7 +206,7 @@ impl Derived {
                     points: Vec::new(),
                     closed: all,
                     normals: Vec::new(),
-                    top: top.plane,
+                    top: Some(top.plane),
                 };
                 let mut k = start;
                 loop {
@@ -253,53 +254,7 @@ impl Derived {
     /// The solid kernel's errors when a shell is not closed (a profile that turns inside out at a
     /// sharp corner).
     pub fn solid(&self) -> Result<Option<Polyhedron>> {
-        let mut vertices: Vec<Point3> = Vec::new();
-        let mut faces: Vec<PolyFace> = Vec::new();
-        for chain in &self.chains {
-            let first = vertices.len();
-            let sections = sections(chain, &self.edge.profile);
-            let count = sections.len();
-            let m = self.edge.profile.len();
-            for s in &sections {
-                vertices.extend(s.iter().map(|p| Point3::new(p[0], p[1], p[2])));
-            }
-            let at = |s: usize, j: usize| u32::try_from(first + s * m + j % m).unwrap_or(u32::MAX);
-            let mut shell: Vec<Vec<u32>> = Vec::new();
-            let rings = if chain.closed { count } else { count - 1 };
-            for s in 0..rings {
-                for j in 0..m {
-                    shell.push(vec![
-                        at(s, j),
-                        at(s, j + 1),
-                        at((s + 1) % count, j + 1),
-                        at((s + 1) % count, j),
-                    ]);
-                }
-            }
-            if !chain.closed {
-                shell.push((0..m).rev().map(|j| at(0, j)).collect());
-                shell.push((0..m).map(|j| at(count - 1, j)).collect());
-            }
-            faces.extend(shell.into_iter().map(PolyFace::new));
-        }
-        if faces.is_empty() {
-            return Ok(None);
-        }
-        let mut solid = Polyhedron::new(
-            vertices.clone(),
-            faces.clone(),
-            &Tolerance::DEFAULT,
-            &Limits::DEFAULT,
-        );
-        // The profile may run either way round: the same shells turned inside out are the solid.
-        if solid.as_ref().is_ok_and(|s| s.volume() < 0.0) || solid.is_err() {
-            let flipped = faces
-                .into_iter()
-                .map(|f| PolyFace::new(f.outer.into_iter().rev().collect()))
-                .collect();
-            solid = Polyhedron::new(vertices, flipped, &Tolerance::DEFAULT, &Limits::DEFAULT);
-        }
-        solid.map(Some)
+        sweep(&self.chains, &self.edge.profile)
     }
 
     /// The length of the edges swept, in meters, along the slab's boundary in plan.
@@ -342,6 +297,61 @@ impl Derived {
     }
 }
 
+/// The solid of `profile` swept along `chains`, as one solid with a shell for each chain.
+///
+/// # Errors
+/// The solid kernel's errors when a shell is not closed (a profile that turns inside out at a
+/// sharp corner).
+pub fn sweep(chains: &[Chain], profile: &[[f64; 2]]) -> Result<Option<Polyhedron>> {
+    let mut vertices: Vec<Point3> = Vec::new();
+    let mut faces: Vec<PolyFace> = Vec::new();
+    for chain in chains {
+        let first = vertices.len();
+        let sections = sections(chain, profile);
+        let count = sections.len();
+        let m = profile.len();
+        for s in &sections {
+            vertices.extend(s.iter().map(|p| Point3::new(p[0], p[1], p[2])));
+        }
+        let at = |s: usize, j: usize| u32::try_from(first + s * m + j % m).unwrap_or(u32::MAX);
+        let mut shell: Vec<Vec<u32>> = Vec::new();
+        let rings = if chain.closed { count } else { count - 1 };
+        for s in 0..rings {
+            for j in 0..m {
+                shell.push(vec![
+                    at(s, j),
+                    at(s, j + 1),
+                    at((s + 1) % count, j + 1),
+                    at((s + 1) % count, j),
+                ]);
+            }
+        }
+        if !chain.closed {
+            shell.push((0..m).rev().map(|j| at(0, j)).collect());
+            shell.push((0..m).map(|j| at(count - 1, j)).collect());
+        }
+        faces.extend(shell.into_iter().map(PolyFace::new));
+    }
+    if faces.is_empty() {
+        return Ok(None);
+    }
+    let mut solid = Polyhedron::new(
+        vertices.clone(),
+        faces.clone(),
+        &Tolerance::DEFAULT,
+        &Limits::DEFAULT,
+    );
+    // The profile may run either way round: the same shells turned inside out are the solid.
+    if solid.as_ref().is_ok_and(|s| s.volume() < 0.0) || solid.is_err() {
+        let flipped = faces
+            .into_iter()
+            .map(|f| PolyFace::new(f.outer.into_iter().rev().collect()))
+            .collect();
+        solid = Polyhedron::new(vertices, flipped, &Tolerance::DEFAULT, &Limits::DEFAULT);
+    }
+    solid.map(Some)
+}
+
 /// The point `p` of the plan at the elevation of the slab's top.
 fn at(top: &crate::floor::Derived, p: [f64; 2]) -> [f64; 3] {
     [p[0], p[1], top.plane.z(p)]
@@ -378,7 +388,7 @@ fn sections(chain: &Chain, profile: &[[f64; 2]]) -> Vec<Vec<[f64; 3]>> {
                 .iter()
                 .map(|q| {
                     let at = [p[0] + m[0] * q[0], p[1] + m[1] * q[0]];
-                    [at[0], at[1], chain.top.z(at) + q[1]]
+                    [at[0], at[1], chain.top.map_or(p[2], |t| t.z(at)) + q[1]]
                 })
                 .collect()
         })

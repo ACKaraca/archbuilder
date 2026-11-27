@@ -423,6 +423,37 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-floor-edge-orphan",
     };
+    /// An elevator's sizes are out of range, or its door is wider than the shaft.
+    pub const ELEVATOR_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.elevator_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-elevator-invalid",
+    };
+    /// A dormer's sizes are out of range.
+    pub const DORMER_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.dormer_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-dormer-invalid",
+    };
+    /// The profile of a roof edge element is not a simple loop, or it names no edge.
+    pub const ROOF_EDGE_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_edge_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-edge-profile",
+    };
+    /// A roof edge element names an edge its roof no longer has, or one without a slope (a
+    /// warning).
+    pub const ROOF_EDGE_ORPHAN: ErrorCode = ErrorCode {
+        code: "ab.model.roof_edge_orphan",
+        category: Category::Conflict,
+        message_id: "ab-model-roof-edge-orphan",
+    };
+    /// A stair has less clear height above its treads or landings than its minimum (a warning).
+    pub const STAIR_HEADROOM: ErrorCode = ErrorCode {
+        code: "ab.model.stair_headroom",
+        category: Category::Conflict,
+        message_id: "ab-model-stair-headroom",
+    };
     /// The profile of a roof by extrusion is unreadable or has too few points, a segment of no
     /// length or a point out of range.
     pub const ROOF_EXTRUSION_PROFILE: ErrorCode = ErrorCode {

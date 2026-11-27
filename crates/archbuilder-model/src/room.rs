@@ -1038,6 +1038,7 @@ fn shape_deps(snapshot: &Snapshot, entry: &Entry) -> Option<(Arc<Object>, crate:
         types::LEVEL,
         types::STOREY,
         types::SHAFT,
+        types::ELEVATOR,
         types::VERTICAL_OPENING,
         types::STAIR,
         types::RAMP,
