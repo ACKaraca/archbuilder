@@ -69,6 +69,7 @@ pub mod outliner;
 pub mod picker;
 pub mod plan_state;
 pub mod properties;
+pub mod ramp_view;
 pub mod roof_view;
 pub mod room_tool;
 pub mod room_view;
@@ -618,6 +619,11 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                 if planned {
                     // The roofs are in the drawing (overhead when above the cut): no tint here.
                     out.extend(stair_view::labels(&snapshot, language));
+                    let shows_ramps = plan_state::current_in(tab, &snapshot)
+                        .and_then(|v| archbuilder_model::spatial::get(&snapshot, v))
+                        .and_then(|o| archbuilder_model::view::settings_of(&snapshot, &o))
+                        .is_none_or(|s| s.shows(archbuilder_model::view::Category::Ramp));
+                    out.extend(ramp_view::labels(&snapshot, language, shows_ramps));
                 } else {
                     out.extend(stair_view::overlays(&snapshot, language));
                     out.extend(roof_view::overlays(&snapshot, language));

@@ -196,6 +196,12 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "snap" if rest.is_empty() => Intent::new(ui::SNAP),
         "repeat" if rest.is_empty() => Intent::new(ui::REPEAT),
         "cut" if rest.is_empty() => Intent::new(ui::CUT),
+        "railing" | "korkuluk" if rest.is_empty() => {
+            Intent::new(archbuilder_commands::circulation::RAILING_CREATE)
+        }
+        "ramp" | "rampa" if rest.is_empty() => {
+            Intent::new(archbuilder_commands::circulation::RAMP_CREATE)
+        }
         "createsimilar" | "benzerini" if rest.is_empty() => Intent::new(ui::CREATE_SIMILAR),
         "selecttype" | "tipisec" if rest.is_empty() => Intent::new(ui::SELECT_TYPE),
         "matchtype" | "tipesle" if rest.is_empty() => Intent::new(ui::MATCH_TYPE),
@@ -246,6 +252,8 @@ fn repeatable(command: &str) -> bool {
         FLOOR_CREATE,
         ROOM_PLACE,
         archbuilder_commands::stair::STAIR_CREATE,
+        archbuilder_commands::circulation::RAILING_CREATE,
+        archbuilder_commands::circulation::RAMP_CREATE,
         archbuilder_commands::roof::ROOF_CREATE,
         archbuilder_commands::ceiling::CEILING_CREATE,
         archbuilder_commands::insert::OPENING_PLACE,

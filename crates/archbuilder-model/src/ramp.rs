@@ -941,6 +941,28 @@ impl Layout {
             .collect()
     }
 
+    /// The middle of each run on the center line, with the slope of the run and the elevation
+    /// there above the base: where the slope is written in plan.
+    #[must_use]
+    pub fn run_midpoints(&self) -> Vec<([f64; 2], f64, f64)> {
+        if self.sketch() {
+            let a = self.ramp.landing_start + self.ramp.length / 2.0;
+            return vec![(self.at(a, 0.0), self.slopes[0], self.elevation(a))];
+        }
+        self.stretches
+            .iter()
+            .enumerate()
+            .filter_map(|(i, run)| {
+                let (a, b) = (self.nodes[i], self.nodes[i + 1]);
+                Some((
+                    [(a.p[0] + b.p[0]) / 2.0, (a.p[1] + b.p[1]) / 2.0],
+                    *self.slopes.get((*run)?)?,
+                    (a.z + b.z) / 2.0,
+                ))
+            })
+            .collect()
+    }
+
     /// The plan drawing.
     #[must_use]
     pub fn plan(&self) -> Plan {

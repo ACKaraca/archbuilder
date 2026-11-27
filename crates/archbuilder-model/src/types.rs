@@ -571,8 +571,11 @@ pub mod plan_view {
     pub const DETAIL: usize = 5;
     /// Whether the storey below is shown faint under the plan.
     pub const UNDERLAY: usize = 6;
-    /// The first category flag (see [`crate::view::Category`]); one flag per category follows.
+    /// The first category flag (see [`crate::view::Category`]); one flag per category follows, as
+    /// many as [`CATEGORY_COUNT`]. Categories added later are at the end of the record.
     pub const CATEGORIES: usize = 7;
+    /// The number of category flags that stand together after the underlay.
+    pub const CATEGORY_COUNT: usize = 9;
     /// The elements hidden in this view (records with one optional reference each).
     pub const HIDDEN: usize = 16;
     /// The field of the reference inside one entry of [`HIDDEN`].
@@ -581,6 +584,10 @@ pub mod plan_view {
     pub const BOTTOM: usize = 17;
     /// The view depth relative to the level, in meters: elements down to it draw beyond the cut.
     pub const DEPTH: usize = 18;
+    /// Whether railings are drawn.
+    pub const SHOW_RAILINGS: usize = 19;
+    /// Whether ramps are drawn.
+    pub const SHOW_RAMPS: usize = 20;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1309,6 +1316,7 @@ fn plan_view_fields() -> Vec<FieldDecl> {
     fields.extend(
         crate::view::Category::ALL
             .iter()
+            .take(plan_view::CATEGORY_COUNT)
             .map(|c| flag(c.field(), c.shown_by_default())),
     );
     fields.push(
@@ -1333,6 +1341,14 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         length_field("depth", Some(real(VIEW_DEPTH_RANGE)))
             .with_default(length(-crate::view::BOTTOM_MARGIN))
             .in_aspect("range"),
+    );
+    // The categories added after the first release stand at the end of the record, so that the
+    // slots of the others stay where files have them.
+    fields.extend(
+        crate::view::Category::ALL
+            .iter()
+            .skip(plan_view::CATEGORY_COUNT)
+            .map(|c| flag(c.field(), c.shown_by_default()).since_minor(1)),
     );
     fields
 }

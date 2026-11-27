@@ -66,11 +66,15 @@ pub enum Category {
     Room,
     /// Shafts and openings.
     Opening,
+    /// Railings.
+    Railing,
+    /// Ramps.
+    Ramp,
 }
 
 impl Category {
     /// Every category, in the order of the flags of a view record.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Wall,
         Self::Floor,
         Self::Roof,
@@ -80,6 +84,8 @@ impl Category {
         Self::Stair,
         Self::Room,
         Self::Opening,
+        Self::Railing,
+        Self::Ramp,
     ];
 
     /// The name of the category in the drawing (the key of its graphic overrides).
@@ -95,6 +101,8 @@ impl Category {
             Self::Stair => "stair",
             Self::Room => "room",
             Self::Opening => "opening",
+            Self::Railing => "railing",
+            Self::Ramp => "ramp",
         }
     }
 
@@ -111,6 +119,8 @@ impl Category {
             Self::Stair => "show_stairs",
             Self::Room => "show_rooms",
             Self::Opening => "show_openings",
+            Self::Railing => "show_railings",
+            Self::Ramp => "show_ramps",
         }
     }
 
@@ -124,7 +134,13 @@ impl Category {
     /// The position of the category's flag in the view record.
     #[must_use]
     pub fn slot(self) -> usize {
-        plan_view::CATEGORIES + Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+        match self {
+            // Appended to the record after the first categories, the list of hidden elements and
+            // the range.
+            Self::Railing => plan_view::SHOW_RAILINGS,
+            Self::Ramp => plan_view::SHOW_RAMPS,
+            _ => plan_view::CATEGORIES + Self::ALL.iter().position(|c| *c == self).unwrap_or(0),
+        }
     }
 
     /// The category of the element type `key`; `None` for what a view does not draw.
@@ -138,7 +154,9 @@ impl Category {
             t::CEILING => Self::Ceiling,
             t::DOOR => Self::Door,
             t::WINDOW => Self::Window,
-            t::STAIR | t::RAMP | t::RAILING => Self::Stair,
+            t::STAIR => Self::Stair,
+            t::RAMP => Self::Ramp,
+            t::RAILING => Self::Railing,
             t::ROOM => Self::Room,
             t::SHAFT | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
             _ => return None,
@@ -164,7 +182,7 @@ pub struct PlanView {
     /// Whether the storey below shows faint underneath.
     pub underlay: bool,
     /// Which categories are drawn, in the order of [`Category::ALL`].
-    pub shown: [bool; 9],
+    pub shown: [bool; 11],
     /// The elements hidden in this view.
     pub hidden: Vec<ObjectId>,
     /// The bottom of the range relative to the level (not above the cut).
@@ -246,10 +264,19 @@ impl PlanView {
             Some(Value::Enum(self.detail.code())),
             Some(Value::Bool(self.underlay)),
         ];
-        out.extend(self.shown.iter().map(|b| Some(Value::Bool(*b))));
+        let flags = |range: std::ops::Range<usize>| {
+            self.shown
+                .get(range)
+                .unwrap_or_default()
+                .iter()
+                .map(|b| Some(Value::Bool(*b)))
+                .collect::<Vec<_>>()
+        };
+        out.extend(flags(0..plan_view::CATEGORY_COUNT));
         out.push(Some(hidden_value(&self.hidden)));
         out.push(Some(crate::types::length(self.bottom)));
         out.push(Some(crate::types::length(self.depth)));
+        out.extend(flags(plan_view::CATEGORY_COUNT..Category::ALL.len()));
         out
     }
 

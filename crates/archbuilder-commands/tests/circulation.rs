@@ -1088,3 +1088,38 @@ fn the_foot_and_the_end_of_a_ramp_and_a_point_of_a_railing_move_in_one_undo_step
     }
     assert_eq!(env.railing(rail).railing.path[1].point, [4.0, 10.0, 0.5]);
 }
+
+#[test]
+fn a_railing_with_too_many_balusters_has_none_and_a_warning_until_the_spacing_allows_them() {
+    let env = Env::new();
+    // 1 km at 0.12 m is far over the most; the rest of the railing is made.
+    let made = env
+        .run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [1000.0, 0.0]]}),
+        )
+        .unwrap();
+    let id = id_at(&made, "railing");
+    assert_eq!(made.value["balusters"], 0);
+    assert_eq!(made.value["balusters_capped"], true);
+    assert_eq!(made.value["posts"], 2);
+    assert!(warning_codes(&env, id).contains(&"ab.model.railing_balusters"));
+    assert!(env.railing(id).solids().unwrap().len() >= 2);
+    // A wider spacing brings the count under the most: 2000 balusters, no warning.
+    env.run(
+        "archbuilder.railing_type.define",
+        json!({"type": text(&spatial::objects(&env.snapshot(), RAILING_TYPE)[0].values, 0).unwrap(),
+               "baluster_spacing": 0.5}),
+    )
+    .unwrap();
+    assert_eq!(env.railing(id).balusters().0.len(), 1999);
+    assert!(!warning_codes(&env, id).contains(&"ab.model.railing_balusters"));
+    // The warning is one of the register's, and undo brings the railing back as it was.
+    env.document.undo().wait().unwrap();
+    assert!(warning_codes(&env, id).contains(&"ab.model.railing_balusters"));
+    assert!(
+        archbuilder_model::validate::register(&env.snapshot())
+            .iter()
+            .any(|w| w.error.code() == "ab.model.railing_balusters")
+    );
+}

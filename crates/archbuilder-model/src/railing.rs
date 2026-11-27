@@ -28,6 +28,10 @@ use crate::types::{self, RAILING_TYPE, railing, railing_type};
 
 /// The most points of a railing's path.
 pub const MAX_POINTS: usize = 500;
+/// The most balusters one railing gets: a railing that would need more has none and is reported
+/// ([`Derived::balusters_capped`]), so that a hostile or merely very long path, or a tiny spacing,
+/// cannot make the solids unbounded.
+pub const MAX_BALUSTERS: usize = 4_000;
 /// The most railings looked at for one that continues to another.
 const MAX_SCANNED: usize = 100_000;
 /// The default horizontal length of an extension, in meters.
@@ -1031,15 +1035,65 @@ impl Derived {
             .collect()
     }
 
-    /// The balusters: between two posts as many as keep the distance along the path within the
-    /// type's spacing, evenly spread. Returns the feet and the tops, and the largest actual
-    /// distance between the axes of two neighbors (a baluster and a post included).
-    #[must_use]
-    pub fn balusters(&self) -> (Vec<Post>, f64) {
-        let top = self.kind.height - self.kind.rail_depth / 2.0;
+    /// The distance along the path to each point of the surface, the stretches between two posts
+    /// as `(start, length, parts)` and the largest length of a part.
+    #[allow(
+        clippy::type_complexity,
+        reason = "three results of one pass, used in two places"
+    )]
+    fn baluster_stretches(&self) -> (Vec<f64>, Vec<(f64, f64, usize)>, f64) {
         let mut cumulative = vec![0.0];
         for w in self.surface.windows(2) {
             cumulative.push(cumulative.last().copied().unwrap_or(0.0) + distance(w[0].0, w[1].0));
+        }
+        // The posts once, by point number: a long path has many points (arcs are flattened).
+        let mut stops: Vec<f64> = self
+            .post_points()
+            .into_iter()
+            .filter_map(|k| cumulative.get(k).copied())
+            .collect();
+        stops.dedup_by(|a, b| (*a - *b).abs() < 1.0e-9);
+        let mut widest = 0.0_f64;
+        let stretches = stops
+            .windows(2)
+            .map(|pair| {
+                let span = pair[1] - pair[0];
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a small count, clamped"
+                )]
+                let parts =
+                    ((span / self.kind.baluster_spacing).ceil() as usize).clamp(1, 1_000_000);
+                widest = widest.max(span / parts as f64);
+                (pair[0], span, parts)
+            })
+            .collect();
+        (cumulative, stretches, widest)
+    }
+
+    /// Whether the railing would need more than [`MAX_BALUSTERS`] balusters: it has none then.
+    #[must_use]
+    pub fn balusters_capped(&self) -> bool {
+        let (_, stretches, _) = self.baluster_stretches();
+        stretches
+            .iter()
+            .map(|(_, _, parts)| parts - 1)
+            .sum::<usize>()
+            > MAX_BALUSTERS
+    }
+
+    /// The balusters: between two posts as many as keep the distance along the path within the
+    /// type's spacing, evenly spread. Returns the feet and the tops, and the largest actual
+    /// distance between the axes of two neighbors (a baluster and a post included). A railing that
+    /// would need more than [`MAX_BALUSTERS`] has none.
+    #[must_use]
+    pub fn balusters(&self) -> (Vec<Post>, f64) {
+        let top = self.kind.height - self.kind.rail_depth / 2.0;
+        let (cumulative, stretches, widest) = self.baluster_stretches();
+        let total: usize = stretches.iter().map(|(_, _, parts)| parts - 1).sum();
+        if total > MAX_BALUSTERS {
+            return (Vec::new(), widest);
         }
         let at = |s: f64| -> [f64; 3] {
             let k = cumulative
@@ -1057,26 +1111,10 @@ impl Derived {
                 },
             )
         };
-        // The posts once, by point number: a long path has many points (arcs are flattened).
-        let mut stops: Vec<f64> = self
-            .post_points()
-            .into_iter()
-            .filter_map(|k| cumulative.get(k).copied())
-            .collect();
-        stops.dedup_by(|a, b| (*a - *b).abs() < 1.0e-9);
-        let mut out = Vec::new();
-        let mut widest = 0.0_f64;
-        for pair in stops.windows(2) {
-            let span = pair[1] - pair[0];
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "a small count, clamped"
-            )]
-            let parts = ((span / self.kind.baluster_spacing).ceil() as usize).clamp(1, 10_000);
-            widest = widest.max(span / parts as f64);
+        let mut out = Vec::with_capacity(total);
+        for (from, span, parts) in stretches {
             for i in 1..parts {
-                let foot = at(pair[0] + span * i as f64 / parts as f64);
+                let foot = at(from + span * i as f64 / parts as f64);
                 out.push((foot, [foot[0], foot[1], foot[2] + top]));
             }
         }
@@ -1370,6 +1408,39 @@ mod tests {
         extend(&mut p4, &r, &surface, false, true);
         assert_eq!(p4.first(), Some(&[0.0, 0.0, 0.9]));
         assert_eq!(p3.last(), Some(&[2.0, 0.0, 1.9]));
+    }
+
+    #[test]
+    fn a_railing_that_needs_more_balusters_than_the_most_has_none_and_says_so() {
+        // 100 m at 0.12 m: 833 balusters, within the most.
+        let fine = derived(
+            &[[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]],
+            RailingType::default(),
+        );
+        assert!(!fine.balusters_capped());
+        assert_eq!(fine.balusters().0.len(), 833);
+        // 600 m would need 4999: none, but the largest actual distance is still reported, so the
+        // gap check keeps working.
+        let long = derived(
+            &[[0.0, 0.0, 0.0], [600.0, 0.0, 0.0]],
+            RailingType::default(),
+        );
+        assert!(long.balusters_capped());
+        let (balusters, widest) = long.balusters();
+        assert!(balusters.is_empty());
+        assert!((widest - 0.12).abs() < 1.0e-9);
+        // A tiny spacing on a short railing is bounded the same way, and a spacing the range
+        // does not allow cannot make a count that overflows.
+        let tiny = RailingType {
+            baluster_spacing: 1.0e-9,
+            ..RailingType::default()
+        };
+        let dense = derived(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], tiny);
+        assert!(dense.balusters_capped() && dense.balusters().0.is_empty());
+        assert!(
+            dense.solids().is_ok_and(|s| s.len() >= 3),
+            "rails and posts stay"
+        );
     }
 
     #[test]

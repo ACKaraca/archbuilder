@@ -553,6 +553,8 @@ pub struct RailingCreated {
     pub posts: usize,
     /// The number of balusters.
     pub balusters: usize,
+    /// Whether the railing would need more balusters than the most one gets and has none.
+    pub balusters_capped: bool,
     /// The widest clear opening between neighbors, in meters.
     pub widest_gap: f64,
 }
@@ -667,6 +669,7 @@ fn create_railing(ctx: &mut Context<'_>, p: CreateRailing) -> Result<RailingCrea
         length: derived.length(),
         posts: derived.posts().len(),
         balusters: derived.balusters().0.len(),
+        balusters_capped: derived.balusters_capped(),
         widest_gap: derived.widest_gap(),
     })
 }

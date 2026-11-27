@@ -132,6 +132,18 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "show_railings",
+        Message {
+            message_id: "ab-prop-view-show-railings",
+        },
+    ),
+    (
+        "show_ramps",
+        Message {
+            message_id: "ab-prop-view-show-ramps",
+        },
+    ),
+    (
         "view_storey",
         Message {
             message_id: "ab-prop-view-view-storey",

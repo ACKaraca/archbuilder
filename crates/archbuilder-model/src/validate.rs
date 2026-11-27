@@ -224,6 +224,14 @@ pub fn circulation_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error>
         Some(types::RAILING) => {
             if let Ok(d) = crate::railing::Derived::of(candidate, object) {
                 let gap = d.widest_gap();
+                if d.balusters_capped() {
+                    out.push(
+                        Error::new(codes::RAILING_BALUSTERS)
+                            .with_arg("name", name.clone())
+                            .with_arg("max", crate::railing::MAX_BALUSTERS.to_string())
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
                 if gap > crate::railing::CLEAR_GAP_LIMIT + 1.0e-9 {
                     out.push(
                         Error::new(codes::RAILING_GAP)

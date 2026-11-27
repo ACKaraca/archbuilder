@@ -74,6 +74,7 @@ ab-model-ramp-slope = "{ $name }" rampasının eğimi % { $slope }; tipinin en b
 ab-model-ramp-top = "{ $name }" rampası varması gereken kottan { $off } mm farklı bitiyor: bir kolun kendi eğimi var. O eğimi ya da yükseklik farkını değiştirin.
 ab-model-railing-malformed = "{ $name }" korkuluğu oluşturulamıyor: yolu iki farklı nokta gerektirir ve bağlı olduğu elemanın durması gerekir.
 ab-model-railing-gap = "{ $name }" korkuluğunda baluster araları { $gap } mm; { $max } mm sınırını aşıyor. Daha küçük baluster aralığı kullanın.
+ab-model-railing-balusters = "{ $name }" korkuluğu { $max } balusterden fazlasını gerektirir; bu yüzden balusteri yok. Tipinin baluster aralığını açın ya da korkuluğu kısaltın.
 ab-model-datum-degenerate = "{ $name }" datumunun kullanılabilir bir çizgisi ya da düzlemi yok: akslar ve referans düzlemleri en az bir milimetre uzunlukta olmalı, çalışma düzlemi için datumu ya da aynı doğru üzerinde olmayan üç nokta gerekir.
 ab-model-datum-label-duplicate = "{ $name }" etiketini binadaki { $count } aks kullanıyor. Birini yeniden adlandırın.
 ab-model-curtain-rule = Bir perde duvar tipinin ızgara kuralı çizgi yerleştiremiyor: değer pozitif bir sayı olmalı, sabit sayı en çok 150 olabilir.

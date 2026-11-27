@@ -74,6 +74,7 @@ ab-model-ramp-slope = The ramp "{ $name }" has a slope of { $slope } %, over the
 ab-model-ramp-top = The ramp "{ $name }" ends { $off } mm off the elevation it was to reach: a run has a slope of its own. Change that slope, or the rise.
 ab-model-railing-malformed = The railing "{ $name }" cannot be built: its path needs two different points, and a host must still exist.
 ab-model-railing-gap = The railing "{ $name }" has an opening of { $gap } mm between balusters, over { $max } mm. Use a smaller baluster spacing.
+ab-model-railing-balusters = The railing "{ $name }" would need more than { $max } balusters, so it has none: they are left out. Widen the baluster spacing of its type or shorten the railing.
 ab-model-datum-degenerate = The datum "{ $name }" has no usable line or plane: a grid or reference plane must be at least a millimeter long and a work plane needs its datum or three points that are not on one line.
 ab-model-datum-label-duplicate = The label "{ $name }" is used by { $count } grids of the building. Rename one of them.
 ab-model-curtain-rule = A curtain wall type has a grid rule that cannot lay out lines: the value must be a positive number, and a fixed number at most 150.

@@ -469,6 +469,17 @@ on the extremes of the boundary across the run line. In the tool the keyword `sk
 prompt asks for the run line and then the points of the boundary, ended with Enter. The record
 holds `slope`, `runs` and `boundary` only when used (schema 1.1; older files load).
 
+Bounds and drawing. A railing gets at most 4 000 balusters ([`railing::MAX_BALUSTERS`]): one that
+would need more has none, keeps its rails and posts and is reported (`ab.model.railing_balusters`),
+and `archbuilder.railing.create` says so (`balusters_capped`); the count is computed before any
+baluster is. In a plan view ramps and railings are drawn under their own categories (`ramp`,
+`railing`, flags `show_ramps` and `show_railings`), not under stairs, and each run of a ramp has
+its slope in percent written at its middle (with the decimal separator of the language, marked when
+it passes the type's largest slope). While the railing or ramp tool asks for points, a dashed
+preview follows the pointer: the path so far for a railing, the outline and walking line of the
+ramp from its foot, the run line and the boundary so far for a ramp by sketch. Typing `railing`
+(`korkuluk`) or `ramp` (`rampa`) at the command line starts the tool, and Repeat repeats it.
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored
@@ -673,13 +684,14 @@ the storeys, the stairs and the openings are the same objects.
 
 #### The plan view of the first slice
 
-`archbuilder.plan_view` (schema 1.0) is the plan view of a storey, owned by it (deleting the storey
+`archbuilder.plan_view` (schema 1.1) is the plan view of a storey, owned by it (deleting the storey
 deletes its views). Its record holds authored settings only: the cut height above the storey's level
 (1.2 m by default), an optional top above the level (else the next level, else 3 m), whether the
 overhead range between the cut and the top is drawn, the scale denominator (100), the detail level
 (`coarse`, `medium`, `fine`), whether the storey below shows faint underneath, one flag per category
-(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts; ceilings are off
-in a new view, since they belong to ceiling plans), the elements hidden in this view (one optional
+(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts, and, in schema
+1.1, railings and ramps, which a file from before it shows; ceilings are off in a new view, since
+they belong to ceiling plans), the elements hidden in this view (one optional
 reference each; deleting an element drops its entry), the bottom of the range relative to the level
 (0 by default) and the view depth below it (1 cm under the level by default, so a slab whose top is
 the level is beyond the cut). Everything below the cut down to the view depth draws beyond the cut.
