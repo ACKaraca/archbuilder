@@ -7,9 +7,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use arc_base::{Dimension, Error, ObjectId, Result};
-use arc_command::prompt::{Accept, PointDims, PromptSequence, PromptStep};
+use arc_command::prompt::{
+    Accept, KeywordOption, PointDims, Prompt, PromptInput, PromptMachine, PromptSequence,
+    PromptState, PromptStep, Step as Next,
+};
 use arc_command::{
     CommandSpec, Context, IdParam, Permission, QuantityParam, Registry, UndoBehavior,
 };
@@ -17,7 +21,7 @@ use arc_doc::package::{Mode, Package};
 use arc_doc::{FieldPath, LoadOptions, Snapshot, Value};
 use archbuilder_model::error::codes as model_codes;
 use archbuilder_model::expr::Stored;
-use archbuilder_model::family::def::{Category, Definition, Hosting, TypeDef};
+use archbuilder_model::family::def::{Category, Definition, Hosting, Scope, TypeDef, Version};
 use archbuilder_model::family::loaded::{
     self, Component, FamilyType, Loaded, components_of, family_types, values_value,
 };
@@ -30,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::codes;
 use crate::parameter::{json_of, stored_input};
-use crate::structure::{create, ensure_valid, expect};
+use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect};
 
 /// A message of the catalog, named by identifier.
 struct MessageId {
@@ -45,6 +49,8 @@ pub const FAMILY_LOAD_PREVIEW: &str = "archbuilder.family.load_preview";
 pub const FAMILY_UPDATE: &str = "archbuilder.family.update";
 /// The identifier of the update preview (read-only).
 pub const FAMILY_UPDATE_PREVIEW: &str = "archbuilder.family.update_preview";
+/// The identifier of the family editor's commit: publishes an edited definition.
+pub const FAMILY_COMMIT: &str = "archbuilder.family.commit";
 /// The identifier of the component placement command.
 pub const COMPONENT_PLACE: &str = "archbuilder.component.place";
 
@@ -731,7 +737,22 @@ fn update_preview(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport
 
 fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
     let new = newer(ctx, &p)?;
-    let (have, new_def, mut report, plan) = plan_update(ctx.snapshot(), &p, &new)?;
+    let (have, new_def, report, plan) = plan_update(ctx.snapshot(), &p, &new)?;
+    apply_update(ctx, &p.add_types, &new, &have, &new_def, report, plan)
+}
+
+/// Applies a planned update to the loaded family `have`: the family record, its types and its
+/// components take the new version's values, and the types named in `add_types` are added.
+/// Refused while a parameter needs a mapping or an instance fails.
+fn apply_update(
+    ctx: &mut Context<'_>,
+    add_types: &[String],
+    new: &Published,
+    have: &Loaded,
+    new_def: &Definition,
+    mut report: UpdateReport,
+    plan: UpdatePlan,
+) -> Result<UpdateReport> {
     if !report.needs_mapping.is_empty() {
         return Err(Error::new(model_codes::FAMILY_MAPPING)
             .with_arg("parameters", report.needs_mapping.join(", ")));
@@ -746,7 +767,7 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
             ));
     }
     let project = spatial::project(ctx.snapshot()).map(|o| o.id);
-    let fields = Loaded::values(&new, &new_def);
+    let fields = Loaded::values(new, new_def);
     let names = [
         "name",
         "family",
@@ -777,11 +798,7 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
         .filter(|t| t.family == have.record)
         .map(|t| t.name)
         .collect();
-    for t in new_def
-        .types
-        .iter()
-        .filter(|t| p.add_types.contains(&t.name))
-    {
+    for t in new_def.types.iter().filter(|t| add_types.contains(&t.name)) {
         if mine.contains(&t.name) {
             continue;
         }
@@ -797,6 +814,191 @@ fn update(ctx: &mut Context<'_>, p: UpdateFamily) -> Result<UpdateReport> {
     loaded::check_components(ctx.txn()?.snapshot(), None)?;
     report.preview = false;
     Ok(report)
+}
+
+/// Parameters of `archbuilder.family.commit`: the family editor's commit of a definition text.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CommitFamily {
+    /// The loaded family the text replaces, by identifier or name; absent to load the text as a
+    /// new family at version 1.0.0.
+    #[serde(default)]
+    #[schemars(length(min = 1, max = 600))]
+    pub family: Option<String>,
+    /// The canonical text of the definition, as the family editor holds it.
+    #[schemars(length(min = 1, max = 1_048_576))]
+    pub text: String,
+    /// For parameters that are removed or retyped: the parameter of the new version that takes
+    /// the value (by formula identifier), or null to drop it.
+    #[serde(default)]
+    pub mapping: BTreeMap<String, Option<String>>,
+    /// Whether to report what the commit would do without changing anything.
+    #[serde(default)]
+    pub preview: bool,
+}
+
+/// What a commit of an edited definition does, computed without changing anything.
+enum Commit {
+    /// A new version of the loaded family `have`.
+    Update {
+        new: Published,
+        have: Loaded,
+        new_def: Definition,
+        report: UpdateReport,
+        plan: UpdatePlan,
+    },
+    /// A definition loaded as a new family.
+    New {
+        published: Published,
+        def: Definition,
+        report: UpdateReport,
+    },
+}
+
+impl Commit {
+    fn into_report(self) -> UpdateReport {
+        match self {
+            Self::Update { report, .. } | Self::New { report, .. } => report,
+        }
+    }
+}
+
+/// Plans the commit of `p` against `snapshot`: the version the change needs, the report of what
+/// it affects, and the changes to apply.
+fn plan_commit(snapshot: &Snapshot, p: &CommitFamily) -> Result<Commit> {
+    let def = Definition::from_text(&p.text)?;
+    let Some(name) = p.family.clone() else {
+        return plan_new(snapshot, def);
+    };
+    let have = find_family(snapshot, &name)?;
+    let old = have.definition()?;
+    if def.header.id != have.family {
+        return Err(Error::new(model_codes::FAMILY_INVALID)
+            .with_arg("part", "header")
+            .with_arg("reason", "identifier"));
+    }
+    if p.text == have.text {
+        return Err(Error::new(model_codes::FAMILY_VERSION)
+            .with_arg("version", have.version.to_string())
+            .with_arg("reason", "unchanged"));
+    }
+    let mut next = have.version;
+    match step(&old, &def) {
+        Step::Major => {
+            next.major += 1;
+            (next.minor, next.patch) = (0, 0);
+        }
+        Step::Minor => {
+            next.minor += 1;
+            next.patch = 0;
+        }
+        Step::Patch => next.patch += 1,
+    }
+    let new = package::publish(&def, Some(&old), next)?;
+    let request = UpdateFamily {
+        family: name,
+        path: String::new(),
+        mapping: p.mapping.clone(),
+        add_types: Vec::new(),
+    };
+    let (have, new_def, report, plan) = plan_update(snapshot, &request, &new)?;
+    Ok(Commit::Update {
+        new,
+        have,
+        new_def,
+        report,
+        plan,
+    })
+}
+
+/// Plans the load of `def` as a new family at version 1.0.0 with all its types.
+fn plan_new(snapshot: &Snapshot, def: Definition) -> Result<Commit> {
+    let version = Version {
+        major: 1,
+        minor: 0,
+        patch: 0,
+    };
+    let published = package::publish(&def, None, version)?;
+    if loaded::families(snapshot)
+        .iter()
+        .any(|f| f.family == def.header.id)
+    {
+        return Err(Error::new(model_codes::FAMILY_VERSION)
+            .with_arg("version", version.to_string())
+            .with_arg("reason", "exists"));
+    }
+    let report = UpdateReport {
+        preview: true,
+        family: def.header.name.clone(),
+        from: String::new(),
+        to: version.to_string(),
+        major: false,
+        removed: Vec::new(),
+        retyped: Vec::new(),
+        added: def.parameters.iter().map(|p| p.name.clone()).collect(),
+        renamed: Vec::new(),
+        needs_mapping: Vec::new(),
+        types: def.types.len(),
+        instances: 0,
+        changes: Vec::new(),
+        failing: Vec::new(),
+    };
+    Ok(Commit::New {
+        published,
+        def,
+        report,
+    })
+}
+
+/// The report of the commit `p` would make, changing nothing: what the family editor shows
+/// before the person commits.
+///
+/// # Errors
+/// The errors of a commit that would be refused (a text that does not read, a version that
+/// cannot be chosen, a parameter that needs a mapping is reported, not refused).
+pub fn preview_commit(snapshot: &Snapshot, p: &CommitFamily) -> Result<UpdateReport> {
+    plan_commit(snapshot, p).map(Commit::into_report)
+}
+
+/// `archbuilder.family.commit`: publishes the edited definition as the next version of the loaded
+/// family (its version follows the change: patch, minor or major), or loads it as a new family.
+/// The report lists the types and instances the change affects; a preview changes nothing.
+fn commit(ctx: &mut Context<'_>, p: CommitFamily) -> Result<UpdateReport> {
+    let plan = plan_commit(ctx.snapshot(), &p)?;
+    if p.preview {
+        return Ok(plan.into_report());
+    }
+    match plan {
+        Commit::Update {
+            new,
+            have,
+            new_def,
+            report,
+            plan,
+        } => apply_update(ctx, &[], &new, &have, &new_def, report, plan),
+        Commit::New {
+            published,
+            def,
+            mut report,
+        } => {
+            let project = spatial::project(ctx.snapshot())
+                .map(|o| o.id)
+                .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+            let family = create(ctx, FAMILY, Some(project), Loaded::values(&published, &def))?;
+            for t in &def.types {
+                create(
+                    ctx,
+                    FAMILY_TYPE,
+                    Some(project),
+                    FamilyType::record(&t.name, family, &t.values),
+                )?;
+            }
+            ensure_valid(ctx)?;
+            loaded::check_components(ctx.txn()?.snapshot(), None)?;
+            report.preview = false;
+            Ok(report)
+        }
+    }
 }
 
 /// Parameters of `archbuilder.component.place`.
@@ -868,6 +1070,19 @@ fn resolve_type(snapshot: &Snapshot, text: &str) -> Result<FamilyType> {
         [] => Err(Error::new(codes::KIND_MISMATCH).with_arg("expected", FAMILY_TYPE)),
         _ => Err(Error::new(model_codes::NAME_TAKEN).with_arg("name", text)),
     }
+}
+
+/// Whether the family type `text` (an identifier or a name) is hosted by walls: its instances go
+/// into a wall with `archbuilder.family_insert.place`, not into the storey with
+/// `archbuilder.component.place`.
+#[must_use]
+pub fn hosted_by_walls(snapshot: &Snapshot, text: &str) -> bool {
+    resolve_type(snapshot, text)
+        .ok()
+        .and_then(|t| spatial::get(snapshot, t.family))
+        .and_then(|o| Loaded::of(&o))
+        .and_then(|f| f.definition().ok())
+        .is_some_and(|d| loaded::host_keys(&d).contains(&types::WALL))
 }
 
 fn instance_values(
@@ -1014,6 +1229,218 @@ fn place_insert(ctx: &mut Context<'_>, p: PlaceInsert) -> Result<InsertPlaced> {
     })
 }
 
+/// The field prefix of an instance value in the property grid: `value.<parameter key>`.
+pub const VALUE_FIELD: &str = "value.";
+/// The identifier of the command that changes a placed component or a hosted instance.
+pub const INSTANCE_SET: &str = "archbuilder.instance.set";
+
+/// Parameters of `archbuilder.instance.set`: a placed component or a hosted instance, changed in
+/// one undo step. Only the given parts change.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetInstance {
+    /// The component or hosted instance.
+    pub object: IdParam,
+    /// A new mark.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    pub name: Option<String>,
+    /// A component's new insertion point `[x, y]` in meters.
+    #[serde(default)]
+    pub point: Option<[f64; 2]>,
+    /// A component's new rotation (a bare number is radians).
+    #[serde(default)]
+    pub rotation: Option<QuantityParam>,
+    /// The new height of the insertion point (a bare number is meters): above the level of a
+    /// component, above the base of the host of a hosted instance.
+    #[serde(default)]
+    pub offset: Option<QuantityParam>,
+    /// A hosted instance's new distance along its host's baseline (a bare number is meters).
+    #[serde(default)]
+    pub distance: Option<QuantityParam>,
+    /// Whether a component is mirrored across its own left-right axis.
+    #[serde(default)]
+    pub mirror: Option<bool>,
+    /// Instance values by parameter key: a literal, `"=formula"`, or `""` to clear the value.
+    /// Only instance-scoped parameters take a value.
+    #[serde(default)]
+    pub values: BTreeMap<String, serde_json::Value>,
+}
+
+/// The parts of an instance an edit changes; each `None` keeps the stored value.
+#[derive(Debug, Default)]
+struct InstanceEdit {
+    name: Option<String>,
+    point: Option<[f64; 2]>,
+    rotation: Option<f64>,
+    offset: Option<f64>,
+    distance: Option<f64>,
+    mirror: Option<bool>,
+    values: BTreeMap<String, serde_json::Value>,
+}
+
+/// The stored value of one instance-scoped parameter after an edit: `None` clears it.
+fn own_value(
+    ctx: &Context<'_>,
+    def: &Definition,
+    key: &str,
+    json: &serde_json::Value,
+) -> Result<Option<Stored>> {
+    let p = def
+        .parameter(key)
+        .ok_or_else(|| Error::new(codes::FIELD_UNKNOWN))?;
+    if p.scope != Scope::Instance {
+        return Err(Error::new(codes::FIELD_UNKNOWN));
+    }
+    match json {
+        serde_json::Value::String(t) if t.trim().is_empty() => Ok(None),
+        serde_json::Value::String(t) if t.trim_start().starts_with('=') => stored_input(
+            ctx,
+            (&p.name, p.data),
+            None,
+            t.trim_start().strip_prefix('='),
+            None,
+        ),
+        other => stored_input(ctx, (&p.name, p.data), Some(other), None, None),
+    }
+}
+
+/// Applies `edit` to the component or hosted instance `id` in one transaction. The new values
+/// must evaluate before anything changes; a refused edit names the parameter, form or instance.
+fn write_instance(ctx: &mut Context<'_>, id: ObjectId, edit: InstanceEdit) -> Result<()> {
+    let snapshot = ctx.snapshot().clone();
+    let object = spatial::get(&snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let key = spatial::type_of(&snapshot, id).unwrap_or_default();
+    if let Some(at) = edit.point
+        && !at.iter().all(|v| v.is_finite())
+    {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    if key == COMPONENT {
+        let mut c = Component::of(&object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let resolved = loaded::resolve(&snapshot, &c)?;
+        for (k, json) in &edit.values {
+            match own_value(ctx, &resolved.definition, k, json)? {
+                Some(v) => c.values.insert(k.clone(), v),
+                None => c.values.remove(k),
+            };
+        }
+        let renamed = edit.name.map(|n| n.trim().to_owned());
+        if let Some(n) = &renamed {
+            c.name.clone_from(n);
+        }
+        if let Some(at) = edit.point {
+            c.origin = at;
+        }
+        if let Some(r) = edit.rotation {
+            c.rotation = r;
+        }
+        if let Some(o) = edit.offset {
+            c.offset = o;
+        }
+        if let Some(m) = edit.mirror {
+            c.mirror = m;
+        }
+        loaded::evaluate_in(&snapshot, &resolved.definition, &resolved.ty, &c.values)?;
+        let mut record = c.record();
+        record.truncate(types::component::VALUES + 1);
+        crate::circulation::write_changes(ctx, COMPONENT, &object, record)?;
+        if let Some(n) = renamed {
+            // The name is the record's first field, which the change of placement leaves alone.
+            let value = (!n.is_empty()).then_some(Value::String(n));
+            ctx.txn()?.modify(id, FieldPath::new("name"), value)?;
+        }
+        ensure_valid(ctx)?;
+        loaded::check_components(ctx.txn()?.snapshot(), Some(&[id]))
+    } else if key == types::FAMILY_INSERT {
+        use archbuilder_model::family::loaded::FamilyInsert;
+        let mut f = FamilyInsert::of(&object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let resolved = loaded::resolve_insert(&snapshot, &f)?;
+        for (k, json) in &edit.values {
+            match own_value(ctx, &resolved.definition, k, json)? {
+                Some(v) => f.values.insert(k.clone(), v),
+                None => f.values.remove(k),
+            };
+        }
+        let renamed = edit.name.map(|n| n.trim().to_owned());
+        if let Some(n) = &renamed {
+            f.name.clone_from(n);
+        }
+        if let Some(d) = edit.distance {
+            f.distance = d;
+        }
+        if let Some(o) = edit.offset {
+            f.offset = o;
+        }
+        loaded::evaluate_in(&snapshot, &resolved.definition, &resolved.ty, &f.values)?;
+        let mut record = f.record();
+        record.truncate(types::family_insert::VALUES + 1);
+        crate::circulation::write_changes(ctx, types::FAMILY_INSERT, &object, record)?;
+        if let Some(n) = renamed {
+            let value = (!n.is_empty()).then_some(Value::String(n));
+            ctx.txn()?.modify(id, FieldPath::new("name"), value)?;
+        }
+        ensure_valid(ctx)
+    } else {
+        Err(Error::new(codes::KIND_MISMATCH))
+    }
+}
+
+/// `archbuilder.instance.set`: changes a placed component or hosted instance, one undo step.
+fn set_instance(ctx: &mut Context<'_>, p: SetInstance) -> Result<()> {
+    let snapshot = ctx.snapshot().clone();
+    let key = spatial::type_of(&snapshot, p.object.0).unwrap_or_default();
+    let rotation = match &p.rotation {
+        Some(q) => Some(ctx.quantity(q, Dimension::ANGLE)?.value()),
+        None => None,
+    };
+    let offset = match &p.offset {
+        Some(q) => Some(crate::length(ctx, q)?.value()),
+        None => None,
+    };
+    let distance = match &p.distance {
+        Some(q) => Some(crate::length(ctx, q)?.value()),
+        None => None,
+    };
+    if key != COMPONENT && (p.point.is_some() || p.rotation.is_some() || p.mirror.is_some()) {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    if key == COMPONENT && p.distance.is_some() {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    write_instance(
+        ctx,
+        p.object.0,
+        InstanceEdit {
+            name: p.name,
+            point: p.point,
+            rotation,
+            offset,
+            distance,
+            mirror: p.mirror,
+            values: p.values,
+        },
+    )
+}
+
+/// The property grid's edit of one instance value (`value.<key>`): the same text rules as the
+/// project parameters (`=formula`, a literal, or empty to clear).
+pub(crate) fn set_instance_value(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<()> {
+    write_instance(
+        ctx,
+        id,
+        InstanceEdit {
+            values: BTreeMap::from([(key.to_owned(), value.clone())]),
+            ..InstanceEdit::default()
+        },
+    )
+}
+
 /// Sets the name and the values of the family type `object` (the family-type branch of
 /// `archbuilder.type.set`): each value is a literal or `{"formula", "unit"}`; every component of
 /// the type is evaluated again before the change commits.
@@ -1139,6 +1566,36 @@ pub fn register(registry: &mut Registry) -> Result<()> {
     )?;
     registry.register(
         CommandSpec::new(
+            FAMILY_COMMIT,
+            MessageId {
+                message_id: "ab-cmd-family-commit-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-family-commit-description",
+            }
+            .message_id,
+            commit,
+        )
+        .with_permissions([Permission::Read, Permission::Edit]),
+    )?;
+    registry.register(
+        CommandSpec::new(
+            INSTANCE_SET,
+            MessageId {
+                message_id: "ab-cmd-instance-set-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-instance-set-description",
+            }
+            .message_id,
+            set_instance,
+        )
+        .with_permissions([Permission::Read, Permission::Edit]),
+    )?;
+    registry.register(
+        CommandSpec::new(
             COMPONENT_PLACE,
             MessageId {
                 message_id: "ab-cmd-component-place-label",
@@ -1185,18 +1642,131 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             .message_id,
             place_insert,
         )
-        .with_prompts(
-            PromptSequence::new().step(PromptStep::new(
+        .with_prompt(Arc::new(FamilyInsertPrompts)),
+    )?;
+    Ok(())
+}
+
+/// The prompts of `archbuilder.family_insert.place`, as the door's: the family type (preset, else
+/// asked), the host wall (preset, picked, or the wall the pointer is on) and the distance along it.
+/// The flip keywords toggle the hand and the facing, and they carry to the next prompt.
+#[derive(Debug)]
+struct FamilyInsertPrompts;
+
+/// The answers of the prompts so far: the family type, the host wall, the flips.
+struct Asked {
+    family: Option<String>,
+    wall: Option<ObjectId>,
+    flip_hand: bool,
+    flip_facing: bool,
+}
+
+impl FamilyInsertPrompts {
+    /// What the answers and the preset give so far.
+    fn asked(state: &PromptState<'_>) -> Asked {
+        let flag = |key: &str| state.preset.get(key).and_then(serde_json::Value::as_bool);
+        let mut asked = Asked {
+            family: state
+                .preset
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            wall: state
+                .preset
+                .get("host")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|s| s.parse().ok()),
+            flip_hand: flag("flip_hand").unwrap_or(false),
+            flip_facing: flag("flip_facing").unwrap_or(false),
+        };
+        for answer in state.answers {
+            match &answer.input {
+                PromptInput::Text(text) => asked.family = Some(text.clone()),
+                PromptInput::Pick(id) => asked.wall = Some(*id),
+                PromptInput::Keyword(k) if k == "flip_hand" => asked.flip_hand = !asked.flip_hand,
+                PromptInput::Keyword(k) if k == "flip_facing" => {
+                    asked.flip_facing = !asked.flip_facing;
+                }
+                _ => {}
+            }
+        }
+        asked
+    }
+}
+
+impl PromptMachine for FamilyInsertPrompts {
+    fn next(&self, state: &PromptState<'_>) -> Result<Next> {
+        let asked = Self::asked(state);
+        let Some(family) = asked.family.clone() else {
+            return Ok(Next::Ask(Prompt::new(
                 "type",
                 MessageId {
                     message_id: "ab-prompt-family-insert-type",
                 }
                 .message_id,
                 text(600),
-            )),
-        ),
-    )?;
-    Ok(())
+            )));
+        };
+        // The distance is the answer that completes the command.
+        let distance = state.answers.iter().rev().find_map(|a| match a.input {
+            PromptInput::Distance(d) => Some(d),
+            _ => None,
+        });
+        if let (Some(distance), Some(wall)) = (distance, asked.wall) {
+            let mut params = serde_json::Map::new();
+            params.insert("type".to_owned(), family.into());
+            params.insert("host".to_owned(), wall.to_string().into());
+            params.insert("distance".to_owned(), distance.into());
+            params.insert("flip_hand".to_owned(), asked.flip_hand.into());
+            params.insert("flip_facing".to_owned(), asked.flip_facing.into());
+            return Ok(Next::Done(params));
+        }
+        let turkish = state
+            .setting(LANGUAGE_SETTING)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .is_some_and(|l| l.starts_with("tr"));
+        let mut arg =
+            Prompt::new(
+                format!("point-{}", state.answers.len()),
+                MessageId {
+                    message_id: "ab-prompt-family-insert-point",
+                }
+                .message_id,
+                Accept::Distance {
+                    min: Some(0.0),
+                    max: Some(types::DISTANCE_RANGE.1),
+                },
+            )
+            .or(Accept::Pick {
+                types: vec![types::WALL.to_owned()],
+            })
+            .or(Accept::keywords(vec![
+                KeywordOption::new("flip_hand", "ab-keyword-insert-hand")
+                    .with_shortcut(if turkish { 'k' } else { 'f' }),
+                KeywordOption::new("flip_facing", "ab-keyword-insert-facing").with_shortcut('a'),
+            ]));
+        arg = arg
+            .with_arg("hand", if asked.flip_hand { "right" } else { "left" })
+            .with_arg(
+                "facing",
+                if asked.flip_facing {
+                    "interior"
+                } else {
+                    "exterior"
+                },
+            );
+        Ok(Next::Ask(arg))
+    }
+
+    fn check(&self, state: &PromptState<'_>, prompt: &Prompt, input: &PromptInput) -> Result<()> {
+        if matches!(input, PromptInput::Distance(_))
+            && prompt.key.starts_with("point")
+            && Self::asked(state).wall.is_none()
+        {
+            return Err(Error::new(codes::NO_WALL_SELECTED));
+        }
+        Ok(())
+    }
 }
 
 /// The record values of `moved` laid over those of `object`, so that fields the component struct

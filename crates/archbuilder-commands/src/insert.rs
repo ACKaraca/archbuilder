@@ -233,7 +233,7 @@ fn selected_inserts(ctx: &Context<'_>) -> Vec<ObjectId> {
         .filter(|id| {
             matches!(
                 spatial::type_of(snapshot, *id).as_deref(),
-                Some(DOOR | WINDOW)
+                Some(DOOR | WINDOW | types::FAMILY_INSERT)
             )
         })
         .collect()
@@ -243,7 +243,7 @@ fn selected_inserts(ctx: &Context<'_>) -> Vec<ObjectId> {
 pub(crate) fn is_insert(snapshot: &Snapshot, id: ObjectId) -> bool {
     matches!(
         spatial::type_of(snapshot, id).as_deref(),
-        Some(DOOR | WINDOW | WALL_OPENING)
+        Some(DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT)
     )
 }
 
@@ -256,9 +256,11 @@ fn wall_for(ctx: &Context<'_>, given: Option<IdParam>) -> Result<arc_doc::Object
     for id in ctx.selection() {
         let found = match spatial::type_of(snapshot, *id).as_deref() {
             Some(WALL) => spatial::get(snapshot, *id),
-            Some(DOOR | WINDOW | WALL_OPENING) => spatial::get(snapshot, *id)
-                .and_then(|i| i.header.owner)
-                .and_then(|owner| spatial::get(snapshot, owner)),
+            Some(DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT) => {
+                spatial::get(snapshot, *id)
+                    .and_then(|i| i.header.owner)
+                    .and_then(|owner| spatial::get(snapshot, owner))
+            }
             _ => None,
         };
         if let Some(found) = found {
@@ -542,7 +544,7 @@ fn flip(ctx: &mut Context<'_>, given: Option<Vec<IdParam>>, hand: bool) -> Resul
     for id in &ids {
         if !matches!(
             spatial::type_of(ctx.snapshot(), *id).as_deref(),
-            Some(DOOR | WINDOW)
+            Some(DOOR | WINDOW | types::FAMILY_INSERT)
         ) {
             return Err(Error::new(codes::KIND_MISMATCH));
         }
@@ -645,6 +647,7 @@ fn rehost(ctx: &mut Context<'_>, p: RehostInserts) -> Result<InsertsRehosted> {
         if spatial::children(snapshot, DOOR, target).len()
             + spatial::children(snapshot, WINDOW, target).len()
             + spatial::children(snapshot, WALL_OPENING, target).len()
+            + spatial::children(snapshot, types::FAMILY_INSERT, target).len()
             >= insert::MAX_PER_WALL
         {
             return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));

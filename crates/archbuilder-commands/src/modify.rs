@@ -280,7 +280,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::ELEVATOR) => set.elevators.push(id),
             Some(types::DORMER) => set.dormers.push(id),
             Some(types::COMPONENT) => set.components.push(id),
-            Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
+            Some(DOOR | WINDOW | types::WALL_OPENING | types::FAMILY_INSERT) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
             _ => return Err(Error::new(codes::NOT_MOVABLE)),
@@ -796,7 +796,11 @@ pub(crate) fn shifted_inserts(
                 .with_arg("from", "0.00")
                 .with_arg("to", format!("{:.2}", wall.length())));
         }
-        out.push((object.id, distance, hand));
+        out.push((
+            object.id,
+            Insert::stored_distance(snapshot, &object, distance),
+            hand,
+        ));
     }
     Ok(out)
 }
@@ -914,8 +918,11 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
     }
     let mut slides = Vec::new();
     for id in &set.inserts {
-        let (_, distance) = slide(&snapshot, *id, xf)?;
-        slides.push((*id, distance));
+        let (item, distance) = slide(&snapshot, *id, xf)?;
+        let object =
+            spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        slides.push((*id, Insert::stored_distance(&snapshot, &object, distance)));
+        let _ = item;
     }
     for (id, wall, hosted) in wall_changes.into_iter().chain(follows) {
         for (field, value) in [
@@ -1334,10 +1341,24 @@ pub(crate) fn copy_insert(
 ) -> Result<ObjectId> {
     let key = spatial::type_of(ctx.snapshot(), source.id)
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let distance = Insert::stored_distance(ctx.snapshot(), source, distance);
+    let mut values = source.values.clone();
+    if key == types::FAMILY_INSERT {
+        // A family instance keeps its mark; its positions are the family record's.
+        let mut put = |at: usize, value: Value| {
+            if let Some(slot) = values.get_mut(at) {
+                *slot = Some(value);
+            }
+        };
+        put(types::family_insert::DISTANCE, types::length(distance));
+        if let Some(code) = hand {
+            put(types::family_insert::HAND, Value::Enum(code));
+        }
+        return create(ctx, &key, Some(host), values);
+    }
     let kind = Kind::of_key(&key).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let seen = ctx.txn()?.snapshot().clone();
     let name = crate::insert::next_name(&seen, kind, host, tongue);
-    let mut values = source.values.clone();
     let mut put = |at: usize, value: Value| {
         if let Some(slot) = values.get_mut(at) {
             *slot = Some(value);

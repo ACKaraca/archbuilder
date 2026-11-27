@@ -35,8 +35,8 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, COMPONENT, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT,
-    STAIR, STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
+    CEILING, COMPONENT, DOOR, ELEVATOR, FAMILY_INSERT, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP,
+    ROOF, ROOM, SHAFT, STAIR, STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
 use crate::wall::Wall;
@@ -243,7 +243,7 @@ impl PlanSource<'_> {
         let walls = own(WALL);
         out.extend(walls.iter().map(|w| w.id));
         for w in &walls {
-            for key in [DOOR, WINDOW, WALL_OPENING] {
+            for key in [DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT] {
                 out.extend(spatial::children(s, key, w.id).iter().map(|o| o.id));
             }
         }
@@ -330,7 +330,7 @@ impl PlanSource<'_> {
                         .is_some_and(|w| below.elevation() + w.base_offset + w.height > reach);
                 if rises {
                     out.push(wall.id);
-                    for key in [DOOR, WINDOW, WALL_OPENING] {
+                    for key in [DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT] {
                         out.extend(spatial::children(s, key, wall.id).iter().map(|o| o.id));
                     }
                 }
@@ -870,7 +870,7 @@ impl PlanSource<'_> {
                 .and_then(|d| d.solid_cut().ok())
                 .map(|(s, _)| self.body(Category::Roof, s, 0.62)),
             CEILING => self.ceiling_object(&object),
-            DOOR | WINDOW | WALL_OPENING => self.insert_object(&object, detail),
+            DOOR | WINDOW | WALL_OPENING | FAMILY_INSERT => self.insert_object(&object, detail),
             STAIR => self.stair_object(&object),
             RAMP => self.ramp_object(&object),
             RAILING => self.railing_object(&object),

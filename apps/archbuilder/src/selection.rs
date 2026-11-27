@@ -236,7 +236,7 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
                 .map(|r| vec![r.start, r.end])
                 .unwrap_or_default()
         }
-        Some(DOOR | WINDOW | types::WALL_OPENING) => {
+        Some(DOOR | WINDOW | types::WALL_OPENING | types::FAMILY_INSERT) => {
             let host = object
                 .header
                 .owner

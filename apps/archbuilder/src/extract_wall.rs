@@ -21,7 +21,9 @@ use arc_mesh::TriMesh;
 use archbuilder_model::cleanup::PieceClass;
 use archbuilder_model::element_type::TypeKind;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{DOOR, FLOOR, LEVEL, STOREY, WALL, WALL_OPENING, WINDOW};
+use archbuilder_model::types::{
+    DOOR, FAMILY_INSERT, FLOOR, LEVEL, STOREY, WALL, WALL_OPENING, WINDOW,
+};
 use archbuilder_model::wall::Wall;
 
 /// The color of a wall (linear RGB).
@@ -218,7 +220,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
                 .map(|w| w.id),
         );
     }
-    let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW, WALL_OPENING]
+    let changed_inserts: BTreeSet<ObjectId> = [DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT]
         .into_iter()
         .flat_map(live)
         .collect();
@@ -230,14 +232,14 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
             .collect()
     };
     let deleted = deleted_of(&[WALL]);
-    let deleted_inserts = deleted_of(&[DOOR, WINDOW, WALL_OPENING]);
+    let deleted_inserts = deleted_of(&[DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT]);
     // A slab that came, changed or went: the layers of the walls that meet it stop at it, or no
     // longer do. Slabs and walls of different storeys meet, so every wall extracts again.
     if !live(FLOOR).is_empty() || !deleted_of(&[FLOOR]).is_empty() {
         return spatial::objects(snapshot, WALL)
             .into_iter()
             .flat_map(|w| {
-                let inserts: Vec<ObjectId> = [DOOR, WINDOW, WALL_OPENING]
+                let inserts: Vec<ObjectId> = [DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT]
                     .into_iter()
                     .flat_map(|key| spatial::children(snapshot, key, w.id))
                     .map(|i| i.id)
@@ -306,7 +308,7 @@ pub fn dependents(snapshot: &Snapshot, changes: &Changes) -> Vec<ObjectId> {
     let inserts: Vec<ObjectId> = walls
         .iter()
         .flat_map(|w| {
-            [DOOR, WINDOW, WALL_OPENING]
+            [DOOR, WINDOW, WALL_OPENING, FAMILY_INSERT]
                 .into_iter()
                 .flat_map(|key| spatial::children(snapshot, key, *w))
         })

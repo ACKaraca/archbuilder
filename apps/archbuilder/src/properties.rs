@@ -10,6 +10,7 @@ use arc_doc::schema::FieldDecl;
 use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
 use arc_ui::{GridContext, Intent, Localize, PropertyGrid, PropertyModel, PropertyObject};
+use archbuilder_commands::family_project::VALUE_FIELD as FAMILY_VALUE_FIELD;
 use archbuilder_commands::project_parameter::FIELD_PREFIX as PARAMETER_FIELD;
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::element_type::{self as et, TypeKind};
@@ -1486,6 +1487,12 @@ const KINDS: &[(&str, Message)] = &[
         archbuilder_model::types::COMPONENT,
         Message {
             message_id: "ab-kind-component",
+        },
+    ),
+    (
+        archbuilder_model::types::FAMILY_INSERT,
+        Message {
+            message_id: "ab-kind-family-insert",
         },
     ),
     (
@@ -3238,6 +3245,10 @@ fn shown(
             values.push(host.map(Value::String));
             read_only.push("insert_wall".to_owned());
         }
+        // A placed component or hosted instance: the family's parameters, one row each.
+        archbuilder_model::types::COMPONENT | archbuilder_model::types::FAMILY_INSERT => {
+            family_value_rows(snapshot, object, &mut fields, &mut values, &mut read_only)
+        }
         // The slope unit of a file from before it is degrees, shown as such.
         PROJECT => {
             if let Some(slot) = values.get_mut(types::project::SLOPE_UNIT)
@@ -3334,6 +3345,71 @@ fn parameter_text(snapshot: &Snapshot, data: DataType, value: &Evaluated) -> Str
 /// `=formula` that edits through `archbuilder.property.set`, and for a formula a read-only row
 /// with what it gives. A value set on the type is read-only on the element. The stored list
 /// itself is not shown.
+/// The family parameters of a placed component or hosted instance, one row each: the instance's
+/// own value (a formula with its `=`, or a literal) for an instance parameter, edited through
+/// `archbuilder.property.set` as `value.<key>`; the type's value for a type parameter, read-only.
+fn family_value_rows(
+    snapshot: &Snapshot,
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    use archbuilder_model::family::def::Scope;
+    use archbuilder_model::family::loaded::{Component, FamilyInsert, resolve, resolve_insert};
+    let found = match spatial::type_of(snapshot, object.id).as_deref() {
+        Some(archbuilder_model::types::COMPONENT) => {
+            Component::of(object).and_then(|c| resolve(snapshot, &c).ok().map(|r| (r, c.values)))
+        }
+        Some(types::FAMILY_INSERT) => FamilyInsert::of(object)
+            .and_then(|f| resolve_insert(snapshot, &f).ok().map(|r| (r, f.values))),
+        _ => None,
+    };
+    let Some((resolved, own)) = found else {
+        return;
+    };
+    // The keyed list of the instance's values is shown as the rows below.
+    if let Some(at) = fields.iter().position(|f| f.name == "values") {
+        fields.remove(at);
+        if at < values.len() {
+            values.remove(at);
+        }
+    }
+    for p in &resolved.definition.parameters {
+        let name = format!("{FAMILY_VALUE_FIELD}{}", p.key);
+        let text = match p.scope {
+            Scope::Instance => own
+                .get(&p.key)
+                .map(|stored| stored_text(snapshot, p.data, stored)),
+            Scope::Type => resolved
+                .ty
+                .values
+                .get(&p.key)
+                .map(|stored| stored_text(snapshot, p.data, stored)),
+        };
+        fields.push(
+            FieldDecl::new(&name, ValueType::String)
+                .optional()
+                .in_aspect("parameters"),
+        );
+        values.push(Some(Value::String(text.unwrap_or_default())));
+        if p.scope != Scope::Instance {
+            read_only.push(name);
+        }
+    }
+}
+
+/// The text of a stored parameter value: `=formula`, or the literal as the grid shows it.
+fn stored_text(snapshot: &Snapshot, data: DataType, stored: &Stored) -> String {
+    match stored.formula() {
+        Some(f) => format!("={}", f.text()),
+        None => match stored {
+            Stored::Literal(e) => parameter_text(snapshot, data, e),
+            Stored::Formula(_) => String::new(),
+        },
+    }
+}
+
 fn parameter_rows(
     snapshot: &Snapshot,
     key: &str,

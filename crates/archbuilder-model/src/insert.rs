@@ -358,7 +358,26 @@ impl Insert {
     #[must_use]
     pub fn of(snapshot: &Snapshot, object: &Object) -> Option<Self> {
         let key = spatial::type_of(snapshot, object.id)?;
+        if key == types::FAMILY_INSERT {
+            return crate::family::loaded::insert_of(snapshot, object);
+        }
         Self::from_values(Kind::of_key(&key)?, &object.values)
+    }
+
+    /// The distance a hosted object stores for its insertion point, given the distance of its
+    /// opening's centre. A built-in insert stores the centre; a family instance stores its
+    /// insertion point, which the cut of its family may offset from it.
+    #[must_use]
+    pub fn stored_distance(snapshot: &Snapshot, object: &Object, centre: f64) -> f64 {
+        let Some(item) = Self::of(snapshot, object) else {
+            return centre;
+        };
+        let family = spatial::type_of(snapshot, object.id).as_deref() == Some(types::FAMILY_INSERT);
+        let stored = match crate::family::loaded::FamilyInsert::of(object) {
+            Some(f) if family => f.distance,
+            _ => item.distance,
+        };
+        stored + (centre - item.distance)
     }
 
     /// The stretch of the baseline the opening covers: `(from, to)` distances from the start.
@@ -393,7 +412,7 @@ impl Insert {
 /// The inserts hosted by the wall `wall`, with their records, by distance and then identifier.
 #[must_use]
 pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>, Insert)> {
-    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW, WALL_OPENING]
+    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW, WALL_OPENING, types::FAMILY_INSERT]
         .into_iter()
         .flat_map(|key| spatial::children(snapshot, key, wall))
         .filter_map(|o| Insert::of(snapshot, &o).map(|i| (o, i)))
@@ -410,11 +429,6 @@ pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>
 #[must_use]
 pub fn openings_of(snapshot: &Snapshot, id: arc_base::ObjectId) -> Vec<Insert> {
     let mut out: Vec<Insert> = hosted(snapshot, id).into_iter().map(|(_, i)| i).collect();
-    out.extend(
-        crate::family::loaded::family_openings(snapshot, id)
-            .into_iter()
-            .map(|(_, i)| i),
-    );
     if let Some(host) = spatial::get(snapshot, id) {
         out.extend(
             crate::curtain::embedded(snapshot, &host)
@@ -625,10 +639,7 @@ pub fn problems_of(snapshot: &Snapshot, object: &Object, item: Insert) -> Vec<Er
         meets_wall(snapshot, &wall_object, &wall, &item, &name)
             .map(|e| e.with_detail("object", object.id.to_string())),
     );
-    let family = crate::family::loaded::family_openings(snapshot, wall_object.id)
-        .into_iter()
-        .filter_map(|(o, i)| spatial::get(snapshot, o).map(|o| (o, i)));
-    for (other, theirs) in hosted(snapshot, wall_object.id).into_iter().chain(family) {
+    for (other, theirs) in hosted(snapshot, wall_object.id) {
         let (a, b) = (item.extent(), theirs.extent());
         let stacked = item.sill >= theirs.top() || theirs.sill >= item.top();
         if other.id != object.id && !stacked && a.0 < b.1 + MIN_GAP && b.0 < a.1 + MIN_GAP {
@@ -1552,7 +1563,7 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
         }
     }
     let mut best: Option<(f64, arc_base::ObjectId, arc_base::ObjectId)> = None;
-    for key in [DOOR, WINDOW, WALL_OPENING] {
+    for key in [DOOR, WINDOW, WALL_OPENING, types::FAMILY_INSERT] {
         for object in spatial::objects(snapshot, key) {
             let (Some(item), Some((host, _, lo, ld, axes))) = (
                 Insert::of(snapshot, &object),

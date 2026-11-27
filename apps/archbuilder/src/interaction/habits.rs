@@ -200,6 +200,10 @@ fn view_word(first: &str, rest: &[String]) -> Option<Intent> {
     })
 }
 
+#[allow(
+    clippy::cognitive_complexity,
+    reason = "one arm for each typed word of the buttons"
+)]
 pub(super) fn typed_word(text: &str) -> Option<Intent> {
     let mut words = text.split_whitespace();
     let first = words.next()?.to_lowercase();
@@ -233,6 +237,7 @@ pub(super) fn typed_word(text: &str) -> Option<Intent> {
         "selecttype" | "tipisec" if rest.is_empty() => Intent::new(ui::SELECT_TYPE),
         "matchtype" | "tipesle" if rest.is_empty() => Intent::new(ui::MATCH_TYPE),
         "edittype" | "tipduzenle" if rest.is_empty() => Intent::new(ui::EDIT_TYPE),
+        "editfamily" | "ailedüzenle" if rest.is_empty() => Intent::new(ui::EDIT_FAMILY),
         "editboundary" | "sinirduzenle" if rest.is_empty() => {
             Intent::new(archbuilder_commands::floor::FLOOR_EDIT_BOUNDARY)
         }

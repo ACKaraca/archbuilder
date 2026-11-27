@@ -159,6 +159,10 @@ impl WallInteraction {
                 cx.ask_panel(crate::TYPES);
                 Ok(())
             }
+            ui::EDIT_FAMILY => {
+                cx.ask_panel(crate::FAMILY_EDITOR);
+                Ok(())
+            }
             _ => return None,
         })
     }

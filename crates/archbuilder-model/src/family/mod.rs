@@ -9,6 +9,7 @@ pub mod fixtures;
 pub mod loaded;
 pub mod package;
 pub mod table;
+pub mod templates;
 pub mod text;
 
 pub use def::{Definition, Version};

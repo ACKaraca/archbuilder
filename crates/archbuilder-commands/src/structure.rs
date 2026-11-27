@@ -748,6 +748,12 @@ pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> 
     for IdParam(id) in p.objects {
         let snapshot = ctx.snapshot();
         let key = spatial::type_of(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        if let Some(param) = p.field.strip_prefix(crate::family_project::VALUE_FIELD)
+            && matches!(key.as_str(), types::COMPONENT | types::FAMILY_INSERT)
+        {
+            crate::family_project::set_instance_value(ctx, id, param, &p.value)?;
+            continue;
+        }
         match (key.as_str(), p.field.as_str()) {
             (_, "name") => {
                 let name = p

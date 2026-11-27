@@ -279,7 +279,10 @@ pub fn capture(snapshot: &Snapshot, selected: &[ObjectId]) -> Result<Json> {
     for id in ids.iter().take(MAX_ITEMS) {
         let key = spatial::type_of(snapshot, *id).unwrap_or_default();
         if let (true, Some(object)) = (
-            key == DOOR || key == WINDOW || key == WALL_OPENING,
+            matches!(
+                key.as_str(),
+                DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT
+            ),
             spatial::get(snapshot, *id),
         ) && let Some(host) = object.header.owner.filter(|h| walls.contains(h))
         {
@@ -403,12 +406,22 @@ pub(crate) fn paste_content(
         created.push(new);
     }
     for (key, _, host, mut values) in decoded.iter().cloned() {
-        if key != DOOR && key != WINDOW && key != WALL_OPENING {
+        if !matches!(
+            key.as_str(),
+            DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT
+        ) {
             continue;
         }
-        let (Some(kind), Some(host)) =
-            (Kind::of_key(&key), host.and_then(|h| map.get(&h).copied()))
-        else {
+        let Some(host) = host.and_then(|h| map.get(&h).copied()) else {
+            continue;
+        };
+        // A family instance keeps its mark and its family type, which must exist here as for a
+        // component.
+        if key == types::FAMILY_INSERT {
+            created.push(create(ctx, &key, Some(host), values)?);
+            continue;
+        }
+        let Some(kind) = Kind::of_key(&key) else {
             continue;
         };
         let seen = ctx.txn()?.snapshot().clone();

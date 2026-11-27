@@ -545,7 +545,12 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
                 }
             })
             .unwrap_or_default(),
-        Some(crate::types::DOOR | crate::types::WINDOW | crate::types::WALL_OPENING) => {
+        Some(
+            crate::types::DOOR
+            | crate::types::WINDOW
+            | crate::types::WALL_OPENING
+            | crate::types::FAMILY_INSERT,
+        ) => {
             let item = crate::insert::Insert::of(snapshot, &object);
             let host = object.header.owner.and_then(|w| spatial::get(snapshot, w));
             match (item, host.as_ref().and_then(|h| Wall::of(snapshot, h))) {

@@ -770,7 +770,7 @@ pub fn resolve_insert(snapshot: &Snapshot, insert: &FamilyInsert) -> Result<Reso
 /// nothing or does not evaluate.
 #[must_use]
 pub fn opening_of(snapshot: &Snapshot, insert: &FamilyInsert) -> Option<crate::insert::Insert> {
-    use crate::insert::{Facing, Hand, Insert, Kind, Operation};
+    use crate::insert::{Insert, Kind, Operation};
     let r = resolve_insert(snapshot, insert).ok()?;
     let ev = evaluate_in(snapshot, &r.definition, &r.ty, &insert.values).ok()?;
     let first = ev.host_cuts.first()?;
@@ -791,32 +791,18 @@ pub fn opening_of(snapshot: &Snapshot, insert: &FamilyInsert) -> Option<crate::i
         frame_width: 0.0,
         frame_depth: 0.0,
         operation: Operation::default(),
-        hand: Hand::default(),
-        facing: Facing::default(),
+        hand: insert.hand,
+        facing: insert.facing,
         rise: 0.0,
         profile: None,
     })
 }
 
-/// The hosted instances of the wall `wall` with the openings they cut, by distance and then
-/// identifier.
+/// The opening a hosted instance object cuts, read from its record; `None` when the family cuts
+/// nothing or does not evaluate.
 #[must_use]
-pub fn family_openings(
-    snapshot: &Snapshot,
-    wall: ObjectId,
-) -> Vec<(ObjectId, crate::insert::Insert)> {
-    let mut found: Vec<(ObjectId, crate::insert::Insert)> =
-        spatial::children(snapshot, crate::types::FAMILY_INSERT, wall)
-            .iter()
-            .filter_map(|o| FamilyInsert::of(o))
-            .filter_map(|i| opening_of(snapshot, &i).map(|o| (i.id, o)))
-            .collect();
-    found.sort_by(|a, b| {
-        a.1.distance
-            .total_cmp(&b.1.distance)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    found
+pub fn insert_of(snapshot: &Snapshot, object: &Object) -> Option<crate::insert::Insert> {
+    FamilyInsert::of(object).and_then(|i| opening_of(snapshot, &i))
 }
 
 /// The rules a hosted instance breaks: those of the opening it cuts, and a family that no longer

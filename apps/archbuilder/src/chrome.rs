@@ -42,6 +42,7 @@ pub const TYPED_WORDS: &[&str] = &[
     "createsimilar",
     "matchtype",
     "edittype",
+    "editfamily",
     "warnings",
     "plan",
     "3d",
@@ -977,6 +978,17 @@ pub fn command_tabs() -> Vec<CommandTab> {
                         ),
                         icon_button(
                             Message {
+                                message_id: "ab-tool-edit-family",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-edit-family-hint",
+                            }),
+                            "editfamily",
+                            "edit-family",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
                                 message_id: "ab-menu-create-similar",
                             },
                             None,
@@ -1318,6 +1330,22 @@ pub fn command_tabs() -> Vec<CommandTab> {
             groups: vec![
                 group(
                     Message {
+                        message_id: "ab-group-family",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-edit-family",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-edit-family-hint",
+                        }),
+                        "editfamily",
+                        "edit-family",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-transform",
                     },
                     vec![
@@ -1642,6 +1670,7 @@ pub fn icons() -> Vec<(String, String)> {
         };
     }
     icons![
+        "edit-family",
         "new",
         "open",
         "save",

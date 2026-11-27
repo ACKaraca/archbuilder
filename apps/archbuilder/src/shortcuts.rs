@@ -90,6 +90,8 @@ pub mod ui {
     pub const MATCH_TYPE: &str = "archbuilder.type.match_pick";
     /// Opens the type editor on the type of the selection.
     pub const EDIT_TYPE: &str = "archbuilder.type.edit";
+    /// Opens the family editor on the family of the selection.
+    pub const EDIT_FAMILY: &str = "archbuilder.view.family_editor";
     /// Brings the warnings panel to the front.
     pub const WARNINGS: &str = "archbuilder.view.warnings";
     /// Selects the objects of the `objects` parameter and frames them in the view.

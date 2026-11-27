@@ -2360,6 +2360,22 @@ impl WallInteraction {
             self.stop_all();
             return self.with_datums(cx, |tool, env, run| tool.begin(env, run, made));
         }
+        // A component of a family hosted by walls goes into a wall: the insert tool asks for it.
+        if command == archbuilder_commands::family_project::COMPONENT_PLACE
+            && intent.params.is_empty()
+        {
+            let snapshot = cx.document()?.snapshot();
+            let picked = crate::tool_type::current_param(
+                &snapshot,
+                archbuilder_model::element_type::TypeKind::Family,
+            );
+            if let Some(family) = picked
+                .filter(|f| archbuilder_commands::family_project::hosted_by_walls(&snapshot, f))
+            {
+                self.stop_all();
+                return self.with_inserts(cx, |tool, env, run| tool.begin_family(env, run, family));
+            }
+        }
         if let Some(command) = PROMPTED
             .iter()
             .copied()

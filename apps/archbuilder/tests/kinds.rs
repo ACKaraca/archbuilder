@@ -196,19 +196,65 @@ impl Rig {
             &[],
         );
         self.component();
+        self.hosted(&walls[3]);
     }
 
     /// A loaded family with one type and a component of it.
     fn component(&self) {
         use archbuilder_model::family::fixtures::table;
-        use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
-        use archbuilder_model::family::package::publish;
-        let s = self.snapshot();
-        let project = spatial::project(&s).unwrap().id;
+        use archbuilder_model::family::loaded::Component;
         let storey = self.first(STOREY);
-        let definition = table();
+        let ty = self.load_family(&table(), 0xB0);
+        let comp = Component {
+            id: ObjectId::from_u128(0xB3),
+            storey: Some(storey),
+            name: String::new(),
+            family_type: ty,
+            offset: 0.0,
+            origin: [20.0, 20.0],
+            rotation: 0.0,
+            mirror: false,
+            values: Default::default(),
+        };
+        self.document
+            .submit(move |txn| {
+                txn.create(
+                    types::COMPONENT,
+                    ObjectId::from_u128(0xB3),
+                    arc_doc::Header {
+                        owner: Some(storey),
+                        ..Default::default()
+                    },
+                    comp.record(),
+                )
+            })
+            .wait()
+            .unwrap();
+    }
+
+    /// A hosted instance of the hosted door family, in the wall `wall` (a wall without openings).
+    fn hosted(&self, wall: &str) {
+        use archbuilder_model::family::fixtures::hosted_door;
+        let ty = self.load_family(&hosted_door(), 0xC0);
+        self.run(
+            "archbuilder.family_insert.place",
+            json!({"host": wall, "type": ty.to_string(), "distance": 1.0}),
+            &[],
+        );
+    }
+
+    /// Loads `definition` with its family, one type, all identifiers from `base`; returns the
+    /// family type.
+    fn load_family(
+        &self,
+        definition: &archbuilder_model::family::def::Definition,
+        base: u128,
+    ) -> ObjectId {
+        use archbuilder_model::family::loaded::{FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let project = spatial::project(&self.snapshot()).unwrap().id;
         let published = publish(
-            &definition,
+            definition,
             None,
             archbuilder_model::family::Version {
                 major: 1,
@@ -217,18 +263,17 @@ impl Rig {
             },
         )
         .unwrap();
-        let values = definition.type_named("1400x800").unwrap().values.clone();
+        let ty = definition.types.first().unwrap();
+        let values = ty.values.clone();
+        let name = ty.name.clone();
+        let (f, t) = (ObjectId::from_u128(base + 1), ObjectId::from_u128(base + 2));
+        let definition = definition.clone();
         self.document
             .submit(move |txn| {
                 let owned = |owner| arc_doc::Header {
                     owner: Some(owner),
                     ..Default::default()
                 };
-                let (f, t, c) = (
-                    ObjectId::from_u128(0xB1),
-                    ObjectId::from_u128(0xB2),
-                    ObjectId::from_u128(0xB3),
-                );
                 txn.create(
                     types::FAMILY,
                     f,
@@ -239,23 +284,12 @@ impl Rig {
                     types::FAMILY_TYPE,
                     t,
                     owned(project),
-                    FamilyType::record("1400x800", f, &values),
-                )?;
-                let comp = Component {
-                    id: c,
-                    storey: Some(storey),
-                    name: String::new(),
-                    family_type: t,
-                    offset: 0.0,
-                    origin: [20.0, 20.0],
-                    rotation: 0.0,
-                    mirror: false,
-                    values: Default::default(),
-                };
-                txn.create(types::COMPONENT, c, owned(storey), comp.record())
+                    FamilyType::record(&name, f, &values),
+                )
             })
             .wait()
             .unwrap();
+        t
     }
 }
 

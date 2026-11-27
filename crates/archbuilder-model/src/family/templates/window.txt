@@ -1,0 +1,29 @@
+archbfam-text 1 functions 1.0
+definition id=00000000-0000-0000-0000-000000007102 version=1.0.0 name="Window" category=window hosting=wall flags="" ifc_entity="" ifc_type="" source="ArchBuilder starter" license="Apache-2.0"
+parameter key=Height id=00000000-0000-0000-0000-000000000072 name="Height" data=length scope=type role=driving group="Dimensions" order=114 default=2.1
+parameter key=Width id=00000000-0000-0000-0000-000000000071 name="Width" data=length scope=type role=driving group="Dimensions" order=113 default=0.9
+type id=00000000-0000-0000-0000-000000000073 name="0900x2100"
+value param=Height v=2.1
+value param=Width v=0.9
+type id=00000000-0000-0000-0000-000000000074 name="1000x2100"
+value param=Height v=2.1
+value param=Width v=1
+plane key=head name="head" axis=z role=top strong=true offset_f="Height" offset_u=m
+plane key=leaf_back name="leaf_back" axis=y role=none strong=true offset=0.02
+plane key=leaf_front name="leaf_front" axis=y role=none strong=true offset=-0.02
+plane key=left name="left" axis=x role=left strong=true offset=0
+plane key=right name="right" axis=x role=right strong=true offset_f="Width" offset_u=m
+plane key=through_back name="through_back" axis=y role=none strong=true offset=0.5
+plane key=through_front name="through_front" axis=y role=none strong=true offset=-0.5
+profile key=leaf_outline axis=z
+vertex u=left v=leaf_front
+vertex u=right v=leaf_front
+vertex u=right v=leaf_back
+vertex u=left v=leaf_back
+profile key=opening_outline axis=z
+vertex u=left v=through_front
+vertex u=right v=through_front
+vertex u=right v=through_back
+vertex u=left v=through_back
+form key=leaf kind=solid profile=leaf_outline from=origin_z to=head material="body" subcategory=""
+form key=opening kind=void profile=opening_outline from=origin_z to=head material="body" subcategory="" cut_host=true
