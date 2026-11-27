@@ -201,6 +201,8 @@ pub(crate) struct Set {
     pub(crate) elevators: Vec<ObjectId>,
     /// The dormers, and those of the roofs in the set (their middle and direction move).
     pub(crate) dormers: Vec<ObjectId>,
+    /// The family components (their insertion point and heading move).
+    pub(crate) components: Vec<ObjectId>,
 }
 
 impl Set {
@@ -220,6 +222,7 @@ impl Set {
             + self.extruded.len()
             + self.elevators.len()
             + self.dormers.len()
+            + self.components.len()
     }
 }
 
@@ -276,6 +279,7 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::ROOF_EXTRUSION) => set.extruded.push(id),
             Some(types::ELEVATOR) => set.elevators.push(id),
             Some(types::DORMER) => set.dormers.push(id),
+            Some(types::COMPONENT) => set.components.push(id),
             Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
@@ -966,6 +970,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
     crate::roof_parts::move_parts(ctx, &snapshot, &set.elevators, &set.dormers, xf)?;
+    crate::family_project::move_components(ctx, &snapshot, &set.components, xf)?;
     crate::circulation::move_circulation(ctx, &snapshot, &set.ramps, &set.railings, xf)?;
     dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
     dissociated += crate::ceiling::move_ceilings(ctx, &snapshot, &set.ceilings, xf, &walls)?;
@@ -1231,6 +1236,13 @@ pub(crate) fn copy_set(
         &snapshot,
         &set.elevators,
         &alone,
+        xf,
+        target,
+    )?);
+    created.extend(crate::family_project::copy_components(
+        ctx,
+        &snapshot,
+        &set.components,
         xf,
         target,
     )?);

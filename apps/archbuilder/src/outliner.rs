@@ -188,6 +188,7 @@ impl<'a> Structure<'a> {
                             archbuilder_model::types::CEILING,
                             archbuilder_model::types::SHAFT,
                             archbuilder_model::types::ELEVATOR,
+                            archbuilder_model::types::COMPONENT,
                         ] {
                             let mut found: Vec<_> = spatial::children(snapshot, key, s.storey.id)
                                 .iter()

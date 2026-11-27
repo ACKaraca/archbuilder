@@ -23,10 +23,11 @@ use arc_io_mesh::{
 };
 use arc_mesh::TriMesh;
 use archbuilder_model::cleanup::{self, PieceClass};
+use archbuilder_model::family::def::{Detail, ViewKind};
 use archbuilder_model::insert::{self, Insert, Role};
 use archbuilder_model::types::{
-    CEILING, DOOR, DORMER, ELEVATOR, FLOOR, FLOOR_EDGE, RAILING, RAMP, REFERENCE_PLANE, ROOF,
-    ROOF_EDGE, ROOF_EXTRUSION, ROOM, SELECTION_SET, STAIR, WALL, WINDOW, WORK_PLANE,
+    CEILING, COMPONENT, DOOR, DORMER, ELEVATOR, FLOOR, FLOOR_EDGE, RAILING, RAMP, REFERENCE_PLANE,
+    ROOF, ROOF_EDGE, ROOF_EXTRUSION, ROOM, SELECTION_SET, STAIR, WALL, WINDOW, WORK_PLANE,
 };
 use archbuilder_model::wall::Wall;
 use archbuilder_model::{spatial, types};
@@ -171,7 +172,7 @@ pub struct MeshExport {
 
 /// The materials: a stable name, the color as linear RGB and the opacity. The names are
 /// identifiers, not messages, so a file reads the same in every language.
-const MATERIALS: [(&str, [f32; 3], f32); 24] = [
+const MATERIALS: [(&str, [f32; 3], f32); 25] = [
     ("wall.core", [0.62, 0.58, 0.50], 1.0),
     ("wall.finish", [0.80, 0.77, 0.70], 1.0),
     ("wall.layer", [0.72, 0.66, 0.46], 1.0),
@@ -195,6 +196,7 @@ const MATERIALS: [(&str, [f32; 3], f32); 24] = [
     ("railing", [0.25, 0.27, 0.30], 1.0),
     ("ramp", [0.72, 0.70, 0.66], 1.0),
     ("elevator.car", [0.55, 0.58, 0.62], 1.0),
+    ("family.component", [0.7, 0.68, 0.62], 1.0),
     ("generic", [0.70, 0.70, 0.70], 1.0),
 ];
 
@@ -202,7 +204,7 @@ const MATERIALS: [(&str, [f32; 3], f32); 24] = [
 type Bodies = Vec<(&'static str, Polyhedron)>;
 
 /// The kinds that have a body, in the order they are written.
-const BODY_KINDS: [&str; 14] = [
+const BODY_KINDS: [&str; 15] = [
     WALL,
     DOOR,
     WINDOW,
@@ -217,6 +219,7 @@ const BODY_KINDS: [&str; 14] = [
     RAMP,
     RAILING,
     ELEVATOR,
+    COMPONENT,
 ];
 
 /// The kinds that are not geometry, with what the report says of each: rooms are volumes of air,
@@ -455,6 +458,21 @@ fn bodies(snapshot: &Snapshot, key: &str, object: &Object) -> Result<Option<Bodi
                 return Ok(None);
             };
             out.extend(derived.solids()?.into_iter().map(|s| ("railing", s)));
+        }
+        COMPONENT => {
+            // The solids a family shows in 3D, one material for all: the slots are the family's
+            // own names.
+            let Some(component) = archbuilder_model::family::loaded::Component::of(object) else {
+                return Ok(None);
+            };
+            let placed = archbuilder_model::family::loaded::place(snapshot, &component)?;
+            out.extend(
+                placed
+                    .solids
+                    .into_iter()
+                    .filter(|s| s.shown.at(Detail::High, ViewKind::ThreeD))
+                    .map(|s| ("family.component", s.solid)),
+            );
         }
         ELEVATOR => {
             let Some(derived) = archbuilder_model::elevator::derived(snapshot, object) else {

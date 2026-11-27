@@ -35,8 +35,8 @@ use crate::cleanup::{Deps, Store, cached};
 use crate::element_type::{Function, Layers, TypeKind, type_of};
 use crate::insert::{Insert, Kind, Role};
 use crate::types::{
-    CEILING, COMPONENT, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT, STAIR,
-    STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
+    CEILING, COMPONENT, DOOR, ELEVATOR, FLOOR, LEVEL, MODEL_VIEW, RAILING, RAMP, ROOF, ROOM, SHAFT,
+    STAIR, STOREY, VERTICAL_OPENING, WALL, WALL_OPENING, WINDOW,
 };
 use crate::view::{Category, Detail, PlanView};
 use crate::wall::Wall;

@@ -265,6 +265,23 @@ impl Component {
         })
     }
 
+    /// The component under the plane motion `xf`: the insertion point moved, the heading turned
+    /// and the mirror flag toggled by a reflection. The placement's second column (the local
+    /// y axis, which a mirror leaves alone) gives the heading.
+    #[must_use]
+    pub fn moved(&self, xf: &crate::transform::Xform) -> Self {
+        let (s, c) = crate::transform::sin_cos(self.rotation);
+        let origin = xf.point(self.origin);
+        let side = xf.point([self.origin[0] - s, self.origin[1] + c]);
+        Self {
+            origin,
+            rotation: (side[1] - origin[1]).atan2(side[0] - origin[0])
+                - std::f64::consts::FRAC_PI_2,
+            mirror: self.mirror != xf.reflects(),
+            ..self.clone()
+        }
+    }
+
     /// The record values.
     #[must_use]
     pub fn record(&self) -> Vec<Option<Value>> {
@@ -281,6 +298,8 @@ impl Component {
             ))),
             Some(Value::Bool(self.mirror)),
             values_value(&self.values),
+            // The project parameter values of the element (`parameters`), none yet.
+            None,
         ]
     }
 }

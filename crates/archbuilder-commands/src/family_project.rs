@@ -24,7 +24,7 @@ use archbuilder_model::family::loaded::{
 use archbuilder_model::family::package::{self, Published, Step, step};
 use archbuilder_model::family::text::checksum;
 use archbuilder_model::spatial;
-use archbuilder_model::types::{COMPONENT, FAMILY, FAMILY_TYPE};
+use archbuilder_model::types::{self, COMPONENT, FAMILY, FAMILY_TYPE};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -1086,4 +1086,70 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         ),
     )?;
     Ok(())
+}
+
+/// The record values of `moved` laid over those of `object`, so that fields the component struct
+/// does not carry (project parameter values) stay.
+fn moved_values(object: &arc_doc::Object, moved: &Component) -> Vec<Option<arc_doc::Value>> {
+    let mut values = object.values.clone();
+    for (slot, v) in moved
+        .record()
+        .into_iter()
+        .enumerate()
+        .take(types::component::VALUES + 1)
+        .skip(1)
+    {
+        if let Some(at) = values.get_mut(slot) {
+            *at = v;
+        }
+    }
+    values
+}
+
+/// Moves the components `ids` under the plane motion `xf` (the modify commands).
+pub(crate) fn move_components(
+    ctx: &mut Context<'_>,
+    snapshot: &arc_doc::Snapshot,
+    ids: &[ObjectId],
+    xf: &archbuilder_model::transform::Xform,
+) -> Result<()> {
+    for id in ids {
+        let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let moved = Component::of(&object)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            .moved(xf);
+        let mut record = moved.record();
+        // The parameters field is not the placement's: it stays as it is.
+        record.truncate(types::component::VALUES + 1);
+        crate::circulation::write_changes(ctx, COMPONENT, &object, record)?;
+    }
+    Ok(())
+}
+
+/// Copies the components `ids` moved by `xf`, onto `target` or their own storey; the family type
+/// stays, the offset above the level and the values are kept.
+pub(crate) fn copy_components(
+    ctx: &mut Context<'_>,
+    snapshot: &arc_doc::Snapshot,
+    ids: &[ObjectId],
+    xf: &archbuilder_model::transform::Xform,
+    target: Option<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for id in ids {
+        let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let storey = target
+            .or(object.header.owner)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let moved = Component::of(&object)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
+            .moved(xf);
+        out.push(create(
+            ctx,
+            COMPONENT,
+            Some(storey),
+            moved_values(&object, &moved),
+        )?);
+    }
+    Ok(out)
 }

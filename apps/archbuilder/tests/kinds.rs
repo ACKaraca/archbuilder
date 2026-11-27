@@ -308,3 +308,35 @@ fn every_element_kind_has_plan_points_a_name_a_pick_a_count_a_delete_and_a_copy(
         assert!(spatial::get(&rig.snapshot(), id).is_some());
     }
 }
+
+#[test]
+fn a_component_moves_mirrors_and_copies_like_any_element() {
+    use archbuilder_model::family::loaded::Component;
+    let rig = Rig::new();
+    rig.component();
+    let id = rig.first(types::COMPONENT);
+    let read = |rig: &Rig, id| Component::of(&spatial::get(&rig.snapshot(), id).unwrap()).unwrap();
+    rig.run(
+        "archbuilder.modify.move",
+        json!({"displacement": [1.0, 2.0]}),
+        &[id],
+    );
+    assert_eq!(read(&rig, id).origin, [21.0, 22.0]);
+    // A mirror across the x axis keeps the point's x, flips y and the handedness.
+    rig.run(
+        "archbuilder.modify.mirror",
+        json!({"axis": [[0.0, 0.0], [1.0, 0.0]], "keep": false}),
+        &[id],
+    );
+    let m = read(&rig, id);
+    assert!(m.mirror);
+    assert!((m.origin[0] - 21.0).abs() < 1e-9 && (m.origin[1] + 22.0).abs() < 1e-9);
+    let made = rig.run(
+        "archbuilder.modify.copy",
+        json!({"displacement": [5.0, 0.0]}),
+        &[id],
+    );
+    let copy = made["created"][0].as_str().unwrap().parse().unwrap();
+    assert_eq!(read(&rig, copy).origin[0], 26.0);
+    assert_eq!(spatial::objects(&rig.snapshot(), types::COMPONENT).len(), 2);
+}

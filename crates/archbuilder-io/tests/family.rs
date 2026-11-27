@@ -102,4 +102,17 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
         .find(|i| i.reason == "ab.io.ifc.family_not_written")
         .expect("the instance is in the loss report");
     assert_eq!(item.reason, "ab.io.ifc.family_not_written");
+    // The mesh export writes the solids a component shows in 3D.
+    let mesh = archbuilder_io::mesh::export_mesh(
+        &document.snapshot(),
+        &archbuilder_io::mesh::MeshOptions {
+            only: Some(std::collections::BTreeSet::from([
+                arc_base::ObjectId::from_u128(0xF00F),
+            ])),
+            ..archbuilder_io::mesh::MeshOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(mesh.elements, 1);
+    assert!(mesh.triangles > 0);
 }

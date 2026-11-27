@@ -177,7 +177,8 @@ pub const ELEMENTS: [&str; 21] = [
 
 /// The physical elements: the elements that carry project parameter values in their
 /// `parameters` field (every element but grids and reference planes).
-pub const PARAMETER_HOSTS: [&str; 18] = [
+pub const PARAMETER_HOSTS: [&str; 19] = [
+    COMPONENT,
     WALL,
     DOOR,
     WINDOW,

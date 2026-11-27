@@ -81,8 +81,10 @@ pub struct Purged {
 /// is kept.
 #[must_use]
 pub fn unused_items(snapshot: &Snapshot) -> Vec<PurgeItem> {
+    // Family types are candidates too, without the rule that the last type of a kind stays.
     let candidates: Vec<(ObjectId, &str, String)> = crate::transfer::TYPE_KINDS
         .iter()
+        .chain([&types::FAMILY_TYPE])
         .flat_map(|key| {
             spatial::objects(snapshot, key).into_iter().map(move |o| {
                 (

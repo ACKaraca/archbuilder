@@ -15,8 +15,8 @@ use arc_doc::{FieldPath, Header, Object, Snapshot, Value};
 use archbuilder_model::names;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
-    self, BUILDING, CEILING_TYPE, DOOR_TYPE, FLOOR_TYPE, LEVEL, PLAN_VIEW, PROJECT, RAILING_TYPE,
-    RAMP_TYPE, ROOF_TYPE, SITE, STOREY, WALL_TYPE, WINDOW_TYPE, project,
+    self, BUILDING, CEILING_TYPE, DOOR_TYPE, FAMILY_TYPE, FLOOR_TYPE, LEVEL, PLAN_VIEW, PROJECT,
+    RAILING_TYPE, RAMP_TYPE, ROOF_TYPE, SITE, STOREY, WALL_TYPE, WINDOW_TYPE, project,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -348,6 +348,31 @@ fn free_name(taken: &[String], name: &str) -> String {
         .unwrap_or_else(|| name.to_owned())
 }
 
+/// The family types of `source` a standards transfer reports as skipped: a family type belongs to
+/// the loaded family it refers to, which the transfer does not bring; Load family does.
+fn skipped_family_types(source: &Snapshot, options: &TransferOptions) -> Vec<TransferItem> {
+    let short = FAMILY_TYPE
+        .strip_prefix("archbuilder.")
+        .unwrap_or(FAMILY_TYPE);
+    if !options.kinds.is_empty() && !options.kinds.iter().any(|k| k == short) {
+        return Vec::new();
+    }
+    spatial::objects(source, FAMILY_TYPE)
+        .iter()
+        .map(|o| (o, name_of(o)))
+        .filter(|(_, name)| {
+            options.names.is_empty() || options.names.iter().any(|n| names::same(n, name))
+        })
+        .map(|(_, name)| TransferItem {
+            kind: FAMILY_TYPE.to_owned(),
+            name,
+            action: "skipped".to_owned(),
+            reason: Some("references".to_owned()),
+            element_type: None,
+        })
+        .collect()
+}
+
 /// Copies the element types of `source` into the open document, and with them the display unit
 /// settings, settling a name the document already has by `options`.
 ///
@@ -359,7 +384,10 @@ pub fn transfer(
     options: &TransferOptions,
 ) -> Result<Transferred> {
     let mut items: Vec<TransferItem> = Vec::new();
-    let (mut copied, mut overwritten, mut skipped) = (0, 0, 0);
+    let (mut copied, mut overwritten) = (0, 0);
+    let family_types = skipped_family_types(source, options);
+    let mut skipped = family_types.len();
+    items.extend(family_types);
     for key in TYPE_KINDS {
         let short = key.strip_prefix("archbuilder.").unwrap_or(key);
         if !options.kinds.is_empty() && !options.kinds.iter().any(|k| k == short) {

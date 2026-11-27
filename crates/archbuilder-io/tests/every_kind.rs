@@ -301,12 +301,18 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     reasons.sort_unstable();
     reasons.dedup();
     assert!(
-        !reasons
-            .iter()
-            .any(|r| r.ends_with("_not_written") && !matches!(*r, "ab.io.ifc.datum_not_written" | "ab.io.ifc.family_not_written")),
+        !reasons.iter().any(|r| r.ends_with("_not_written")
+            && !matches!(
+                *r,
+                "ab.io.ifc.datum_not_written" | "ab.io.ifc.family_not_written"
+            )),
         "{reasons:?}"
     );
-    for reason in ["ab.io.ifc.family_not_written", "ab.io.ifc.dormer_as_parts", "ab.io.ifc.fascia_as_covering"] {
+    for reason in [
+        "ab.io.ifc.family_not_written",
+        "ab.io.ifc.dormer_as_parts",
+        "ab.io.ifc.fascia_as_covering",
+    ] {
         assert!(reasons.contains(&reason), "{reason} not reported");
     }
     // The standard property sets of the kinds the model knows values for.
