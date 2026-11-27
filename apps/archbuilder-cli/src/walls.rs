@@ -174,6 +174,7 @@ fn insert_of(kind: Kind, object: &Value) -> Option<Insert> {
         facing: named(&values["facing"], &Facing::ALL, Facing::code, Facing::name)
             .unwrap_or_default(),
         rise: 0.0,
+        profile: None,
     })
 }
 

@@ -7,7 +7,7 @@ ab-io-no-structure = Belgede dışa aktarılacak proje, arsa ve bina yok.
 ab-io-loss-object-not-exported = Bir nesne okunamadı ve IFC dosyasında yok.
 ab-io-loss-body-not-exported = Bir öğe IFC dosyasında şekli olmadan yer alıyor.
 ab-io-loss-quantity-not-exported = Bir öğenin bir miktarı IFC dosyasına yazılmadı.
-ab-io-loss-window-operation = Açılır pencere tek panel olarak yazıldı: IFC4'te pencerenin kendisinde açılma bilgisi yok, bu yüzden açılma türü, menteşe tarafı ve yönü dosyada yer almıyor.
+ab-io-loss-window-operation = Menteşeli, üstten ya da alttan menteşeli, pivot ya da katlanır pencere tek ya da çift panel olarak yazıldı: IFC4'te pencerenin kendisinde açılma bilgisi yok, bu yüzden açılma türü, menteşe tarafı ve yönü dosyada yer almıyor.
 ab-io-path-required = Dosya adı verilmedi. Komut satırına archbuilder.file.export_ifc path=<dosya> yazın.
 ab-io-loss-room-unenclosed = Bir oda IFC dosyasında yok: onu çevreleyen kapalı bir duvar halkası olmadığından mekan olarak yazılacak bir bölgesi yok.
 ab-io-loss-room-redundant = Bir oda IFC dosyasında yok: bölgesi başka bir odada olduğundan ve her bölge tek bir mekan olarak yazıldığından.

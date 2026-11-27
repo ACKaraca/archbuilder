@@ -2153,6 +2153,7 @@ fn leaf(
         hand: Hand::default(),
         facing: Facing::default(),
         rise: 0.0,
+        profile: None,
     })
 }
 
@@ -2202,6 +2203,7 @@ fn opening_of(host: &Wall, curtain: &Wall) -> Option<Insert> {
         hand: Hand::default(),
         facing: Facing::default(),
         rise: 0.0,
+        profile: None,
     })
 }
 

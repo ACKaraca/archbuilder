@@ -1069,6 +1069,14 @@ pub enum OperationParam {
     Fixed,
     /// A window with a hinged leaf.
     Casement,
+    /// A door or window of leaves that fold against each other.
+    Folding,
+    /// A window hinged at the top.
+    Awning,
+    /// A window hinged at the bottom.
+    Hopper,
+    /// A door or window whose leaf turns on a vertical axis.
+    Pivot,
 }
 
 impl From<OperationParam> for Operation {
@@ -1079,6 +1087,10 @@ impl From<OperationParam> for Operation {
             OperationParam::Sliding => Self::Sliding,
             OperationParam::Fixed => Self::Fixed,
             OperationParam::Casement => Self::Casement,
+            OperationParam::Folding => Self::Folding,
+            OperationParam::Awning => Self::Awning,
+            OperationParam::Hopper => Self::Hopper,
+            OperationParam::Pivot => Self::Pivot,
         }
     }
 }

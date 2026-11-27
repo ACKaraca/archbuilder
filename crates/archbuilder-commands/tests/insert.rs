@@ -426,3 +426,96 @@ fn flipping_the_facing_keeps_the_hinge_on_the_same_jamb() {
     assert_eq!(after.hinge_direction(), before.hinge_direction());
     assert_eq!(after.hand, before.hand.flipped());
 }
+
+#[test]
+fn openings_at_separate_heights_may_overlap_in_plan_and_the_wall_is_cut_by_both() {
+    let env = Env::new();
+    let wall = env.wall();
+    env.place(
+        "archbuilder.door.place",
+        json!({"wall": wall, "distance": 4.0}),
+    )
+    .unwrap();
+    // A transom over the door: its sill is above the door's head, so the same stretch is free.
+    env.place(
+        "archbuilder.opening.place",
+        json!({"wall": wall, "distance": 4.0, "sill": 2.3, "height": 0.5, "width": 0.9}),
+    )
+    .unwrap();
+    let expected = 6.0 - 0.9 * 2.1 * 0.2 - 0.9 * 0.5 * 0.2;
+    assert!((env.volume(wall) - expected).abs() < 1e-9);
+    // At the door's own height the same stretch is refused, naming the door.
+    let refused = env.refused(
+        "archbuilder.opening.place",
+        json!({"wall": wall, "distance": 4.0, "sill": 1.0, "height": 0.5, "width": 0.9}),
+    );
+    assert!(
+        refused.contains("insert_overlap") && refused.contains("Door 1"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn inserts_change_host_in_one_undoable_command_and_a_bad_target_changes_nothing() {
+    let env = Env::new();
+    let first = env.wall();
+    env.run(
+        "archbuilder.wall.create",
+        json!({"start": [0.0, 5.0], "end": [10.0, 5.0], "height": 3.0}),
+        &[],
+    )
+    .unwrap();
+    let second = spatial::objects(&env.snapshot(), WALL)
+        .iter()
+        .map(|o| o.id)
+        .find(|id| *id != first)
+        .unwrap();
+    let door = env
+        .place(
+            "archbuilder.door.place",
+            json!({"wall": first, "distance": 3.0}),
+        )
+        .unwrap();
+    let door: ObjectId = door.value["insert"].as_str().unwrap().parse().unwrap();
+    // A door already stands where the moved one would land.
+    env.place(
+        "archbuilder.door.place",
+        json!({"wall": second, "distance": 3.2}),
+    )
+    .unwrap();
+    let blocked = env.refused(
+        "archbuilder.insert.rehost",
+        json!({"inserts": [door], "wall": second}),
+    );
+    assert!(blocked.contains("insert_overlap"), "{blocked}");
+    let outside = env.refused(
+        "archbuilder.insert.rehost",
+        json!({"inserts": [door], "wall": second, "distance": 0.2}),
+    );
+    assert!(outside.contains("insert_outside"), "{outside}");
+    let before = env.dump();
+    env.run(
+        "archbuilder.insert.rehost",
+        json!({"inserts": [door], "wall": second, "distance": 7.0}),
+        &[],
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let moved = spatial::get(&snapshot, door).unwrap();
+    assert_eq!(moved.header.owner, Some(second));
+    assert_eq!(Insert::of(&snapshot, &moved).unwrap().distance, 7.0);
+    assert!(env.document.undo().wait().unwrap().value);
+    assert_eq!(env.dump(), before, "one undo moves it back");
+    assert!(env.document.redo().wait().unwrap().value);
+    // Without a distance the plan position is kept: 3.0 along the first wall is 3.0 along the
+    // second, which is free of the door at 3.2 only once that one is out of the way.
+    env.run(
+        "archbuilder.insert.rehost",
+        json!({"inserts": [door], "wall": first}),
+        &[],
+    )
+    .unwrap();
+    let back = spatial::get(&env.snapshot(), door).unwrap();
+    assert_eq!(back.header.owner, Some(first));
+    assert!((Insert::of(&env.snapshot(), &back).unwrap().distance - 7.0).abs() < 1e-9);
+}

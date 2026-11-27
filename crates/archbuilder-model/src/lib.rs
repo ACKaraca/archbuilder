@@ -298,6 +298,16 @@ pub mod defaults {
         }
     }
 
+    /// The name of the dormer opening numbered `n` in `language`: `Dormer 3`, `Çatı çıkması 3`.
+    #[must_use]
+    pub fn dormer_opening(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çatı çıkması {n}")
+        } else {
+            format!("Dormer {n}")
+        }
+    }
+
     /// The name of the roof by extrusion numbered `n` in `language`: `Extruded roof 3`,
     /// `Ekstrüzyon çatı 3`.
     #[must_use]

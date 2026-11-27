@@ -701,6 +701,9 @@ pub mod wall_opening {
     pub const RISE: usize = 5;
     /// Whether the opening is pinned.
     pub const PINNED: usize = 6;
+    /// The sketched outline: points in meters from the opening's lower left corner, x along the
+    /// baseline and y up; appended in schema 1.1, absent for a rectangle or an arch.
+    pub const PROFILE: usize = 7;
 }
 
 /// Field positions of `archbuilder.shaft`.
@@ -1503,6 +1506,19 @@ fn wall_opening_fields() -> Vec<FieldDecl> {
         length_field("sill", Some(real(SILL_RANGE))),
         length_field("rise", Some(real(RISE_RANGE))),
         pinned_field(0),
+        FieldDecl::new(
+            "profile",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real((0.0, INSERT_WIDTH_RANGE.1)))),
+                length_field("y", Some(real((0.0, INSERT_HEIGHT_RANGE.1)))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: crate::insert::MAX_PROFILE as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
     ]
 }
 

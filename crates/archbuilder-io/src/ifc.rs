@@ -576,9 +576,30 @@ impl Mapper<'_> {
             Ok(Some(body)) => element.body = Some(body),
             _ => self.lose(reasons::BODY_NOT_EXPORTED, label, object),
         }
-        if !door && item.operation == insert::Operation::Casement {
+        if !door
+            && matches!(
+                item.operation,
+                insert::Operation::Casement
+                    | insert::Operation::Awning
+                    | insert::Operation::Hopper
+                    | insert::Operation::Pivot
+                    | insert::Operation::Folding
+            )
+        {
             self.lose(reasons::WINDOW_OPERATION, label, object);
         }
+        element.quantity_sets.push(QuantitySet::new(
+            if door {
+                "Qto_DoorBaseQuantities"
+            } else {
+                "Qto_WindowBaseQuantities"
+            },
+            vec![
+                Quantity::new("Width", QuantityValue::Length(item.width)),
+                Quantity::new("Height", QuantityValue::Length(item.height)),
+                Quantity::new("Area", QuantityValue::Area(item.width * item.height)),
+            ],
+        ));
         self.elements.push(opening);
         self.elements.push(element);
         self.exported += 1;
@@ -607,7 +628,9 @@ impl Mapper<'_> {
             [item.width, 0.0],
             [item.width, spring - item.sill],
         ];
-        if spring < item.top() {
+        if let Some(sketch) = item.profile {
+            points = sketch.points().to_vec();
+        } else if spring < item.top() {
             let bulge = 2.0 * item.rise / item.width;
             points.extend(
                 archbuilder_model::floor::flatten_edge(
@@ -624,7 +647,9 @@ impl Mapper<'_> {
         } else {
             points.push([0.0, item.height]);
         }
-        points.push([0.0, spring - item.sill]);
+        if item.profile.is_none() {
+            points.push([0.0, spring - item.sill]);
+        }
         points.dedup_by(|a, b| (a[0] - b[0]).abs() < 1.0e-9 && (a[1] - b[1]).abs() < 1.0e-9);
         let origin = wall_frame.at(item.distance - half, high);
         let u = wall_frame.u;
@@ -1110,9 +1135,16 @@ fn operation(item: &Insert) -> &'static str {
         (Kind::Door, Operation::DoubleSwing, _) => "DOUBLE_DOOR_SINGLE_SWING",
         (Kind::Door, Operation::Sliding, Hand::Left) => "SLIDING_TO_RIGHT",
         (Kind::Door, Operation::Sliding, Hand::Right) => "SLIDING_TO_LEFT",
+        (Kind::Door, Operation::Folding, _) if insert::folding_leaves(item) > 2 => {
+            "DOUBLE_DOOR_FOLDING"
+        }
+        (Kind::Door, Operation::Folding, Hand::Left) => "FOLDING_TO_RIGHT",
+        (Kind::Door, Operation::Folding, Hand::Right) => "FOLDING_TO_LEFT",
+        // IFC4 has no pivot door: the value is user-defined.
+        (Kind::Door, Operation::Pivot, _) => "PIVOT",
         (Kind::Door, _, Hand::Left) => "SINGLE_SWING_RIGHT",
         (Kind::Door, _, Hand::Right) => "SINGLE_SWING_LEFT",
-        (Kind::Window, Operation::Sliding, _) => "DOUBLE_PANEL_VERTICAL",
+        (Kind::Window, Operation::Sliding | Operation::Folding, _) => "DOUBLE_PANEL_VERTICAL",
         (Kind::Window | Kind::Opening, _, _) => "SINGLE_PANEL",
     }
 }
@@ -1173,6 +1205,9 @@ fn element_types(snapshot: &Snapshot) -> Vec<ElementType> {
                     match (kind, i.operation) {
                         (TypeKind::Door, Operation::DoubleSwing) => "DOUBLE_DOOR_SINGLE_SWING",
                         (TypeKind::Door, Operation::Sliding) => "SLIDING",
+                        (TypeKind::Door, Operation::Folding) => "FOLDING",
+                        (TypeKind::Door, Operation::Pivot) => "PIVOT",
+                        (_, Operation::Folding) => "DOUBLE_PANEL_VERTICAL",
                         (TypeKind::Door, _) => "SINGLE_SWING",
                         (_, Operation::Sliding) => "DOUBLE_PANEL_VERTICAL",
                         _ => "SINGLE_PANEL",

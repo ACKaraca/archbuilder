@@ -272,6 +272,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             "opening-vertical",
                             ButtonSize::Small,
                         ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-dormer",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-dormer-hint",
+                            }),
+                            archbuilder_commands::opening::DORMER_OPENING_CREATE,
+                            "opening-dormer",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-rehost",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-rehost-hint",
+                            }),
+                            archbuilder_commands::insert::INSERT_REHOST,
+                            "opening-rehost",
+                            ButtonSize::Small,
+                        ),
                     ],
                 ),
                 group(
@@ -1277,6 +1299,8 @@ pub fn icons() -> Vec<(String, String)> {
         "opening-wall",
         "opening-shaft",
         "opening-vertical",
+        "opening-dormer",
+        "opening-rehost",
         "stair",
         "floor-slope",
         "floor-edge",
