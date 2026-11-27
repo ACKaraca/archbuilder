@@ -834,18 +834,23 @@ These are interface behavior in `apps/archbuilder` (`interaction/habits.rs`, `me
 - **Double click** (primary, view from above, no command running): on a wall it selects the walls joined
   to it end to end; on a floor it starts the add-hole flow for that floor (there is no sketch edit mode
   yet); on a room it opens an inline rename of the room (Enter renames, Escape cancels).
-- **Clipboard.** Ctrl+C copies the selected walls (with their doors and windows), floors, doors,
-  windows and rooms as content, a snapshot of their field values (`archbuilder.clipboard` content,
-  JSON), with the lower left corner of their plan extent as the base point, and puts a short text on
+- **Clipboard.** Ctrl+C copies the selected elements of every kind `archbuilder.modify.copy`
+  copies (walls with their doors and windows, curtain walls with their grid edits, panel overrides
+  and type, floors with their edges and openings, rooms, stairs and ramps with their hosted
+  railings, railings by path, roofs, roofs by extrusion, ceilings, shafts, grids and reference
+  planes) as content, a snapshot of their field values (`archbuilder.clipboard` content, JSON),
+  with the lower left corner of their plan extent as the base point, and puts a short text on
   the system clipboard (the platform reports the paste shortcut only while that clipboard holds
   something). A wall's level-constrained top is stored as its effective height. Ctrl+X copies and
   deletes in one undo step. Ctrl+V asks for an insertion point with the base at the pointer and a
   ghost of the copy; Enter or Space pastes in place (`archbuilder.clipboard.paste` with `content`,
   a copy translated by the displacement from the base to the point) into the storey the selection is
   in, else the lowest. `archbuilder.clipboard.paste_to_storey` pastes into the selected storey at
-  the same plan position. The clipboard is one for the whole application and its content does not
-  depend on the originals, so a paste works after they are deleted and in another open document
-  (another tab). Each paste is one undo step and the joins re-derive. A
+  the same plan position. Grids and reference planes go to the building of that storey, a grid with
+  the label after its original's; a type, level or host the document does not have is dropped (the
+  default type, the storey's own levels). The clipboard is one for the whole application and its
+  content does not depend on the originals, so a paste works after they are deleted and in another
+  open document (another tab). Each paste is one undo step and the joins re-derive. A
   paste in place over identical walls says once that the pasted objects lie on top of their
   originals instead of listing each collision. Copying with nothing selected, or pasting before
   anything was copied, says so.
@@ -937,7 +942,9 @@ stays exterior, and swaps the hand of its doors and windows. A floor keeps an ed
 wall only when that wall moves or is copied with it; every other edge is dissociated and stays
 where the motion puts it (the result and a notice say how many). A door or window moved alone slides
 along its wall by the displacement projected onto the baseline and is refused outside the clear span
-or on another opening; rotating or mirroring one alone is refused. Storeys and levels are skipped.
+or on another opening; rotating or mirroring one alone is refused. A roof by extrusion moves with
+its plane (a reflection turns the extrusion to the other side of it); a copied stair or ramp takes
+its hosted railings. Storeys and levels are skipped.
 
 Walls and floors in this slice: a floor by interior faces sits between the walls; a floor by exterior
 faces overlaps the wall bottoms by the slab thickness. Wall volumes are not reduced and the floor
