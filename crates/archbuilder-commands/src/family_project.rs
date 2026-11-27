@@ -17,7 +17,7 @@ use arc_doc::package::{Mode, Package};
 use arc_doc::{FieldPath, LoadOptions, Snapshot, Value};
 use archbuilder_model::error::codes as model_codes;
 use archbuilder_model::expr::Stored;
-use archbuilder_model::family::def::{Definition, TypeDef};
+use archbuilder_model::family::def::{Category, Definition, Hosting, TypeDef};
 use archbuilder_model::family::loaded::{
     self, Component, FamilyType, Loaded, components_of, family_types, values_value,
 };
@@ -47,6 +47,9 @@ pub const FAMILY_UPDATE: &str = "archbuilder.family.update";
 pub const FAMILY_UPDATE_PREVIEW: &str = "archbuilder.family.update_preview";
 /// The identifier of the component placement command.
 pub const COMPONENT_PLACE: &str = "archbuilder.component.place";
+
+/// The identifier of the hosted placement command.
+pub const FAMILY_INSERT_PLACE: &str = "archbuilder.family_insert.place";
 
 /// The most families one load takes.
 pub const MAX_FAMILIES: usize = 256;
@@ -896,6 +899,13 @@ fn place(ctx: &mut Context<'_>, p: PlaceComponent) -> Result<ComponentPlaced> {
         .and_then(|o| Loaded::of(&o))
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let def = fam.definition()?;
+    // A hosted family goes into its host (`archbuilder.family_insert.place`); a profile family
+    // has no body and is used by edges and bands.
+    if def.header.hosting != Hosting::None || def.header.category == Category::Profile {
+        return Err(Error::new(model_codes::FAMILY_INVALID)
+            .with_arg("part", "definition")
+            .with_arg("reason", "not_freestanding"));
+    }
     let rotation = match &p.rotation {
         Some(q) => ctx.quantity(q, Dimension::ANGLE)?.value(),
         None => 0.0,
@@ -924,6 +934,83 @@ fn place(ctx: &mut Context<'_>, p: PlaceComponent) -> Result<ComponentPlaced> {
     loaded::check_components(ctx.txn()?.snapshot(), Some(&[id]))?;
     Ok(ComponentPlaced {
         component: IdParam(id),
+    })
+}
+
+/// Parameters of `archbuilder.family_insert.place`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlaceInsert {
+    /// The host: a wall for a family hosted by walls.
+    pub host: IdParam,
+    /// The family type, by identifier, or by name (`Family: Type`).
+    #[serde(rename = "type")]
+    #[schemars(length(min = 1, max = 600))]
+    pub family_type: String,
+    /// The distance along the host's baseline to the insertion point (a bare number is meters).
+    pub distance: QuantityParam,
+    /// The height of the insertion point above the host's base (a bare number is meters).
+    #[serde(default)]
+    pub offset: Option<QuantityParam>,
+    /// Whether the family has the right hand (mirrored across its own left-right axis).
+    #[serde(default)]
+    pub flip_hand: bool,
+    /// Whether the family faces the interior side (turned half a turn).
+    #[serde(default)]
+    pub flip_facing: bool,
+    /// A mark.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    pub name: Option<String>,
+    /// Instance values by parameter key: a literal, or `{"formula": "...", "unit": "mm"}`.
+    #[serde(default)]
+    pub values: BTreeMap<String, serde_json::Value>,
+}
+
+/// What `archbuilder.family_insert.place` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct InsertPlaced {
+    /// The new hosted instance.
+    pub insert: IdParam,
+}
+
+fn place_insert(ctx: &mut Context<'_>, p: PlaceInsert) -> Result<InsertPlaced> {
+    use archbuilder_model::family::loaded::FamilyInsert;
+    use archbuilder_model::insert::{Facing, Hand};
+    let host =
+        spatial::get(ctx.snapshot(), p.host.0).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let host_key = spatial::type_of(ctx.snapshot(), host.id).unwrap_or_default();
+    let ty = resolve_type(ctx.snapshot(), &p.family_type)?;
+    let fam = spatial::get(ctx.snapshot(), ty.family)
+        .and_then(|o| Loaded::of(&o))
+        .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let def = fam.definition()?;
+    loaded::check_host(&def, &host_key)?;
+    let distance = crate::length(ctx, &p.distance)?.value();
+    let offset = match &p.offset {
+        Some(q) => crate::length(ctx, q)?.value(),
+        None => 0.0,
+    };
+    let values = instance_values(ctx, &def, &p.values)?;
+    let insert = FamilyInsert {
+        id: host.id,
+        host: Some(host.id),
+        name: p.name.unwrap_or_default().trim().to_owned(),
+        family_type: ty.id,
+        distance,
+        offset,
+        hand: if p.flip_hand { Hand::Right } else { Hand::Left },
+        facing: if p.flip_facing {
+            Facing::Interior
+        } else {
+            Facing::Exterior
+        },
+        values,
+    };
+    let id = create(ctx, types::FAMILY_INSERT, Some(host.id), insert.record())?;
+    ensure_valid(ctx)?;
+    Ok(InsertPlaced {
+        insert: IdParam(id),
     })
 }
 
@@ -1083,6 +1170,30 @@ pub fn register(registry: &mut Registry) -> Result<()> {
                         dims: PointDims::Two,
                     },
                 )),
+        ),
+    )?;
+    registry.register(
+        CommandSpec::new(
+            FAMILY_INSERT_PLACE,
+            MessageId {
+                message_id: "ab-cmd-family-insert-place-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-family-insert-place-description",
+            }
+            .message_id,
+            place_insert,
+        )
+        .with_prompts(
+            PromptSequence::new().step(PromptStep::new(
+                "type",
+                MessageId {
+                    message_id: "ab-prompt-family-insert-type",
+                }
+                .message_id,
+                text(600),
+            )),
         ),
     )?;
     Ok(())

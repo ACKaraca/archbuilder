@@ -145,9 +145,9 @@ version.
 
 ## Canonical text and packages
 
-The canonical text of a definition is line oriented: a first line `archbfam-text 1 functions 1.0`,
+The canonical text of a definition is line oriented: a first line `archbfam-text 1 functions 1.0` (1.1 when a formula calls `lookup`),
 then one line per part (`definition`, `parameter`, `type` with its `value` lines, `plane`,
-`profile` and `symbol` with their `vertex` lines, `form`, `test` with its `set` lines), ordered by
+`profile` (with `open=true` for an open polyline) and `symbol` with their `vertex` lines, `form` (a host-cutting void carries `cut_host=true`), `table` with its `column` and `row` lines, `nested` with its `nparam` lines, `array`, `test` with its `set` lines), ordered by
 kind and then by key, with `name=value` fields in schema order; a value is a bare word or a quoted
 string, and a stored value `x` is `x=<number>`, `x=true`, `x="text"` or `x_f="formula"` with an
 optional `x_u=<unit>`. Numbers are in the shortest form that reads back the same, lengths in meters.
@@ -165,6 +165,26 @@ evaluation gives the closed solids of each form (a void is subtracted from the s
 must pass through two parallel faces), a role for every face (`family.form[<key>].start`, `end`,
 `side.<loop>.<curve>.<facet>`, `void[<void>].<curve>.<facet>`), and the plan symbols; a failure
 names the form. The budget of one evaluation counts the bytes of the formulas it runs.
+
+Tables, arrays and nested uses: a `table` has typed columns (the first `keys` are keys) and
+`lookup("table", "column", key, ..., fallback)` returns the column of the first row whose keys
+match, else the fallback, which must have the column's dimension. An `array` repeats a form or a
+nested use linearly (count, spacing, axis) or radially (count, angle, center about the vertical
+axis); copy `i` of form `f` is `f#i`. A `nested` use pins a child family and version, a type by
+name or by a family-type parameter, a placement on reference planes and the child parameters that
+take formulas of the parent. A non-shared child's solids join the parent's body; a shared child is
+kept apart with the identifier `nested_id(parent, "key")` (`"key#i"` for a copy), a version 8
+identifier that is the same after every regeneration. A cycle among nested families, a nesting
+deeper than 8 and more than 10,000 placed children are refused. A profile family
+(category `profile`) evaluates its open and closed profiles and is not placed as a component.
+
+A hosted family has a hosting kind; its void forms marked `cut_host` do not subtract from the
+family's own solids but give the opening it cuts in a wall (the box of the voids). The record
+`archbuilder.family_insert` (owned by the host wall) holds the family type, the distance along
+the baseline, the height above the base, the hand and the facing; `archbuilder.family_insert.place`
+refuses a family that is not hosted, a door or window family that is not hosted by a wall, a host
+of another kind than the family's hosting, hosts other than walls (not yet), and what a built-in
+insert refuses (outside the clear span, over another opening, too tall).
 
 A `.archbfam` file is an Arc document package with a manifest record (`archbuilder.fam.manifest`)
 and one record per published version (`archbuilder.fam.definition`: family identifier, version,

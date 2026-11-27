@@ -21,6 +21,7 @@ use arc_io_ifc::write::{
 use archbuilder_model::expr::{DataType, Evaluated};
 use archbuilder_model::family::def::{Category, Definition, Header, ParamDef, Scope};
 use archbuilder_model::family::loaded::{self, Component, Resolved};
+use archbuilder_model::wall::Wall;
 
 use super::{Frame, Mapper, brep, name_of, psets};
 use crate::error::reasons;
@@ -102,8 +103,9 @@ pub(super) struct Assignment {
 }
 
 /// The default entity of a category (the table of ADR 0009, section 4) and its predefined type.
-pub(super) fn default_of(category: Category) -> (Entity, Option<&'static str>) {
-    match category {
+pub(super) fn default_of(category: Category) -> Option<(Entity, Option<&'static str>)> {
+    Some(match category {
+        Category::Profile => return None,
         Category::Furniture => (Entity::Furniture, None),
         Category::Casework => (Entity::Furniture, Some("CASEWORK")),
         Category::PlumbingFixture => (Entity::SanitaryTerminal, None),
@@ -114,7 +116,7 @@ pub(super) fn default_of(category: Category) -> (Entity, Option<&'static str>) {
         Category::Window => (Entity::Window, None),
         Category::Column => (Entity::Column, None),
         Category::GenericModel | Category::SpecialtyEquipment => (Entity::Proxy, None),
-    }
+    })
 }
 
 /// The assignment of a header: its own entity and type when it names them, else the default of
@@ -123,7 +125,7 @@ pub(super) fn default_of(category: Category) -> (Entity, Option<&'static str>) {
 /// # Errors
 /// The entity text of an assignment that names an entity this mapping does not know.
 pub(super) fn assignment(header: &Header) -> Result<Assignment, String> {
-    let (entity, predefined) = default_of(header.category);
+    let (entity, predefined) = default_of(header.category).ok_or_else(|| "profile".to_owned())?;
     let own = header.ifc_entity.trim();
     let entity_text = (!own.is_empty()).then_some(own);
     let (entity, predefined) = match entity_text {
@@ -234,6 +236,9 @@ impl Mapper<'_> {
         let Ok(resolved) = loaded::resolve(self.snapshot, &component) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCBUILDINGELEMENTPROXY", object);
         };
+        if resolved.definition.header.category == Category::Profile {
+            return self.lose(reasons::NOT_EXPORTED, "IFCPROFILEDEF", object);
+        }
         let assigned = match assignment(&resolved.definition.header) {
             Ok(a) => a,
             Err(_) => {
@@ -269,14 +274,32 @@ impl Mapper<'_> {
             Some(body) => element.body = Some(body),
             None => self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object),
         }
-        self.family_properties(&mut element, &resolved, &placed.evaluation.values, object);
+        self.finish(
+            &mut element,
+            (&resolved, assigned, kind),
+            &placed.evaluation.values,
+            object,
+        );
+        self.elements.push(element);
+        self.exported += 1;
+    }
+
+    /// The sets, quantities and type of a written family element.
+    fn finish(
+        &mut self,
+        element: &mut Element,
+        (resolved, assigned, kind): (&Resolved, Assignment, ElementKind),
+        values: &std::collections::BTreeMap<String, Evaluated>,
+        object: &Object,
+    ) {
+        self.family_properties(element, resolved, values, object);
         if let Some(common) = match assigned.entity {
             Entity::Door => Some(("Pset_DoorCommon", "Qto_DoorBaseQuantities")),
             Entity::Window => Some(("Pset_WindowCommon", "Qto_WindowBaseQuantities")),
             _ => None,
         } {
             psets::attach(
-                &mut element,
+                element,
                 common.0,
                 vec![psets::identifier("Reference", &resolved.ty.name)],
             );
@@ -309,6 +332,106 @@ impl Mapper<'_> {
             }
         }
         element.element_type = Some(type_id);
+    }
+
+    /// A hosted family instance of a wall: the `IfcOpeningElement` its host-cutting void makes
+    /// (`IfcRelVoidsElement`) and, for a door or window family, the `IfcDoor` or `IfcWindow` that
+    /// fills it (`IfcRelFillsElement`). A hosted entity the writer cannot write is named in the
+    /// loss report; its opening is still written, because the wall is cut.
+    pub(super) fn family_insert(
+        &mut self,
+        object: &Object,
+        placed: (&Object, &Wall, &Frame),
+        storey: ObjectId,
+    ) {
+        let (host, wall, wall_frame) = placed;
+        let Some(insert) = loaded::FamilyInsert::of(object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object);
+        };
+        let Ok(resolved) = loaded::resolve_insert(self.snapshot, &insert) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object);
+        };
+        let Some(item) = loaded::opening_of(self.snapshot, &insert) else {
+            // Nothing cuts the host: the instance is a hosted body without an opening.
+            return self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object);
+        };
+        self.wall_opening(object, &item, (host, wall, wall_frame), storey);
+        let assigned = match assignment(&resolved.definition.header) {
+            Ok(a) => a,
+            Err(_) => {
+                return self.lose(
+                    reasons::FAMILY_NOT_WRITTEN,
+                    "IFCBUILDINGELEMENTPROXY",
+                    object,
+                );
+            }
+        };
+        let Some(kind) = assigned.entity.kind() else {
+            return self.lose(reasons::FAMILY_NOT_WRITTEN, assigned.entity.class(), object);
+        };
+        let Ok(evaluation) = loaded::evaluate_in(
+            self.snapshot,
+            &resolved.definition,
+            &resolved.ty,
+            &insert.values,
+        ) else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object);
+        };
+        let turned = if insert.facing == archbuilder_model::insert::Facing::Interior {
+            -1.0
+        } else {
+            1.0
+        };
+        let Some(frame) = Frame::new(
+            wall_frame.at(insert.distance, 0.0),
+            [wall_frame.u[0] * turned, wall_frame.u[1] * turned],
+        ) else {
+            return self.lose(reasons::NOT_EXPORTED, assigned.entity.class(), object);
+        };
+        let storey_id = storey.as_u128();
+        let mut element = Element::new(object.id.as_u128(), kind, &name_of(object), storey_id);
+        element.placement = frame.placement(wall.base_offset + insert.offset);
+        element.predefined_type = assigned.predefined.clone();
+        element.host = Some(arc_io_ifc::write::derived_id(
+            object.id.as_u128(),
+            arc_io_ifc::write::role::INSERT_OPENING,
+            0,
+        ));
+        element.overall_width = Some(item.width).filter(|w| *w > 0.0);
+        element.overall_height = Some(item.height).filter(|h| *h > 0.0);
+        // The right hand mirrors the family across its own left-right axis.
+        let mirror = insert.hand == archbuilder_model::insert::Hand::Right;
+        let flip = arc_base::math::Transform3::from_matrix_unchecked(arc_base::math::Matrix4::new(
+            -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ));
+        let mut solids = Vec::new();
+        for s in &evaluation.solids {
+            let moved = if mirror {
+                s.solid.transformed(
+                    &flip,
+                    &arc_base::Tolerance::DEFAULT,
+                    &arc_base::Limits::DEFAULT,
+                )
+            } else {
+                Ok(s.solid.clone())
+            };
+            match moved {
+                Ok(m) => solids.push(m),
+                Err(_) => {
+                    return self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object);
+                }
+            }
+        }
+        match brep(solids.iter(), &super::WORLD, 0.0) {
+            Some(body) => element.body = Some(body),
+            None => self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object),
+        }
+        self.finish(
+            &mut element,
+            (&resolved, assigned, kind),
+            &evaluation.values,
+            object,
+        );
         self.elements.push(element);
         self.exported += 1;
     }
@@ -377,11 +500,11 @@ mod tests {
 
     #[test]
     fn every_category_has_the_default_of_the_adr_table() {
-        let class = |c| default_of(c).0.class();
+        let class = |c| default_of(c).unwrap().0.class();
         assert_eq!(class(Category::Furniture), "IFCFURNITURE");
         assert_eq!(
             default_of(Category::Casework),
-            (Entity::Furniture, Some("CASEWORK"))
+            Some((Entity::Furniture, Some("CASEWORK")))
         );
         assert_eq!(class(Category::PlumbingFixture), "IFCSANITARYTERMINAL");
         assert_eq!(class(Category::LightingFixture), "IFCLIGHTFIXTURE");
@@ -393,7 +516,7 @@ mod tests {
         // Proxies are the default of generic categories only.
         let proxies: Vec<Category> = Category::ALL
             .into_iter()
-            .filter(|c| default_of(*c).0 == Entity::Proxy)
+            .filter(|c| default_of(*c).is_some_and(|d| d.0 == Entity::Proxy))
             .collect();
         assert_eq!(
             proxies,

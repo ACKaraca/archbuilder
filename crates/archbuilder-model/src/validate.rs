@@ -52,7 +52,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         | types::FAMILY_TYPE => Some(&[PROJECT]),
         types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
-        DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
+        DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
         types::FLOOR_EDGE => Some(&[FLOOR]),
         types::DORMER | types::ROOF_EDGE => Some(&[ROOF]),
@@ -112,6 +112,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == DOOR || key == WINDOW || key == WALL_OPENING {
         out.extend(crate::insert::problems(candidate, object));
     }
+    if key == types::FAMILY_INSERT {
+        out.extend(crate::family::loaded::insert_problems(candidate, object));
+    }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
     }
@@ -156,6 +159,7 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         && key != ROOM
         && key != types::GRID
         && key != types::COMPONENT
+        && key != types::FAMILY_INSERT
         && objects(candidate, key)
             .iter()
             .any(|o| o.id != object.id && scope(o) && folded(o) == own)

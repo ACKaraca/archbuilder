@@ -11,17 +11,22 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arc_base::{Dimension, Error, Quantity, Result, Unit};
 use arc_doc::{Bound, FieldDecl, Value, ValueType};
-use arc_solve::{Context, Expr, ExprKind, ExprLimits, Names, Span, Value as SolveValue};
+use arc_solve::{Context, Expr, ExprKind, ExprLimits, Functions, Names, Span, Value as SolveValue};
 
 use crate::error::codes;
 
 /// The version of the function set formulas may call; recorded with every definition.
-pub const FUNCTION_SET_VERSION: (u32, u32) = (1, 0);
+pub const FUNCTION_SET_VERSION: (u32, u32) = (1, 1);
 
-/// The functions of version 1 (`lookup` belongs to family tables and comes with them).
-pub const FUNCTIONS: [&str; 22] = [
+/// The first function set version that has `lookup`; a definition that calls it declares at least
+/// this one.
+pub const LOOKUP_SINCE: (u32, u32) = (1, 1);
+
+/// The functions of version 1.1 (`lookup` reads the embedded tables of a family; outside a
+/// family it has no table and fails).
+pub const FUNCTIONS: [&str; 23] = [
     "abs", "min", "max", "sqrt", "pow", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-    "round", "floor", "ceil", "if", "len", "sum", "first", "last", "concat", "format",
+    "round", "floor", "ceil", "if", "len", "sum", "first", "last", "concat", "format", "lookup",
 ];
 
 /// The limits of one formula (the value part of OQ-01).
@@ -320,6 +325,20 @@ impl Formula {
         }
     }
 
+    /// The names of the functions the formula calls.
+    #[must_use]
+    pub fn calls(&self) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        if let Ok(expr) = self.parse() {
+            walk(&expr, &mut |node| {
+                if let ExprKind::Call(name, _) = node.kind() {
+                    out.insert(name.clone());
+                }
+            });
+        }
+        out
+    }
+
     /// Every name the formula reads, with the span of each use, in text order.
     ///
     /// # Errors
@@ -379,11 +398,27 @@ impl Formula {
     /// formula; `ab.model.param_value_invalid` for a type that takes no formula, an integer that
     /// is not whole or a text past the limit.
     pub fn evaluate(&self, names: &dyn Names, data: DataType) -> Result<Evaluated> {
+        self.evaluate_with(names, data, None)
+    }
+
+    /// [`Self::evaluate`] with host functions (the `lookup` of a family's tables).
+    ///
+    /// # Errors
+    /// As [`Self::evaluate`].
+    pub fn evaluate_with(
+        &self,
+        names: &dyn Names,
+        data: DataType,
+        functions: Option<&Functions>,
+    ) -> Result<Evaluated> {
         if !data.takes_formula() {
             return Err(Error::new(codes::PARAM_VALUE_INVALID));
         }
         let expr = self.parse()?;
         let mut context = Context::new().with_limits(LIMITS).with_names(names);
+        if let Some(f) = functions {
+            context = context.with_functions(f);
+        }
         if let Some(unit) = self.unit {
             context = context.with_bare_unit(*unit);
         }
@@ -544,8 +579,21 @@ impl Stored {
     /// Those of [`Formula::evaluate`]; `ab.model.param_value_invalid` for a literal of another
     /// kind.
     pub fn evaluate(&self, names: &dyn Names, data: DataType) -> Result<Evaluated> {
+        self.evaluate_with(names, data, None)
+    }
+
+    /// [`Self::evaluate`] with host functions.
+    ///
+    /// # Errors
+    /// As [`Self::evaluate`].
+    pub fn evaluate_with(
+        &self,
+        names: &dyn Names,
+        data: DataType,
+        functions: Option<&Functions>,
+    ) -> Result<Evaluated> {
         match self {
-            Self::Formula(f) => f.evaluate(names, data),
+            Self::Formula(f) => f.evaluate_with(names, data, functions),
             Self::Literal(v) if v.fits(data) => Ok(v.clone()),
             Self::Literal(_) => Err(Error::new(codes::PARAM_VALUE_INVALID)),
         }
@@ -652,6 +700,18 @@ pub fn evaluate_scope(
     nodes: &[Node<'_>],
     outer: &dyn Fn(&str) -> Option<SolveValue>,
 ) -> Result<Vec<Evaluated>> {
+    evaluate_scope_with(nodes, outer, None)
+}
+
+/// [`evaluate_scope`] with host functions.
+///
+/// # Errors
+/// As [`evaluate_scope`].
+pub fn evaluate_scope_with(
+    nodes: &[Node<'_>],
+    outer: &dyn Fn(&str) -> Option<SolveValue>,
+    functions: Option<&Functions>,
+) -> Result<Vec<Evaluated>> {
     let order = order(nodes)?;
     let mut results: Vec<Option<Evaluated>> = vec![None; nodes.len()];
     let index: BTreeMap<&str, usize> = nodes
@@ -671,7 +731,7 @@ pub fn evaluate_scope(
                     })
                 };
                 stored
-                    .evaluate(&lookup, node.data)
+                    .evaluate_with(&lookup, node.data, functions)
                     .map_err(|e| e.with_arg("parameter", node.name))?
             }
         };
@@ -768,7 +828,7 @@ mod tests {
             Evaluated::Bool(true)
         );
         // Every listed function is one arc-solve knows.
-        for name in FUNCTIONS {
+        for name in FUNCTIONS.into_iter().filter(|n| *n != "lookup") {
             let text = format!("{name}()");
             let error = Formula::new(&text, None)
                 .and_then(|f| f.evaluate(&none, DataType::Number))
@@ -779,13 +839,7 @@ mod tests {
 
     #[test]
     fn functions_outside_version_1_are_refused_at_the_name() {
-        for text in [
-            "exp(1)",
-            "ln(2)",
-            "log(10)",
-            "lookup(\"t\", 1)",
-            "1 + roundup(2)",
-        ] {
+        for text in ["exp(1)", "ln(2)", "log(10)", "1 + roundup(2)"] {
             let error = Formula::new(text, None).unwrap_err();
             assert_eq!(error.code(), "solve.expr.unknown_function", "{text}");
             let span = span_of(&error).unwrap();

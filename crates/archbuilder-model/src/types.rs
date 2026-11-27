@@ -58,6 +58,9 @@ pub const FAMILY_TYPE: &str = "archbuilder.family_type";
 /// The type key of a component: a freestanding instance of a family type on a storey.
 pub const COMPONENT: &str = "archbuilder.component";
 
+/// The type key of a hosted family instance: a family type placed in a host element (a wall).
+pub const FAMILY_INSERT: &str = "archbuilder.family_insert";
+
 /// The type key of the wall.
 pub const WALL: &str = "archbuilder.wall";
 
@@ -177,8 +180,9 @@ pub const ELEMENTS: [&str; 21] = [
 
 /// The physical elements: the elements that carry project parameter values in their
 /// `parameters` field (every element but grids and reference planes).
-pub const PARAMETER_HOSTS: [&str; 19] = [
+pub const PARAMETER_HOSTS: [&str; 20] = [
     COMPONENT,
+    FAMILY_INSERT,
     WALL,
     DOOR,
     WINDOW,
@@ -240,10 +244,11 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 42] = [
+pub const KEYS: [&str; 43] = [
     FAMILY,
     FAMILY_TYPE,
     COMPONENT,
+    FAMILY_INSERT,
     PROJECT,
     SITE,
     BUILDING,
@@ -367,6 +372,24 @@ pub mod component {
     pub const MIRROR: usize = 6;
     /// The instance values, keyed by parameter key.
     pub const VALUES: usize = 7;
+}
+
+/// Field positions of `archbuilder.family_insert`; the host is the header owner.
+pub mod family_insert {
+    /// The name (a mark).
+    pub const NAME: usize = 0;
+    /// The family type.
+    pub const FAMILY_TYPE: usize = 1;
+    /// The distance along the host's baseline to the insertion point, in meters.
+    pub const DISTANCE: usize = 2;
+    /// The height of the insertion point above the host's base, in meters.
+    pub const OFFSET: usize = 3;
+    /// The hand.
+    pub const HAND: usize = 4;
+    /// The facing.
+    pub const FACING: usize = 5;
+    /// The instance values, keyed by parameter key.
+    pub const VALUES: usize = 6;
 }
 
 /// Field positions of `archbuilder.project`.
@@ -1756,6 +1779,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (FAMILY, family_fields()),
         (FAMILY_TYPE, family_type_fields()),
         (COMPONENT, component_fields()),
+        (FAMILY_INSERT, family_insert_fields()),
         (PARAMETER, crate::parameter::fields()),
         (MODEL_VIEW, model_view_fields()),
         (CEILING, ceiling_fields()),
@@ -1893,6 +1917,44 @@ fn component_fields() -> Vec<FieldDecl> {
         FieldDecl::new("mirror", ValueType::Bool)
             .with_default(Value::Bool(false))
             .in_aspect("geometry"),
+        keyed_values_field("values"),
+    ]
+}
+
+/// The fields of a hosted family instance: a mark, its family type, the position in the host,
+/// the hand and facing, and its values.
+fn family_insert_fields() -> Vec<FieldDecl> {
+    use crate::insert::{Facing, Hand};
+    let variants = |items: Vec<(&'static str, u32)>| {
+        ValueType::Enum(
+            items
+                .into_iter()
+                .map(|(n, c)| EnumVariant::new(n, c))
+                .collect(),
+        )
+    };
+    let mut family_type = reference_to(FAMILY_TYPE);
+    family_type.rule.cardinality = Cardinality::One;
+    vec![
+        FieldDecl::new("name", ValueType::String)
+            .with_bound(Bound::Length { max: NAME_BYTES })
+            .optional()
+            .in_aspect("identity"),
+        FieldDecl::new("family_type", ValueType::Reference(family_type)).in_aspect("identity"),
+        length_field("distance", Some(real(DISTANCE_RANGE))),
+        length_field("offset", Some(real(BASE_OFFSET_RANGE))),
+        FieldDecl::new(
+            "hand",
+            variants(Hand::ALL.iter().map(|o| (o.name(), o.code())).collect()),
+        )
+        .with_default(Value::Enum(Hand::Left.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new(
+            "facing",
+            variants(Facing::ALL.iter().map(|o| (o.name(), o.code())).collect()),
+        )
+        .with_default(Value::Enum(Facing::Exterior.code()))
+        .in_aspect("geometry"),
         keyed_values_field("values"),
     ]
 }

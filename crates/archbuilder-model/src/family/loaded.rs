@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use arc_base::math::{Matrix4, Point3, Transform3};
+use arc_base::id::Identifier;
+use arc_base::math::Point3;
 use arc_base::{Error, Limits, ObjectId, Result, Tolerance};
 use arc_doc::{Object, Snapshot, Value};
 use arc_geom::Polyhedron;
@@ -345,11 +346,29 @@ pub struct PlacedSymbol {
     pub shown: Shown,
 }
 
+/// A shared nested child of a component: an element derived from the component, with the
+/// identifier derived from the component's and the nested-use key ([`super::nested_id`]).
+#[derive(Debug, Clone)]
+pub struct PlacedShared {
+    /// The derived identifier.
+    pub id: ObjectId,
+    /// The nested-use key, `key#i` for an array copy.
+    pub key: String,
+    /// The child family's identifier.
+    pub family: ObjectId,
+    /// The child's type name.
+    pub type_name: Option<String>,
+    /// The child's solids in project coordinates.
+    pub solids: Vec<PlacedSolid>,
+}
+
 /// A component's geometry: its solids and its plan symbols, placed, with the evaluation.
 #[derive(Debug, Clone)]
 pub struct Placed {
     /// The solids.
     pub solids: Vec<PlacedSolid>,
+    /// The shared nested children, each its own element.
+    pub shared: Vec<PlacedShared>,
     /// The symbols of the plan view.
     pub plan: Vec<PlacedSymbol>,
     /// The evaluation in the family's frame.
@@ -404,6 +423,14 @@ pub fn evaluate_in(
 ) -> Result<Evaluation> {
     let variables = variable::evaluate(snapshot)?;
     let lookup = |name: &str| variable::lookup(&variables, name);
+    // A nested use pins a family identifier and a version; the project holds the copy it loaded.
+    let loaded = families(snapshot);
+    let children = |id: ObjectId, version: Version| -> Option<Arc<Definition>> {
+        loaded
+            .iter()
+            .find(|f| f.family == id && f.version == version)
+            .and_then(|f| f.definition().ok())
+    };
     // The type's values lie over the definition's, as a test case's do over a type's.
     let mut d = definition.clone();
     let name = "\u{1}type";
@@ -418,6 +445,7 @@ pub fn evaluate_in(
             type_name: Some(name),
             instance,
             variables: &lookup,
+            children: &children,
         },
     )
 }
@@ -437,25 +465,13 @@ pub fn place(snapshot: &Snapshot, component: &Component) -> Result<Placed> {
         .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
     let (s, c) = component.rotation.sin_cos();
     let m = if component.mirror { -1.0 } else { 1.0 };
-    let matrix = Matrix4::new(
-        m * c,
-        -s,
-        0.0,
-        component.origin[0],
-        m * s,
-        c,
-        0.0,
-        component.origin[1],
-        0.0,
-        0.0,
-        1.0,
-        elevation + component.offset,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-    );
-    let transform = Transform3::from_matrix_unchecked(matrix);
+    let rows = [
+        [m * c, -s, 0.0, component.origin[0]],
+        [m * s, c, 0.0, component.origin[1]],
+        [0.0, 0.0, 1.0, elevation + component.offset],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    let transform = super::eval::to_transform(&rows);
     let (tolerance, limits) = (Tolerance::DEFAULT, Limits::DEFAULT);
     let mut solids = Vec::with_capacity(evaluation.solids.len());
     for FormSolid {
@@ -495,8 +511,31 @@ pub fn place(snapshot: &Snapshot, component: &Component) -> Result<Placed> {
             shown: s.shown.clone(),
         })
         .collect();
+    let mut shared = Vec::with_capacity(evaluation.shared.len());
+    for child in &evaluation.shared {
+        let t = super::eval::to_transform(&super::eval::multiply(&rows, &child.matrix));
+        let mut parts = Vec::with_capacity(child.evaluation.solids.len());
+        for p in &child.evaluation.solids {
+            parts.push(PlacedSolid {
+                form: p.form.clone(),
+                solid: p.solid.transformed(&t, &tolerance, &limits)?,
+                roles: p.roles.clone(),
+                material: p.material.clone(),
+                subcategory: p.subcategory.clone(),
+                shown: p.shown.clone(),
+            });
+        }
+        shared.push(PlacedShared {
+            id: ObjectId::from_u128(super::nested_id(component.id, &child.key)),
+            key: child.key.clone(),
+            family: child.family,
+            type_name: child.type_name.clone(),
+            solids: parts,
+        });
+    }
     Ok(Placed {
         solids,
+        shared,
         plan,
         evaluation,
     })
@@ -579,4 +618,229 @@ pub fn outline(snapshot: &Snapshot, component: &Component) -> Vec<[f64; 2]> {
     } else {
         vec![component.origin]
     }
+}
+
+// ----- hosted family instances ------------------------------------------------------------------
+
+/// The element types that can host a family of the hosting kind of `def`, by type key.
+#[must_use]
+pub fn host_keys(def: &Definition) -> &'static [&'static str] {
+    use super::def::Hosting;
+    use crate::types::{CEILING, FLOOR, ROOF, ROOF_EXTRUSION, WALL};
+    match def.header.hosting {
+        Hosting::Wall => &[WALL],
+        Hosting::Floor => &[FLOOR],
+        Hosting::Ceiling => &[CEILING],
+        Hosting::Roof => &[ROOF, ROOF_EXTRUSION],
+        Hosting::Face => &[WALL, FLOOR, CEILING, ROOF, ROOF_EXTRUSION],
+        Hosting::None | Hosting::WorkPlane => &[],
+    }
+}
+
+/// Whether a family may be placed in a host of type `host_key`.
+///
+/// # Errors
+/// `ab.family.invalid` with the reason `hosting` (a door or window family that is not hosted by a
+/// wall, or a family that is not hosted), `host_kind` (the host is not of a kind the family's
+/// hosting allows) or `host_unsupported` (the host kind is allowed, but only walls carry
+/// geometry of hosted instances so far).
+pub fn check_host(def: &Definition, host_key: &str) -> Result<()> {
+    use super::def::{Category, Hosting};
+    let refuse = |reason: &str| {
+        Error::new(codes::FAMILY_INVALID)
+            .with_arg("part", "host")
+            .with_arg("reason", reason)
+    };
+    let door_or_window = matches!(def.header.category, Category::Door | Category::Window);
+    if def.header.hosting == Hosting::None
+        || (door_or_window && def.header.hosting != Hosting::Wall)
+    {
+        return Err(refuse("hosting"));
+    }
+    if !host_keys(def).contains(&host_key) {
+        return Err(refuse("host_kind"));
+    }
+    if host_key != crate::types::WALL {
+        return Err(refuse("host_unsupported"));
+    }
+    Ok(())
+}
+
+/// A hosted instance of a family type: its host (the header owner), the insertion point along the
+/// host's baseline and above its base, the hand and the facing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FamilyInsert {
+    /// The record.
+    pub id: ObjectId,
+    /// The host.
+    pub host: Option<ObjectId>,
+    /// The mark.
+    pub name: String,
+    /// The family type.
+    pub family_type: ObjectId,
+    /// The distance from the baseline's start to the insertion point.
+    pub distance: f64,
+    /// The height of the insertion point above the host's base.
+    pub offset: f64,
+    /// The hand: right mirrors the family across its own left-right axis.
+    pub hand: crate::insert::Hand,
+    /// The side the family faces: interior turns it half a turn.
+    pub facing: crate::insert::Facing,
+    /// The instance's own values, by parameter key.
+    pub values: BTreeMap<String, Stored>,
+}
+
+impl FamilyInsert {
+    /// The hosted instance stored in `object`.
+    #[must_use]
+    pub fn of(object: &Object) -> Option<Self> {
+        use crate::types::family_insert as f;
+        let v = &object.values;
+        let Some(Some(Value::Reference(ty))) = v.get(f::FAMILY_TYPE) else {
+            return None;
+        };
+        Some(Self {
+            id: object.id,
+            host: object.header.owner,
+            name: types::text(v, f::NAME).unwrap_or_default().to_owned(),
+            family_type: *ty,
+            distance: types::meters(v, f::DISTANCE)?,
+            offset: types::meters(v, f::OFFSET).unwrap_or(0.0),
+            hand: crate::insert::Hand::of_field(v, f::HAND),
+            facing: crate::insert::Facing::of_field(v, f::FACING),
+            values: values_of(object, f::VALUES),
+        })
+    }
+
+    /// The record values.
+    #[must_use]
+    pub fn record(&self) -> Vec<Option<Value>> {
+        vec![
+            (!self.name.is_empty()).then(|| Value::String(self.name.clone())),
+            Some(Value::Reference(self.family_type)),
+            Some(types::length(self.distance)),
+            Some(types::length(self.offset)),
+            Some(Value::Enum(self.hand.code())),
+            Some(Value::Enum(self.facing.code())),
+            values_value(&self.values),
+            None,
+        ]
+    }
+
+    /// The direction of the family's x axis along the host's baseline: `-1` for a family that
+    /// faces the interior (turned half a turn) or is mirrored for the right hand, both reversing
+    /// the x axis seen along the baseline.
+    #[must_use]
+    pub fn along(&self) -> f64 {
+        let turned = if self.facing == crate::insert::Facing::Interior {
+            -1.0
+        } else {
+            1.0
+        };
+        let mirrored = if self.hand == crate::insert::Hand::Right {
+            -1.0
+        } else {
+            1.0
+        };
+        turned * mirrored
+    }
+}
+
+/// The family, definition and type of a hosted instance.
+///
+/// # Errors
+/// `ab.family.evaluation_failed` when the type or family is missing or the text no longer reads.
+pub fn resolve_insert(snapshot: &Snapshot, insert: &FamilyInsert) -> Result<Resolved> {
+    let component = Component {
+        id: insert.id,
+        storey: None,
+        name: insert.name.clone(),
+        family_type: insert.family_type,
+        offset: 0.0,
+        origin: [0.0; 2],
+        rotation: 0.0,
+        mirror: false,
+        values: BTreeMap::new(),
+    };
+    resolve(snapshot, &component)
+}
+
+/// The opening a hosted instance cuts in its wall: a rectangle, the box of its host-cutting
+/// voids, with the insertion point at the instance's distance. `None` when the family cuts
+/// nothing or does not evaluate.
+#[must_use]
+pub fn opening_of(snapshot: &Snapshot, insert: &FamilyInsert) -> Option<crate::insert::Insert> {
+    use crate::insert::{Facing, Hand, Insert, Kind, Operation};
+    let r = resolve_insert(snapshot, insert).ok()?;
+    let ev = evaluate_in(snapshot, &r.definition, &r.ty, &insert.values).ok()?;
+    let first = ev.host_cuts.first()?;
+    let (mut lo, mut hi) = (first.min, first.max);
+    for c in &ev.host_cuts {
+        for i in 0..3 {
+            lo[i] = lo[i].min(c.min[i]);
+            hi[i] = hi[i].max(c.max[i]);
+        }
+    }
+    let centre = (lo[0] + hi[0]) / 2.0;
+    Some(Insert {
+        kind: Kind::Opening,
+        distance: insert.distance + insert.along() * centre,
+        width: hi[0] - lo[0],
+        height: hi[2] - lo[2],
+        sill: insert.offset + lo[2],
+        frame_width: 0.0,
+        frame_depth: 0.0,
+        operation: Operation::default(),
+        hand: Hand::default(),
+        facing: Facing::default(),
+        rise: 0.0,
+        profile: None,
+    })
+}
+
+/// The hosted instances of the wall `wall` with the openings they cut, by distance and then
+/// identifier.
+#[must_use]
+pub fn family_openings(
+    snapshot: &Snapshot,
+    wall: ObjectId,
+) -> Vec<(ObjectId, crate::insert::Insert)> {
+    let mut found: Vec<(ObjectId, crate::insert::Insert)> =
+        spatial::children(snapshot, crate::types::FAMILY_INSERT, wall)
+            .iter()
+            .filter_map(|o| FamilyInsert::of(o))
+            .filter_map(|i| opening_of(snapshot, &i).map(|o| (i.id, o)))
+            .collect();
+    found.sort_by(|a, b| {
+        a.1.distance
+            .total_cmp(&b.1.distance)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    found
+}
+
+/// The rules a hosted instance breaks: those of the opening it cuts, and a family that no longer
+/// evaluates.
+#[must_use]
+pub fn insert_problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
+    let Some(insert) = FamilyInsert::of(object) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    match resolve_insert(snapshot, &insert) {
+        Err(e) => return vec![e],
+        Ok(r) => {
+            if let Err(e) = evaluate_in(snapshot, &r.definition, &r.ty, &insert.values) {
+                out.push(
+                    Error::new(codes::FAMILY_EVALUATION)
+                        .with_arg("instance", insert.name.as_str())
+                        .with_arg("reason", e.code()),
+                );
+            }
+        }
+    }
+    if let Some(item) = opening_of(snapshot, &insert) {
+        out.extend(crate::insert::problems_of(snapshot, object, item));
+    }
+    out
 }
