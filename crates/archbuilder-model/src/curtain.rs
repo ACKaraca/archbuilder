@@ -77,7 +77,8 @@ coded! {
 }
 
 coded! {
-    /// Where a fixed-distance grid starts counting.
+    /// Where a grid starts counting: a fixed distance, or the side an equal division's offset is
+    /// left free on.
     Justify {
         /// From the start of the baseline or the base.
         #[default]
@@ -220,7 +221,8 @@ pub struct GridRule {
     pub kind: RuleKind,
     /// A distance in meters, or the number of lines for [`RuleKind::FixedNumber`].
     pub value: f64,
-    /// Where a fixed distance starts counting.
+    /// Where the rule starts counting: a fixed distance from the start, the middle or the end; an
+    /// equal division from the start, the middle or the end of the stretch the offset leaves.
     pub justify: Justify,
     /// The shift of the origin of a fixed distance, or the stretch left free at the justified
     /// side of an equal division, in meters.
@@ -284,10 +286,24 @@ impl GridRule {
             return out;
         }
         let inside = |p: f64| p > TOL && p < extent - TOL;
+        // An equal division spreads its lines over the stretch the offset leaves free: from the
+        // offset to the end (start), up to the end less the offset (end), or between the two
+        // (center). A line stands at each end of the stretch that does not reach the border.
+        let free = self.offset.max(0.0);
+        let (lo, hi) = match self.justify {
+            Justify::Start => (free, extent),
+            Justify::End => (0.0, extent - free),
+            Justify::Center => (free, extent - free),
+        };
+        let span = hi - lo;
         let equal = |count: usize| -> Vec<(String, f64)> {
-            (1..=count)
-                .map(|i| (format!("n{i}"), extent * i as f64 / (count + 1) as f64))
-                .collect()
+            let mut lines: Vec<_> = (1..=count)
+                .map(|i| (format!("n{i}"), lo + span * i as f64 / (count + 1) as f64))
+                .collect();
+            lines.push(("lo".to_owned(), lo));
+            lines.push(("hi".to_owned(), hi));
+            lines.retain(|l| inside(l.1));
+            lines
         };
         match self.kind {
             RuleKind::FixedDistance => {
@@ -308,12 +324,13 @@ impl GridRule {
                     }
                 }
             }
+            _ if span <= 2.0 * TOL => {}
             RuleKind::FixedNumber => out = equal(count_of(self.value.round())),
             RuleKind::MaxSpacing => {
-                out = equal(count_of((extent / self.value - 1.0e-9).ceil() - 1.0));
+                out = equal(count_of((span / self.value - 1.0e-9).ceil() - 1.0));
             }
             RuleKind::MinSpacing => {
-                out = equal(count_of((extent / self.value + 1.0e-9).floor() - 1.0));
+                out = equal(count_of((span / self.value + 1.0e-9).floor() - 1.0));
             }
         }
         out.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -2341,6 +2358,39 @@ mod tests {
         assert_eq!(rule(RuleKind::MaxSpacing, 1.2).lines(5.0).len(), 4);
         assert_eq!(rule(RuleKind::MinSpacing, 1.2).lines(5.0).len(), 3);
         assert!(rule(RuleKind::FixedDistance, 0.0).lines(5.0).is_empty());
+    }
+
+    #[test]
+    fn equal_divisions_leave_the_offset_free_on_the_justified_side() {
+        let with = |kind, value, justify, offset| GridRule {
+            justify,
+            offset,
+            ..rule(kind, value)
+        };
+        // Two interior lines over 0.5 to 5: a line at the offset, then thirds of the rest.
+        let start = with(RuleKind::FixedNumber, 2.0, Justify::Start, 0.5).lines(5.0);
+        assert_eq!(at(&start), vec![0.5, 2.0, 3.5]);
+        assert_eq!(start[0].0, "lo");
+        let end = with(RuleKind::FixedNumber, 2.0, Justify::End, 0.5).lines(5.0);
+        assert_eq!(at(&end), vec![1.5, 3.0, 4.5]);
+        let center = with(RuleKind::FixedNumber, 1.0, Justify::Center, 0.5).lines(5.0);
+        assert_eq!(at(&center), vec![0.5, 2.5, 4.5]);
+        // The spacings count over the free stretch: at most 1.2 wide over 4.5 m needs four cells.
+        let max = with(RuleKind::MaxSpacing, 1.2, Justify::Start, 0.5).lines(5.0);
+        assert_eq!(max.len(), 4);
+        assert!((max[1].1 - max[0].1 - 4.5 / 4.0).abs() < 1e-9);
+        let min = with(RuleKind::MinSpacing, 1.2, Justify::End, 0.5).lines(5.0);
+        assert_eq!(min.len(), 3);
+        // No offset is the whole extent; an offset that leaves nothing gives no lines.
+        assert_eq!(
+            at(&with(RuleKind::FixedNumber, 3.0, Justify::End, 0.0).lines(4.0)),
+            vec![1.0, 2.0, 3.0]
+        );
+        assert!(
+            with(RuleKind::FixedNumber, 3.0, Justify::Start, 5.0)
+                .lines(5.0)
+                .is_empty()
+        );
     }
 
     #[test]

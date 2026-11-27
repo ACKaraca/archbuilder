@@ -69,3 +69,10 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
   window override needs a rectangular cell: in a turned cell the panel is drawn as a plain one.
   Added lines lean with their family. The two families must cross at a clear angle; a rule pair
   that makes them nearly parallel is refused. Older documents carry no angle and stay straight.
+- **Justification and offset (AB-WALL-020).** A fixed distance counts from the start, the middle
+  or the end of the baseline or the height, shifted by the offset. The other three rules divide
+  the stretch the offset leaves free (from the offset to the end for a start justification, up to
+  the end less the offset for an end justification, between the two for a center one) into equal
+  cells, and a line stands at each end of that stretch that does not reach a border. Their value
+  is the number of interior lines of the stretch or the spacing measured over it. Without an
+  offset nothing changes.

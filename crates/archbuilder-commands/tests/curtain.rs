@@ -388,3 +388,38 @@ fn an_angle_past_the_limit_or_parallel_families_are_refused() {
         .unwrap_err();
     assert_eq!(e.code(), "ab.model.curtain_rule");
 }
+
+#[test]
+fn equal_division_rules_take_justification_and_offset_and_undo() {
+    let env = Env::new();
+    let ty = curtain_type(
+        &env,
+        json!({"name": "Offset",
+               "vertical": {"kind": "fixed_number", "value": 2, "justify": "start", "offset": 0.5},
+               "horizontal": {"kind": "max_spacing", "value": 1.5, "justify": "end", "offset": 0.3}}),
+    );
+    let wall = env.wall(
+        [0.0, 0.0],
+        [5.0, 0.0],
+        json!({"type": ty.to_string(), "height": 3.0}),
+    );
+    let at = |lines: &[archbuilder_model::curtain::Line]| -> Vec<f64> {
+        lines.iter().map(|l| (l.at * 1e6).round() / 1e6).collect()
+    };
+    let d = derived(&env, wall);
+    // A line at the offset, then two more dividing the rest in thirds.
+    assert_eq!(at(&d.layout.vertical), vec![0.0, 0.5, 2.0, 3.5, 5.0]);
+    // Up to the end less the offset (2.7 m): two cells of at most 1.5 m, and a line at 2.7.
+    assert_eq!(at(&d.layout.horizontal), vec![0.0, 1.35, 2.7, 3.0]);
+    assert_eq!(d.panels.len(), 12);
+    // Changing the rule is one undo step and the grid regenerates.
+    env.run(
+        "archbuilder.curtain.type",
+        json!({"type": ty.to_string(), "vertical": {"offset": 0}}),
+    )
+    .unwrap();
+    let thirds = at(&derived(&env, wall).layout.vertical);
+    assert_eq!(thirds, vec![0.0, 1.666_667, 3.333_333, 5.0]);
+    env.document.undo().wait().unwrap();
+    assert_eq!(derived(&env, wall).layout.vertical.len(), 5);
+}
