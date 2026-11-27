@@ -754,6 +754,38 @@ fn grids_of_one_direction_are_reported_and_not_padded() {
 }
 
 #[test]
+fn a_grid_of_several_segments_is_reported_not_shortened() {
+    let doc = Doc::new();
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"start": [0.0, 0.0], "end": [0.0, 8.0], "label": "A"}),
+    );
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"points": [[-1.0, 0.0], [4.0, 0.0], [8.0, 3.0]], "label": "1"}),
+    );
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"start": [-1.0, 6.0], "end": [9.0, 6.0], "label": "2"}),
+    );
+    let (exported, file) = doc.export("grid_multi_segment");
+    let reported: Vec<_> = exported
+        .report
+        .items
+        .iter()
+        .filter(|i| i.reason == "ab.io.ifc.grid_multi_segment")
+        .collect();
+    assert_eq!(reported.len(), 1);
+    // The other lines still make a grid; the bent line is not among its axes.
+    let axes: Vec<String> = file
+        .instances_of("IFCGRIDAXIS")
+        .map(|a| text(&a.records[0].parameters[0]).to_owned())
+        .collect();
+    assert_eq!(axes.len(), 2);
+    assert!(!axes.contains(&"1".to_owned()));
+}
+
+#[test]
 fn planes_and_selection_sets_are_reported_with_their_own_kinds() {
     let doc = Doc::new();
     doc.run(

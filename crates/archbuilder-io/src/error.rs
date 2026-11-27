@@ -111,6 +111,14 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-grid-one-direction",
     };
+    /// A grid line of several segments: the writer's grid axis is one line or one arc, so the line
+    /// is named rather than shortened to its ends.
+    pub const GRID_MULTI_SEGMENT: Reason = Reason {
+        code: "ab.io.ifc.grid_multi_segment",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-grid-multi-segment",
+    };
     /// A curtain wall with doors or windows as panels: IFC4 aggregates them in the curtain wall,
     /// which the writer of the foundation does not do, so each fills an opening in the wall.
     pub const CURTAIN_PANEL_FILLED: Reason = Reason {

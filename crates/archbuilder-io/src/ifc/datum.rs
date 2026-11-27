@@ -88,6 +88,12 @@ impl Mapper<'_> {
                 self.lose(reasons::NOT_EXPORTED, "IFCGRID", &object);
                 continue;
             };
+            // shortcut: the pinned writer's axis curve is one line or one arc; a grid of several
+            // segments is reported until the writer takes polylines and composite curves.
+            if !grid.via.is_empty() {
+                self.lose(reasons::GRID_MULTI_SEGMENT, "IFCGRIDAXIS", &object);
+                continue;
+            }
             let mut axis = GridAxis::new(&grid.label, curve);
             axis.same_sense = same_sense;
             if matches!(curve, AxisCurve::Line { .. }) {

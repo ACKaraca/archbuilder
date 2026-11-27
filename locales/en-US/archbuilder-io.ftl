@@ -27,4 +27,5 @@ ab-io-loss-georeference-not-written = The geodetic reference of the project is n
 ab-io-loss-datum-not-written = A reference plane or work plane is not in the IFC file: it is a drawing aid, not a building element.
 ab-io-loss-selection-set-not-written = A selection set is not in the IFC file: it is a list of elements, and groups cannot be written yet. Its elements are in the file.
 ab-io-loss-grid-one-direction = A grid line is not in the IFC file: an IFC grid needs lines in two directions, and the grid lines of this building run in one.
+ab-io-loss-grid-multi-segment = A grid line of several segments is not in the IFC file: an IFC grid axis can be written only as one line or one arc so far, and shortening it to its ends would misplace it.
 ab-io-loss-curtain-panel-filled = A curtain wall has { $count } doors or windows as panels: each is written as a door or window that fills an opening in the curtain wall, not as a part of it.
