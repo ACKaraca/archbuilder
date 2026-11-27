@@ -20,6 +20,7 @@
 
 mod apply;
 pub mod data;
+pub(crate) mod export;
 mod geom;
 mod map;
 mod plan;

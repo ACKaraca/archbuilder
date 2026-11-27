@@ -60,6 +60,8 @@ pub struct ExportOptions {
     pub limits: Limits,
     /// Cancels the export between elements.
     pub cancel: Cancel,
+    /// The schema of the file; IFC4 by default.
+    pub schema: arc_io_ifc::write::OutputSchema,
 }
 
 impl Default for ExportOptions {
@@ -70,6 +72,7 @@ impl Default for ExportOptions {
             application: String::new(),
             limits: Limits::DEFAULT,
             cancel: Cancel::new(),
+            schema: arc_io_ifc::write::OutputSchema::Ifc4,
         }
     }
 }
@@ -1648,6 +1651,10 @@ fn brep<'a>(
 ///
 /// `ab.io.no_structure` for a document without a project, a site or a building; the `io.ifc.*`
 /// codes and `base.cancelled` of the writer.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the document in order: structure, elements, types, writer, validation"
+)]
 pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export> {
     let (Some(project), Some(site), Some(building)) = (
         spatial::project(snapshot),
@@ -1674,6 +1681,7 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
     for other in spatial::buildings(snapshot).into_iter().skip(1) {
         mapper.lose(reasons::NOT_EXPORTED, "IFCBUILDING", &other);
     }
+    let mut hooks = crate::import::export::Hooks::of(snapshot);
     for entry in spatial::storeys(snapshot, building.id) {
         let elevation = entry.elevation();
         model.storeys.push(Storey::new(
@@ -1682,6 +1690,20 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
             elevation,
         ));
         mapper.storey(entry.storey.id, elevation)?;
+        // The foreign elements of an import in this storey, and the imported rooms that no wall
+        // encloses (written without a body, so that their identity and data are kept).
+        let present: std::collections::BTreeSet<u128> =
+            mapper.elements.iter().map(|e| e.id).collect();
+        let (foreign, kept_rooms) = hooks.elements(
+            snapshot,
+            entry.storey.id,
+            elevation,
+            &options.limits,
+            &present,
+        );
+        mapper.losses.retain(|l| !kept_rooms.contains(&l.object));
+        mapper.exported += foreign.len();
+        mapper.elements.extend(foreign);
     }
     mapper.grids(&mut model, building.id);
     // Reference planes and work planes are drawing aids with no IFC entity; each is reported.
@@ -1694,6 +1716,8 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         }
     }
     model.elements = std::mem::take(&mut mapper.elements);
+    project::Info::of(&project, &building).apply(&mut model, project.id.as_u128());
+    hooks.augment(&mut model);
     model.types = element_types(snapshot);
     model.types.append(&mut mapper.types);
     mapper.groups(&mut model);
@@ -1706,15 +1730,13 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         file_name: options.file_name.clone(),
         timestamp: options.timestamp.clone(),
         originating_system: options.application.clone(),
+        schema: options.schema,
         ..WriteOptions::default()
     };
     let mut written = write(&model, &write_options)?;
-    // The project information the writer has no attributes for.
+    let foreign_ids = hooks.foreign_ids();
+    written.bytes = hooks.finish(written.bytes, &options.limits, &options.cancel);
     let info = project::Info::of(&project, &building);
-    match project::apply(&written.bytes, &info, project.id.as_u128()) {
-        Some(bytes) => written.bytes = bytes,
-        None => mapper.lose(reasons::PROJECT_INFO_NOT_WRITTEN, "IFCPROJECT", &project),
-    }
     if info.issue_date.is_some() {
         mapper.lose(reasons::ISSUE_DATE_NOT_WRITTEN, "IFCPROJECT", &project);
     }
@@ -1728,7 +1750,9 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         &model,
         (options.limits, &options.cancel),
         &mut report,
+        &foreign_ids,
     );
+    report.items.extend(hooks.take_losses());
     Ok(Export {
         bytes: written.bytes,
         elements: mapper.exported,

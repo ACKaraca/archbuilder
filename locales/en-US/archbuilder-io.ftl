@@ -29,7 +29,6 @@ ab-io-loss-curtain-panel-filled = A curtain wall has { $count } doors or windows
 ab-io-loss-dormer-as-parts = IFC4 has no element for a dormer: it is written as the opening in its roof, a wall for each of its front and cheek walls and a roof for its own small roof.
 ab-io-loss-fascia-as-covering = IFC4 has no element for a fascia: it is written as a covering of the type molding with its swept body.
 ab-io-loss-roof-edge-orphan = A roof edge element names edges that its roof no longer has or that define no slope: those edges are not in the file.
-ab-io-loss-project-info-not-written = The project information could not be added to the IFC file: its long name, phase, addresses, actors and building properties are left out.
 ab-io-loss-issue-date-not-written = The issue date of the project is not in the IFC file: IFC4 has no attribute for it.
 ab-io-command-new-from-template-label = New From Template
 ab-io-command-new-from-template-description = Starts the project of the open document from a template, an ordinary document: its project settings and information, site, building, storeys, levels, element types and plan views are copied under new identifiers, replacing the structure the document has. The template is not changed. The document must have no elements.

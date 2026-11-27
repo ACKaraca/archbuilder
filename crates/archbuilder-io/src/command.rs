@@ -51,6 +51,21 @@ pub struct ExportParams {
     /// The file to write, inside the session's write roots.
     #[schemars(length(min = 1, max = 4095))]
     pub path: String,
+    /// The schema of the file: `ifc4` (the default), `ifc4x3` or `ifc2x3`.
+    #[serde(default)]
+    pub schema: Option<SchemaParam>,
+}
+
+/// The schema of an exported IFC file as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SchemaParam {
+    /// IFC4 ADD2 TC1.
+    Ifc4,
+    /// IFC4X3 ADD2.
+    Ifc4x3,
+    /// IFC2X3 TC1; needs the generated schema tables.
+    Ifc2x3,
 }
 
 /// What `archbuilder.file.export_ifc` returns.
@@ -86,6 +101,11 @@ fn export(ctx: &mut Context<'_>, p: ExportParams) -> Result<Exported> {
         timestamp: iso8601(ctx.now_unix_millis()),
         application: format!("archbuilder {}", env!("CARGO_PKG_VERSION")),
         limits: *ctx.limits(),
+        schema: match p.schema.unwrap_or(SchemaParam::Ifc4) {
+            SchemaParam::Ifc4 => arc_io_ifc::write::OutputSchema::Ifc4,
+            SchemaParam::Ifc4x3 => arc_io_ifc::write::OutputSchema::Ifc4x3,
+            SchemaParam::Ifc2x3 => arc_io_ifc::write::OutputSchema::Ifc2x3,
+        },
         ..ExportOptions::default()
     };
     let export = export_ifc(ctx.snapshot(), &options)?;

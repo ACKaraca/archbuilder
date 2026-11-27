@@ -149,15 +149,6 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-roof-edge-orphan",
     };
-    /// The project information could not be added to the IFC file: the file is not the shape the
-    /// writer produces, so the project's long name, phase, addresses, actors and building
-    /// properties are left out.
-    pub const PROJECT_INFO_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.project_info_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-project-info-not-written",
-    };
     /// The issue date of the project: IFC4 has no attribute for it, so it is left out.
     pub const ISSUE_DATE_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.issue_date_not_written",

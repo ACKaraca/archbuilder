@@ -29,7 +29,6 @@ ab-io-loss-curtain-panel-filled = Bir perde duvarın panelleri arasında { $coun
 ab-io-loss-dormer-as-parts = IFC4'te çatı penceresi için bir eleman yok: çatısındaki açıklık, ön ve yan duvarlarının her biri için bir duvar ve kendi küçük çatısı için bir çatı olarak yazıldı.
 ab-io-loss-fascia-as-covering = IFC4'te saçak silmesi için bir eleman yok: süpürülmüş gövdesiyle pervaz türünde bir kaplama olarak yazıldı.
 ab-io-loss-roof-edge-orphan = Bir çatı kenarı elemanı, çatısında artık bulunmayan ya da eğimi olmayan kenarları adlandırıyor: bu kenarlar dosyada yok.
-ab-io-loss-project-info-not-written = Proje bilgisi IFC dosyasına eklenemedi: uzun ad, aşama, adresler, aktörler ve yapı özellikleri dışarıda kaldı.
 ab-io-loss-issue-date-not-written = Projenin yayın tarihi IFC dosyasında yok: IFC4’te bunun için bir öznitelik bulunmaz.
 ab-io-command-new-from-template-label = Şablondan Yeni
 ab-io-command-new-from-template-description = Açık belgenin projesini, sıradan bir belge olan bir şablondan başlatır: proje ayarları ve bilgisi, saha, yapı, katlar, seviyeler, eleman tipleri ve plan görünümleri yeni kimliklerle kopyalanır ve belgenin mevcut yapısının yerini alır. Şablon değişmez. Belgede eleman bulunmamalıdır.
