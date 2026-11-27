@@ -676,6 +676,65 @@ pub struct TypePanel {
     circ_copying: Option<Vec<ObjectId>>,
 }
 
+/// The family types of the project grouped by family: each family with its version and its own
+/// types, then the families it nests, each with its version and types indented under it. Returns
+/// the family type clicked.
+fn family_menu(
+    ui: &mut Ui,
+    snapshot: &Snapshot,
+    all: &[std::sync::Arc<arc_doc::Object>],
+    current: Option<ObjectId>,
+) -> Option<ObjectId> {
+    use archbuilder_model::family::loaded::{FamilyType, Loaded, families};
+    let family_of = |id: ObjectId| {
+        spatial::get(snapshot, id)
+            .and_then(|o| FamilyType::of(&o))
+            .map(|t| t.family)
+    };
+    let heading = |f: &Loaded| {
+        let v = f.version;
+        format!("{} {}.{}.{}", f.name, v.major, v.minor, v.patch)
+    };
+    let mut picked = None;
+    let mut row = |ui: &mut Ui, indent: f32, t: &std::sync::Arc<arc_doc::Object>| {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            if ui
+                .selectable_label(current == Some(t.id), et::name(t))
+                .clicked()
+            {
+                picked = Some(t.id);
+            }
+        });
+    };
+    let families = families(snapshot);
+    for family in &families {
+        ui.label(RichText::new(heading(family)).strong());
+        for t in all
+            .iter()
+            .filter(|t| family_of(t.id) == Some(family.record))
+        {
+            row(ui, 8.0, t);
+        }
+        let Ok(definition) = family.definition() else {
+            continue;
+        };
+        for nested in &definition.nested {
+            let Some(child) = families.iter().find(|f| f.family == nested.family) else {
+                continue;
+            };
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(RichText::new(format!("nests {}", heading(child))).italics());
+            });
+            for t in all.iter().filter(|t| family_of(t.id) == Some(child.record)) {
+                row(ui, 20.0, t);
+            }
+        }
+    }
+    picked
+}
+
 /// The values of a family type, one row each: the parameter and its literal or formula.
 fn family_values(ui: &mut Ui, snapshot: &Snapshot, id: ObjectId, localize: &dyn Localize) {
     use archbuilder_model::expr::{Evaluated, Stored};
@@ -1051,6 +1110,12 @@ impl TypePanel {
             ComboBox::from_id_salt("archbuilder-types-type")
                 .selected_text(current)
                 .show_ui(ui, |ui| {
+                    if kind == TypeKind::Family {
+                        if let Some(picked) = family_menu(ui, &snapshot, &all, id) {
+                            self.chosen = Some(picked);
+                        }
+                        return;
+                    }
                     for t in &all {
                         if ui.selectable_label(Some(t.id) == id, et::name(t)).clicked() {
                             self.chosen = Some(t.id);
