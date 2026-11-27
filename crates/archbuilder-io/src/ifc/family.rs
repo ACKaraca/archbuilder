@@ -1,22 +1,22 @@
 //! Family instances in the IFC export (ADR 0009, section 4): the entity of each category (the
 //! table of the ADR, overridden by the family's own IFC assignment), the type object of the
-//! family type, the property sets `ArchBuilder_Type`, `ArchBuilder_Instance` and
-//! `ArchBuilder_Family` with the IFC value type of every parameter, the standard sets where the
-//! category maps, and the evaluated solids as faceted B-reps. Identifiers are the model's own, so
-//! every `GlobalId` is the same after every export.
+//! family type with its property sets `ArchBuilder_Type` and `ArchBuilder_Family`, and the type's
+//! shared geometry as an `IfcRepresentationMap`, which each occurrence with the same body maps
+//! through an `IfcMappedItem`. An occurrence has its `ArchBuilder_Instance` set, the standard sets
+//! where the category maps, and its own faceted body only where its geometry differs from the
+//! type's. Identifiers are the model's own, so every `GlobalId` is the same after every export.
 //!
-//! The pinned writer of `arc-io-ifc` writes doors and windows only; the other entities of the
-//! table have no element kind there yet. An instance of those is listed in the loss report with
-//! the entity it maps to, never written as a proxy. The writer also has no property sets on
-//! types and no representation maps: the sets of the type are written on the occurrence (listed
-//! once per type) and every occurrence has its own faceted body.
+//! A generic model or specialty equipment has no entity of its own: it is written only as the
+//! entity its family declares, and otherwise listed in the loss report, never as a proxy.
+
+use std::collections::BTreeMap;
 
 use arc_base::ObjectId;
 use arc_base::id::Identifier;
 use arc_doc::Object;
 use arc_io_ifc::write::{
-    Element, ElementKind, ElementType, Measure, Property, PropertySet, PropertyValue, Quantity,
-    QuantityValue,
+    Body, Element, ElementKind, ElementType, Measure, Placement, Property, PropertySet,
+    PropertyValue, Quantity, QuantityValue,
 };
 use archbuilder_model::expr::{DataType, Evaluated};
 use archbuilder_model::family::def::{Category, Definition, Header, ParamDef, Scope};
@@ -45,12 +45,14 @@ pub(super) enum Entity {
     Window,
     /// `IfcColumn`.
     Column,
-    /// `IfcBuildingElementProxy`, the default of generic categories only.
+    /// `IfcBeam`; only by a family's own assignment, no category defaults to it.
+    Beam,
+    /// `IfcBuildingElementProxy`; only by a family's own assignment, never a default.
     Proxy,
 }
 
 impl Entity {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Furniture,
         Self::SanitaryTerminal,
         Self::LightFixture,
@@ -59,6 +61,7 @@ impl Entity {
         Self::Door,
         Self::Window,
         Self::Column,
+        Self::Beam,
         Self::Proxy,
     ];
 
@@ -73,16 +76,24 @@ impl Entity {
             Self::Door => "IFCDOOR",
             Self::Window => "IFCWINDOW",
             Self::Column => "IFCCOLUMN",
+            Self::Beam => "IFCBEAM",
             Self::Proxy => "IFCBUILDINGELEMENTPROXY",
         }
     }
 
-    /// The element kind of the pinned writer that writes this entity; `None` when it has none.
-    pub(super) const fn kind(self) -> Option<ElementKind> {
+    /// The element kind of the writer that writes this entity.
+    pub(super) const fn kind(self) -> ElementKind {
         match self {
-            Self::Door => Some(ElementKind::Door),
-            Self::Window => Some(ElementKind::Window),
-            _ => None,
+            Self::Furniture => ElementKind::Furniture,
+            Self::SanitaryTerminal => ElementKind::SanitaryTerminal,
+            Self::LightFixture => ElementKind::LightFixture,
+            Self::ElectricAppliance => ElementKind::ElectricAppliance,
+            Self::UnitaryEquipment => ElementKind::UnitaryEquipment,
+            Self::Door => ElementKind::Door,
+            Self::Window => ElementKind::Window,
+            Self::Column => ElementKind::Column,
+            Self::Beam => ElementKind::Beam,
+            Self::Proxy => ElementKind::BuildingElementProxy,
         }
     }
 
@@ -103,10 +114,12 @@ pub(super) struct Assignment {
 }
 
 /// The default entity of a category (the table of ADR 0009, section 4) and its predefined type.
+/// A profile, a generic model and specialty equipment have none: their family must name one.
 pub(super) fn default_of(category: Category) -> Option<(Entity, Option<&'static str>)> {
     Some(match category {
-        Category::Profile => return None,
+        Category::Profile | Category::GenericModel | Category::SpecialtyEquipment => return None,
         Category::Furniture => (Entity::Furniture, None),
+        // Casework has no furniture type of its own: a user-defined type with the text.
         Category::Casework => (Entity::Furniture, Some("CASEWORK")),
         Category::PlumbingFixture => (Entity::SanitaryTerminal, None),
         Category::LightingFixture => (Entity::LightFixture, None),
@@ -115,7 +128,6 @@ pub(super) fn default_of(category: Category) -> Option<(Entity, Option<&'static 
         Category::Door => (Entity::Door, None),
         Category::Window => (Entity::Window, None),
         Category::Column => (Entity::Column, None),
-        Category::GenericModel | Category::SpecialtyEquipment => (Entity::Proxy, None),
     })
 }
 
@@ -123,21 +135,21 @@ pub(super) fn default_of(category: Category) -> Option<(Entity, Option<&'static 
 /// its category.
 ///
 /// # Errors
-/// The entity text of an assignment that names an entity this mapping does not know.
+/// The entity text of an assignment that names an entity this mapping does not know, or the
+/// class a family without any entity would need (a generic model that names none).
 pub(super) fn assignment(header: &Header) -> Result<Assignment, String> {
-    let (entity, predefined) = default_of(header.category).ok_or_else(|| "profile".to_owned())?;
     let own = header.ifc_entity.trim();
-    let entity_text = (!own.is_empty()).then_some(own);
-    let (entity, predefined) = match entity_text {
-        Some(text) => (
-            Entity::parse(text).ok_or_else(|| text.to_owned())?,
-            None::<&str>,
-        ),
-        None => (entity, predefined),
+    let (entity, predefined) = if own.is_empty() {
+        match default_of(header.category) {
+            Some((entity, predefined)) => (entity, predefined.map(str::to_owned)),
+            None => return Err(Entity::Proxy.class().to_owned()),
+        }
+    } else {
+        (Entity::parse(own).ok_or_else(|| own.to_owned())?, None)
     };
     let own_type = header.ifc_type.trim();
     let predefined = if own_type.is_empty() {
-        predefined.map(str::to_owned)
+        predefined
     } else {
         Some(own_type.to_owned())
     };
@@ -182,7 +194,7 @@ fn value_of(data: DataType, value: &Evaluated) -> Option<(PropertyValue, bool)> 
 /// and how many were written as text.
 fn parameter_set(
     definition: &Definition,
-    values: &std::collections::BTreeMap<String, Evaluated>,
+    values: &BTreeMap<String, Evaluated>,
     scope: Scope,
 ) -> (Vec<Property>, usize) {
     let mut properties = Vec::new();
@@ -227,9 +239,25 @@ fn family_set(resolved: &Resolved) -> PropertySet {
     )
 }
 
+/// The solid mirrored across the frame's own y axis (its x changes sign), in the same frame.
+fn mirror_x(solid: &arc_geom::Polyhedron) -> Option<arc_geom::Polyhedron> {
+    let flip = arc_base::math::Transform3::from_matrix_unchecked(arc_base::math::Matrix4::new(
+        -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ));
+    solid
+        .transformed(
+            &flip,
+            &arc_base::Tolerance::DEFAULT,
+            &arc_base::Limits::DEFAULT,
+        )
+        .ok()
+}
+
 impl Mapper<'_> {
-    /// A freestanding family instance of the storey whose level is at `level`.
-    pub(super) fn component(&mut self, object: &Object, storey: ObjectId, level: f64) {
+    /// A freestanding family instance of the storey whose level is at `level`. Its body is the
+    /// family's own solids in the frame of the instance, so every instance with the same values
+    /// has the same body, which the type holds once.
+    pub(super) fn component(&mut self, object: &Object, storey: ObjectId) {
         let Some(component) = Component::of(object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCBUILDINGELEMENTPROXY", object);
         };
@@ -249,34 +277,59 @@ impl Mapper<'_> {
                 );
             }
         };
-        let Some(kind) = assigned.entity.kind() else {
-            return self.lose(reasons::FAMILY_NOT_WRITTEN, assigned.entity.class(), object);
+        let class = assigned.entity.class();
+        // The solids in the family's own frame: the origin, rotation, mirror and offset are the
+        // placement of the element, never part of the body.
+        let local = Component {
+            storey: None,
+            origin: [0.0, 0.0],
+            rotation: 0.0,
+            offset: 0.0,
+            mirror: false,
+            ..component.clone()
         };
-        let Ok(placed) = loaded::place(self.snapshot, &component) else {
-            return self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object);
+        let Ok(placed) = loaded::place(self.snapshot, &local) else {
+            return self.lose(reasons::BODY_NOT_EXPORTED, class, object);
         };
         let (s, c) = component.rotation.sin_cos();
         let Some(frame) = Frame::new(component.origin, [c, s]) else {
-            return self.lose(reasons::NOT_EXPORTED, assigned.entity.class(), object);
+            return self.lose(reasons::NOT_EXPORTED, class, object);
         };
+        let body = if component.mirror {
+            let mut mirrored = Vec::with_capacity(placed.solids.len());
+            for solid in &placed.solids {
+                match mirror_x(&solid.solid) {
+                    Some(m) => mirrored.push(m),
+                    None => return self.lose(reasons::BODY_NOT_EXPORTED, class, object),
+                }
+            }
+            brep(mirrored.iter(), &super::WORLD, 0.0)
+        } else {
+            brep(placed.solids.iter().map(|s| &s.solid), &super::WORLD, 0.0)
+        };
+        let type_id = self.ensure_type(&resolved, &assigned, &placed.evaluation.values, object);
         let storey_id = storey.as_u128();
-        let mut element = Element::new(object.id.as_u128(), kind, &name_of(object), storey_id);
+        let mut element = Element::new(
+            object.id.as_u128(),
+            assigned.entity.kind(),
+            &name_of(object),
+            storey_id,
+        );
         element.placement = frame.placement(component.offset);
         element.predefined_type = assigned.predefined.clone();
         let size = placed.evaluation.size;
         element.overall_width = Some(size[0]).filter(|w| *w > 0.0);
         element.overall_height = Some(size[2]).filter(|h| *h > 0.0);
-        match brep(
-            placed.solids.iter().map(|s| &s.solid),
-            &frame,
-            level + component.offset,
-        ) {
+        match body {
+            Some(body) if self.share_geometry(type_id, &body) => {
+                element.mapping = Some(Placement::default());
+            }
             Some(body) => element.body = Some(body),
-            None => self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object),
+            None => self.lose(reasons::BODY_NOT_EXPORTED, class, object),
         }
-        self.finish(
+        self.occurrence(
             &mut element,
-            (&resolved, assigned, kind),
+            (&resolved, &assigned, type_id),
             &placed.evaluation.values,
             object,
         );
@@ -284,15 +337,77 @@ impl Mapper<'_> {
         self.exported += 1;
     }
 
-    /// The sets, quantities and type of a written family element.
-    fn finish(
+    /// The element type of a family type, created on its first occurrence: its predefined type,
+    /// its property sets (`ArchBuilder_Type` and `ArchBuilder_Family`) and the parameters IFC has
+    /// no value type for, counted once. Returns the identifier of the type.
+    fn ensure_type(
+        &mut self,
+        resolved: &Resolved,
+        assigned: &Assignment,
+        values: &BTreeMap<String, Evaluated>,
+        object: &Object,
+    ) -> u128 {
+        let type_id = resolved.ty.id.as_u128();
+        if self.types.iter().any(|t| t.id == type_id) {
+            return type_id;
+        }
+        let mut ty = ElementType::new(type_id, assigned.entity.kind(), &resolved.ty.name);
+        ty.predefined_type = assigned.predefined.clone();
+        let (properties, as_text) = parameter_set(&resolved.definition, values, Scope::Type);
+        if !properties.is_empty() {
+            ty.property_sets
+                .push(PropertySet::new("ArchBuilder_Type", properties));
+        }
+        ty.property_sets.push(family_set(resolved));
+        if as_text > 0 {
+            self.lose_n(
+                reasons::FAMILY_PARAMETER_AS_TEXT,
+                assigned.entity.class(),
+                object,
+                as_text,
+            );
+        }
+        self.types.push(ty);
+        type_id
+    }
+
+    /// Makes `body` the shared geometry of the type `type_id` when it has none, and whether the
+    /// type holds `body`: an occurrence with that body maps the type's representation instead of
+    /// writing its own.
+    fn share_geometry(&mut self, type_id: u128, body: &Body) -> bool {
+        let Some(ty) = self.types.iter_mut().find(|t| t.id == type_id) else {
+            return false;
+        };
+        if ty.representation.is_none() {
+            ty.representation = Some(body.clone());
+            return true;
+        }
+        ty.representation.as_ref() == Some(body)
+    }
+
+    /// The occurrence's own data: its `ArchBuilder_Instance` set, the standard sets of its entity
+    /// where the category maps, and its element type.
+    fn occurrence(
         &mut self,
         element: &mut Element,
-        (resolved, assigned, kind): (&Resolved, Assignment, ElementKind),
-        values: &std::collections::BTreeMap<String, Evaluated>,
+        (resolved, assigned, type_id): (&Resolved, &Assignment, u128),
+        values: &BTreeMap<String, Evaluated>,
         object: &Object,
     ) {
-        self.family_properties(element, resolved, values, object);
+        let (properties, as_text) = parameter_set(&resolved.definition, values, Scope::Instance);
+        if !properties.is_empty() {
+            element
+                .property_sets
+                .push(PropertySet::new("ArchBuilder_Instance", properties));
+        }
+        if as_text > 0 {
+            self.lose_n(
+                reasons::FAMILY_PARAMETER_AS_TEXT,
+                assigned.entity.class(),
+                object,
+                as_text,
+            );
+        }
         if let Some(common) = match assigned.entity {
             Entity::Door => Some(("Pset_DoorCommon", "Qto_DoorBaseQuantities")),
             Entity::Window => Some(("Pset_WindowCommon", "Qto_WindowBaseQuantities")),
@@ -316,21 +431,7 @@ impl Mapper<'_> {
                     .push(arc_io_ifc::write::QuantitySet::new(common.1, quantities));
             }
         }
-        let type_id = resolved.ty.id.as_u128();
-        if !self.types.iter().any(|t| t.id == type_id) {
-            let mut ty = ElementType::new(type_id, kind, &resolved.ty.name);
-            ty.predefined_type = assigned.predefined;
-            self.types.push(ty);
-            if let Some(type_object) =
-                archbuilder_model::spatial::get(self.snapshot, resolved.ty.id)
-            {
-                self.lose(
-                    reasons::FAMILY_TYPE_SETS_ON_OCCURRENCE,
-                    assigned.entity.class(),
-                    &type_object,
-                );
-            }
-        }
+        element.property_sets.push(family_set(resolved));
         element.element_type = Some(type_id);
     }
 
@@ -366,9 +467,6 @@ impl Mapper<'_> {
                 );
             }
         };
-        let Some(kind) = assigned.entity.kind() else {
-            return self.lose(reasons::FAMILY_NOT_WRITTEN, assigned.entity.class(), object);
-        };
         let Ok(evaluation) = loaded::evaluate_in(
             self.snapshot,
             &resolved.definition,
@@ -388,8 +486,14 @@ impl Mapper<'_> {
         ) else {
             return self.lose(reasons::NOT_EXPORTED, assigned.entity.class(), object);
         };
+        let type_id = self.ensure_type(&resolved, &assigned, &evaluation.values, object);
         let storey_id = storey.as_u128();
-        let mut element = Element::new(object.id.as_u128(), kind, &name_of(object), storey_id);
+        let mut element = Element::new(
+            object.id.as_u128(),
+            assigned.entity.kind(),
+            &name_of(object),
+            storey_id,
+        );
         element.placement = frame.placement(wall.base_offset + insert.offset);
         element.predefined_type = assigned.predefined.clone();
         element.host = Some(arc_io_ifc::write::derived_id(
@@ -401,23 +505,16 @@ impl Mapper<'_> {
         element.overall_height = Some(item.height).filter(|h| *h > 0.0);
         // The right hand mirrors the family across its own left-right axis.
         let mirror = insert.hand == archbuilder_model::insert::Hand::Right;
-        let flip = arc_base::math::Transform3::from_matrix_unchecked(arc_base::math::Matrix4::new(
-            -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ));
         let mut solids = Vec::new();
         for s in &evaluation.solids {
             let moved = if mirror {
-                s.solid.transformed(
-                    &flip,
-                    &arc_base::Tolerance::DEFAULT,
-                    &arc_base::Limits::DEFAULT,
-                )
+                mirror_x(&s.solid)
             } else {
-                Ok(s.solid.clone())
+                Some(s.solid.clone())
             };
             match moved {
-                Ok(m) => solids.push(m),
-                Err(_) => {
+                Some(m) => solids.push(m),
+                None => {
                     return self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object);
                 }
             }
@@ -426,48 +523,14 @@ impl Mapper<'_> {
             Some(body) => element.body = Some(body),
             None => self.lose(reasons::BODY_NOT_EXPORTED, assigned.entity.class(), object),
         }
-        self.finish(
+        self.occurrence(
             &mut element,
-            (&resolved, assigned, kind),
+            (&resolved, &assigned, type_id),
             &evaluation.values,
             object,
         );
         self.elements.push(element);
         self.exported += 1;
-    }
-
-    /// The sets of the parameters and of the family on `element`; the values of the types the
-    /// IFC type system lacks are counted in the loss report.
-    pub(super) fn family_properties(
-        &mut self,
-        element: &mut Element,
-        resolved: &Resolved,
-        values: &std::collections::BTreeMap<String, Evaluated>,
-        object: &Object,
-    ) {
-        let mut as_text = 0;
-        for (name, scope) in [
-            ("ArchBuilder_Type", Scope::Type),
-            ("ArchBuilder_Instance", Scope::Instance),
-        ] {
-            let (properties, text) = parameter_set(&resolved.definition, values, scope);
-            as_text += text;
-            if !properties.is_empty() {
-                element
-                    .property_sets
-                    .push(PropertySet::new(name, properties));
-            }
-        }
-        element.property_sets.push(family_set(resolved));
-        if as_text > 0 {
-            self.lose_n(
-                reasons::FAMILY_PARAMETER_AS_TEXT,
-                assignment(&resolved.definition.header)
-                    .map_or("IFCPROPERTYSET", |a| a.entity.class()),
-                object,
-                as_text,
-            );
-        }
     }
 }
 
@@ -513,14 +576,18 @@ mod tests {
         assert_eq!(class(Category::Door), "IFCDOOR");
         assert_eq!(class(Category::Window), "IFCWINDOW");
         assert_eq!(class(Category::Column), "IFCCOLUMN");
-        // Proxies are the default of generic categories only.
-        let proxies: Vec<Category> = Category::ALL
+        // A proxy is never a default: the categories without an entity name none.
+        let none: Vec<Category> = Category::ALL
             .into_iter()
-            .filter(|c| default_of(*c).is_some_and(|d| d.0 == Entity::Proxy))
+            .filter(|c| default_of(*c).is_none())
             .collect();
         assert_eq!(
-            proxies,
-            vec![Category::GenericModel, Category::SpecialtyEquipment]
+            none,
+            vec![
+                Category::GenericModel,
+                Category::SpecialtyEquipment,
+                Category::Profile
+            ]
         );
     }
 
@@ -540,11 +607,36 @@ mod tests {
             (a.entity, a.predefined.as_deref()),
             (Entity::Furniture, Some("SHELF"))
         );
+        // A generic model writes the proxy only when it declares that entity.
+        let a = assignment(&header(
+            Category::GenericModel,
+            "IfcBuildingElementProxy",
+            "COMPLEX",
+        ))
+        .unwrap();
+        assert_eq!(
+            (a.entity, a.predefined.as_deref()),
+            (Entity::Proxy, Some("COMPLEX"))
+        );
+        assert_eq!(
+            assignment(&header(Category::Column, "IfcBeam", "BEAM"))
+                .unwrap()
+                .entity,
+            Entity::Beam
+        );
+        assert!(assignment(&header(Category::GenericModel, "", "")).is_err());
         // An entity this mapping does not know is refused, not replaced by a proxy.
         assert_eq!(
             assignment(&header(Category::Furniture, "IfcPump", "")),
             Err("IfcPump".to_owned())
         );
+    }
+
+    #[test]
+    fn every_entity_is_found_by_its_class() {
+        for entity in Entity::ALL {
+            assert_eq!(Entity::parse(entity.class()), Some(entity));
+        }
     }
 
     #[test]

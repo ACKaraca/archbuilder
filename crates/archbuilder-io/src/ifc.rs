@@ -255,7 +255,7 @@ impl Mapper<'_> {
             spatial::children(self.snapshot, archbuilder_model::types::COMPONENT, storey)
         {
             self.cancel.check()?;
-            self.component(&component, storey, level);
+            self.component(&component, storey);
         }
         Ok(())
     }

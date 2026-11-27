@@ -215,15 +215,17 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         json!({"name": "All walls", "objects": walls}),
     );
 
-    // A family instance has no IFC mapping yet: it is listed in the loss report.
+    // A generic model that names no IFC entity: it is listed in the loss report, not a proxy.
     {
+        use archbuilder_model::family::def::Category;
         use archbuilder_model::family::fixtures::table;
         use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
         use archbuilder_model::family::package::publish;
         let s = document.snapshot();
         let project = spatial::project(&s).unwrap().id;
         let storey = spatial::objects(&s, types::STOREY)[0].id;
-        let definition = table();
+        let mut definition = table();
+        definition.header.category = Category::GenericModel;
         let published = publish(
             &definition,
             None,

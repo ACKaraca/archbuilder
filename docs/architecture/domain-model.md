@@ -1044,8 +1044,9 @@ identifier (a rename follows too), parameters that were removed or retyped need 
 `update_preview` report without changing anything. `archbuilder.component.place` places an instance
 (the Component button of the Architecture tab); the Manage tab's Load family button opens a file
 dialog for `load`. A plan view draws a component's solids as cut parts and the symbolic geometry its
-definition shows at the view's detail level; the viewport draws the solids shown in 3D. Until the
-IFC mapping of family instances exists, the export lists each in the loss report.
+definition shows at the view's detail level; the viewport draws the solids shown in 3D. The
+IFC export writes each family instance with the entity its family declares; a generic model or
+specialty equipment that declares none is listed in the loss report.
 
 ## Selection and modify commands
 

@@ -42,6 +42,14 @@ fn is_product(entity: &str) -> bool {
         "IFCMEMBER",
         "IFCTRANSPORTELEMENT",
         "IFCPIPESEGMENT",
+        "IFCFURNITURE",
+        "IFCSANITARYTERMINAL",
+        "IFCLIGHTFIXTURE",
+        "IFCELECTRICAPPLIANCE",
+        "IFCUNITARYEQUIPMENT",
+        "IFCCOLUMN",
+        "IFCBEAM",
+        "IFCBUILDINGELEMENTPROXY",
     ]
     .iter()
     .any(|p| entity.starts_with(p) && !entity.ends_with("TYPE"))
@@ -221,6 +229,14 @@ fn kind_of(kind: ElementKind) -> &'static str {
         ElementKind::Member => "IFCMEMBER",
         ElementKind::TransportElement => "IFCTRANSPORTELEMENT",
         ElementKind::PipeSegment => "IFCPIPESEGMENT",
+        ElementKind::Furniture => "IFCFURNITURE",
+        ElementKind::SanitaryTerminal => "IFCSANITARYTERMINAL",
+        ElementKind::LightFixture => "IFCLIGHTFIXTURE",
+        ElementKind::ElectricAppliance => "IFCELECTRICAPPLIANCE",
+        ElementKind::UnitaryEquipment => "IFCUNITARYEQUIPMENT",
+        ElementKind::Column => "IFCCOLUMN",
+        ElementKind::Beam => "IFCBEAM",
+        ElementKind::BuildingElementProxy => "IFCBUILDINGELEMENTPROXY",
     }
 }
 

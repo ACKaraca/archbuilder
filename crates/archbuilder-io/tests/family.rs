@@ -1,18 +1,24 @@
-//! Family instances in the IFC export, until their mapping exists: each is listed in the loss
-//! report with an explicit reason, never written as a proxy, and the export stays valid.
+//! Family instances in the IFC export: each entity a family declares is written natively, with
+//! its type object (property sets, shared geometry as a representation map) and its occurrences;
+//! a family that names no entity is listed in the loss report, never written as a proxy. The
+//! export stays valid.
 
 #![allow(clippy::unwrap_used, reason = "test code")]
 
 use std::sync::Arc;
 
+use arc_base::Limits;
 use arc_base::id::Identifier;
 use arc_command::{Invocation, Invoker, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Header, Snapshot};
+use arc_io_ifc::{Parameter, ReadOptions};
 use archbuilder_io::{ExportOptions, export_ifc};
+use archbuilder_model::family::Version;
+use archbuilder_model::family::def::Category;
+use archbuilder_model::family::fixtures::{cabinet, table};
 use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
 use archbuilder_model::family::package::publish;
-use archbuilder_model::family::{Version, fixtures::table};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{COMPONENT, FAMILY, FAMILY_TYPE, STOREY};
 use serde_json::json;
@@ -20,6 +26,13 @@ use serde_json::json;
 fn place_family(
     definition: archbuilder_model::family::Definition,
     type_name: &'static str,
+) -> Document {
+    place_families(vec![(definition, type_name)])
+}
+
+/// Places one freestanding instance of each family type in one storey, the i-th at `[1, 1 + 4i]`.
+fn place_families(
+    placements: Vec<(archbuilder_model::family::Definition, &'static str)>,
 ) -> Document {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
@@ -46,50 +59,58 @@ fn place_family(
     let snapshot = document.snapshot();
     let project = spatial::project(&snapshot).unwrap().id;
     let storey = spatial::objects(&snapshot, STOREY)[0].id;
-    let published = publish(
-        &definition,
-        None,
-        Version {
-            major: 1,
-            minor: 0,
-            patch: 0,
-        },
-    )
-    .unwrap();
-    let definition = published.definition().unwrap();
+    let mut records = Vec::new();
+    for (index, (definition, type_name)) in placements.into_iter().enumerate() {
+        let published = publish(
+            &definition,
+            None,
+            Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let definition = published.definition().unwrap();
+        records.push((published, definition, type_name, index));
+    }
     document
         .submit(move |txn| {
             let header = |owner| Header {
                 owner: Some(owner),
                 ..Header::default()
             };
-            let family = arc_base::ObjectId::from_u128(0xF00D);
-            let ty = arc_base::ObjectId::from_u128(0xF00E);
-            let comp = arc_base::ObjectId::from_u128(0xF00F);
-            txn.create(
-                FAMILY,
-                family,
-                header(project),
-                Loaded::values(&published, &definition),
-            )?;
-            txn.create(
-                FAMILY_TYPE,
-                ty,
-                header(project),
-                FamilyType::record(type_name, family, &std::collections::BTreeMap::new()),
-            )?;
-            let c = Component {
-                id: comp,
-                storey: Some(storey),
-                name: "T1".into(),
-                family_type: ty,
-                offset: 0.0,
-                origin: [1.0, 1.0],
-                rotation: 0.0,
-                mirror: false,
-                values: std::collections::BTreeMap::new(),
-            };
-            txn.create(COMPONENT, comp, header(storey), c.record())
+            for (published, definition, type_name, index) in records {
+                let offset = u128::try_from(index).unwrap() * 0x10;
+                let family = arc_base::ObjectId::from_u128(0xF00D + offset);
+                let ty = arc_base::ObjectId::from_u128(0xF00E + offset);
+                let comp = arc_base::ObjectId::from_u128(0xF00F + offset);
+                txn.create(
+                    FAMILY,
+                    family,
+                    header(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    FAMILY_TYPE,
+                    ty,
+                    header(project),
+                    FamilyType::record(type_name, family, &std::collections::BTreeMap::new()),
+                )?;
+                let c = Component {
+                    id: comp,
+                    storey: Some(storey),
+                    name: "T1".into(),
+                    family_type: ty,
+                    offset: 0.0,
+                    origin: [1.0, 1.0 + 4.0 * f64::from(u32::try_from(index).unwrap())],
+                    rotation: 0.0,
+                    mirror: false,
+                    values: std::collections::BTreeMap::new(),
+                };
+                txn.create(COMPONENT, comp, header(storey), c.record())?;
+            }
+            Ok(())
         })
         .wait()
         .unwrap();
@@ -97,19 +118,26 @@ fn place_family(
 }
 
 #[test]
-fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
-    let document = place_family(table(), "1400x800");
+fn a_generic_model_without_an_entity_is_listed_and_never_a_proxy() {
+    let mut definition = table();
+    definition.header.category = Category::GenericModel;
+    let document = place_family(definition, "1400x800");
     let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
     assert!(export.valid);
     let text = String::from_utf8_lossy(&export.bytes);
     assert!(!text.contains("IFCBUILDINGELEMENTPROXY"), "no silent proxy");
-    let item = export
-        .report
-        .items
-        .iter()
-        .find(|i| i.reason == "ab.io.ifc.family_not_written")
-        .expect("the instance is in the loss report");
-    assert_eq!(item.reason, "ab.io.ifc.family_not_written");
+    assert!(
+        !text.contains("IFCFURNITURE("),
+        "no entity of another category"
+    );
+    assert!(
+        export
+            .report
+            .items
+            .iter()
+            .any(|i| i.reason == "ab.io.ifc.family_not_written"),
+        "the instance is in the loss report"
+    );
     // The mesh export writes the solids a component shows in 3D.
     let mesh = archbuilder_io::mesh::export_mesh(
         &document.snapshot(),
@@ -123,6 +151,98 @@ fn family_instances_are_listed_in_the_loss_report_and_never_become_proxies() {
     .unwrap();
     assert_eq!(mesh.elements, 1);
     assert!(mesh.triangles > 0);
+}
+
+/// The names of the property sets a type object holds in `HasPropertySets` (attribute 5 of
+/// `IfcTypeObject`), read back from the file.
+fn type_set_names(file: &arc_io_ifc::IfcFile, type_name: &str) -> Vec<String> {
+    let Some(instance) = file.instances_of(type_name).next() else {
+        return Vec::new();
+    };
+    let Parameter::List(sets) = &instance.records[0].parameters[5] else {
+        return Vec::new();
+    };
+    sets.iter()
+        .filter_map(|set| match set {
+            Parameter::Reference(name) => file.instance(*name),
+            _ => None,
+        })
+        .filter_map(|set| match set.records[0].parameters.get(2) {
+            Some(Parameter::Text(name)) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn furniture_casework_and_explicit_entities_are_written_natively() {
+    let document = place_families(vec![(table(), "1400x800"), (cabinet(), "600")]);
+    let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+    assert!(export.valid, "{:?}", export.report.items);
+    let text = String::from_utf8_lossy(&export.bytes);
+    for needle in [
+        "IFCFURNITURE(",
+        "IFCFURNITURETYPE(",
+        "IFCRELDEFINESBYTYPE(",
+        "IFCREPRESENTATIONMAP(",
+        "IFCMAPPEDITEM(",
+        "USERDEFINED",
+    ] {
+        assert!(text.contains(needle), "{needle}");
+    }
+    assert!(
+        text.matches("IFCMAPPEDITEM(").count() >= 2,
+        "both occurrences map the type's shape"
+    );
+    assert!(!text.contains("IFCBUILDINGELEMENTPROXY"), "no silent proxy");
+    assert!(
+        !export
+            .report
+            .items
+            .iter()
+            .any(|i| i.reason == "ab.io.ifc.family_not_written"),
+    );
+    let read = arc_io_ifc::read(
+        &export.bytes,
+        &mut ReadOptions::with_limits(Limits::DEFAULT),
+    )
+    .unwrap();
+    assert_eq!(
+        type_set_names(&read.file, "IFCFURNITURETYPE"),
+        vec![
+            "ArchBuilder_Type".to_owned(),
+            "ArchBuilder_Family".to_owned()
+        ],
+        "the type's sets are on the type object"
+    );
+    assert!(read.file.instances_of("IFCRELDEFINESBYPROPERTIES").count() > 0);
+    if let Ok(dir) = std::env::var("AB_IFC_OUT") {
+        std::fs::write(
+            std::path::Path::new(&dir).join("furniture.ifc"),
+            &export.bytes,
+        )
+        .unwrap();
+    }
+    // Each explicit entity of a family is written as its own IFC class.
+    for (entity, class) in [
+        ("IfcSanitaryTerminal", "IFCSANITARYTERMINAL("),
+        ("IfcLightFixture", "IFCLIGHTFIXTURE("),
+        ("IfcElectricAppliance", "IFCELECTRICAPPLIANCE("),
+        ("IfcUnitaryEquipment", "IFCUNITARYEQUIPMENT("),
+        ("IfcColumn", "IFCCOLUMN("),
+        ("IfcBeam", "IFCBEAM("),
+        ("IfcBuildingElementProxy", "IFCBUILDINGELEMENTPROXY("),
+    ] {
+        let mut definition = table();
+        definition.header.ifc_entity = entity.to_owned();
+        let document = place_family(definition, "1400x800");
+        let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+        assert!(export.valid, "{entity}: {:?}", export.report.items);
+        let text = String::from_utf8_lossy(&export.bytes);
+        assert!(text.contains(class), "{entity}");
+        assert!(text.contains("IFCRELDEFINESBYTYPE("), "{entity}");
+        assert!(text.contains("IFCMAPPEDITEM("), "{entity}");
+    }
 }
 
 #[test]
