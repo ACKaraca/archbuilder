@@ -891,6 +891,61 @@ fn polygons_of(region: &Region) -> Vec<Vec<P>> {
         .collect()
 }
 
+/// `polys` with the polygon `extra` united with the polygon of `layer` it touches; with no such
+/// polygon it becomes one of that layer, taking the attributes of the first of the layer.
+#[must_use]
+pub fn unite_into(mut polys: Vec<Poly>, layer: usize, extra: Vec<P>) -> Vec<Poly> {
+    for p in polys.iter_mut().filter(|p| p.layer == layer) {
+        if boxes_meet_touching(bbox(&p.points), bbox(&extra))
+            && let Some(u) = combine(&p.points, &extra, BooleanOp::Union)
+            && let [single] = u.as_slice()
+        {
+            p.points = single.clone();
+            return polys;
+        }
+    }
+    if let Some(first) = polys.iter().find(|p| p.layer == layer).cloned() {
+        polys.push(Poly {
+            points: extra,
+            ..first
+        });
+    }
+    polys
+}
+
+/// The polygons `polys` with those of one layer of one record that touch united into one: the
+/// facets of an arc wall. `owner` names the record of a polygon's wall index.
+#[must_use]
+pub fn merge_touching(
+    polys: Vec<Poly>,
+    owner: &dyn Fn(usize) -> Option<arc_base::ObjectId>,
+) -> Vec<Poly> {
+    let mut out: Vec<Poly> = Vec::with_capacity(polys.len());
+    for p in polys {
+        let mut merged = false;
+        for q in out.iter_mut().rev() {
+            if q.layer != p.layer
+                || q.core != p.core
+                || owner(q.wall) != owner(p.wall)
+                || !boxes_meet_touching(bbox(&q.points), bbox(&p.points))
+            {
+                continue;
+            }
+            if let Some(u) = combine(&q.points, &p.points, BooleanOp::Union)
+                && let [single] = u.as_slice()
+            {
+                q.points = single.clone();
+                merged = true;
+                break;
+            }
+        }
+        if !merged {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// `a` combined with `b` by `op`, as polygons; `None` when the kernel refuses either.
 fn combine(a: &[P], b: &[P], op: BooleanOp) -> Option<Vec<Vec<P>>> {
     let (ra, rb) = (region(a)?, region(b)?);
@@ -1315,7 +1370,7 @@ fn boxes_meet_touching(a: [f64; 4], b: [f64; 4]) -> bool {
 }
 
 /// `poly` less the polygon `cut`: what is left of it, as polygons of the same layer.
-fn subtract(poly: Poly, cut: &[P]) -> Vec<Poly> {
+pub(crate) fn subtract(poly: Poly, cut: &[P]) -> Vec<Poly> {
     if !boxes_meet(bbox(&poly.points), bbox(cut)) {
         return vec![poly];
     }
@@ -1428,6 +1483,8 @@ mod tests {
             location: LocationLine::Center,
             start_join: JoinStyle::Auto,
             end_join: JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         }
     }
 

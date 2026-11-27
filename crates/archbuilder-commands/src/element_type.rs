@@ -55,6 +55,9 @@ const GENERIC_WALL: Msg = Msg {
 const CURTAIN_WALL: Msg = Msg {
     message_id: "ab-type-wall-curtain",
 };
+const STACKED_WALL: Msg = Msg {
+    message_id: "ab-type-wall-stacked",
+};
 const CAVITY_WALL: Msg = Msg {
     message_id: "ab-type-wall-cavity",
 };
@@ -302,6 +305,72 @@ fn create_type(
 ) -> Result<ObjectId> {
     let owner = project(ctx.txn()?.snapshot())?;
     create(ctx, kind.key(), Some(owner), values)
+}
+
+/// Creates a stacked wall type named `name` (or the first free `Stacked wall`) of `stack`: its
+/// layers are those of the variable segment, so the stacked wall has one thickness for placement,
+/// joins and hosting.
+///
+/// # Errors
+/// `ab.model.wall_stack_invalid` for a stack that breaks the rules; the transaction's errors.
+pub(crate) fn create_stacked_type(
+    ctx: &mut Context<'_>,
+    name: Option<&str>,
+    stack: &[et::StackEntry],
+) -> Result<ObjectId> {
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wanted = name.map(str::trim).filter(|t| !t.is_empty()).map_or_else(
+        || Names::new(&language(ctx)).text(&STACKED_WALL, &[]),
+        str::to_owned,
+    );
+    let invalid = |reason: &str| {
+        Error::new(archbuilder_model::error::codes::WALL_STACK_INVALID)
+            .with_arg("name", wanted.clone())
+            .with_arg("reason", reason)
+    };
+    if stack.len() < 2 || stack.len() > et::MAX_STACK {
+        return Err(invalid("count"));
+    }
+    if stack.iter().filter(|e| e.height <= 0.0).count() != 1
+        || stack
+            .iter()
+            .any(|e| !e.height.is_finite() || e.height < 0.0)
+    {
+        return Err(invalid("variable"));
+    }
+    let mut parts = Vec::new();
+    for e in stack {
+        let ty = spatial::get(&snapshot, e.type_id)
+            .filter(|t| spatial::type_of(&snapshot, t.id).as_deref() == Some(TypeKind::Wall.key()))
+            .filter(|t| {
+                et::StackEntry::of(&t.values).is_empty()
+                    && archbuilder_model::curtain::CurtainType::from_values(&t.values).is_none()
+            })
+            .ok_or_else(|| invalid("kind"))?;
+        let wall = WallType::from_values(&ty.values).ok_or_else(|| invalid("kind"))?;
+        parts.push(wall);
+    }
+    let thickness = parts[0].layers.total();
+    if parts
+        .iter()
+        .any(|p| (p.layers.total() - thickness).abs() > 1.0e-6)
+    {
+        return Err(invalid("thickness"));
+    }
+    let variable = stack
+        .iter()
+        .position(|e| e.height <= 0.0)
+        .and_then(|k| parts.get(k))
+        .ok_or_else(|| invalid("variable"))?;
+    let n = Names::new(&language(ctx));
+    let name = free_name(&snapshot, TypeKind::Wall, &wanted, &n);
+    let id = create_type(ctx, TypeKind::Wall, et::wall_type_values(&name, variable))?;
+    ctx.txn()?.modify(
+        id,
+        arc_doc::FieldPath::new("stack"),
+        Some(et::StackEntry::value(stack)),
+    )?;
+    Ok(id)
 }
 
 /// Creates the default types of a new project, named in the interface language: three wall

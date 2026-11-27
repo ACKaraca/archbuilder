@@ -51,6 +51,18 @@ ab-model-roof-unclosed = No continuous surface covers the roof "{ $name }" near 
 ab-model-roof-degenerate = The surface of the roof "{ $name }" could not be computed reliably near ({ $x }, { $y }). Remove very short or nearly parallel edges there.
 ab-model-wall-attach-failed = The wall "{ $name }" cannot follow the underside of "{ $target }": part of it is outside it, or the underside comes down to the wall's base. It keeps its own top until that changes.
 ab-model-wall-attach-target = The wall "{ $name }" can attach its top only to a roof or a floor of its building.
+ab-model-wall-shape-invalid = The wall "{ $name }" has a shape that makes no solid: the inner face of an arc wall needs a radius of at least 5 cm, a leaning wall must keep a thickness at its top, and an arc wall cannot lean.
+ab-model-wall-profile-invalid = The profile of the wall "{ $name }" is not usable: every loop needs three points or more and no crossing edges, the outline must lie inside the wall's rectangle, and the openings inside the outline.
+ab-model-wall-profile-inserts = The profile would leave { $count } door or window openings of the wall "{ $name }" outside the wall: { $inserts }.
+ab-model-wall-shape-combination = The wall "{ $name }" cannot combine { $first } with { $second }.
+ab-model-wall-band-invalid = A band of the wall "{ $name }" does not fit it: its range must lie within the wall and its width and depth must be positive numbers.
+ab-model-wall-stack-invalid = The stacked wall type "{ $name }" cannot be made: { $reason ->
+    [count] it needs from two to sixteen segments.
+    [variable] exactly one segment must have a variable height.
+    [kind] a segment must be a basic wall type that is not itself stacked.
+    [thickness] every segment must have the same total thickness.
+    *[other] a segment is not usable.
+}
 ab-model-ceiling-malformed = The ceiling "{ $name }" has no usable boundary: each loop needs at least three points inside the allowed range, and its edges must be readable.
 ab-model-ceiling-boundary = The boundary of the ceiling "{ $name }" is not usable: a loop crosses or touches itself, an edge is shorter than a millimeter, or the area is out of range. Redraw it.
 ab-model-ceiling-edge-unsupported = An edge of the ceiling "{ $name }" follows the wall "{ $wall }" but runs past its ends: the wall no longer bounds the ceiling there.

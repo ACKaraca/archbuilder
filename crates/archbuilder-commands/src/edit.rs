@@ -180,8 +180,14 @@ fn wall_at(
         .map(|(id, w)| (wall_distance(&w, p), id, w))
         .filter(|(d, _, _)| *d <= radius)
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id, w)| (id, w))
         .ok_or_else(|| Error::new(codes::NO_WALL_AT))
+        .and_then(|(_, id, w)| {
+            if w.is_arc() {
+                Err(Error::new(codes::ARC_WALL_UNSUPPORTED).with_arg("name", name_of(snapshot, id)))
+            } else {
+                Ok((id, w))
+            }
+        })
 }
 
 /// A straight line an element offers to align or trim to: a face or the center line of a wall,
@@ -197,7 +203,7 @@ struct Line {
 fn lines(snapshot: &Snapshot, storey: ObjectId) -> Vec<Line> {
     let mut out = Vec::new();
     for object in spatial::walls(snapshot, storey).iter().take(MAX_OBJECTS) {
-        let Some(w) = Wall::from_values(&object.values) else {
+        let Some(w) = Wall::from_values(&object.values).filter(|w| !w.is_arc()) else {
             continue;
         };
         let f = w.plain_footprint();
@@ -519,6 +525,11 @@ fn plan_offset(
                 .map(|w| (*id, w))
         })
         .collect();
+    if let Some((id, _)) = walls.iter().find(|(_, w)| w.is_arc()) {
+        return Err(
+            Error::new(codes::ARC_WALL_UNSUPPORTED).with_arg("name", name_of(snapshot, *id))
+        );
+    }
     let floors: Vec<(ObjectId, Floor, Vec<Vec<P>>)> = floor_ids
         .iter()
         .take(MAX_OBJECTS)

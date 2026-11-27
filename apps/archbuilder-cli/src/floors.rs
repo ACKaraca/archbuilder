@@ -31,6 +31,11 @@ pub(crate) fn wall_of(object: &Value) -> Option<Wall> {
             .unwrap_or_default(),
         start_join: JoinStyle::default(),
         end_join: JoinStyle::default(),
+        bulge: number(v, "bulge").unwrap_or(0.0),
+        lean: [
+            number(v, "lean_exterior").unwrap_or(0.0),
+            number(v, "lean_interior").unwrap_or(0.0),
+        ],
     })
 }
 

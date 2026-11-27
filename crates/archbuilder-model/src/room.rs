@@ -1064,6 +1064,8 @@ mod tests {
             location: LocationLine::Center,
             start_join: JoinStyle::Auto,
             end_join: JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         }
     }
 

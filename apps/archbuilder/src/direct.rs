@@ -832,7 +832,7 @@ fn ghost(
     let mut out = Vec::new();
     if !copy {
         for wall in archbuilder_commands::modify::preview(snapshot, objects, xf) {
-            out.push(closed(&wall.plain_footprint()));
+            out.push(closed(&wall.plain_outline()));
         }
     }
     for id in objects.iter().take(2000) {
@@ -841,11 +841,7 @@ fn ghost(
         };
         if let Some(wall) = Wall::from_values(&object.values) {
             if copy {
-                let moved: Vec<V2> = wall
-                    .plain_footprint()
-                    .iter()
-                    .map(|p| xf.point(*p))
-                    .collect();
+                let moved: Vec<V2> = wall.plain_outline().iter().map(|p| xf.point(*p)).collect();
                 out.push(closed(&moved));
             }
         } else if let Some(boundary) =
@@ -1269,7 +1265,7 @@ impl Direct {
                 out.ghost = archbuilder_commands::modify::preview_end(snapshot, *wall, *end, to)
                     .iter()
                     .map(|wall| {
-                        let f = wall.plain_footprint();
+                        let f = wall.plain_outline();
                         ProductOverlay::Path {
                             points: f.iter().chain(f.first()).map(|p| p3(*p, w.base)).collect(),
                             dashed: true,

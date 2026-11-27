@@ -288,11 +288,42 @@ pub fn openings_of(snapshot: &Snapshot, id: arc_base::ObjectId) -> Vec<Insert> {
     out
 }
 
+/// A straight wall that stands for the stretch of an arc wall around `item`: tangent to the
+/// baseline at the insert's center, with the insert at its middle, and the insert in its own
+/// distances. An insert in an arc wall is made on this tangent frame (its opening is faceted to
+/// the chord within the arc's sagitta over the opening's width). A straight wall is its own.
+#[must_use]
+pub fn on_arc(wall: &Wall, item: &Insert) -> (Wall, Insert) {
+    if !wall.is_arc() {
+        return (*wall, *item);
+    }
+    let at = item.distance.clamp(0.0, wall.length());
+    let (c, t) = (wall.point_at(at), wall.tangent_at(at));
+    let half = item.width / 2.0 + item.frame_width + 0.1;
+    let straight = Wall {
+        start: [c[0] - t[0] * half, c[1] - t[1] * half],
+        end: [c[0] + t[0] * half, c[1] + t[1] * half],
+        bulge: 0.0,
+        ..*wall
+    };
+    (
+        straight,
+        Insert {
+            distance: half,
+            ..*item
+        },
+    )
+}
+
 /// The stretch of the baseline, as distances from its start, where the joined solid with the
 /// corners `footprint` has both faces: between the inner corners of the two ends.
 #[must_use]
 pub fn clear_span(wall: &Wall, footprint: [[f64; 2]; 4]) -> (f64, f64) {
     let length = wall.length();
+    if wall.is_arc() {
+        // The footprint's ends are cut radially: the faces are as long as the baseline.
+        return (0.0, length);
+    }
     if length <= 0.0 {
         return (0.0, 0.0);
     }
@@ -325,6 +356,10 @@ fn meets_wall(
     name: &str,
 ) -> Option<Error> {
     let storey = wall_object.header.owner?;
+    if wall.is_arc() {
+        // shortcut: a wall meeting an arc wall's opening is not checked, until arcs have a T test.
+        return None;
+    }
     let axes = Axes::new(wall, 0.0).ok()?;
     let (from, to) = item.extent();
     for other in spatial::walls(snapshot, storey) {
@@ -403,6 +438,20 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     if item.width < bar || item.height < bar {
         out.push(Error::new(codes::INSERT_FRAME).with_arg("name", name.clone()));
     }
+    if let Some(profile) = crate::wall::Profile::of(&wall_object.values)
+        && profile.fits(wall.length(), wall.height)
+    {
+        let (from, to) = item.extent();
+        if !profile.holds((from, to), (item.sill, item.top())) {
+            out.push(
+                Error::new(codes::INSERT_OUTSIDE)
+                    .with_arg("name", name.clone())
+                    .with_arg("wall", host.clone())
+                    .with_arg("from", format!("{from:.2}"))
+                    .with_arg("to", format!("{to:.2}")),
+            );
+        }
+    }
     if let Some((low, high)) = clear_span_of(snapshot, &wall_object) {
         let (from, to) = item.extent();
         if from < low + SIDE_CLEARANCE || to > high - SIDE_CLEARANCE {
@@ -480,6 +529,20 @@ pub(crate) struct Axes {
     pub(crate) low: f64,
     pub(crate) high: f64,
     pub(crate) base: f64,
+    /// The arc wall these axes are of: points along the baseline follow the arc.
+    pub(crate) arc: Option<Wall>,
+}
+
+fn axes_copy(a: &Axes) -> Axes {
+    Axes {
+        origin: a.origin,
+        u: a.u,
+        n: a.n,
+        low: a.low,
+        high: a.high,
+        base: a.base,
+        arc: a.arc,
+    }
 }
 
 impl Axes {
@@ -488,9 +551,11 @@ impl Axes {
         if !(length >= types::MIN_WALL_LENGTH && length.is_finite()) {
             return Err(Error::new(codes::WALL_TOO_SHORT).with_arg("name", ""));
         }
+        // An arc wall has no frame of its own: this one is of its chord.
+        let chord = wall.chord().max(f64::MIN_POSITIVE);
         let u = [
-            (wall.end[0] - wall.start[0]) / length,
-            (wall.end[1] - wall.start[1]) / length,
+            (wall.end[0] - wall.start[0]) / chord,
+            (wall.end[1] - wall.start[1]) / chord,
         ];
         let (low, high) = wall.extent();
         Ok(Self {
@@ -500,11 +565,17 @@ impl Axes {
             low,
             high,
             base: level + wall.base_offset,
+            arc: wall.is_arc().then_some(*wall),
         })
     }
 
-    /// The plan point `x` along the baseline and `y` to the left of it.
+    /// The plan point `x` along the baseline (along the arc for an arc wall) and `y` to the
+    /// left of it.
     pub(crate) fn at(&self, x: f64, y: f64) -> Point2 {
+        if let Some(wall) = &self.arc {
+            let (p, t) = (wall.point_at(x), wall.tangent_at(x));
+            return Point2::new(p[0] - t[1] * y, p[1] + t[0] * y);
+        }
         Point2::new(
             self.origin[0] + self.u[0] * x + self.n[0] * y,
             self.origin[1] + self.u[1] * x + self.n[1] * y,
@@ -577,6 +648,24 @@ fn profile(item: &Insert, from: f64, to: f64, tolerance: &Tolerance) -> Result<R
 /// The errors of the solid kernel: an opening outside the supported case (see
 /// [`arc_geom::PrismTool`]) is refused, never cut wrongly.
 pub fn cut(wall: &Wall, level: f64, solid: Polyhedron, inserts: &[Insert]) -> Result<Polyhedron> {
+    if wall.is_arc() {
+        let mut current = solid;
+        for (k, item) in inserts.iter().enumerate() {
+            let (straight, local) = on_arc(wall, item);
+            current = cut_straight(&straight, level, current, &[local], k)?;
+        }
+        return Ok(current);
+    }
+    cut_straight(wall, level, solid, inserts, 0)
+}
+
+fn cut_straight(
+    wall: &Wall,
+    level: f64,
+    solid: Polyhedron,
+    inserts: &[Insert],
+    first: usize,
+) -> Result<Polyhedron> {
     if inserts.is_empty() {
         return Ok(solid);
     }
@@ -599,7 +688,7 @@ pub fn cut(wall: &Wall, level: f64, solid: Polyhedron, inserts: &[Insert]) -> Re
             start: -axes.high - OVERSHOOT,
             end: -axes.low + OVERSHOOT,
             chord: CHORD,
-            opening: u32::try_from(k).unwrap_or(u32::MAX),
+            opening: u32::try_from(first + k).unwrap_or(u32::MAX),
             allow_split: false,
         };
         current = current.subtract_prism(&tool, &tolerance, &Limits::DEFAULT)?;
@@ -654,7 +743,14 @@ pub fn gross_solid(
     footprint: [[f64; 2]; 4],
     level: f64,
 ) -> Result<Polyhedron> {
+    if let Some(profile) = crate::wall::Profile::of(&object.values)
+        && profile.fits(wall.length(), wall.height)
+    {
+        return profile.solid(wall, level, wall.extent());
+    }
     if let Some((_, surface)) = attached_roof(snapshot, object)
+        && !wall.leans()
+        && !wall.is_arc()
         && let Ok(solid) = crate::wall::under_roof(wall, footprint, level, &surface)
     {
         return Ok(solid);
@@ -685,6 +781,8 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
     if item.kind == Kind::Opening {
         return Ok(Vec::new());
     }
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let tolerance = Tolerance::DEFAULT;
     let boxed = |x: (f64, f64), y: (f64, f64), z: (f64, f64)| -> Result<Polyhedron> {
@@ -787,6 +885,8 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
 /// # Errors
 /// `ab.model.wall_too_short` for a wall without a length.
 pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]>>> {
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let z = axes.base + 1.0;
     let at = |x: f64, y: f64| {
@@ -891,6 +991,8 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
 /// # Errors
 /// `ab.model.wall_too_short` for a wall without a length.
 pub fn outline(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]>>> {
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let (x0, x1) = item.extent();
     let at = |x: f64, y: f64, z: f64| {
@@ -971,10 +1073,26 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
             ) else {
                 continue;
             };
+            let (lo, ld, axes, item) = match walls.iter().find(|w| w.0.id == host.id) {
+                Some((_, wall, ..)) if wall.is_arc() => {
+                    // An arc wall's opening is picked on its tangent frame.
+                    let level = host
+                        .header
+                        .owner
+                        .and_then(|id| spatial::get(snapshot, id))
+                        .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
+                    let (straight, local_item) = on_arc(wall, &item);
+                    match local(&straight, level) {
+                        Some((a, b, c)) => (a, b, c, local_item),
+                        None => continue,
+                    }
+                }
+                _ => (*lo, *ld, axes_copy(axes), item),
+            };
             let (x0, x1) = item.extent();
             if let Some(t) = enters(
-                *lo,
-                *ld,
+                lo,
+                ld,
                 [x0, axes.low, item.sill],
                 [x1, axes.high, item.top()],
             ) && best.is_none_or(|(b, _, _)| t < b)
@@ -986,7 +1104,8 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
     let (t, id, host) = best?;
     // A wall in front of the opening, other than its own, hides it.
     let hidden = walls.iter().any(|(object, wall, lo, ld, axes)| {
-        object.id != host
+        !wall.is_arc()
+            && object.id != host
             && enters(
                 *lo,
                 *ld,

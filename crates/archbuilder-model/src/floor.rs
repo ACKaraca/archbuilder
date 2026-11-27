@@ -530,8 +530,11 @@ impl Floor {
     /// The boundary read from the record's own wall data in `snapshot`.
     #[must_use]
     pub fn boundary_in(&self, snapshot: &Snapshot) -> Option<Boundary> {
+        // An edge cannot follow the face of an arc wall: it is left unresolved and reported.
         self.boundary(&|id| {
-            crate::spatial::get(snapshot, id).and_then(|o| Wall::from_values(&o.values))
+            crate::spatial::get(snapshot, id)
+                .and_then(|o| Wall::from_values(&o.values))
+                .filter(|w| !w.is_arc())
         })
     }
 
@@ -1325,6 +1328,8 @@ pub fn storey_walls(snapshot: &Snapshot, storey: ObjectId) -> Vec<(ObjectId, Wal
         .iter()
         .filter_map(|o| Wall::from_values(&o.values).map(|w| (o.id, w)))
         .filter(|(_, w)| w.length() >= MIN_WALL_LENGTH)
+        // An arc wall bounds rooms by its facets.
+        .flat_map(|(id, w)| w.facets().into_iter().map(move |f| (id, f)))
         .collect()
 }
 
@@ -1813,6 +1818,8 @@ mod tests {
             location: LocationLine::Center,
             start_join: JoinStyle::Auto,
             end_join: JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         }
     }
 
@@ -2011,6 +2018,8 @@ mod tests {
             location: crate::wall::LocationLine::Center,
             start_join: crate::wall::JoinStyle::Auto,
             end_join: crate::wall::JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         };
         let v = |x: f64, y: f64, edge: Option<Association>| Vertex {
             loop_index: 0,

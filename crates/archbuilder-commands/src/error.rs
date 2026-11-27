@@ -222,6 +222,12 @@ pub mod codes {
         category: Category::NotFound,
         message_id: "ab-cmd-no-wall-at",
     };
+    /// The command is for straight walls and the wall is an arc.
+    pub const ARC_WALL_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.arc_wall_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-arc-wall-unsupported",
+    };
     /// No wall face, wall center line or floor edge lies at the picked point.
     pub const NO_LINE_AT: ErrorCode = ErrorCode {
         code: "ab.cmd.no_line_at",

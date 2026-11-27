@@ -780,6 +780,36 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "bulge",
+        Message {
+            message_id: "ab-prop-wall-bulge",
+        },
+    ),
+    (
+        "lean_exterior",
+        Message {
+            message_id: "ab-prop-wall-lean-exterior",
+        },
+    ),
+    (
+        "lean_interior",
+        Message {
+            message_id: "ab-prop-wall-lean-interior",
+        },
+    ),
+    (
+        "wall_profile",
+        Message {
+            message_id: "ab-prop-wall-profile",
+        },
+    ),
+    (
+        "wall_bands",
+        Message {
+            message_id: "ab-prop-wall-bands",
+        },
+    ),
+    (
         "floor_area",
         Message {
             message_id: "ab-prop-floor-area",
@@ -1824,6 +1854,33 @@ fn shown(
             for (field, value) in joins {
                 fields.push(field);
                 values.push(value);
+            }
+            // The shape of the wall: the bulge of an arc and the lean of each face are edited
+            // here; the profile and the bands are edited by their commands and shown as a count.
+            for at in [
+                types::wall::BULGE,
+                types::wall::LEAN_EXTERIOR,
+                types::wall::LEAN_INTERIOR,
+            ] {
+                if let Some(decl) = decl.schema.fields.get(at) {
+                    fields.push(decl.clone());
+                    values.push(object.values.get(at).cloned().flatten());
+                }
+            }
+            if let Some(profile) = archbuilder_model::wall::Profile::of(&object.values) {
+                let points: usize = profile.loops.iter().map(Vec::len).sum();
+                fields.push(text_field("wall_profile"));
+                values.push(Some(Value::String(format!(
+                    "{points} / {}",
+                    profile.loops.len().saturating_sub(1)
+                ))));
+                read_only.push("wall_profile".to_owned());
+            }
+            let bands = archbuilder_model::wall::Band::of(&object.values).len();
+            if bands > 0 {
+                fields.push(text_field("wall_bands"));
+                values.push(Some(Value::String(bands.to_string())));
+                read_only.push("wall_bands".to_owned());
             }
             // Last: the fields above are found by their positions in the record.
             with_type(

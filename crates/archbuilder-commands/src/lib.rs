@@ -44,6 +44,7 @@ pub mod stats;
 pub mod structure;
 pub mod view;
 pub mod wall;
+pub mod wall_shape;
 
 use std::sync::Arc;
 
@@ -91,6 +92,7 @@ pub fn registry() -> Result<Registry> {
     let mut registry = Registry::new();
     structure::register(&mut registry)?;
     wall::register(&mut registry)?;
+    wall_shape::register(&mut registry)?;
     insert::register(&mut registry)?;
     floor::register(&mut registry)?;
     floor_edge::register(&mut registry)?;

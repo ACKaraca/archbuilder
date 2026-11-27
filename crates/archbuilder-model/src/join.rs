@@ -547,8 +547,22 @@ pub fn footprints(walls: &[Wall]) -> Vec<[P; 4]> {
     out
 }
 
-/// The footprints of the walls of one storey at one snapshot, by wall.
-type Storey = std::collections::BTreeMap<arc_base::ObjectId, [P; 4]>;
+/// The straight walls of `walls` with every arc wall divided into its facets (see
+/// [`Wall::facets`]), and for each wall of `walls` the range of the result that is its own.
+#[must_use]
+pub fn expand(walls: &[Wall]) -> (Vec<Wall>, Vec<std::ops::Range<usize>>) {
+    let mut out = Vec::with_capacity(walls.len());
+    let mut ranges = Vec::with_capacity(walls.len());
+    for w in walls {
+        let from = out.len();
+        out.extend(w.facets());
+        ranges.push(from..out.len());
+    }
+    (out, ranges)
+}
+
+/// The footprints of the walls of one storey at one snapshot, by wall: one per facet.
+type Storey = std::collections::BTreeMap<arc_base::ObjectId, Vec<[P; 4]>>;
 
 /// The most storeys whose footprints the cache keeps.
 const CACHE_STOREYS: usize = 64;
@@ -573,7 +587,37 @@ fn storey_footprints(snapshot: &arc_doc::Snapshot, storey: arc_base::ObjectId) -
             walls.push(data);
         }
     }
-    ids.into_iter().zip(footprints(&walls)).collect()
+    let (flat, ranges) = expand(&walls);
+    let feet = footprints(&flat);
+    ids.into_iter()
+        .zip(ranges)
+        .map(|(id, r)| (id, feet.get(r).map(<[_]>::to_vec).unwrap_or_default()))
+        .collect()
+}
+
+/// The ends of an arc wall's facet footprints as one footprint: an end that is joined has the
+/// corners of its facet; an end that is free is cut radially, as [`Wall::plain_footprint`] has it.
+/// A straight wall has its own footprint.
+#[must_use]
+pub fn carrier(own: &Wall, feet: &[[P; 4]]) -> Option<[P; 4]> {
+    let (first, last) = (feet.first()?, feet.last()?);
+    if !own.is_arc() {
+        return Some(*first);
+    }
+    let facets = own.facets();
+    let (f0, f1) = (
+        facets.first()?.plain_footprint(),
+        facets.last()?.plain_footprint(),
+    );
+    let plain = own.plain_footprint();
+    let start_free = first[0] == f0[0] && first[3] == f0[3];
+    let end_free = last[1] == f1[1] && last[2] == f1[2];
+    Some([
+        if start_free { plain[0] } else { first[0] },
+        if end_free { plain[1] } else { last[1] },
+        if end_free { plain[2] } else { last[2] },
+        if start_free { plain[3] } else { first[3] },
+    ])
 }
 
 /// The joined footprint of one wall record: the corners of [`footprints`] over the walls of its
@@ -605,9 +649,42 @@ pub fn footprint_of(snapshot: &arc_doc::Snapshot, object: &arc_doc::Object) -> O
     });
     Some(
         feet.get(&object.id)
-            .copied()
+            .and_then(|f| carrier(&own, f))
             .unwrap_or_else(|| own.plain_footprint()),
     )
+}
+
+/// The joined footprints of the facets of one wall record (one for a straight wall), in order
+/// from the start of the baseline; see [`Wall::facets`]. `None` when the record is not a
+/// readable wall.
+#[must_use]
+pub fn facet_footprints_of(
+    snapshot: &arc_doc::Snapshot,
+    object: &arc_doc::Object,
+) -> Option<Vec<[P; 4]>> {
+    let own = Wall::from_values(&object.values)?;
+    let plain = || own.facets().iter().map(Wall::plain_footprint).collect();
+    let Some(storey) = object.header.owner else {
+        return Some(plain());
+    };
+    let cached = CACHE.lock().ok().and_then(|cache| {
+        cache
+            .iter()
+            .find(|(s, snap, _)| *s == storey && snap.ptr_eq(snapshot))
+            .map(|(_, _, f)| std::sync::Arc::clone(f))
+    });
+    let feet = cached.unwrap_or_else(|| {
+        let feet = std::sync::Arc::new(storey_footprints(snapshot, storey));
+        if let Ok(mut cache) = CACHE.lock() {
+            cache.retain(|(s, snap, _)| *s != storey || snap.ptr_eq(snapshot));
+            if cache.len() >= CACHE_STOREYS {
+                cache.remove(0);
+            }
+            cache.push((storey, snapshot.clone(), std::sync::Arc::clone(&feet)));
+        }
+        feet
+    });
+    Some(feet.get(&object.id).cloned().unwrap_or_else(plain))
 }
 
 /// [`footprint_of`] without the cache: every call joins the whole storey again.
@@ -620,7 +697,7 @@ pub fn footprint_uncached(
     let storey = object.header.owner?;
     storey_footprints(snapshot, storey)
         .get(&object.id)
-        .copied()
+        .and_then(|f| carrier(&own, f))
         .or_else(|| Some(own.plain_footprint()))
 }
 
@@ -716,6 +793,8 @@ mod tests {
             location,
             start_join: JoinStyle::Auto,
             end_join: JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         }
     }
 

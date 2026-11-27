@@ -2785,6 +2785,8 @@ mod tests {
             location: crate::wall::LocationLine::Center,
             start_join: crate::wall::JoinStyle::Auto,
             end_join: crate::wall::JoinStyle::Auto,
+            bulge: 0.0,
+            lean: [0.0; 2],
         };
         let layout = Layout::of(&ty, &[], 4.0, 4.0);
         let none = [(false, false); 2];

@@ -40,6 +40,9 @@ use crate::structure::{LANGUAGE_SETTING, create, ensure_valid, expect, language,
 
 /// The identifier of the create-wall command.
 pub const WALL_CREATE: &str = "archbuilder.wall.create";
+/// The identifier of the create-wall command that draws arc walls: the same command with the
+/// arc switch of its prompts on (the keyword `arc` switches it off).
+pub const WALL_CREATE_ARC: &str = "archbuilder.wall.create_arc";
 /// The identifier of the delete-wall command.
 pub const WALL_DELETE: &str = "archbuilder.wall.delete";
 /// The identifier of the command that flips walls to the other side of their location line.
@@ -146,6 +149,15 @@ pub struct CreateWall {
     /// A prompt aid: the point the keyword `close` ends the wall at. The command ignores it.
     #[serde(default)]
     pub close_to: Option<[f64; 2]>,
+    /// The bulge of the baseline: the tangent of a quarter of its sweep from the start to the
+    /// end, positive counter-clockwise, so the wall is an arc; absent or 0 for a straight wall.
+    /// Not together with `through`.
+    #[serde(default)]
+    pub bulge: Option<f64>,
+    /// A point `[x, y]` the baseline passes through between its end points: the wall is the arc
+    /// through the three points. Not together with `bulge`.
+    #[serde(default)]
+    pub through: Option<[f64; 2]>,
 }
 
 /// What `archbuilder.wall.create` returns: the wall and the values it was made with, which a
@@ -175,6 +187,8 @@ pub struct WallCreated {
     pub base_offset: f64,
     /// The location line.
     pub location_line: LocationLineParam,
+    /// Whether the wall is an arc: a host that chains walls keeps drawing arcs.
+    pub arc: bool,
 }
 
 /// Parameters of `archbuilder.wall.delete`.
@@ -475,6 +489,8 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
                 end: w.start,
                 start_join: w.end_join,
                 end_join: w.start_join,
+                // The same arc seen from the other end bulges the other way.
+                bulge: -w.bulge,
                 ..w
             };
             Some((*id, w, new))
@@ -514,6 +530,13 @@ fn flip_walls(ctx: &mut Context<'_>, p: FlipWalls) -> Result<()> {
                 object.id,
                 arc_doc::FieldPath::new("facing"),
                 Some(Value::Enum(item.facing.flipped().code())),
+            )?;
+        }
+        if wall.is_arc() {
+            txn.modify(
+                id,
+                arc_doc::FieldPath::new("bulge"),
+                Some(Value::F64(-wall.bulge)),
             )?;
         }
         // The ends swap with the baseline, and so do their join styles.
@@ -673,6 +696,10 @@ pub(crate) fn next_wall_name(snapshot: &Snapshot, storey: ObjectId, language: &s
         .unwrap_or_default()
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the storey, type, height, baseline and the record"
+)]
 pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCreated> {
     let storey = storey_for(ctx, p.storey)?;
     let meters = |ctx: &Context<'_>, param: &Option<QuantityParam>, default: f64| match param {
@@ -721,6 +748,16 @@ pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCr
     } else {
         [p.start, p.end]
     };
+    // The bulge of the arc as stored (the baseline may be reversed).
+    let bulge = match (p.bulge, p.through) {
+        (Some(_), Some(_)) => return Err(Error::new(arc_command::error::codes::PARAMS_INVALID)),
+        (Some(b), None) if b.is_finite() && b.abs() <= archbuilder_model::floor::MAX_BULGE => b,
+        (Some(_), None) => return Err(Error::new(arc_command::error::codes::PARAMS_INVALID)),
+        (None, Some(via)) => archbuilder_model::sketch::bulge_through(p.start, via, p.end)
+            .ok_or_else(|| Error::new(arc_command::error::codes::PARAMS_INVALID))?,
+        (None, None) => 0.0,
+    };
+    let bulge = if flip { -bulge } else { bulge };
     let id = create(
         ctx,
         WALL,
@@ -743,6 +780,13 @@ pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCr
             Some(types::length(0.0)),
         ],
     )?;
+    if bulge.abs() >= archbuilder_model::floor::MIN_BULGE {
+        ctx.txn()?.modify(
+            id,
+            arc_doc::FieldPath::new("bulge"),
+            Some(Value::F64(bulge)),
+        )?;
+    }
     crate::element_type::assign(ctx, id, TypeKind::Wall, wall_type)?;
     ensure_valid(ctx)?;
     let thickness = spatial::get(ctx.txn()?.snapshot(), id)
@@ -760,6 +804,7 @@ pub(crate) fn create_wall(ctx: &mut Context<'_>, p: CreateWall) -> Result<WallCr
         flip,
         base_offset,
         location_line: location.into(),
+        arc: bulge.abs() >= archbuilder_model::floor::MIN_BULGE,
     })
 }
 
@@ -794,6 +839,12 @@ const KEY_LOCATION: Msg = Msg {
 };
 const KEY_FLIP: Msg = Msg {
     message_id: "ab-keyword-wall-flip",
+};
+const KEY_ARC: Msg = Msg {
+    message_id: "ab-keyword-wall-arc",
+};
+const PROMPT_THROUGH: Msg = Msg {
+    message_id: "ab-prompt-wall-through",
 };
 const KEY_CLOSE: Msg = Msg {
     message_id: "ab-keyword-wall-close",
@@ -842,6 +893,8 @@ struct Shown {
     turkish: bool,
     /// Whether the wall being placed is flipped.
     flip: bool,
+    /// Whether the wall being placed is an arc: a third point on it is asked for.
+    arc: bool,
 }
 
 impl Shown {
@@ -898,6 +951,11 @@ impl Shown {
                 .or_else(|| state.preset.get("flip"))
                 .and_then(Json::as_bool)
                 .unwrap_or(false),
+            arc: over
+                .get("arc")
+                .or_else(|| state.preset.get("arc"))
+                .and_then(Json::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -910,6 +968,7 @@ impl Shown {
             // The values in effect as plain numbers and words, for a host that draws a preview.
             .with_arg("thickness_m", self.meters.0.to_string())
             .with_arg("flip", self.flip.to_string())
+            .with_arg("arc", self.arc.to_string())
     }
 }
 
@@ -925,8 +984,8 @@ fn shortcut(shown: &Shown, english: char, turkish: char) -> char {
     if shown.turkish { turkish } else { english }
 }
 
-fn point_prompt(key: String, message: &Msg, close: bool, shown: &Shown) -> Prompt {
-    let mut options = vec![
+fn point_prompt(key: String, message: &Msg, close: bool, options: bool, shown: &Shown) -> Prompt {
+    let mut keywords = vec![
         KeywordOption::new("thickness", KEY_THICKNESS.message_id)
             .with_shortcut(shortcut(shown, 't', 'k')),
         KeywordOption::new("height", KEY_HEIGHT.message_id)
@@ -934,21 +993,27 @@ fn point_prompt(key: String, message: &Msg, close: bool, shown: &Shown) -> Promp
         KeywordOption::new("location", KEY_LOCATION.message_id)
             .with_shortcut(shortcut(shown, 'l', 'o')),
         KeywordOption::new("flip", KEY_FLIP.message_id).with_shortcut(shortcut(shown, 'f', 'ç')),
+        KeywordOption::new("arc", KEY_ARC.message_id).with_shortcut(shortcut(shown, 'a', 'a')),
     ];
     if close {
-        options.push(
+        keywords.push(
             KeywordOption::new("close", KEY_CLOSE.message_id)
                 .with_shortcut(shortcut(shown, 'c', 'p')),
         );
     }
-    Prompt::new(
+    let prompt = Prompt::new(
         key,
         message.message_id,
         Accept::Point {
             dims: PointDims::Two,
         },
-    )
-    .or(Accept::keywords(options))
+    );
+    // The point on the arc takes no options: it only places the point.
+    if options {
+        prompt.or(Accept::keywords(keywords))
+    } else {
+        prompt
+    }
 }
 
 fn location_prompt(key: String, shown: &Shown) -> Prompt {
@@ -981,23 +1046,30 @@ impl WallPrompts {
         let mut over = Map::new();
         let mut start = point_of(state.preset.get("start"));
         let mut end = None;
+        let mut through = None;
         let mut at = 0;
-        for stage in [0, 1] {
+        for stage in [0, 1, 2] {
             if stage == 0 && start.is_some() {
+                continue;
+            }
+            // The third point is asked for only when the wall is an arc, which a keyword at the
+            // first two prompts switches on and off.
+            if stage == 2 && !Shown::of(state, &over).arc {
                 continue;
             }
             loop {
                 let shown = Shown::of(state, &over);
-                let message = if stage == 0 {
-                    &PROMPT_START
-                } else {
-                    &PROMPT_END
+                let message = match stage {
+                    0 => &PROMPT_START,
+                    1 => &PROMPT_END,
+                    _ => &PROMPT_THROUGH,
                 };
                 let Some(answer) = state.answers.get(at) else {
                     let prompt = point_prompt(
                         format!("point-{at}"),
                         message,
                         stage == 1 && close_to.is_some(),
+                        stage < 2,
                         &shown,
                     );
                     return (start, Step::Ask(shown.arg(prompt)));
@@ -1005,10 +1077,10 @@ impl WallPrompts {
                 at += 1;
                 match &answer.input {
                     PromptInput::Point(p) => {
-                        if stage == 0 {
-                            start = Some([p.x, p.y]);
-                        } else {
-                            end = Some([p.x, p.y]);
+                        match stage {
+                            0 => start = Some([p.x, p.y]),
+                            1 => end = Some([p.x, p.y]),
+                            _ => through = Some([p.x, p.y]),
                         }
                         break;
                     }
@@ -1019,6 +1091,9 @@ impl WallPrompts {
                     PromptInput::Keyword(k) if k == "flip" => {
                         // The other side of the location line.
                         over.insert("flip".to_owned(), Json::from(!shown.flip));
+                    }
+                    PromptInput::Keyword(k) if k == "arc" => {
+                        over.insert("arc".to_owned(), Json::from(!shown.arc));
                     }
                     PromptInput::Keyword(k) => {
                         let ask = match k.as_str() {
@@ -1055,6 +1130,11 @@ impl WallPrompts {
             }
         }
         let mut params = over;
+        // The arc switch is a prompt option, not a parameter of the command.
+        params.remove("arc");
+        if let Some(via) = through {
+            params.insert("through".to_owned(), Json::from(via.to_vec()));
+        }
         if params.contains_key("height") {
             // A typed height leaves the top unconnected.
             params.insert("top_level".to_owned(), Json::Null);
@@ -1094,6 +1174,7 @@ impl PromptMachine for WallPrompts {
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
+#[allow(clippy::too_many_lines, reason = "one registration per command")]
 pub fn register(registry: &mut Registry) -> Result<()> {
     const LABEL: Msg = Msg {
         message_id: "ab-cmd-wall-create-label",
@@ -1106,6 +1187,21 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             WALL_CREATE,
             LABEL.message_id,
             DESCRIPTION.message_id,
+            |ctx: &mut Context<'_>, p: CreateWall| create_wall(ctx, p),
+        )
+        .with_prompt(Arc::new(WallPrompts)),
+    )?;
+    const ARC_LABEL: Msg = Msg {
+        message_id: "ab-cmd-wall-create-arc-label",
+    };
+    const ARC_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-wall-create-arc-description",
+    };
+    registry.register(
+        CommandSpec::new(
+            WALL_CREATE_ARC,
+            ARC_LABEL.message_id,
+            ARC_DESCRIPTION.message_id,
             |ctx: &mut Context<'_>, p: CreateWall| create_wall(ctx, p),
         )
         .with_prompt(Arc::new(WallPrompts)),

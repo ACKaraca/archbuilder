@@ -457,6 +457,8 @@ fn the_plan_symbol_has_the_leaf_open_on_the_facing_side_and_the_swing_on_the_han
         location: LocationLine::Center,
         start_join: JoinStyle::Auto,
         end_join: JoinStyle::Auto,
+        bulge: 0.0,
+        lean: [0.0; 2],
     };
     let door = Insert {
         kind: Kind::Door,

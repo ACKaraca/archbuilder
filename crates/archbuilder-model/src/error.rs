@@ -375,6 +375,42 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-wall-attach-failed",
     };
+    /// The shape numbers of a wall (arc, lean, profile, bands) cannot make a solid.
+    pub const WALL_SHAPE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_shape_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-shape-invalid",
+    };
+    /// A wall's profile has an opening or an outline that does not fit.
+    pub const WALL_PROFILE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_profile_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-profile-invalid",
+    };
+    /// Doors or windows of a wall fall outside the profile it was given.
+    pub const WALL_PROFILE_INSERTS: ErrorCode = ErrorCode {
+        code: "ab.model.wall_profile_inserts",
+        category: Category::Conflict,
+        message_id: "ab-model-wall-profile-inserts",
+    };
+    /// Two shapes of a wall cannot be combined.
+    pub const WALL_SHAPE_COMBINATION: ErrorCode = ErrorCode {
+        code: "ab.model.wall_shape_combination",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-shape-combination",
+    };
+    /// A stacked wall type is not usable.
+    pub const WALL_STACK_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_stack_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-stack-invalid",
+    };
+    /// A band of a wall does not fit it.
+    pub const WALL_BAND_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_band_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-band-invalid",
+    };
     /// A wall is attached to something that is not a roof or a floor of its building.
     pub const WALL_ATTACH_TARGET: ErrorCode = ErrorCode {
         code: "ab.model.wall_attach_target",
