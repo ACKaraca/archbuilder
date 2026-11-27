@@ -312,6 +312,7 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         .with_permissions([Permission::Read, Permission::FileWrite]),
     )?;
     register_shortcuts(registry)?;
+    crate::import::register(registry)?;
     crate::standards::register(registry)
 }
 

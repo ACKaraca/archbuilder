@@ -51,6 +51,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         | types::FAMILY
         | types::FAMILY_TYPE => Some(&[PROJECT]),
         types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
+        types::FOREIGN_ELEMENT => Some(&[STOREY, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
@@ -156,6 +157,7 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         && key != ROOM
         && key != types::GRID
         && key != types::COMPONENT
+        && key != types::FOREIGN_ELEMENT
         && objects(candidate, key)
             .iter()
             .any(|o| o.id != object.id && scope(o) && folded(o) == own)

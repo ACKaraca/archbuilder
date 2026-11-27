@@ -138,6 +138,10 @@ pub const REFERENCE_PLANE: &str = "archbuilder.reference_plane";
 /// A work plane: the plane placement and sketching work on, from a level, a grid, a reference
 /// plane or three points. Contained in a building.
 pub const WORK_PLANE: &str = "archbuilder.work_plane";
+/// The type key of a foreign element: a product of an imported file that has no native
+/// counterpart, kept with its class, its source identity and its geometry as a mesh (read-only
+/// reference element, AB-IO-018).
+pub const FOREIGN_ELEMENT: &str = "archbuilder.foreign_element";
 
 /// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
 pub const TYPE_KEYS: [&str; 6] = [
@@ -240,7 +244,8 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 42] = [
+pub const KEYS: [&str; 43] = [
+    FOREIGN_ELEMENT,
     FAMILY,
     FAMILY_TYPE,
     COMPONENT,
@@ -1072,6 +1077,29 @@ pub mod grid {
     pub const PATH: usize = 11;
 }
 
+/// Field positions of `archbuilder.foreign_element`.
+pub mod foreign_element {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The entity class of the source file in its schema's spelling (`IfcColumn`).
+    pub const CLASS: usize = 1;
+    /// The predefined type of the source element; `USERDEFINED` types carry their text in
+    /// [`OBJECT_TYPE`].
+    pub const PREDEFINED_TYPE: usize = 2;
+    /// The object type text of the source element.
+    pub const OBJECT_TYPE: usize = 3;
+    /// The tag of the source element.
+    pub const TAG: usize = 4;
+    /// The geometry of the source element as an encoded mesh in project coordinates, meters; absent
+    /// when the file gave none or the foundation could not evaluate it.
+    pub const MESH: usize = 5;
+    /// The schema identifier of the source file (`IFC4`).
+    pub const SOURCE_SCHEMA: usize = 6;
+}
+
+/// The name and version of the encoding of the mesh of a foreign element.
+pub const FOREIGN_MESH_ENCODING: (&str, u32) = ("arc.mesh", 1);
+
 /// Field positions of `archbuilder.reference_plane`.
 pub mod reference_plane {
     /// The name.
@@ -1750,6 +1778,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         optional_length("end_height", BASE_OFFSET_RANGE).since_minor(4),
     ];
     for (key, fields) in [
+        (FOREIGN_ELEMENT, foreign_element_fields()),
         (PLAN_VIEW, plan_view_fields()),
         (SELECTION_SET, selection_set_fields()),
         (VARIABLE, crate::variable::fields()),
@@ -2479,6 +2508,26 @@ fn strength_variants() -> ValueType {
             .map(|s| EnumVariant::new(s.name(), s.code()))
             .collect(),
     )
+}
+
+fn foreign_element_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        text_field("ifc_class", 64),
+        text_field("predefined_type", 64),
+        text_field("object_type", NAME_BYTES),
+        text_field("tag", NAME_BYTES),
+        FieldDecl::new(
+            "mesh",
+            ValueType::Geometry(arc_doc::GeometryEncoding {
+                name: FOREIGN_MESH_ENCODING.0.to_owned(),
+                version: FOREIGN_MESH_ENCODING.1,
+            }),
+        )
+        .optional()
+        .in_aspect("geometry"),
+        text_field("source_schema", 16),
+    ]
 }
 
 fn reference_plane_fields() -> Vec<FieldDecl> {
