@@ -84,3 +84,6 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
   a merged wall's second part gets a fresh key past the first part's. What cannot be kept without
   guessing is left out and listed in the command result as `unkept`, never rebound to a neighbor.
   Both commands are one undo step.
+- **Pin (AB-DATUM-022).** A pinned curtain wall still takes grid edits and panel overrides: they
+  divide and fill the wall but never move or reshape it, like the finishes of a pinned room.
+  Moving, splitting, merging or deleting it is refused, naming the wall.

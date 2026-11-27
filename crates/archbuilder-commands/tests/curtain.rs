@@ -556,3 +556,39 @@ fn merging_curtain_walls_carries_the_edits_of_both_with_fresh_keys() {
     assert!(spatial::get(&env.snapshot(), wall).is_some());
     assert_eq!(edited(&env, wall).0.len(), 1);
 }
+
+#[test]
+fn a_pinned_curtain_wall_takes_grid_edits_and_panel_overrides_but_cannot_move_or_split() {
+    let env = Env::new();
+    let wall = four_meter_wall(&env);
+    env.run("archbuilder.element.pin", json!({"objects": [wall]}))
+        .unwrap();
+    // The grid divides and fills the wall without moving or reshaping it.
+    env.run(
+        "archbuilder.curtain.grid_add",
+        json!({"wall": wall, "direction": "vertical", "at": 0.5}),
+    )
+    .unwrap();
+    env.run(
+        "archbuilder.curtain.panel",
+        json!({"wall": wall, "cell": "start-a1.base-n1", "panel": "solid"}),
+    )
+    .unwrap();
+    assert_eq!(edited(&env, wall).0.len(), 1);
+    assert!(derived(&env, wall).panels[0].overridden);
+    // Its place and shape stay protected.
+    let moved = env
+        .run(
+            "archbuilder.modify.move",
+            json!({"objects": [wall], "displacement": [1.0, 0.0]}),
+        )
+        .unwrap_err();
+    assert_eq!(moved.code(), "ab.model.pinned");
+    let split = env
+        .run("archbuilder.wall.split", json!({"at": [2.5, 0.0]}))
+        .unwrap_err();
+    assert_eq!(split.code(), "ab.model.pinned");
+    // The edit is one undo step like any other.
+    env.document.undo().wait().unwrap();
+    assert!(!derived(&env, wall).panels[0].overridden);
+}
