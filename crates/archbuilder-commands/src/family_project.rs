@@ -21,7 +21,7 @@ use arc_doc::package::{Mode, Package};
 use arc_doc::{FieldPath, LoadOptions, Snapshot, Value};
 use archbuilder_model::error::codes as model_codes;
 use archbuilder_model::expr::Stored;
-use archbuilder_model::family::def::{Category, Definition, Hosting, TypeDef};
+use archbuilder_model::family::def::{Category, Definition, Hosting, Scope, TypeDef};
 use archbuilder_model::family::loaded::{
     self, Component, FamilyType, Loaded, components_of, family_types, values_value,
 };
@@ -1031,6 +1031,218 @@ fn place_insert(ctx: &mut Context<'_>, p: PlaceInsert) -> Result<InsertPlaced> {
     })
 }
 
+/// The field prefix of an instance value in the property grid: `value.<parameter key>`.
+pub const VALUE_FIELD: &str = "value.";
+/// The identifier of the command that changes a placed component or a hosted instance.
+pub const INSTANCE_SET: &str = "archbuilder.instance.set";
+
+/// Parameters of `archbuilder.instance.set`: a placed component or a hosted instance, changed in
+/// one undo step. Only the given parts change.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetInstance {
+    /// The component or hosted instance.
+    pub object: IdParam,
+    /// A new mark.
+    #[serde(default)]
+    #[schemars(length(max = 256))]
+    pub name: Option<String>,
+    /// A component's new insertion point `[x, y]` in meters.
+    #[serde(default)]
+    pub point: Option<[f64; 2]>,
+    /// A component's new rotation (a bare number is radians).
+    #[serde(default)]
+    pub rotation: Option<QuantityParam>,
+    /// The new height of the insertion point (a bare number is meters): above the level of a
+    /// component, above the base of the host of a hosted instance.
+    #[serde(default)]
+    pub offset: Option<QuantityParam>,
+    /// A hosted instance's new distance along its host's baseline (a bare number is meters).
+    #[serde(default)]
+    pub distance: Option<QuantityParam>,
+    /// Whether a component is mirrored across its own left-right axis.
+    #[serde(default)]
+    pub mirror: Option<bool>,
+    /// Instance values by parameter key: a literal, `"=formula"`, or `""` to clear the value.
+    /// Only instance-scoped parameters take a value.
+    #[serde(default)]
+    pub values: BTreeMap<String, serde_json::Value>,
+}
+
+/// The parts of an instance an edit changes; each `None` keeps the stored value.
+#[derive(Debug, Default)]
+struct InstanceEdit {
+    name: Option<String>,
+    point: Option<[f64; 2]>,
+    rotation: Option<f64>,
+    offset: Option<f64>,
+    distance: Option<f64>,
+    mirror: Option<bool>,
+    values: BTreeMap<String, serde_json::Value>,
+}
+
+/// The stored value of one instance-scoped parameter after an edit: `None` clears it.
+fn own_value(
+    ctx: &Context<'_>,
+    def: &Definition,
+    key: &str,
+    json: &serde_json::Value,
+) -> Result<Option<Stored>> {
+    let p = def
+        .parameter(key)
+        .ok_or_else(|| Error::new(codes::FIELD_UNKNOWN))?;
+    if p.scope != Scope::Instance {
+        return Err(Error::new(codes::FIELD_UNKNOWN));
+    }
+    match json {
+        serde_json::Value::String(t) if t.trim().is_empty() => Ok(None),
+        serde_json::Value::String(t) if t.trim_start().starts_with('=') => stored_input(
+            ctx,
+            (&p.name, p.data),
+            None,
+            t.trim_start().strip_prefix('='),
+            None,
+        ),
+        other => stored_input(ctx, (&p.name, p.data), Some(other), None, None),
+    }
+}
+
+/// Applies `edit` to the component or hosted instance `id` in one transaction. The new values
+/// must evaluate before anything changes; a refused edit names the parameter, form or instance.
+fn write_instance(ctx: &mut Context<'_>, id: ObjectId, edit: InstanceEdit) -> Result<()> {
+    let snapshot = ctx.snapshot().clone();
+    let object = spatial::get(&snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let key = spatial::type_of(&snapshot, id).unwrap_or_default();
+    if let Some(at) = edit.point
+        && !at.iter().all(|v| v.is_finite())
+    {
+        return Err(Error::new(arc_command::error::codes::PARAMS_INVALID));
+    }
+    if key == COMPONENT {
+        let mut c = Component::of(&object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let resolved = loaded::resolve(&snapshot, &c)?;
+        for (k, json) in &edit.values {
+            match own_value(ctx, &resolved.definition, k, json)? {
+                Some(v) => c.values.insert(k.clone(), v),
+                None => c.values.remove(k),
+            };
+        }
+        let renamed = edit.name.map(|n| n.trim().to_owned());
+        if let Some(n) = &renamed {
+            c.name.clone_from(n);
+        }
+        if let Some(at) = edit.point {
+            c.origin = at;
+        }
+        if let Some(r) = edit.rotation {
+            c.rotation = r;
+        }
+        if let Some(o) = edit.offset {
+            c.offset = o;
+        }
+        if let Some(m) = edit.mirror {
+            c.mirror = m;
+        }
+        loaded::evaluate_in(&snapshot, &resolved.definition, &resolved.ty, &c.values)?;
+        let mut record = c.record();
+        record.truncate(types::component::VALUES + 1);
+        crate::circulation::write_changes(ctx, COMPONENT, &object, record)?;
+        if let Some(n) = renamed {
+            // The name is the record's first field, which the change of placement leaves alone.
+            let value = (!n.is_empty()).then_some(Value::String(n));
+            ctx.txn()?.modify(id, FieldPath::new("name"), value)?;
+        }
+        ensure_valid(ctx)?;
+        loaded::check_components(ctx.txn()?.snapshot(), Some(&[id]))
+    } else if key == types::FAMILY_INSERT {
+        use archbuilder_model::family::loaded::FamilyInsert;
+        let mut f = FamilyInsert::of(&object).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let resolved = loaded::resolve_insert(&snapshot, &f)?;
+        for (k, json) in &edit.values {
+            match own_value(ctx, &resolved.definition, k, json)? {
+                Some(v) => f.values.insert(k.clone(), v),
+                None => f.values.remove(k),
+            };
+        }
+        let renamed = edit.name.map(|n| n.trim().to_owned());
+        if let Some(n) = &renamed {
+            f.name.clone_from(n);
+        }
+        if let Some(d) = edit.distance {
+            f.distance = d;
+        }
+        if let Some(o) = edit.offset {
+            f.offset = o;
+        }
+        loaded::evaluate_in(&snapshot, &resolved.definition, &resolved.ty, &f.values)?;
+        let mut record = f.record();
+        record.truncate(types::family_insert::VALUES + 1);
+        crate::circulation::write_changes(ctx, types::FAMILY_INSERT, &object, record)?;
+        if let Some(n) = renamed {
+            let value = (!n.is_empty()).then_some(Value::String(n));
+            ctx.txn()?.modify(id, FieldPath::new("name"), value)?;
+        }
+        ensure_valid(ctx)
+    } else {
+        Err(Error::new(codes::KIND_MISMATCH))
+    }
+}
+
+/// `archbuilder.instance.set`: changes a placed component or hosted instance, one undo step.
+fn set_instance(ctx: &mut Context<'_>, p: SetInstance) -> Result<()> {
+    let snapshot = ctx.snapshot().clone();
+    let key = spatial::type_of(&snapshot, p.object.0).unwrap_or_default();
+    let rotation = match &p.rotation {
+        Some(q) => Some(ctx.quantity(q, Dimension::ANGLE)?.value()),
+        None => None,
+    };
+    let offset = match &p.offset {
+        Some(q) => Some(crate::length(ctx, q)?.value()),
+        None => None,
+    };
+    let distance = match &p.distance {
+        Some(q) => Some(crate::length(ctx, q)?.value()),
+        None => None,
+    };
+    if key != COMPONENT && (p.point.is_some() || p.rotation.is_some() || p.mirror.is_some()) {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    if key == COMPONENT && p.distance.is_some() {
+        return Err(Error::new(codes::KIND_MISMATCH));
+    }
+    write_instance(
+        ctx,
+        p.object.0,
+        InstanceEdit {
+            name: p.name,
+            point: p.point,
+            rotation,
+            offset,
+            distance,
+            mirror: p.mirror,
+            values: p.values,
+        },
+    )
+}
+
+/// The property grid's edit of one instance value (`value.<key>`): the same text rules as the
+/// project parameters (`=formula`, a literal, or empty to clear).
+pub(crate) fn set_instance_value(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    key: &str,
+    value: &serde_json::Value,
+) -> Result<()> {
+    write_instance(
+        ctx,
+        id,
+        InstanceEdit {
+            values: BTreeMap::from([(key.to_owned(), value.clone())]),
+            ..InstanceEdit::default()
+        },
+    )
+}
+
 /// Sets the name and the values of the family type `object` (the family-type branch of
 /// `archbuilder.type.set`): each value is a literal or `{"formula", "unit"}`; every component of
 /// the type is evaluated again before the change commits.
@@ -1153,6 +1365,21 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         )
         .with_undo(UndoBehavior::NotUndoable)
         .with_permissions([Permission::Read, Permission::FileRead]),
+    )?;
+    registry.register(
+        CommandSpec::new(
+            INSTANCE_SET,
+            MessageId {
+                message_id: "ab-cmd-instance-set-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-instance-set-description",
+            }
+            .message_id,
+            set_instance,
+        )
+        .with_permissions([Permission::Read, Permission::Edit]),
     )?;
     registry.register(
         CommandSpec::new(

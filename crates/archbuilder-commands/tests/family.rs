@@ -902,3 +902,75 @@ fn a_hosted_instance_slides_along_its_wall_flips_and_copies_and_undoes_in_one_st
     assert_eq!(copied.family_type, read(&env).family_type);
     assert!((copied.distance - 5.0).abs() < 1e-9);
 }
+
+#[test]
+fn a_placed_instance_takes_new_values_and_placement_in_one_undo_step() {
+    use arc_base::ObjectId;
+    use archbuilder_model::family::loaded::Component;
+    let env = Env::new("instance-set", true);
+    env.load(
+        &env.package("t.archbfam", &[(&table(), "1.0.0")]),
+        json!({}),
+    )
+    .unwrap();
+    let id = env
+        .run(
+            "archbuilder.component.place",
+            json!({"type": "1800x900", "point": [1.0, 2.0], "values": {"LegSize": 0.08}}),
+        )
+        .unwrap()
+        .value["component"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id: ObjectId = id.parse().unwrap();
+    let read = |env: &Env| {
+        let s = env.snapshot();
+        Component::of(&spatial::get(&s, id).unwrap()).unwrap()
+    };
+    // A value and a placement change together, as one command.
+    env.run(
+        "archbuilder.instance.set",
+        json!({"object": id.to_string(), "point": [3.0, 4.0], "name": "T2",
+               "values": {"LegSize": 0.05}}),
+    )
+    .unwrap();
+    let c = read(&env);
+    assert_eq!((c.origin, c.name.as_str()), ([3.0, 4.0], "T2"));
+    assert_eq!(c.values.len(), 1);
+    assert!(
+        (volume(&env, &id.to_string()) - (1.8 * 0.9 * 0.04 + 4.0 * 0.05 * 0.05 * 0.71)).abs()
+            < 1e-9
+    );
+    // The property grid's edit of one value, then the value cleared back to the type's.
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [id.to_string()], "field": "value.LegSize", "value": 0.06}),
+    )
+    .unwrap();
+    assert!(
+        (volume(&env, &id.to_string()) - (1.8 * 0.9 * 0.04 + 4.0 * 0.06 * 0.06 * 0.71)).abs()
+            < 1e-9
+    );
+    env.run(
+        "archbuilder.property.set",
+        json!({"objects": [id.to_string()], "field": "value.LegSize", "value": ""}),
+    )
+    .unwrap();
+    assert!(read(&env).values.is_empty());
+    // A value that is not instance-scoped, or a key the family does not have, is refused.
+    assert!(
+        env.run(
+            "archbuilder.instance.set",
+            json!({"object": id.to_string(), "values": {"Nope": 1.0}}),
+        )
+        .is_err()
+    );
+    // Each command is one undo step: three steps back to the placement.
+    env.undo();
+    env.undo();
+    env.undo();
+    let c = read(&env);
+    assert_eq!((c.origin, c.name.as_str()), ([1.0, 2.0], ""));
+    assert!(c.values.contains_key("LegSize"));
+}
