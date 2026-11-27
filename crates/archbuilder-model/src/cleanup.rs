@@ -62,8 +62,21 @@ fn same(a: &[Arc<Object>], b: &[Arc<Object>]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| Arc::ptr_eq(x, y))
 }
 
+/// The most results kept under one (`id`, `extra`): one for each document that has an object with
+/// that identifier (two documents opened from one file, or documents made from the same seed).
+const SAME_KEY: usize = 8;
+
+/// Whether `old` shares an object with `new`: results of one document follow each other this way
+/// (a commit replaces some of the objects), results of two documents never do.
+fn shares(old: &[Arc<Object>], new: &std::collections::HashSet<*const Object>) -> bool {
+    old.iter().any(|o| new.contains(&Arc::as_ptr(o)))
+}
+
 /// The result kept in `store` for (`id`, `extra`) when it was made from `deps`, else `make()`,
-/// which is then kept. The entry holds its objects, so an address is never reused under it.
+/// which is then kept. The entry holds its objects, so an address is never reused under it. A new
+/// result replaces the older ones of the same document only, so documents whose objects have the
+/// same identifiers do not throw each other's results away; the least recently used entry goes
+/// first when the store is full.
 pub(crate) fn cached<T>(
     store: &Store<T>,
     id: ObjectId,
@@ -71,15 +84,28 @@ pub(crate) fn cached<T>(
     deps: Deps,
     make: impl FnOnce() -> T,
 ) -> Arc<T> {
-    let hit = store.lock().ok().and_then(|c| {
-        c.iter()
-            .find(|e| e.id == id && e.extra == extra && same(&e.deps, &deps))
-            .map(|e| Arc::clone(&e.value))
+    let hit = store.lock().ok().and_then(|mut c| {
+        let at = c
+            .iter()
+            .position(|e| e.id == id && e.extra == extra && same(&e.deps, &deps))?;
+        let entry = c.remove(at);
+        let value = Arc::clone(&entry.value);
+        c.push(entry);
+        Some(value)
     });
     hit.unwrap_or_else(|| {
         let value = Arc::new(make());
         if let Ok(mut c) = store.lock() {
-            c.retain(|e| !(e.id == id && e.extra == extra));
+            let new: std::collections::HashSet<*const Object> =
+                deps.iter().map(Arc::as_ptr).collect();
+            c.retain(|e| !(e.id == id && e.extra == extra && shares(&e.deps, &new)));
+            if let Some(oldest) = c
+                .iter()
+                .position(|e| e.id == id && e.extra == extra)
+                .filter(|_| c.iter().filter(|e| e.id == id && e.extra == extra).count() >= SAME_KEY)
+            {
+                c.remove(oldest);
+            }
             if c.len() >= CACHE_ENTRIES {
                 c.remove(0);
             }
@@ -844,4 +870,39 @@ fn split_by_floor(
         out.push((inside, z0.max(zt), z1));
     }
     out.into_iter().filter(|(_, a, b)| b - a > 1.0e-6).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arc_base::id::Identifier;
+
+    fn object(id: u128) -> Arc<Object> {
+        Arc::new(Object::new(
+            ObjectId::from_u128(id),
+            arc_doc::SchemaVersion { major: 1, minor: 0 },
+            arc_doc::Header::default(),
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn results_of_two_documents_under_one_identifier_are_both_kept() {
+        let store: Store<u32> = Mutex::new(Vec::new());
+        let key = ObjectId::from_u128(7);
+        // Two documents with the same identifiers: their objects are not the same Arcs.
+        let (a, b) = (vec![object(1), object(2)], vec![object(1), object(2)]);
+        let first = cached(&store, key, 0, a.clone(), || 1);
+        let other = cached(&store, key, 0, b.clone(), || 2);
+        assert_eq!((*first, *other), (1, 2));
+        assert!(Arc::ptr_eq(
+            &first,
+            &cached(&store, key, 0, a.clone(), || 3)
+        ));
+        assert!(Arc::ptr_eq(&other, &cached(&store, key, 0, b, || 4)));
+        // A commit of the first document (one object replaced) replaces its result only.
+        let next = vec![Arc::clone(&a[0]), object(2)];
+        assert_eq!(*cached(&store, key, 0, next, || 5), 5);
+        assert_eq!(store.lock().map(|c| c.len()).unwrap_or(0), 2);
+    }
 }
