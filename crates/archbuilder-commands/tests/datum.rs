@@ -773,3 +773,230 @@ fn sketches_store_their_work_plane_and_a_roof_by_extrusion_follows_it() {
     assert_eq!(stored(floor_id), None);
     assert_eq!(origin(&env), [0.0, 0.0]);
 }
+
+fn run_ok(env: &Env, command: &str, params: Json) -> Outcome {
+    env.run(command, params).unwrap()
+}
+
+#[test]
+fn the_project_location_changes_readings_and_never_moves_an_element() {
+    let env = Env::new();
+    let storey = env.storeys()[0].to_string();
+    let wall = run_ok(
+        &env,
+        "archbuilder.wall.create",
+        json!({"start": [10.0, 0.0], "end": [20.0, 0.0], "storey": storey}),
+    );
+    let wall_id: ObjectId = id_of(&wall, "wall").parse().unwrap();
+    let wall_line = |env: &Env| {
+        let w = archbuilder_model::wall::Wall::from_values(
+            &spatial::get(&env.snapshot(), wall_id).unwrap().values,
+        )
+        .unwrap();
+        (w.start, w.end)
+    };
+    // Without a location both points are the origin and nothing is georeferenced.
+    let read = run_ok(
+        &env,
+        "archbuilder.coordinates.query",
+        json!({"point": [12.0, 3.0]}),
+    );
+    assert_eq!(read.value["project"], json!([12.0, 3.0, 0.0]));
+    assert!(read.value["map"].is_null());
+    // The base point moves the project coordinates; the wall stays.
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"base_point": [10.0, 0.0, 1.0], "survey_point": [100.0, 50.0]}),
+    );
+    assert_eq!(wall_line(&env), ([10.0, 0.0], [20.0, 0.0]));
+    let read = run_ok(
+        &env,
+        "archbuilder.coordinates.query",
+        json!({"point": [12.0, 3.0, 2.0]}),
+    );
+    assert_eq!(read.value["internal"], json!([12.0, 3.0, 2.0]));
+    assert_eq!(read.value["project"], json!([2.0, 3.0, 1.0]));
+    assert_eq!(read.value["survey"], json!([-88.0, -47.0, 2.0]));
+    // The geodetic reference: the survey point at E 500000 N 6800000 H 40, north turned 90 degrees.
+    let set = run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"crs": "EPSG:3067", "eastings": 500000.0, "northings": 6800000.0,
+               "height": 40.0, "true_north": "90 deg", "scale": 1.0}),
+    );
+    assert_eq!(set.value["georeferenced"], true);
+    let read = run_ok(
+        &env,
+        "archbuilder.coordinates.query",
+        json!({"point": [110.0, 50.0, 1.0]}),
+    );
+    let map = read.value["map"].as_array().unwrap();
+    assert!((map[0].as_f64().unwrap() - 500_000.0).abs() < 1e-6);
+    assert!((map[1].as_f64().unwrap() - (6_800_000.0 - 10.0)).abs() < 1e-6);
+    assert_eq!(read.value["crs"], "EPSG:3067");
+    assert_eq!(wall_line(&env), ([10.0, 0.0], [20.0, 0.0]));
+    // Undo takes the georeference off; the previous points stay.
+    env.document.undo().wait().unwrap();
+    let read = run_ok(
+        &env,
+        "archbuilder.coordinates.query",
+        json!({"point": [110.0, 50.0]}),
+    );
+    assert!(read.value["map"].is_null());
+    assert_eq!(read.value["survey"], json!([10.0, 0.0, 0.0]));
+    // Clearing the georeference leaves the points.
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"crs": "EPSG:3067", "eastings": 1.0, "northings": 2.0}),
+    );
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"clear_georeference": true}),
+    );
+    let c = archbuilder_model::coordinates::Coordinates::of(&env.snapshot());
+    assert!(!c.is_georeferenced() && c.crs.is_none() && c.survey == [100.0, 50.0, 0.0]);
+    // What is out of range or malformed is refused and changes nothing.
+    for bad in [
+        json!({"scale": 0.0}),
+        json!({"base_point": [1.0]}),
+        json!({"base_point": [1.0e9, 0.0]}),
+        json!({"survey_point": [0.0, 0.0, f64::INFINITY]}),
+        json!({"eastings": 1.0e12}),
+        json!({"true_north": "far away"}),
+    ] {
+        assert!(
+            env.run("archbuilder.coordinates.set", bad.clone()).is_err(),
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        archbuilder_model::coordinates::Coordinates::of(&env.snapshot()),
+        c
+    );
+    // With nothing to change the project is selected for its properties.
+    let selected = run_ok(&env, "archbuilder.coordinates.set", json!({}));
+    assert!(selected.selection.is_some());
+}
+
+#[test]
+fn a_view_orients_to_true_north_without_moving_anything() {
+    let env = Env::new();
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"true_north": "30 deg"}),
+    );
+    let storey = env.storeys()[0].to_string();
+    let view = run_ok(&env, "archbuilder.view.duplicate", json!({"view": storey}));
+    let view: ObjectId = id_of(&view, "view").parse().unwrap();
+    assert_eq!(
+        view_settings(&env, view).north,
+        archbuilder_model::view::North::Project
+    );
+    run_ok(
+        &env,
+        "archbuilder.view.set",
+        json!({"view": view.to_string(), "field": "north", "value": "true_north"}),
+    );
+    let north = view_settings(&env, view).north;
+    assert_eq!(north, archbuilder_model::view::North::True);
+    let c = archbuilder_model::coordinates::Coordinates::of(&env.snapshot());
+    assert!((c.view_rotation(north) + 30.0_f64.to_radians()).abs() < 1e-9);
+    // A duplicate of the view keeps its orientation; undo returns the project north.
+    let copy = run_ok(
+        &env,
+        "archbuilder.view.duplicate",
+        json!({"view": view.to_string()}),
+    );
+    let copy: ObjectId = id_of(&copy, "view").parse().unwrap();
+    assert_eq!(view_settings(&env, copy).north, north);
+    env.document.undo().wait().unwrap();
+    env.document.undo().wait().unwrap();
+    assert_eq!(
+        view_settings(&env, view).north,
+        archbuilder_model::view::North::Project
+    );
+}
+
+#[test]
+fn geometry_far_from_the_origin_is_reported_and_recentering_keeps_its_map_position() {
+    let env = Env::new();
+    let storey = env.storeys()[0].to_string();
+    // Near the origin nothing is reported.
+    run_ok(
+        &env,
+        "archbuilder.wall.create",
+        json!({"start": [0.0, 0.0], "end": [10.0, 0.0], "storey": storey}),
+    );
+    assert!(distant(&env).is_none());
+    let far = run_ok(
+        &env,
+        "archbuilder.wall.create",
+        json!({"start": [30_000.0, 100.0], "end": [30_010.0, 100.0], "storey": storey}),
+    );
+    let far_id: ObjectId = id_of(&far, "wall").parse().unwrap();
+    let (count, ids) = distant(&env).unwrap();
+    assert_eq!(count, "1");
+    assert_eq!(ids, vec![far_id]);
+    // The survey point is at the far geometry; the model is moved so that the survey point lies on
+    // the origin (the first wall then lies far the other way, as it was 30 km from the survey point).
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"survey_point": [30_000.0, 100.0], "base_point": [29_990.0, 100.0],
+               "crs": "EPSG:3067", "eastings": 500000.0, "northings": 6800000.0}),
+    );
+    let map_of = |env: &Env, p: [f64; 2]| {
+        run_ok(env, "archbuilder.coordinates.query", json!({"point": p})).value["map"].clone()
+    };
+    let before = map_of(&env, [30_010.0, 100.0]);
+    let moved = run_ok(&env, "archbuilder.coordinates.recenter", json!({}));
+    assert_eq!(moved.value["offset"], json!([-30_000.0, -100.0]));
+    assert!(moved.value["moved"].as_u64().unwrap() >= 2);
+    let wall = archbuilder_model::wall::Wall::from_values(
+        &spatial::get(&env.snapshot(), far_id).unwrap().values,
+    )
+    .unwrap();
+    assert_eq!((wall.start, wall.end), ([0.0, 0.0], [10.0, 0.0]));
+    let c = archbuilder_model::coordinates::Coordinates::of(&env.snapshot());
+    assert_eq!((c.survey, c.base), ([0.0, 0.0, 0.0], [-10.0, 0.0, 0.0]));
+    // The same wall end, now at (10, 0), has the same map coordinates.
+    assert_eq!(map_of(&env, [10.0, 0.0]), before);
+    assert_eq!(distant(&env).map(|d| d.1.len()), Some(1));
+    assert!(!distant(&env).unwrap().1.contains(&far_id));
+    // Undo puts the model and both points back, and the warning with them.
+    env.document.undo().wait().unwrap();
+    assert!(distant(&env).is_some());
+    assert_eq!(map_of(&env, [30_010.0, 100.0]), before);
+    // A larger precision distance silences the report.
+    run_ok(
+        &env,
+        "archbuilder.coordinates.set",
+        json!({"precision_distance": 50_000.0}),
+    );
+    assert!(distant(&env).is_none());
+    assert!(
+        env.run(
+            "archbuilder.coordinates.set",
+            json!({"precision_distance": 0.5})
+        )
+        .is_err()
+    );
+}
+
+/// The count and elements of the far-geometry warning, when the register has one.
+fn distant(env: &Env) -> Option<(String, Vec<ObjectId>)> {
+    archbuilder_model::validate::register(&env.snapshot())
+        .into_iter()
+        .find(|w| w.error.code() == "ab.model.location_distant")
+        .map(|w| {
+            let count = match w.error.arguments().get("count") {
+                Some(arc_base::error::Value::Text(t)) => t.clone(),
+                other => format!("{other:?}"),
+            };
+            (count, w.objects)
+        })
+}

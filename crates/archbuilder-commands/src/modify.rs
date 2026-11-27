@@ -196,7 +196,7 @@ pub(crate) struct Set {
 }
 
 impl Set {
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.walls.len()
             + self.floors.len()
             + self.rooms.len()

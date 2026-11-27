@@ -1209,11 +1209,13 @@ pub enum WarningKind {
     Ceiling,
     /// A grid label used twice in a building.
     Datum,
+    /// Geometry far from the internal origin.
+    Location,
 }
 
 impl WarningKind {
     /// Every kind, in the order the panel lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Stair,
         Self::Room,
         Self::Wall,
@@ -1222,6 +1224,7 @@ impl WarningKind {
         Self::Insert,
         Self::Type,
         Self::Datum,
+        Self::Location,
     ];
 
     /// The kind of a finding, by its code.
@@ -1242,6 +1245,8 @@ impl WarningKind {
             Self::Insert
         } else if code.starts_with("ab.model.datum") {
             Self::Datum
+        } else if code.starts_with("ab.model.location") {
+            Self::Location
         } else if code.starts_with("ab.model.type") {
             Self::Type
         } else {
@@ -1348,6 +1353,9 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
         let error = Error::new(codes::DATUM_LABEL_DUPLICATE)
             .with_arg("name", label)
             .with_arg("count", found.len().to_string());
+        push(Severity::Warning, error, found);
+    }
+    if let Some((error, found)) = crate::coordinates::distant_findings(snapshot) {
         push(Severity::Warning, error, found);
     }
     for key in [WALL, FLOOR, DOOR, WINDOW, ROOF, CEILING] {

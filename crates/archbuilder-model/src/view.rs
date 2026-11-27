@@ -174,6 +174,19 @@ pub struct PlanView {
     pub depth: f64,
     /// The extent and head overrides of grids in this view.
     pub datum_views: Vec<DatumView>,
+    /// Which north the view is oriented to.
+    pub north: North,
+}
+
+coded! {
+    /// Which north a plan view is oriented to.
+    North {
+        /// Project north: the internal y axis points up.
+        #[default]
+        Project = 0, "project_north";
+        /// True north points up.
+        True = 1, "true_north";
+    }
 }
 
 /// The range of a view-specific grid extent adjustment, in meters.
@@ -284,6 +297,7 @@ impl PlanView {
             bottom: 0.0,
             depth: -BOTTOM_MARGIN,
             datum_views: Vec::new(),
+            north: North::Project,
         }
     }
 
@@ -326,6 +340,7 @@ impl PlanView {
             bottom: crate::types::meters(values, plan_view::BOTTOM).unwrap_or(0.0),
             depth: crate::types::meters(values, plan_view::DEPTH).unwrap_or(-BOTTOM_MARGIN),
             datum_views: datum_views_at(values),
+            north: North::of_field(values, plan_view::NORTH),
         })
     }
 
@@ -346,6 +361,7 @@ impl PlanView {
         out.push(Some(crate::types::length(self.bottom)));
         out.push(Some(crate::types::length(self.depth)));
         out.push(datum_views_value(&self.datum_views));
+        out.push((self.north != North::Project).then(|| Value::Enum(self.north.code())));
         out
     }
 

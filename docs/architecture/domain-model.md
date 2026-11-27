@@ -23,7 +23,7 @@ recomputes when something changes. It is the schema contract for `archbuilder-mo
 | Type | Key properties | Relationships |
 |---|---|---|
 | `Project` | Information fields, settings, units, boundary rule, template flag | One per document; root of spatial tree |
-| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document |
+| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document; kept as optional fields of the `Project` record (see Location) |
 | `Site` | Name, boundary, terrain references | Child of project |
 | `Building` | Name, elevation, address | Child of site |
 | `Storey` | Name, level reference | Child of building; contains elements |

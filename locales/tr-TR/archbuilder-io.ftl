@@ -29,3 +29,4 @@ ab-io-loss-ramp-not-written = Bir rampa IFC dosyasında yok: rampalar ve rampa k
 ab-io-loss-grid-not-written = Bir aks IFC dosyasında yok: aks çizgileri ve eksenleri henüz yazılamıyor, yerine başka bir varlık koymak kaybı gizlerdi.
 ab-io-loss-datum-not-written = Bir referans düzlemi ya da çalışma düzlemi IFC dosyasında yok: IFC karşılığı olmayan bir çizim yardımcısı.
 ab-io-loss-curtain-not-written = Perde duvar IFC dosyasında yok: perde duvar, plaka ve eleman yazılamıyor; duvar ile bu türden { $count } panel veya doğrama dışarıda bırakıldı. Onu içeren temel duvarın boşluğu dosyada yine de var.
+ab-io-loss-georeference-not-written = Projenin jeodezik referansı IFC dosyasında yok: koordinat sistemi ve ölçüm noktasının konumu henüz yazılamıyor.

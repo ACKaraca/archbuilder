@@ -14,6 +14,7 @@ use arc_app::shell::{
 };
 use arc_base::error::Value;
 use arc_ui::Intent;
+use archbuilder_commands::coordinates::{COORDINATES_QUERY, COORDINATES_RECENTER, COORDINATES_SET};
 use archbuilder_commands::datum::{GRID_CREATE, REFERENCE_PLANE_CREATE, WORK_PLANE_SET};
 use archbuilder_commands::edit;
 use archbuilder_commands::floor::FLOOR_CREATE;
@@ -824,6 +825,46 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-location",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-location",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-location-hint",
+                            }),
+                            COORDINATES_SET,
+                            "project-location",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-coordinates",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-coordinates-hint",
+                            }),
+                            COORDINATES_QUERY,
+                            "coordinates",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-recenter",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-recenter-hint",
+                            }),
+                            COORDINATES_RECENTER,
+                            "recenter",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-model",
                     },
                     vec![icon_button(
@@ -1242,6 +1283,9 @@ pub fn icons() -> Vec<(String, String)> {
         "roof-extrusion",
         "set",
         "statistics",
+        "project-location",
+        "coordinates",
+        "recenter",
         "railing",
         "ramp",
         "grid",

@@ -1268,6 +1268,17 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
             mapper.lose(reason, kind, &datum);
         }
     }
+    // The writer has no map conversion or projected coordinate system yet: a georeference is
+    // reported, not dropped silently.
+    if archbuilder_model::coordinates::Coordinates::of(snapshot).is_georeferenced()
+        && let Some(project) = spatial::project(snapshot)
+    {
+        mapper.lose(
+            reasons::GEOREFERENCE_NOT_WRITTEN,
+            "IFCMAPCONVERSION",
+            &project,
+        );
+    }
     model.elements = std::mem::take(&mut mapper.elements);
     model.types = element_types(snapshot);
     let write_options = WriteOptions {

@@ -262,6 +262,33 @@ pub mod project {
     pub const TEMPLATE: usize = 5;
     /// How slopes are shown and typed ([`crate::units::SlopeUnit`] code); appended in schema 1.1.
     pub const SLOPE_UNIT: usize = 6;
+    /// The x of the project base point, in internal coordinates, in meters; appended in schema
+    /// 1.2 with the rest of the location fields (see [`crate::coordinates`]), all optional.
+    pub const BASE_X: usize = 7;
+    /// The y of the project base point.
+    pub const BASE_Y: usize = 8;
+    /// The elevation of the project base point.
+    pub const BASE_Z: usize = 9;
+    /// The x of the survey point, in internal coordinates.
+    pub const SURVEY_X: usize = 10;
+    /// The y of the survey point.
+    pub const SURVEY_Y: usize = 11;
+    /// The elevation of the survey point.
+    pub const SURVEY_Z: usize = 12;
+    /// The angle from project north to true north, counterclockwise.
+    pub const TRUE_NORTH: usize = 13;
+    /// The scale factor from model to map lengths; 1 when absent.
+    pub const SCALE: usize = 14;
+    /// The coordinate reference system: an EPSG code (`EPSG:3067`) or a WKT text.
+    pub const CRS: usize = 15;
+    /// The eastings of the survey point in the coordinate reference system, in meters.
+    pub const EASTINGS: usize = 16;
+    /// The northings of the survey point, in meters.
+    pub const NORTHINGS: usize = 17;
+    /// The height of the survey point above the datum of the reference system, in meters.
+    pub const HEIGHT: usize = 18;
+    /// The distance from the internal origin beyond which geometry is reported, in meters.
+    pub const PRECISION_DISTANCE: usize = 19;
 }
 
 /// Field positions of `archbuilder.site`.
@@ -584,6 +611,8 @@ pub mod plan_view {
     /// The grids whose extent or heads this view overrides (records, see [`crate::view::DatumView`]);
     /// appended in schema 1.1.
     pub const DATUM_VIEWS: usize = 19;
+    /// Which north the view is oriented to ([`crate::view::North`] code); appended in schema 1.2.
+    pub const NORTH: usize = 20;
 }
 
 /// Field positions of `archbuilder.selection_set`.
@@ -1066,7 +1095,7 @@ fn declaration(key: &str, fields: Vec<FieldDecl>) -> Result<TypeDecl> {
 /// The registry's errors; none occur for these declarations.
 #[allow(clippy::too_many_lines, reason = "one field list per type")]
 pub fn register(registry: &mut TypeRegistry) -> Result<()> {
-    let project = vec![
+    let mut project = vec![
         name_field("identity"),
         text_field("number", 64),
         text_field("client", NAME_BYTES),
@@ -1090,6 +1119,28 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         .in_aspect("units")
         .since_minor(1),
     ];
+    // The location of the project: where its base point and survey point are, which way north
+    // is and where the survey point is on the map. Optional, so older files load unchanged.
+    let located = |name: &str, range: (f64, f64)| optional_length(name, range).since_minor(2);
+    project.extend([
+        located("base_x", COORDINATE_RANGE),
+        located("base_y", COORDINATE_RANGE),
+        located("base_z", ELEVATION_RANGE),
+        located("survey_x", COORDINATE_RANGE),
+        located("survey_y", COORDINATE_RANGE),
+        located("survey_z", ELEVATION_RANGE),
+        angle_field("true_north").optional().since_minor(2),
+        FieldDecl::new("map_scale", ValueType::F64)
+            .optional()
+            .with_bound(real(crate::coordinates::SCALE_RANGE))
+            .in_aspect("geometry")
+            .since_minor(2),
+        text_field("crs", crate::coordinates::MAX_CRS).since_minor(2),
+        located("eastings", crate::coordinates::MAP_RANGE),
+        located("northings", crate::coordinates::MAP_RANGE),
+        located("survey_height", ELEVATION_RANGE),
+        located("precision_distance", (1.0, COORDINATE_RANGE.1)),
+    ]);
     let site = vec![name_field("identity")];
     let building = vec![
         name_field("identity"),
@@ -1355,6 +1406,20 @@ fn plan_view_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("graphics")
         .since_minor(1),
+    );
+    fields.push(
+        FieldDecl::new(
+            "north",
+            ValueType::Enum(
+                crate::view::North::ALL
+                    .iter()
+                    .map(|n| EnumVariant::new(n.name(), n.code()))
+                    .collect(),
+            ),
+        )
+        .optional()
+        .in_aspect("graphics")
+        .since_minor(2),
     );
     fields
 }
@@ -2284,6 +2349,19 @@ mod tests {
                     ("length_unit", project::LENGTH_UNIT),
                     ("template", project::TEMPLATE),
                     ("slope_unit", project::SLOPE_UNIT),
+                    ("base_x", project::BASE_X),
+                    ("base_y", project::BASE_Y),
+                    ("base_z", project::BASE_Z),
+                    ("survey_x", project::SURVEY_X),
+                    ("survey_y", project::SURVEY_Y),
+                    ("survey_z", project::SURVEY_Z),
+                    ("true_north", project::TRUE_NORTH),
+                    ("map_scale", project::SCALE),
+                    ("crs", project::CRS),
+                    ("eastings", project::EASTINGS),
+                    ("northings", project::NORTHINGS),
+                    ("survey_height", project::HEIGHT),
+                    ("precision_distance", project::PRECISION_DISTANCE),
                 ],
             ),
             (SITE, &[("name", site::NAME)]),
@@ -2384,7 +2462,16 @@ mod tests {
             for (name, at) in fields {
                 assert_eq!(decl.schema.fields[*at].name, *name, "{key}");
             }
-            assert_eq!(decl.schema.fields.len(), fields.len(), "{key}");
+            // A type whose sketch is made on a work plane ends with the reference to it.
+            let stored = usize::from(ON_WORK_PLANE.iter().any(|k| *k == key));
+            assert_eq!(decl.schema.fields.len(), fields.len() + stored, "{key}");
+            if stored == 1 {
+                assert_eq!(decl.schema.fields[fields.len()].name, "work_plane", "{key}");
+            }
         }
+        assert_eq!(
+            registry.get(ROOF_EXTRUSION).unwrap().schema.fields[roof_extrusion::WORK_PLANE].name,
+            "work_plane"
+        );
     }
 }

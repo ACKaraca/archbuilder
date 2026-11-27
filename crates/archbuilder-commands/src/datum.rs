@@ -418,51 +418,54 @@ fn point_ok(p: [f64; 2]) -> bool {
     p.iter().all(|v| v.is_finite() && *v >= lo && *v <= hi)
 }
 
-fn create_grid(ctx: &mut Context<'_>, mut p: CreateGrid) -> Result<GridCreated> {
-    let building = building_for(ctx, p.building)?;
-    let snapshot = ctx.snapshot().clone();
+/// The control points of the line `p` asks for and the bulge of each of its segments.
+fn grid_line(snapshot: &Snapshot, p: &mut CreateGrid) -> Result<(Vec<[f64; 2]>, Vec<f64>)> {
     let baseline = |id: ObjectId| -> Result<[[f64; 2]; 2]> {
-        let wall = expect(&snapshot, id, WALL)?;
+        let wall = expect(snapshot, id, WALL)?;
         archbuilder_model::wall::Wall::from_values(&wall.values)
             .map(|w| [w.start, w.end])
             .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
     };
     // The control points of the line and the bulge of each segment.
-    let (points, mut bulges): (Vec<[f64; 2]>, Option<Vec<f64>>) =
-        match (p.from_walls, p.from_wall, p.points, p.start, p.end) {
-            (Some(walls), ..) => {
-                if walls.is_empty() || walls.len() > datum::MAX_PATH {
-                    return Err(Error::new(codes::NO_LINE));
-                }
-                let mut points: Vec<[f64; 2]> = Vec::new();
-                for IdParam(id) in walls {
-                    let [a, b] = baseline(id)?;
-                    let joined =
-                        |x: [f64; 2], y: [f64; 2]| (x[0] - y[0]).hypot(x[1] - y[1]) < 1.0e-3;
-                    // The first wall runs backwards when the second meets its start.
-                    if points.len() == 2
-                        && let Some(first) = points.first().copied()
-                        && (joined(first, a) || joined(first, b))
-                        && !points
-                            .last()
-                            .is_some_and(|l| joined(*l, a) || joined(*l, b))
-                    {
-                        points.reverse();
-                    }
-                    match points.last().copied() {
-                        None => points.extend([a, b]),
-                        Some(last) if joined(last, a) => points.push(b),
-                        Some(last) if joined(last, b) => points.push(a),
-                        Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
-                    }
-                }
-                (points, None)
+    let (points, mut bulges): (Vec<[f64; 2]>, Option<Vec<f64>>) = match (
+        p.from_walls.take(),
+        p.from_wall,
+        p.points.take(),
+        p.start,
+        p.end,
+    ) {
+        (Some(walls), ..) => {
+            if walls.is_empty() || walls.len() > datum::MAX_PATH {
+                return Err(Error::new(codes::NO_LINE));
             }
-            (None, Some(IdParam(id)), ..) => (baseline(id)?.to_vec(), None),
-            (None, None, Some(points), ..) => (points, p.bulges.take()),
-            (None, None, None, Some(a), Some(b)) => (vec![a, b], None),
-            _ => return Err(Error::new(codes::NO_LINE)),
-        };
+            let mut points: Vec<[f64; 2]> = Vec::new();
+            for IdParam(id) in walls {
+                let [a, b] = baseline(id)?;
+                let joined = |x: [f64; 2], y: [f64; 2]| (x[0] - y[0]).hypot(x[1] - y[1]) < 1.0e-3;
+                // The first wall runs backwards when the second meets its start.
+                if points.len() == 2
+                    && let Some(first) = points.first().copied()
+                    && (joined(first, a) || joined(first, b))
+                    && !points
+                        .last()
+                        .is_some_and(|l| joined(*l, a) || joined(*l, b))
+                {
+                    points.reverse();
+                }
+                match points.last().copied() {
+                    None => points.extend([a, b]),
+                    Some(last) if joined(last, a) => points.push(b),
+                    Some(last) if joined(last, b) => points.push(a),
+                    Some(_) => return Err(Error::new(codes::VALUE_INVALID)),
+                }
+            }
+            (points, None)
+        }
+        (None, Some(IdParam(id)), ..) => (baseline(id)?.to_vec(), None),
+        (None, None, Some(points), ..) => (points, p.bulges.take()),
+        (None, None, None, Some(a), Some(b)) => (vec![a, b], None),
+        _ => return Err(Error::new(codes::NO_LINE)),
+    };
     if points.len() < 2
         || points.len() > datum::MAX_PATH + 2
         || !points.iter().all(|q| point_ok(*q))
@@ -487,6 +490,14 @@ fn create_grid(ctx: &mut Context<'_>, mut p: CreateGrid) -> Result<GridCreated> 
     {
         return Err(Error::new(codes::VALUE_INVALID));
     }
+    Ok((points, bulges))
+}
+
+fn create_grid(ctx: &mut Context<'_>, mut p: CreateGrid) -> Result<GridCreated> {
+    let building = building_for(ctx, p.building)?;
+    let snapshot = ctx.snapshot().clone();
+    let (points, bulges) = grid_line(&snapshot, &mut p)?;
+    let segments = points.len() - 1;
     let (start, end, bulge) = match (points.first(), points.last(), bulges.last()) {
         (Some(a), Some(b), Some(k)) => (*a, *b, *k),
         _ => return Err(Error::new(codes::NO_LINE)),
@@ -866,6 +877,7 @@ fn two_points(first: Msg, second: Msg) -> PromptSequence {
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
+#[allow(clippy::too_many_lines, reason = "one registration per command")]
 pub fn register(registry: &mut Registry) -> Result<()> {
     let spec = |id, label: Msg, description: Msg| (id, label.message_id, description.message_id);
     let (id, label, description) = spec(

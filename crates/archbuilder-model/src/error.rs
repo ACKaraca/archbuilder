@@ -485,6 +485,13 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-datum-label-duplicate",
     };
+    /// Geometry lies farther from the internal origin than the document's precision distance (a
+    /// warning).
+    pub const LOCATION_DISTANT: ErrorCode = ErrorCode {
+        code: "ab.model.location_distant",
+        category: Category::Conflict,
+        message_id: "ab-model-location-distant",
+    };
     /// A plan view's range is out of order: view depth, bottom, cut and top must rise.
     pub const VIEW_RANGE: ErrorCode = ErrorCode {
         code: "ab.model.view_range",

@@ -378,6 +378,102 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "base_x",
+        Message {
+            message_id: "ab-prop-base-x",
+        },
+    ),
+    (
+        "base_y",
+        Message {
+            message_id: "ab-prop-base-y",
+        },
+    ),
+    (
+        "base_z",
+        Message {
+            message_id: "ab-prop-base-z",
+        },
+    ),
+    (
+        "survey_x",
+        Message {
+            message_id: "ab-prop-survey-x",
+        },
+    ),
+    (
+        "survey_y",
+        Message {
+            message_id: "ab-prop-survey-y",
+        },
+    ),
+    (
+        "survey_z",
+        Message {
+            message_id: "ab-prop-survey-z",
+        },
+    ),
+    (
+        "true_north",
+        Message {
+            message_id: "ab-prop-true-north",
+        },
+    ),
+    (
+        "map_scale",
+        Message {
+            message_id: "ab-prop-map-scale",
+        },
+    ),
+    (
+        "crs",
+        Message {
+            message_id: "ab-prop-crs",
+        },
+    ),
+    (
+        "eastings",
+        Message {
+            message_id: "ab-prop-eastings",
+        },
+    ),
+    (
+        "northings",
+        Message {
+            message_id: "ab-prop-northings",
+        },
+    ),
+    (
+        "survey_height",
+        Message {
+            message_id: "ab-prop-survey-height",
+        },
+    ),
+    (
+        "precision_distance",
+        Message {
+            message_id: "ab-prop-precision-distance",
+        },
+    ),
+    (
+        "north",
+        Message {
+            message_id: "ab-prop-view-north",
+        },
+    ),
+    (
+        "project_north",
+        Message {
+            message_id: "ab-prop-north-project",
+        },
+    ),
+    (
+        "face",
+        Message {
+            message_id: "ab-prop-work-plane-face",
+        },
+    ),
+    (
         "degrees",
         Message {
             message_id: "ab-slope-degrees",
