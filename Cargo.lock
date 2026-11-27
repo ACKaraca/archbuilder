@@ -368,6 +368,7 @@ dependencies = [
  "arc-doc",
  "arc-draft",
  "arc-geom",
+ "arc-mesh",
  "arc-solve",
  "arc-view",
  "blake3",

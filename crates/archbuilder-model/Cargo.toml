@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 arc-base = { workspace = true }
 arc-doc = { workspace = true }
+arc-mesh = { workspace = true }
 arc-geom = { workspace = true }
 arc-draft = { workspace = true }
 arc-view = { workspace = true }

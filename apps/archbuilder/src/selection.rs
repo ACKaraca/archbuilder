@@ -228,6 +228,9 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
                     .collect()
             })
             .unwrap_or_default(),
+        Some(types::FOREIGN_ELEMENT) => {
+            archbuilder_model::foreign::plan_outline(&object.values).unwrap_or_default()
+        }
         Some(types::GRID) => archbuilder_model::datum::Grid::from_values(&object.values)
             .map(|g| g.points())
             .unwrap_or_default(),

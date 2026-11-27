@@ -146,7 +146,8 @@ encodes, so the export writes the same `GlobalId` again (IFC `GlobalId`s are the
 element identifier, see the domain model); a `GlobalId` that is malformed, repeated in the file or
 taken by another object gets a new identifier. The source map of the document (`arc_doc::source_map`,
 format `ifc`) binds each `GlobalId` to its object (ADR 0007). A product whose `GlobalId` the document
-already holds, as an identifier or in the source map, is matched and not made again.
+already holds, as an identifier or in the source map, is matched and not made again. A copy or paste
+of an imported element is a new element with its own identifier, so it is written with its own `GlobalId`.
 
 **Export of imported content.** Foreign elements are written as their source class: the stand-in the
 writer has (a member with the mesh as a faceted B-rep) is rewritten through the reader's edit API

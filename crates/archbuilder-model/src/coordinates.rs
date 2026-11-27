@@ -232,6 +232,9 @@ pub fn anchors(object: &arc_doc::Object, key: &str) -> Vec<[f64; 2]> {
         types::REFERENCE_PLANE => crate::datum::RefPlane::from_values(v)
             .map(|r| vec![r.start, r.end])
             .unwrap_or_default(),
+        types::FOREIGN_ELEMENT => crate::foreign::bounds(v)
+            .map(|(lo, hi)| vec![[lo[0], lo[1]], [hi[0], hi[1]]])
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }

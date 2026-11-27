@@ -197,6 +197,42 @@ impl Rig {
         );
         self.component();
         self.hosted(&walls[3]);
+        self.foreign();
+    }
+
+    /// An imported element: a box in the storey, as the import writes one.
+    fn foreign(&self) {
+        let storey = self.first(STOREY);
+        let mut values = self.blank(types::FOREIGN_ELEMENT);
+        if let Some(slot) = values.get_mut(types::foreign_element::NAME) {
+            *slot = Some(arc_doc::Value::String("Column".to_owned()));
+        }
+        if let Some(slot) = values.get_mut(types::foreign_element::MESH) {
+            *slot = archbuilder_model::foreign::box_value([25.0, 0.0, 0.0], [26.0, 1.0, 2.0]);
+        }
+        self.document
+            .submit(move |txn| {
+                txn.create(
+                    types::FOREIGN_ELEMENT,
+                    ObjectId::from_u128(0xD0),
+                    arc_doc::Header {
+                        owner: Some(storey),
+                        ..Default::default()
+                    },
+                    values,
+                )
+            })
+            .wait()
+            .unwrap();
+    }
+
+    /// The default values of a record of `key`.
+    fn blank(&self, key: &str) -> Vec<Option<arc_doc::Value>> {
+        self.snapshot()
+            .registry()
+            .get(key)
+            .map(|d| d.schema.fields.iter().map(|f| f.default.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// A loaded family with one type and a component of it.
@@ -388,4 +424,21 @@ fn a_component_moves_mirrors_and_copies_like_any_element() {
     let copy = made["created"][0].as_str().unwrap().parse().unwrap();
     assert_eq!(read(&rig, copy).origin[0], 26.0);
     assert_eq!(spatial::objects(&rig.snapshot(), types::COMPONENT).len(), 2);
+}
+
+#[test]
+fn a_foreign_element_is_hidden_and_isolated_by_kind() {
+    let rig = Rig::new();
+    rig.every_kind();
+    let s = rig.snapshot();
+    let id = rig.first(types::FOREIGN_ELEMENT);
+    let wall = rig.first(types::WALL);
+    let mut vis = archbuilder::visibility::Visibility::default();
+    vis.hide_kinds(&[types::FOREIGN_ELEMENT]);
+    assert!(!vis.shows(&s, id), "hidden by kind");
+    assert!(vis.shows(&s, wall));
+    vis.reset();
+    vis.isolate_kinds(&[types::FOREIGN_ELEMENT]);
+    assert!(vis.shows(&s, id), "isolated by kind");
+    assert!(!vis.shows(&s, wall));
 }

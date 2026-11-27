@@ -182,6 +182,18 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-mirror-axis",
     };
+    /// A foreign element (an imported shape) cannot be mirrored: nothing is changed.
+    pub const FOREIGN_MIRROR: ErrorCode = ErrorCode {
+        code: "ab.cmd.foreign_mirror",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-foreign-mirror",
+    };
+    /// The shape of an imported element cannot be moved or copied (its mesh does not decode).
+    pub const FOREIGN_SHAPE: ErrorCode = ErrorCode {
+        code: "ab.cmd.foreign_shape",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-foreign-shape",
+    };
     /// A point or value is typed while a modify command still waits for its objects.
     pub const SELECT_BEFORE_POINTS: ErrorCode = ErrorCode {
         code: "ab.cmd.select_before_points",

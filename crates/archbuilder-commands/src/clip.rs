@@ -199,7 +199,8 @@ pub fn capture(snapshot: &Snapshot, selected: &[ObjectId]) -> Result<Json> {
             | types::ELEVATOR
             | types::COMPONENT
             | types::GROUP_INSTANCE
-            | types::ROOF_EXTRUSION => push(
+            | types::ROOF_EXTRUSION
+            | types::FOREIGN_ELEMENT => push(
                 &mut items,
                 *id,
                 None,
@@ -565,6 +566,12 @@ pub(crate) fn paste_content(
     }
     // A component moves with the paste; its family type stays (the type must exist here).
     for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::FOREIGN_ELEMENT {
+            continue;
+        }
+        created.push(crate::foreign::paste_foreign(ctx, &values, &xf, storey)?);
+    }
+    for (key, _, _, values) in decoded.iter().cloned() {
         if key != types::COMPONENT {
             continue;
         }
@@ -826,6 +833,12 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
             if lo <= hi {
                 out.push(vec![at(lo), at(hi)]);
             }
+        } else if key == types::FOREIGN_ELEMENT
+            && let Some(outline) = archbuilder_model::foreign::plan_outline(&values)
+        {
+            let mut l = outline;
+            l.extend(l.first().copied());
+            out.push(l);
         } else if (key == FLOOR || key == CEILING)
             && let Some(f) = Floor::from_values(&values)
         {

@@ -38,6 +38,7 @@ pub mod family_project;
 pub mod floor;
 pub mod floor_edge;
 pub mod floor_slope;
+pub mod foreign;
 pub mod group;
 pub mod insert;
 pub mod model_view;

@@ -198,6 +198,21 @@ pub fn stack(
             on_lines.push((f64::MIN, o.id));
         }
     }
+    // A foreign element is picked over its mesh's plan box, widened by the aperture.
+    // shortcut: each hover decodes the meshes of up to MAX_PER_KIND foreign elements; store the plan box beside the mesh once a format change is approved.
+    for o in spatial::objects(snapshot, crate::types::FOREIGN_ELEMENT)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some((lo, hi)) = crate::foreign::bounds(&o.values) else {
+            continue;
+        };
+        let inside = (lo[0] - aperture..=hi[0] + aperture).contains(&at[0])
+            && (lo[1] - aperture..=hi[1] + aperture).contains(&at[1]);
+        if inside {
+            on_lines.push((f64::MIN, o.id));
+        }
+    }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));
@@ -506,6 +521,24 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         Some(crate::types::GRID | crate::types::REFERENCE_PLANE) => {
             crate::datum::outline(snapshot, &object)
         }
+        Some(crate::types::FOREIGN_ELEMENT) => crate::foreign::bounds(&object.values)
+            .map(|(lo, hi)| {
+                [lo[2], hi[2]]
+                    .into_iter()
+                    .map(|z| {
+                        close(
+                            &[
+                                [lo[0], lo[1]],
+                                [hi[0], lo[1]],
+                                [hi[0], hi[1]],
+                                [lo[0], hi[1]],
+                            ],
+                            z,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         Some(crate::types::ROOF_EXTRUSION) => crate::roof_extrusion::Derived::of(snapshot, &object)
             .map(|d| {
                 d.pieces()

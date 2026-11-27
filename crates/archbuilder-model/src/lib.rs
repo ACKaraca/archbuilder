@@ -67,6 +67,7 @@ pub mod expr;
 pub mod family;
 pub mod floor;
 pub mod floor_edge;
+pub mod foreign;
 pub mod group;
 pub mod headroom;
 pub mod insert;

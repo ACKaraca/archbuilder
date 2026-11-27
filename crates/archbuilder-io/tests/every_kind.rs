@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use arc_base::id::Identifier;
 use arc_command::{Invocation, Invoker, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Snapshot};
@@ -343,6 +344,34 @@ fn a_document_with_every_element_kind_exports_and_validates() {
             json!({"host": walls[3], "type": t.to_string(), "distance": 3.0}),
         );
     }
+    // An imported element: a box in the storey, as the import writes one.
+    let storey = spatial::objects(&document.snapshot(), types::STOREY)[0].id;
+    let mut values: Vec<Option<arc_doc::Value>> = document
+        .snapshot()
+        .registry()
+        .get(types::FOREIGN_ELEMENT)
+        .map(|d| d.schema.fields.iter().map(|f| f.default.clone()).collect())
+        .unwrap_or_default();
+    if let Some(slot) = values.get_mut(types::foreign_element::NAME) {
+        *slot = Some(arc_doc::Value::String("Column".to_owned()));
+    }
+    if let Some(slot) = values.get_mut(types::foreign_element::MESH) {
+        *slot = archbuilder_model::foreign::box_value([30.0, 0.0, 0.0], [31.0, 1.0, 3.0]);
+    }
+    document
+        .submit(move |txn| {
+            txn.create(
+                types::FOREIGN_ELEMENT,
+                arc_base::ObjectId::from_u128(0xF0),
+                arc_doc::Header {
+                    owner: Some(storey),
+                    ..Default::default()
+                },
+                values,
+            )
+        })
+        .wait()
+        .unwrap();
     let s = document.snapshot();
     for key in ELEMENTS
         .iter()

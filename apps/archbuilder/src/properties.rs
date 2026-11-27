@@ -34,6 +34,42 @@ const PENDING: &str = "…";
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
     (
+        "ifc_class",
+        Message {
+            message_id: "ab-prop-ifc-class",
+        },
+    ),
+    (
+        "predefined_type",
+        Message {
+            message_id: "ab-prop-predefined-type",
+        },
+    ),
+    (
+        "object_type",
+        Message {
+            message_id: "ab-prop-object-type",
+        },
+    ),
+    (
+        "tag",
+        Message {
+            message_id: "ab-prop-tag",
+        },
+    ),
+    (
+        "source_schema",
+        Message {
+            message_id: "ab-prop-source-schema",
+        },
+    ),
+    (
+        "foreign_extent",
+        Message {
+            message_id: "ab-prop-foreign-extent",
+        },
+    ),
+    (
         "parameters",
         Message {
             message_id: "ab-prop-parameters",
@@ -1640,6 +1676,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::FOREIGN_ELEMENT,
+        Message {
+            message_id: "ab-kind-foreign-element",
+        },
+    ),
+    (
         types::DORMER,
         Message {
             message_id: "ab-kind-dormer",
@@ -3101,6 +3143,30 @@ fn shown(
                 values.push(value.map(Value::String));
                 read_only.push(name.to_owned());
             }
+        }
+        // An imported element shows the source's data read only, and the plan extent of its shape;
+        // the mesh is shown as the shape, not as a value.
+        types::FOREIGN_ELEMENT => {
+            use archbuilder_model::types::foreign_element as f;
+            if fields.len() > f::MESH && values.len() > f::MESH {
+                fields.remove(f::MESH);
+                values.remove(f::MESH);
+            }
+            let extent = archbuilder_model::foreign::bounds(&object.values)
+                .map(|(lo, hi)| format!("{:.2} m × {:.2} m", hi[0] - lo[0], hi[1] - lo[1]));
+            fields.push(text_field("foreign_extent"));
+            values.push(extent.map(Value::String));
+            read_only.extend(
+                [
+                    "ifc_class",
+                    "predefined_type",
+                    "object_type",
+                    "tag",
+                    "source_schema",
+                    "foreign_extent",
+                ]
+                .map(str::to_owned),
+            );
         }
         // An elevator shows its sizes, the levels it stops at and the span of its shaft.
         types::ELEVATOR => {
