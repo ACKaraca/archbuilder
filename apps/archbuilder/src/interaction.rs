@@ -120,6 +120,16 @@ fn statistics_text(localizer: &arc_app::locale::Localizer, value: &serde_json::V
         .text
 }
 
+const PURGED: Message = Message {
+    message_id: "ab-notice-purged",
+};
+const PURGE_NOTHING: Message = Message {
+    message_id: "ab-notice-purge-nothing",
+};
+const STANDARDS_DONE: Message = Message {
+    message_id: "ab-notice-standards",
+};
+
 const STATISTICS_REPORT: Message = Message {
     message_id: "ab-statistics-report",
 };
@@ -2471,6 +2481,77 @@ impl WallInteraction {
         )
     }
 
+    /// The notices of the project commands: what a purge removed, what a standards transfer
+    /// copied.
+    fn say_project_outcome(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        command: &str,
+        value: &serde_json::Value,
+    ) {
+        if command == archbuilder_commands::project::PROJECT_PURGE
+            && value.get("preview").and_then(serde_json::Value::as_bool) == Some(false)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let removed = value
+                .get("removed")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let names: Vec<&str> = value
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|i| i.get("name").and_then(serde_json::Value::as_str))
+                .collect();
+            let text = localizer
+                .format(
+                    PURGED.message_id,
+                    &[
+                        ("count", arc_base::error::Value::Int(removed)),
+                        ("names", arc_base::error::Value::Text(names.join(", "))),
+                    ],
+                )
+                .text;
+            self.push_notice(text);
+        } else if command == archbuilder_commands::project::PROJECT_PURGE
+            && value.get("preview").and_then(serde_json::Value::as_bool) == Some(true)
+            && value
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            // Nothing was offered, so nothing was removed.
+            let text = localizer.format(PURGE_NOTHING.message_id, &[]).text;
+            self.push_notice(text);
+        }
+        if command == archbuilder_io::standards::TRANSFER_STANDARDS
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let number = |key: &str| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+            };
+            let text = localizer
+                .format(
+                    STANDARDS_DONE.message_id,
+                    &[
+                        (
+                            "count",
+                            arc_base::error::Value::Int(number("copied") + number("overwritten")),
+                        ),
+                        ("skipped", arc_base::error::Value::Int(number("skipped"))),
+                    ],
+                )
+                .text;
+            self.push_notice(text);
+        }
+    }
+
     /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
     fn say_outcome(
         &mut self,
@@ -2483,6 +2564,7 @@ impl WallInteraction {
         {
             self.push_notice(text);
         }
+        self.say_project_outcome(cx, command, value);
         if command == STATISTICS
             && let Some(localizer) = self.localizer(cx.language())
         {

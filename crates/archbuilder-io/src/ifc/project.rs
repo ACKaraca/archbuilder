@@ -189,6 +189,11 @@ fn global_id(project_id: u128, tag: u128) -> String {
 
 /// Writes `info` into the IFC4 file `bytes`. `None` when the file is not the shape the writer
 /// produces (a missing project, site or building), so the caller reports it.
+#[allow(
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    reason = "one list of entities after another, in the order they refer to each other"
+)]
 pub(crate) fn apply(bytes: &[u8], info: &Info, project_id: u128) -> Option<Vec<u8>> {
     if !info.writes_anything() {
         return Some(bytes.to_vec());

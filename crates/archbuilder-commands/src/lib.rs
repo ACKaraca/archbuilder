@@ -43,6 +43,7 @@ pub mod selection;
 pub mod stair;
 pub mod stats;
 pub mod structure;
+pub mod transfer;
 pub mod view;
 pub mod wall;
 

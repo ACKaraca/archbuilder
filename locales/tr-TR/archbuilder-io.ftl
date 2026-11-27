@@ -31,3 +31,7 @@ ab-io-loss-grid-multi-segment = Birden çok parçalı bir aks çizgisi IFC dosya
 ab-io-loss-curtain-panel-filled = Bir perde duvarın panelleri arasında { $count } kapı veya pencere var: her biri perde duvarın parçası olarak değil, perde duvarda açılan bir boşluğu dolduran kapı veya pencere olarak yazıldı.
 ab-io-loss-project-info-not-written = Proje bilgisi IFC dosyasına eklenemedi: uzun ad, aşama, adresler, aktörler ve yapı özellikleri dışarıda kaldı.
 ab-io-loss-issue-date-not-written = Projenin yayın tarihi IFC dosyasında yok: IFC4’te bunun için bir öznitelik bulunmaz.
+ab-io-command-new-from-template-label = Şablondan Yeni
+ab-io-command-new-from-template-description = Açık belgenin projesini, sıradan bir belge olan bir şablondan başlatır: proje ayarları ve bilgisi, saha, yapı, katlar, seviyeler, eleman tipleri ve plan görünümleri yeni kimliklerle kopyalanır ve belgenin mevcut yapısının yerini alır. Şablon değişmez. Belgede eleman bulunmamalıdır.
+ab-io-command-transfer-standards-label = Standartları Aktar
+ab-io-command-transfer-standards-description = Eleman tiplerini ve görüntüleme birimi ayarlarını başka bir belge dosyasından kopyalar. Belgede adı zaten bulunan tip, tipe göre korunur, üzerine yazılır (hiçbir şey kullanmıyorsa) ya da boş bir adla kopyalanır; sonuç neyin kopyalandığını ve neyin dışarıda kaldığını listeler.

@@ -31,3 +31,7 @@ ab-io-loss-grid-multi-segment = A grid line of several segments is not in the IF
 ab-io-loss-curtain-panel-filled = A curtain wall has { $count } doors or windows as panels: each is written as a door or window that fills an opening in the curtain wall, not as a part of it.
 ab-io-loss-project-info-not-written = The project information could not be added to the IFC file: its long name, phase, addresses, actors and building properties are left out.
 ab-io-loss-issue-date-not-written = The issue date of the project is not in the IFC file: IFC4 has no attribute for it.
+ab-io-command-new-from-template-label = New From Template
+ab-io-command-new-from-template-description = Starts the project of the open document from a template, an ordinary document: its project settings and information, site, building, storeys, levels, element types and plan views are copied under new identifiers, replacing the structure the document has. The template is not changed. The document must have no elements.
+ab-io-command-transfer-standards-label = Transfer Standards
+ab-io-command-transfer-standards-description = Copies element types and the display unit settings from another document file. A type whose name the document already has is kept, overwritten (when nothing uses it) or copied under a free name, per type; the result lists what was copied and what was left out.

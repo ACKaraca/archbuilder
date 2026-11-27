@@ -335,6 +335,8 @@ pub mod project {
     pub const YEAR_OF_CONSTRUCTION: usize = 40;
     /// How the building is constructed, in words.
     pub const CONSTRUCTION_METHOD: usize = 41;
+    /// The file name of the template the project was made from (AB-DATUM-001).
+    pub const TEMPLATE_SOURCE: usize = 42;
 }
 
 /// The longest project information text, in bytes.
@@ -1303,6 +1305,7 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         ("occupancy_type", INFO_BYTES),
         ("year_of_construction", 4),
         ("construction_method", INFO_BYTES),
+        ("template_source", NAME_BYTES),
     ] {
         project.push(text_field(name, max).since_minor(4));
     }
@@ -2550,6 +2553,7 @@ mod tests {
                     ("occupancy_type", project::OCCUPANCY_TYPE),
                     ("year_of_construction", project::YEAR_OF_CONSTRUCTION),
                     ("construction_method", project::CONSTRUCTION_METHOD),
+                    ("template_source", project::TEMPLATE_SOURCE),
                 ],
             ),
             (SITE, &[("name", site::NAME)]),

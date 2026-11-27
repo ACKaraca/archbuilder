@@ -501,3 +501,7 @@ ab-cmd-project-set-units-label = Display Units
 ab-cmd-project-set-units-description = Sets the display unit, the decimals and the rounding step of lengths, areas, volumes, angles and slopes. Stored values stay in SI units; only how values are shown and how a typed number is read changes. Without values it selects the project, whose properties list the same fields.
 ab-cmd-project-set-info-label = Project Information
 ab-cmd-project-set-info-description = Sets the project information: name, number, client, address, status, issue date, author, organization, description, long name, and the occupancy type, year and method of construction of the building. An empty text clears a field. The IFC export writes these values. Without values it selects the project, whose properties list the same fields.
+ab-cmd-template-invalid = The file is not a template: it has no project with a site, a building and a storey, or it is not an ArchBuilder document.
+ab-cmd-template-target-has-elements = A project is started from a template in a document without elements. This document has { $count } element(s); use a new document.
+ab-cmd-project-purge-label = Purge Unused
+ab-cmd-project-purge-description = Removes the element types that nothing uses, with the types only they use, in one undoable step; the last type of a kind stays. With preview it only lists them and why each is unused.

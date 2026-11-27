@@ -500,3 +500,7 @@ ab-cmd-project-set-units-label = Görüntüleme Birimleri
 ab-cmd-project-set-units-description = Uzunluk, alan, hacim, açı ve eğimin görüntüleme birimini, ondalık basamağını ve yuvarlama adımını belirler. Saklanan değerler SI birimlerinde kalır; yalnızca değerlerin gösterimi ve yazılan sayının okunuşu değişir. Değer verilmezse projeyi seçer; özellikleri aynı alanları listeler.
 ab-cmd-project-set-info-label = Proje Bilgisi
 ab-cmd-project-set-info-description = Proje bilgisini belirler: ad, numara, işveren, adres, durum, yayın tarihi, yazar, kuruluş, açıklama, uzun ad ile yapının kullanım türü, yapım yılı ve yapım yöntemi. Boş metin alanı temizler. IFC dışa aktarımı bu değerleri yazar. Değer verilmezse projeyi seçer; özellikleri aynı alanları listeler.
+ab-cmd-template-invalid = Dosya bir şablon değil: site, yapı ve kat içeren bir proje yok ya da bir ArchBuilder belgesi değil.
+ab-cmd-template-target-has-elements = Şablondan proje, elemanı olmayan bir belgede başlatılır. Bu belgede { $count } eleman var; yeni bir belge kullanın.
+ab-cmd-project-purge-label = Kullanılmayanları Temizle
+ab-cmd-project-purge-description = Hiçbir elemanın kullanmadığı eleman tiplerini, yalnızca onların kullandığı tiplerle birlikte, tek geri alınabilir adımda kaldırır; bir türün son tipi kalır. Önizleme ile yalnızca listeler ve her birinin neden kullanılmadığını söyler.

@@ -706,3 +706,23 @@ ab-prop-long-name = Long name
 ab-prop-occupancy-type = Occupancy type
 ab-prop-year-of-construction = Year of construction
 ab-prop-construction-method = Construction method
+ab-group-project = Project
+ab-tool-project-info = Project Information
+ab-tool-project-info-hint = Edit the name, number, client, address, status and the rest of the project information in the properties panel.
+ab-tool-units = Units
+ab-tool-units-hint = Set the display unit, decimals and rounding of lengths, areas, volumes, angles and slopes in the properties panel.
+ab-tool-purge = Purge
+ab-tool-purge-hint = Remove the element types nothing uses, in one step you can undo.
+ab-tool-transfer-standards = Transfer Standards
+ab-tool-transfer-standards-hint = Copy element types and unit settings from another project file.
+ab-template-title = Choose a template
+ab-transfer-standards-title = Copy standards from a project
+ab-notice-purged = { $count ->
+    [one] Removed 1 unused type: { $names }. Undo brings it back.
+   *[other] Removed { $count } unused types: { $names }. Undo brings them back.
+}
+ab-notice-purge-nothing = No unused types: everything is in use, or is the last type of its kind.
+ab-notice-standards = { $count ->
+    [one] Copied 1 type, kept or skipped { $skipped }.
+   *[other] Copied { $count } types, kept or skipped { $skipped }.
+}

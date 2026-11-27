@@ -681,3 +681,23 @@ ab-prop-long-name = Uzun ad
 ab-prop-occupancy-type = Kullanım türü
 ab-prop-year-of-construction = Yapım yılı
 ab-prop-construction-method = Yapım yöntemi
+ab-group-project = Proje
+ab-tool-project-info = Proje Bilgisi
+ab-tool-project-info-hint = Proje adını, numarasını, işvereni, adresi, durumu ve diğer proje bilgilerini özellikler panelinde düzenleyin.
+ab-tool-units = Birimler
+ab-tool-units-hint = Uzunluk, alan, hacim, açı ve eğimin birimini, ondalık basamağını ve yuvarlamasını özellikler panelinde belirleyin.
+ab-tool-purge = Temizle
+ab-tool-purge-hint = Hiçbir şeyin kullanmadığı eleman tiplerini geri alınabilir tek adımda kaldırın.
+ab-tool-transfer-standards = Standartları Aktar
+ab-tool-transfer-standards-hint = Eleman tiplerini ve birim ayarlarını başka bir proje dosyasından kopyalayın.
+ab-template-title = Bir şablon seçin
+ab-transfer-standards-title = Standartları bir projeden kopyalayın
+ab-notice-purged = { $count ->
+    [one] Kullanılmayan 1 tip kaldırıldı: { $names }. Geri alma onu geri getirir.
+   *[other] Kullanılmayan { $count } tip kaldırıldı: { $names }. Geri alma onları geri getirir.
+}
+ab-notice-purge-nothing = Kullanılmayan tip yok: her şey kullanımda ya da türünün son tipi.
+ab-notice-standards = { $count ->
+    [one] 1 tip kopyalandı, { $skipped } tip korundu ya da atlandı.
+   *[other] { $count } tip kopyalandı, { $skipped } tip korundu ya da atlandı.
+}

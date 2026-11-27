@@ -865,6 +865,57 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-project",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-info",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-info-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_SET_INFO,
+                            "project-info",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-units",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-units-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_SET_UNITS,
+                            "units",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-purge",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-purge-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_PURGE,
+                            "purge",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-transfer-standards",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-transfer-standards-hint",
+                            }),
+                            archbuilder_io::standards::TRANSFER_STANDARDS,
+                            "transfer-standards",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-model",
                     },
                     vec![icon_button(
@@ -1326,6 +1377,10 @@ pub fn icons() -> Vec<(String, String)> {
         "properties",
         "outliner",
         "export-ifc",
+        "project-info",
+        "units",
+        "purge",
+        "transfer-standards",
     ]
 }
 

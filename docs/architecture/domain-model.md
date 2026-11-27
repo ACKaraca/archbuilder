@@ -1298,6 +1298,27 @@ building with `Reference` (the project number), `OccupancyType`, `YearOfConstruc
 types of the IFC4 template. IFC4 has no `Pset_ProjectCommon` and no attribute for an issue date: the date is named in the loss
 report. The file validates against the IFC4 schema with the EXPRESS rules.
 
+## Templates, standards transfer and purge
+
+A template is an ordinary `.archb` document; the project's `template` flag marks it as one (`archbuilder.property.set` edits it).
+`archbuilder.file.new_from_template` (File > New From Template; a path or the open dialog) starts the open document's project from
+one. It is for a document without elements: the document's structure is replaced by copies of the template's project (with its
+units and information, `template` cleared and the file name kept as `template_source`, schema 1.4), site, building, storeys,
+levels, element types and plan views, under new identifiers, so the `GlobalId`s of two projects never coincide. The hidden elements and
+grid overrides of the template's views are not carried over. Elements, datums and selection sets of the template are not copied and
+are listed in the result. The template file is only read, and the command is one undo step.
+
+`archbuilder.file.transfer_standards` copies element types (wall, floor, door, window, roof, ceiling, railing and ramp types) and the
+display unit settings from another document file, which it reads without changing (an open document is reached through its saved
+file). A type whose name the document already has is `keep` (default), `overwrite` (only when nothing refers to it) or `rename`
+(copied as `Name (2)`), set for all types and over by name; a type that refers to other objects is skipped. The result lists each type
+with what happened and why a type was left out. It is one undo step.
+
+`archbuilder.project.purge` lists (`preview`) or removes the element types that nothing refers to, in one undo step, each with its
+reason: `unused`, or `used_only_by_unused` for a type that only other removed types use, which go together. A type that anything in
+use refers to is never offered and is refused when asked for, and the last type of a kind stays. Materials are layer names of the
+types, so they are removed with a type; there are no other families, styles, filters or view templates yet.
+
 ## Location: origins, north and the geodetic reference
 
 The internal origin is fixed: every stored coordinate is measured from it. The project record holds, as optional fields (a file

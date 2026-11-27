@@ -195,3 +195,58 @@ fn project_information_is_validated_cleared_edited_by_the_property_command_and_u
     // Nothing to set selects the project.
     run_ok(&env, "archbuilder.project.set_info", json!({}));
 }
+
+#[test]
+fn purge_lists_unused_types_with_a_reason_and_removes_them_in_one_undo_step() {
+    use archbuilder_model::types::WALL_TYPE;
+    let env = Env::new();
+    let count = |env: &Env| spatial::objects(&env.snapshot(), WALL_TYPE).len();
+    let storey = env.storeys()[0].to_string();
+    let wall = run_ok(
+        &env,
+        "archbuilder.wall.create",
+        json!({"storey": storey, "start": [0.0, 0.0], "end": [4.0, 0.0]}),
+    );
+    let used = archbuilder_model::element_type::type_id(
+        archbuilder_model::element_type::TypeKind::Wall,
+        &spatial::get(
+            &env.snapshot(),
+            wall.value["wall"].as_str().unwrap().parse().unwrap(),
+        )
+        .unwrap()
+        .values,
+    );
+    let before = count(&env);
+    let present: Vec<&str> = archbuilder_commands::transfer::TYPE_KINDS
+        .into_iter()
+        .filter(|k| !spatial::objects(&env.snapshot(), k).is_empty())
+        .collect();
+    let preview = run_ok(&env, "archbuilder.project.purge", json!({"preview": true}));
+    let listed = preview.value["items"].as_array().unwrap();
+    assert!(!listed.is_empty());
+    assert!(listed.iter().all(|i| i["reason"] == "unused"));
+    assert_eq!(count(&env), before, "a preview changes nothing");
+    // The type the wall uses is never offered, nor refused silently when asked for.
+    let used = used.unwrap().to_string();
+    assert!(listed.iter().all(|i| i["id"] != used.as_str()));
+    assert!(
+        env.run("archbuilder.project.purge", json!({"items": [used]}),)
+            .is_err()
+    );
+    // One item, then everything else, each one undo step.
+    let first = listed[0]["id"].as_str().unwrap().to_owned();
+    let done = run_ok(&env, "archbuilder.project.purge", json!({"items": [first]}));
+    assert_eq!(done.value["removed"], 1);
+    let rest = run_ok(&env, "archbuilder.project.purge", json!({}));
+    assert!(rest.value["removed"].as_u64().unwrap() >= 1);
+    // What is left: every type in use, and the last type of each kind.
+    assert!(spatial::get(&env.snapshot(), used.parse().unwrap()).is_some());
+    for key in present {
+        assert!(!spatial::objects(&env.snapshot(), key).is_empty(), "{key}");
+    }
+    let again = run_ok(&env, "archbuilder.project.purge", json!({"preview": true}));
+    assert!(again.value["items"].as_array().unwrap().is_empty());
+    env.document.undo().wait().unwrap();
+    env.document.undo().wait().unwrap();
+    assert_eq!(count(&env), before);
+}

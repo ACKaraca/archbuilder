@@ -3,11 +3,13 @@
 //! The values live on the project record ([`archbuilder_model::types::project`]); a command that
 //! is given nothing to change selects the project, whose properties list the same fields.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use arc_base::{Error, ObjectId, Result};
-use arc_command::{CommandSpec, Context, Registry};
+use arc_command::{CommandSpec, Context, IdParam, Registry};
 use arc_doc::{FieldPath, Snapshot, Value};
 use archbuilder_model::spatial;
-use archbuilder_model::types::PROJECT;
+use archbuilder_model::types::{self, PROJECT};
 use archbuilder_model::units::{
     AngleUnit, AreaUnit, LengthUnit, MAX_PRECISION, ROUNDING_RANGE, SlopeUnit, VolumeUnit,
 };
@@ -16,6 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::codes;
 
+/// The identifier of the purge command.
+pub const PROJECT_PURGE: &str = "archbuilder.project.purge";
 /// The identifier of the project information command.
 pub const PROJECT_SET_INFO: &str = "archbuilder.project.set_info";
 /// The identifier of the display units command.
@@ -31,6 +35,178 @@ pub(crate) fn project_of(snapshot: &Snapshot) -> Result<ObjectId> {
         .first()
         .map(|p| p.id)
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))
+}
+
+/// Parameters of `archbuilder.project.purge` (AB-DATUM-006).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Purge {
+    /// Only list what would be removed; nothing changes.
+    #[serde(default)]
+    pub preview: Option<bool>,
+    /// The unused items to remove; every unused item when absent. An item that is in use is
+    /// refused. What only an item to remove uses goes with it.
+    #[serde(default)]
+    #[schemars(length(max = 100000))]
+    pub items: Option<Vec<IdParam>>,
+}
+
+/// One unused item.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PurgeItem {
+    /// The item.
+    pub id: IdParam,
+    /// Its type key.
+    pub kind: String,
+    /// Its name.
+    pub name: String,
+    /// Why it is unused: `unused` (nothing refers to it) or `used_only_by_unused` (only items
+    /// that are removed with it do).
+    pub reason: String,
+}
+
+/// What `archbuilder.project.purge` reports.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Purged {
+    /// The items that were removed, or with `preview` would be.
+    pub items: Vec<PurgeItem>,
+    /// How many were removed; 0 for a preview.
+    pub removed: usize,
+    /// Whether nothing was changed.
+    pub preview: bool,
+}
+
+/// The unused element types of `snapshot`, in the order they can go (what uses an item before it).
+/// An item is unused when nothing outside the unused items refers to it; the last type of a kind
+/// is kept.
+#[must_use]
+pub fn unused_items(snapshot: &Snapshot) -> Vec<PurgeItem> {
+    let candidates: Vec<(ObjectId, &str, String)> = crate::transfer::TYPE_KINDS
+        .iter()
+        .flat_map(|key| {
+            spatial::objects(snapshot, key).into_iter().map(move |o| {
+                (
+                    o.id,
+                    *key,
+                    types::text(&o.values, 0).unwrap_or_default().to_owned(),
+                )
+            })
+        })
+        .collect();
+    let ids: BTreeSet<ObjectId> = candidates.iter().map(|(id, _, _)| *id).collect();
+    let users = crate::transfer::referrers(snapshot, &ids);
+    let mut kept: BTreeSet<ObjectId> = BTreeSet::new();
+    let mut unused: Vec<ObjectId> = Vec::new();
+    loop {
+        // Everything whose users are all unused, repeated until nothing more joins.
+        unused.clear();
+        let mut set: BTreeSet<ObjectId> = BTreeSet::new();
+        loop {
+            let before = set.len();
+            for (id, _, _) in &candidates {
+                if set.contains(id) || kept.contains(id) {
+                    continue;
+                }
+                let blocked = users
+                    .get(id)
+                    .is_some_and(|u| u.iter().any(|user| !set.contains(user)));
+                if !blocked {
+                    set.insert(*id);
+                    unused.push(*id);
+                }
+            }
+            if set.len() == before {
+                break;
+            }
+        }
+        // The last type of a kind stays.
+        let mut changed = false;
+        for key in crate::transfer::TYPE_KINDS {
+            let of_kind: Vec<ObjectId> = candidates
+                .iter()
+                .filter(|(_, k, _)| *k == key)
+                .map(|(id, _, _)| *id)
+                .collect();
+            if !of_kind.is_empty() && of_kind.iter().all(|id| set.contains(id)) {
+                kept.insert(of_kind[0]);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let by_id: BTreeMap<ObjectId, &(ObjectId, &str, String)> =
+        candidates.iter().map(|c| (c.0, c)).collect();
+    unused
+        .into_iter()
+        .filter_map(|id| by_id.get(&id))
+        .map(|(id, key, name)| PurgeItem {
+            id: IdParam(*id),
+            kind: (*key).to_owned(),
+            name: name.clone(),
+            reason: if users.contains_key(id) {
+                "used_only_by_unused"
+            } else {
+                "unused"
+            }
+            .to_owned(),
+        })
+        .collect()
+}
+
+fn purge(ctx: &mut Context<'_>, p: Purge) -> Result<Purged> {
+    let offered = unused_items(ctx.snapshot());
+    let preview = p.preview == Some(true);
+    let chosen: Vec<PurgeItem> = match p.items {
+        None => offered,
+        Some(wanted) => {
+            let mut set: BTreeSet<ObjectId> = BTreeSet::new();
+            for IdParam(id) in &wanted {
+                if !offered.iter().any(|o| o.id.0 == *id) {
+                    return Err(Error::new(codes::VALUE_INVALID));
+                }
+                set.insert(*id);
+            }
+            // What only a chosen item uses goes with it.
+            let all: BTreeSet<ObjectId> = offered.iter().map(|o| o.id.0).collect();
+            let users = crate::transfer::referrers(ctx.snapshot(), &all);
+            loop {
+                let before = set.len();
+                for (target, from) in &users {
+                    if set.contains(target) {
+                        set.extend(from.iter().copied());
+                    }
+                }
+                if set.len() == before {
+                    break;
+                }
+            }
+            offered
+                .into_iter()
+                .filter(|o| set.contains(&o.id.0))
+                .collect()
+        }
+    };
+    if preview || chosen.is_empty() {
+        return Ok(Purged {
+            items: chosen,
+            removed: 0,
+            preview: true,
+        });
+    }
+    let txn = ctx.txn()?;
+    // The users of an item are deleted before it.
+    for item in &chosen {
+        txn.delete(item.id.0)?;
+    }
+    crate::structure::ensure_valid(ctx)?;
+    let removed = chosen.len();
+    Ok(Purged {
+        items: chosen,
+        removed,
+        preview: false,
+    })
 }
 
 /// Parameters of `archbuilder.project.set_info` (AB-DATUM-002): each text that is given replaces
@@ -293,6 +469,18 @@ fn set_units(ctx: &mut Context<'_>, p: SetUnits) -> Result<UnitsSet> {
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
+    registry.register(CommandSpec::new(
+        PROJECT_PURGE,
+        Msg {
+            message_id: "ab-cmd-project-purge-label",
+        }
+        .message_id,
+        Msg {
+            message_id: "ab-cmd-project-purge-description",
+        }
+        .message_id,
+        |ctx: &mut Context<'_>, p: Purge| purge(ctx, p),
+    ))?;
     registry.register(CommandSpec::new(
         PROJECT_SET_INFO,
         Msg {

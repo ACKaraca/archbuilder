@@ -322,6 +322,15 @@ fn every_line_of_the_command_tabs_names_a_command_and_every_icon_exists() {
     for line in old {
         assert!(lines.iter().any(|l| l == line), "{line} unreachable");
     }
+    // The Manage tab's project group: information, units, purge and standards transfer.
+    for line in [
+        archbuilder_commands::project::PROJECT_SET_INFO,
+        archbuilder_commands::project::PROJECT_SET_UNITS,
+        archbuilder_commands::project::PROJECT_PURGE,
+        archbuilder_io::standards::TRANSFER_STANDARDS,
+    ] {
+        assert!(lines.iter().any(|l| l == line), "{line} unreachable");
+    }
     let items = all_items();
     assert!(
         items
