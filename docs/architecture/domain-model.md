@@ -1257,3 +1257,31 @@ vertical work plane takes the plane's line and follows it: moving the datum move
 plane of its own) detaches it, and when the plane is deleted it returns to the plane stored at creation. The other sketch-based kinds
 store the plane without following it. In a 3D view the active work plane is where the tools' points land (the wall, floor, railing
 and datum tools draw along it); a plan view keeps the storey's plane.
+
+## Location: origins, north and the geodetic reference
+
+The internal origin is fixed: every stored coordinate is measured from it. The project record holds, as optional fields (a file
+from before loads with every one absent), the **project base point** (`base_x`, `base_y`, `base_z`) and the **survey point**
+(`survey_x`, `survey_y`, `survey_z`), both positions in internal coordinates, the angle `true_north` from project north (the internal
+y axis) to true north, counterclockwise, and the geodetic reference: `crs` (an EPSG code or a WKT text), `eastings`, `northings`
+and `survey_height` of the survey point in that system, `map_scale`, and the `precision_distance`. Absent points are the origin,
+absent north is 0 and absent scale is 1; a project is georeferenced when `crs` and the eastings and northings are all set. Moving a
+point or turning north changes the coordinates reported for a point and never moves an element.
+
+A point reads in four systems: internal, project (minus the base point), survey (minus the survey point) and map. The map position is
+the survey point's eastings and northings plus the offset from the survey point turned by true north and scaled, the height likewise
+(the conversion an IFC map conversion carries). The IFC export does not write the map conversion or the coordinate reference system
+yet: a georeferenced project names them in the loss report. `archbuilder.coordinates.set` changes the fields (without values it
+selects the project, whose properties list them), `archbuilder.coordinates.query` reports a picked point (the Coordinates button of
+the Manage tab; the history shows the readout in the project's length unit) and `archbuilder.coordinates.recenter` translates the
+whole model, with both points, so that the survey point lies on the internal origin: every element keeps its map coordinates, and a
+pinned element refuses the move.
+
+A plan view has an optional `north` (`project_north`, the default, or `true_north`) stored with its settings;
+`Coordinates::view_rotation` derives the turn of the drawing that points true north up. The viewport of the shell does not turn a
+plan yet, so the choice is stored and the property grid edits it, but the drawing stays in project north.
+
+Geometry beyond the precision distance (20 km when the project sets none) from the internal origin, measured in plan at the authored
+points of each element, is one warning of the register (kind Location) that names how many elements and how far the farthest lies;
+it clears when the model is recentered or the distance raised. Imports do not exist yet, so the check runs on whatever the document
+holds.
