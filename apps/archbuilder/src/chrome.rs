@@ -45,6 +45,14 @@ pub const TYPED_WORDS: &[&str] = &[
     "warnings",
     "plan",
     "3d",
+    "style wireframe",
+    "style hidden_line",
+    "style shaded",
+    "style shaded_with_edges",
+    "style consistent_colors",
+    "view3d",
+    "savecamera",
+    "sectionbox",
 ];
 
 /// The most tabs whose selection is remembered.
@@ -735,6 +743,120 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             }),
                             "3d",
                             "view-3d",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-model-views",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-view-3d-new",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-view-3d-new-hint",
+                            }),
+                            "view3d",
+                            "view-3d-new",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-save-camera",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-save-camera-hint",
+                            }),
+                            "savecamera",
+                            "save-camera",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-section-box",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-section-box-hint",
+                            }),
+                            "sectionbox",
+                            "section-box",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-section",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-section-hint",
+                            }),
+                            "archbuilder.view.create_section",
+                            "section",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-elevations",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-elevations-hint",
+                            }),
+                            "archbuilder.view.create_elevations",
+                            "elevation",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-visual-style",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-wireframe",
+                            },
+                            None,
+                            "style wireframe",
+                            "style-wireframe",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-hidden-line",
+                            },
+                            None,
+                            "style hidden_line",
+                            "style-hidden-line",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-shaded",
+                            },
+                            None,
+                            "style shaded",
+                            "style-shaded",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-shaded-with-edges",
+                            },
+                            None,
+                            "style shaded_with_edges",
+                            "style-shaded-edges",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-consistent-colors",
+                            },
+                            None,
+                            "style consistent_colors",
+                            "style-consistent",
                             ButtonSize::Small,
                         ),
                     ],
@@ -1488,6 +1610,16 @@ pub fn icons() -> Vec<(String, String)> {
         "plan-view",
         "view-3d",
         "zoom-extents",
+        "view-3d-new",
+        "save-camera",
+        "section-box",
+        "section",
+        "elevation",
+        "style-wireframe",
+        "style-hidden-line",
+        "style-shaded",
+        "style-shaded-edges",
+        "style-consistent",
         "hide",
         "isolate",
         "reveal",

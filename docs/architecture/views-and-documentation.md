@@ -71,6 +71,36 @@ Properties of the pipeline:
 - Provenance on drafting entities is what makes picking, live dimensions and annotation anchors work
   in 2D views.
 
+## Model views as implemented
+
+Plan views (`archbuilder.plan_view`) and model views (`archbuilder.model_view`) are records of
+authored settings; their drawings are derived on the extraction workers and never stored.
+
+- **Saved 3D views** keep a camera (eye, target, perspective or orthographic, field of view), a
+  visual style, a section box and the visibility of a plan view (category flags and the elements
+  hidden in the view). Opening one sets its camera; New 3D view and Save camera store the
+  viewport's camera. The visual styles are the shading modes of the `arc-gpu` renderer: wireframe,
+  hidden line, shaded, shaded with edges and consistent colors; the default 3D view keeps its style
+  for the session. The section box is the renderer's axis-aligned box (switched on without corners it takes the
+  extent of the walls): it clips meshes and caps closed solids, not line items. Textures, shadows, ambient occlusion and sun are not provided.
+- **Sections** are a line in plan (they look to the left of start to end) with a far clip
+  distance; **elevations** are made four per building, each line 5 m outside the extent of its
+  walls and facing it. Both are drawn by `arc-view` in an orthographic frame through the line
+  (view x along the line, view y the elevation): what the cut plane crosses is cut, what lies
+  within the far clip behind it is beyond, what lies in front is not drawn. With crop on, the
+  drawing is cropped to the line and, when set, between the bottom and top elevations. The drawing
+  stands in the vertical plane of the line and the camera faces it with rotation locked. Levels
+  (line, name and elevation) and the grids the line crosses (line and head) are drawn over it.
+  Plan symbols, rooms and railings by path are not drawn in sections yet; the extent of a level is
+  the width of the view.
+- **Markers**: the plan views of a building draw its sections (line and a triangle at each end
+  pointing where the section looks) and elevations (a circle with a triangle toward the building).
+- **North**: a plan view oriented to true north is framed turned by the true north angle, so true
+  north points up.
+- The project browser lists the 3D view, the plan views, then the saved 3D views, sections and
+  elevations; each opens in the viewport, and the property grid shows its settings while nothing is
+  selected.
+
 ## Annotation anchoring
 
 | Anchor kind | Resolves to | Example |

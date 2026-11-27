@@ -70,6 +70,7 @@ pub mod headroom;
 pub mod insert;
 pub mod join;
 pub mod layered;
+pub mod model_view;
 pub mod names;
 pub mod opening;
 pub mod parameter;
@@ -151,6 +152,45 @@ pub mod defaults {
     #[must_use]
     pub fn names(language: &str) -> Names {
         if turkish(language) { TURKISH } else { ENGLISH }
+    }
+
+    /// The name of the 3D view numbered `n` in `language`: `3D View 2`, `3B Görünüm 2`.
+    #[must_use]
+    pub fn view_3d(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("3B Görünüm {n}")
+        } else {
+            format!("3D View {n}")
+        }
+    }
+
+    /// The name of the section numbered `n` in `language`: `Section 2`, `Kesit 2`.
+    #[must_use]
+    pub fn section(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Kesit {n}")
+        } else {
+            format!("Section {n}")
+        }
+    }
+
+    /// The name of the elevation of a building's `side` in `language`: `North Elevation`,
+    /// `Kuzey Cephesi`.
+    #[must_use]
+    pub fn elevation(language: &str, side: crate::model_view::Side) -> String {
+        use crate::model_view::Side;
+        let tr = turkish(language);
+        match (side, tr) {
+            (Side::North, false) => "North Elevation",
+            (Side::East, false) => "East Elevation",
+            (Side::South, false) => "South Elevation",
+            (Side::West, false) => "West Elevation",
+            (Side::North, true) => "Kuzey Cephesi",
+            (Side::East, true) => "Doğu Cephesi",
+            (Side::South, true) => "Güney Cephesi",
+            (Side::West, true) => "Batı Cephesi",
+        }
+        .to_owned()
     }
 
     /// The name of the wall numbered `n` on a storey in `language`: `Wall 3`, `Duvar 3`.

@@ -342,7 +342,8 @@ impl Default for OutlinerPanel {
 }
 
 impl OutlinerPanel {
-    /// The Views branch: the 3D view and the plan views. A click, a double click or Open makes a
+    /// The Views branch: the 3D view, the plan views and the model views (saved 3D views,
+    /// sections, elevations). A click, a double click or Open makes a
     /// view the view of the viewport; the property grid shows the settings of the open plan view
     /// while nothing is selected.
     #[allow(clippy::too_many_lines, reason = "one row per view with its menu")]
@@ -355,7 +356,8 @@ impl OutlinerPanel {
     ) {
         use crate::shortcuts::ui as cmd;
         use archbuilder_commands::view as vc;
-        let current = crate::plan_state::current_in(tab, snapshot);
+        let current = crate::plan_state::current_in(tab, snapshot)
+            .or_else(|| crate::plan_state::model_in(tab, snapshot));
         // The controller carries the switch out; it is no command of the document, so the history
         // does not list it.
         let open = |id: Option<ObjectId>| {
@@ -387,8 +389,14 @@ impl OutlinerPanel {
                     .filter(|s| archbuilder_model::view::of_storey(snapshot, s.id).is_empty())
                     .take(archbuilder_model::view::MAX_VIEWS)
                     .map(|s| (s, false));
+                // The plan views, then the saved 3D views, sections and elevations.
                 let rows: Vec<(std::sync::Arc<arc_doc::Object>, bool)> = defaults
                     .chain(views.iter().map(|v| (v.clone(), true)))
+                    .chain(
+                        archbuilder_model::model_view::all(snapshot)
+                            .into_iter()
+                            .map(|v| (v, true)),
+                    )
                     .collect();
                 for (v, real) in &rows {
                     let name = name(v);

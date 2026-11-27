@@ -17,6 +17,7 @@ mod attach;
 mod habits;
 mod sketch;
 mod types;
+mod views;
 
 pub use types::upgrade_invocation;
 
@@ -1648,6 +1649,7 @@ impl Interaction for WallInteraction {
             .and(fresh.map_or(Ok(()), Err))
     }
 
+    #[allow(clippy::too_many_lines, reason = "one field of the output per line")]
     fn output(&self) -> InteractionOutput {
         let line = self.current_line();
         let prompt = line
@@ -1736,6 +1738,8 @@ impl Interaction for WallInteraction {
             banner: self.habits.banner.clone(),
             hidden: self.habits.lists.hidden.clone(),
             isolated: self.habits.lists.isolated.clone(),
+            shading: self.habits.shading,
+            section: self.habits.section.clone(),
             history: self.notices.clone(),
             history_first: self.notices_first,
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
@@ -2339,6 +2343,7 @@ impl WallInteraction {
         if let Some(made) = [
             archbuilder_commands::datum::GRID_CREATE,
             archbuilder_commands::datum::REFERENCE_PLANE_CREATE,
+            archbuilder_commands::model_view::VIEW_CREATE_SECTION,
         ]
         .into_iter()
         .find(|c| *c == command)

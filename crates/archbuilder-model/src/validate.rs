@@ -46,6 +46,7 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
         types::SELECTION_SET | types::VARIABLE | types::PARAMETER => Some(&[PROJECT]),
+        types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
         DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
@@ -117,6 +118,9 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     }
     if key == types::PLAN_VIEW {
         out.extend(crate::view::problem(object));
+    }
+    if key == types::MODEL_VIEW {
+        out.extend(crate::model_view::problem(object));
     }
     if types::is_datum(key) && crate::datum::is_degenerate(candidate, key, object) {
         out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));

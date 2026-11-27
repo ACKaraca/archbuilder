@@ -52,6 +52,7 @@ pub mod extract_floor;
 pub mod extract_floor_edge;
 pub mod extract_insert;
 pub mod extract_level;
+pub mod extract_model_view;
 pub mod extract_roof;
 pub mod extract_roof_extrusion;
 pub mod extract_roof_parts;
@@ -74,6 +75,7 @@ pub mod ramp_view;
 pub mod roof_view;
 pub mod room_tool;
 pub mod room_view;
+pub mod section_view;
 pub mod selection;
 pub mod shortcuts;
 pub mod snap;
@@ -543,6 +545,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
             })
         }),
     })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.model_view".into(),
+        types: vec![archbuilder_model::types::MODEL_VIEW.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_model_view::extract(snapshot, object, cancel)
+            })
+        }),
+    })?;
     builder.build(clock, owner)
 }
 
@@ -711,7 +722,13 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
             // A plan view draws the lines of stairs, roofs, ceilings and openings itself; what stays
             // here is text (room tags, stair texts) and the marks of pinned elements.
-            let planned = plan_state::current(tab).is_some();
+            // A section or elevation shows its datums only; a saved 3D view is a 3D view.
+            if let Some(out) = section_overlays(app, tab, language) {
+                return out;
+            }
+            let planned = app
+                .tab(tab)
+                .is_ok_and(|t| plan_state::current_in(tab, &t.document().snapshot()).is_some());
             let mut out = if planned {
                 Vec::new()
             } else {
@@ -764,6 +781,21 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         status_text: Some(chrome::status_text()),
         seed,
     })
+}
+
+/// The overlays of the section or elevation `tab` shows; `None` for any other view.
+fn section_overlays(
+    app: &arc_app::application::Application,
+    tab: arc_app::application::TabId,
+    language: &str,
+) -> Option<Vec<arc_ui::ProductOverlay>> {
+    let snapshot = app.tab(tab).ok()?.document().snapshot();
+    let id = plan_state::model_in(tab, &snapshot)?;
+    let object = archbuilder_model::spatial::get(&snapshot, id)?;
+    let settings = archbuilder_model::model_view::settings(&snapshot, id)?;
+    settings
+        .is_drawing()
+        .then(|| section_view::overlays(&snapshot, object.header.owner, &settings, language))
 }
 
 /// A small pin drawn at the middle of every pinned element, so pinned elements stand out in plan:
