@@ -153,6 +153,12 @@ const LABELS: &[(&str, Message)] = &[
         },
     ),
     (
+        "show_components",
+        Message {
+            message_id: "ab-prop-view-show-components",
+        },
+    ),
+    (
         "view_storey",
         Message {
             message_id: "ab-prop-view-view-storey",

@@ -580,6 +580,7 @@ ab-prop-view-show-rooms = Show rooms
 ab-prop-view-show-openings = Show openings and shafts
 ab-prop-view-show-railings = Show railings
 ab-prop-view-show-ramps = Show ramps
+ab-prop-view-show-components = Show components
 ab-prop-view-view-storey = Storey
 ab-prop-view-view-hidden = Elements hidden in view
 ab-prop-view-coarse = Coarse

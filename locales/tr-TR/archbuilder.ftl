@@ -555,6 +555,7 @@ ab-prop-view-show-rooms = Odaları göster
 ab-prop-view-show-openings = Boşlukları ve şaftları göster
 ab-prop-view-show-railings = Korkulukları göster
 ab-prop-view-show-ramps = Rampaları göster
+ab-prop-view-show-components = Bileşenleri göster
 ab-prop-view-view-storey = Kat
 ab-prop-view-view-hidden = Görünümde gizlenen öğeler
 ab-prop-view-coarse = Düşük

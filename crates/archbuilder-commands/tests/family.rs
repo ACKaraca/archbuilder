@@ -599,3 +599,67 @@ fn a_major_update_needs_a_mapping_for_removed_parameters_and_a_failing_instance_
         "refused: the document is as the undone update left it"
     );
 }
+
+#[test]
+fn hiding_the_components_category_hides_components_in_a_plan_view() {
+    let env = Env::new("category", true);
+    env.load(
+        &env.package("k.archbfam", &[(&table(), "1.0.0")]),
+        json!({}),
+    )
+    .unwrap();
+    let id: arc_base::ObjectId = env
+        .run(
+            "archbuilder.component.place",
+            json!({"type": "1800x900", "point": [1.0, 2.0]}),
+        )
+        .unwrap()
+        .value["component"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let storey = {
+        let s = env.snapshot();
+        spatial::storeys(&s, spatial::buildings(&s)[0].id)[0]
+            .storey
+            .id
+    };
+    let view = || {
+        let s = env.snapshot();
+        archbuilder_model::view::of_storey(&s, storey)
+            .into_iter()
+            .next()
+            .unwrap()
+    };
+    let drawn = || {
+        let built = archbuilder_model::plan::build(
+            &env.snapshot(),
+            &view(),
+            &archbuilder_model::plan::Filter::default(),
+            &arc_base::Cancel::new(),
+        )
+        .unwrap();
+        !built.primitives_of(id).is_empty()
+    };
+    assert!(drawn());
+    let set = |value: bool| {
+        env.run(
+            "archbuilder.property.set",
+            json!({"objects": [view().id.to_string()], "field": "show_components", "value": value}),
+        )
+        .unwrap();
+    };
+    set(false);
+    assert!(!drawn());
+    set(true);
+    assert!(drawn());
+    // A plan view saved before the flag existed shows components.
+    let mut values = spatial::get(&env.snapshot(), view().id)
+        .unwrap()
+        .values
+        .clone();
+    values.truncate(archbuilder_model::types::plan_view::SHOW_COMPONENTS);
+    let settings = archbuilder_model::view::PlanView::from_values(&values).unwrap();
+    assert!(settings.shows(archbuilder_model::view::Category::Component));
+}
