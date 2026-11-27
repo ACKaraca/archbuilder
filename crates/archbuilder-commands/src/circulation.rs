@@ -9,10 +9,15 @@
 //!   continues to, are authored on it.
 //! - `archbuilder.railing_type.define` and `archbuilder.ramp_type.define`: create a type, or edit
 //!   the one named by `type`.
-//! - `archbuilder.ramp.create`: a straight ramp by run with landings, a width, a thickness and a
-//!   form; the slope follows from the rise (the level above, else `rise`) and the length, and a
-//!   slope over the type's largest is a warning. Railings are created on the sides named in
-//!   `railings` (both by default), hosted on the ramp.
+//! - `archbuilder.ramp.create`: a ramp by run with landings, a width, a thickness and a form (or
+//!   by sketch: a `boundary` of points with the run line given by `start`, `to` and the
+//!   landings); the slope follows from the rise (the level above, else `rise`) and the length, and
+//!   a slope over the type's largest is a warning. More `runs` follow the first, each turned at
+//!   the middle of the landing before it and with a slope of its own if it is given one.
+//!   Railings are created on the sides named in `railings` (both by default), hosted on the ramp.
+//! - `archbuilder.ramp.set_run` and `archbuilder.ramp.add_run`: change one run of a ramp (its
+//!   length, landing, turn or slope; remove it) and add a run. A change of one run's slope moves
+//!   the elevations of the runs after it.
 //!
 //! The prompts ([`RailingPrompts`], [`RampPrompts`]) ask for points: a railing takes points until
 //! Enter, a ramp takes the foot and the end of the run.
@@ -47,6 +52,10 @@ pub const RAILING_TYPE_DEFINE: &str = "archbuilder.railing_type.define";
 pub const RAMP_CREATE: &str = "archbuilder.ramp.create";
 /// The identifier of the define-ramp-type command.
 pub const RAMP_TYPE_DEFINE: &str = "archbuilder.ramp_type.define";
+/// The identifier of the command that edits one run of a ramp.
+pub const RAMP_SET_RUN: &str = "archbuilder.ramp.set_run";
+/// The identifier of the command that adds a run to a ramp.
+pub const RAMP_ADD_RUN: &str = "archbuilder.ramp.add_run";
 
 fn invalid() -> Error {
     Error::new(arc_command::error::codes::PARAMS_INVALID)
@@ -696,6 +705,18 @@ pub struct CreateRamp {
     /// The level the ramp arrives at; else the level above the storey.
     #[serde(default)]
     pub top_level: Option<IdParam>,
+    /// The slope (rise over run) of the first run, when it is not the one that carries the rise
+    /// over all the runs.
+    #[serde(default)]
+    pub slope: Option<f64>,
+    /// The runs after the first, each with the turn at the landing before it, its length, its
+    /// landing and, if it is to have its own, its slope.
+    #[serde(default)]
+    pub runs: Option<Vec<RunParam>>,
+    /// The boundary of a ramp by sketch, `[x, y]` points of a simple polygon; the foot, the
+    /// direction and the lengths then describe the run line the slope rises along.
+    #[serde(default)]
+    pub boundary: Option<Vec<[f64; 2]>>,
     /// The ramp type, by identifier or name; the default type without one.
     #[serde(default)]
     pub ramp_type: Option<String>,
@@ -710,6 +731,48 @@ pub struct CreateRamp {
     pub name: Option<String>,
 }
 
+/// A run after the first one of a ramp.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunParam {
+    /// The turn at the landing before the run, positive to the left; a JSON number is radians, a
+    /// text number such as `"90"` is degrees. None without it.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The horizontal length of the sloped part.
+    pub length: QuantityParam,
+    /// The flat landing after the run; none.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The slope of this run; the shared slope without it.
+    #[serde(default)]
+    pub slope: Option<f64>,
+}
+
+/// An angle as a command parameter: a JSON number is radians, a text number is degrees.
+fn angle(ctx: &Context<'_>, param: &QuantityParam) -> Result<f64> {
+    match param {
+        QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
+            Ok(t.trim().parse::<f64>().unwrap_or(0.0).to_radians())
+        }
+        other => Ok(ctx.quantity(other, Dimension::ANGLE)?.value()),
+    }
+}
+
+fn run_of(ctx: &Context<'_>, p: &RunParam) -> Result<archbuilder_model::ramp::Run> {
+    Ok(archbuilder_model::ramp::Run {
+        turn: p
+            .turn
+            .as_ref()
+            .map(|t| angle(ctx, t))
+            .transpose()?
+            .unwrap_or(0.0),
+        length: meters(ctx, Some(&p.length))?.ok_or_else(invalid)?,
+        landing: meters(ctx, p.landing.as_ref())?.unwrap_or(0.0),
+        slope: p.slope,
+    })
+}
+
 /// What `archbuilder.ramp.create` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct RampCreated {
@@ -719,9 +782,9 @@ pub struct RampCreated {
     pub storey: IdParam,
     /// The rise in meters.
     pub rise: f64,
-    /// The slope of the run (rise over run).
+    /// The slope of the steepest run (rise over run).
     pub slope: f64,
-    /// Whether the slope passes the type's largest.
+    /// Whether the slope of any run passes the type's largest.
     pub slope_exceeded: bool,
     /// The volume of the body in cubic meters.
     pub volume: f64,
@@ -742,10 +805,7 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
             }
             d[1].atan2(d[0])
         }
-        (None, Some(QuantityParam::Text(t))) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        (None, Some(param)) => ctx.quantity(param, Dimension::ANGLE)?.value(),
+        (None, Some(param)) => angle(ctx, param)?,
         (None, None) => 0.0,
     };
     let length = match (meters(ctx, p.length.as_ref())?, p.to) {
@@ -773,6 +833,14 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
         rise: meters(ctx, p.rise.as_ref())?,
         top_level,
         ramp_type: Some(type_id),
+        slope: p.slope,
+        runs: p
+            .runs
+            .iter()
+            .flatten()
+            .map(|r| run_of(ctx, r))
+            .collect::<Result<Vec<_>>>()?,
+        boundary: p.boundary.clone().unwrap_or_default(),
     };
     let sides = match &p.railings {
         None => vec![Side::Left, Side::Right],
@@ -823,6 +891,150 @@ fn create_ramp(ctx: &mut Context<'_>, p: CreateRamp) -> Result<RampCreated> {
         slope_exceeded: layout.exceeds(),
         volume: layout.volume(),
         railings,
+    })
+}
+
+/// Parameters of `archbuilder.ramp.set_run`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetRampRun {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The run: 0 is the first, 1 the one after its landing, and so on.
+    pub run: usize,
+    /// The new horizontal length of the sloped part.
+    #[serde(default)]
+    pub length: Option<QuantityParam>,
+    /// The new landing after the run.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The new turn at the landing before the run (not for the first run); a JSON number is
+    /// radians, a text number degrees.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The slope of the run (rise over run).
+    #[serde(default)]
+    pub slope: Option<f64>,
+    /// Gives the run the shared slope again.
+    #[serde(default)]
+    pub clear_slope: bool,
+    /// Removes the run (not the first).
+    #[serde(default)]
+    pub remove: bool,
+}
+
+/// Parameters of `archbuilder.ramp.add_run`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddRampRun {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The turn at the landing before the run, positive to the left; a JSON number is radians, a
+    /// text number such as `"90"` is degrees. None without it.
+    #[serde(default)]
+    pub turn: Option<QuantityParam>,
+    /// The horizontal length of the sloped part.
+    pub length: QuantityParam,
+    /// The flat landing after the run; none.
+    #[serde(default)]
+    pub landing: Option<QuantityParam>,
+    /// The slope of this run; the shared slope without it.
+    #[serde(default)]
+    pub slope: Option<f64>,
+}
+
+/// What the commands that edit the runs of a ramp return.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RampEdited {
+    /// The ramp.
+    pub ramp: IdParam,
+    /// The rise: the elevation of the top above the base, in meters.
+    pub rise: f64,
+    /// How far the top is above the elevation the ramp was to reach, in meters.
+    pub top_off: f64,
+    /// The slope of each run.
+    pub slopes: Vec<f64>,
+    /// The elevation at the start and at the end of each run, in meters.
+    pub elevations: Vec<[f64; 2]>,
+}
+
+/// Changes the ramp `id` as `change` says and reports what its runs are now.
+fn edit_ramp(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    change: impl FnOnce(&Context<'_>, &mut Ramp) -> Result<()>,
+) -> Result<RampEdited> {
+    let object = expect(ctx.snapshot(), id, RAMP)?;
+    let name = types::text(&object.values, 0)
+        .unwrap_or_default()
+        .to_owned();
+    let mut body = Ramp::from_values(&object.values).ok_or_else(invalid)?;
+    change(ctx, &mut body)?;
+    write_changes(ctx, RAMP, &object, body.values(&name))?;
+    ensure_valid(ctx)?;
+    let layout = {
+        let txn = ctx.txn()?;
+        spatial::get(txn.snapshot(), id).and_then(|o| Placed::of(txn.snapshot(), &o))
+    }
+    .and_then(|p| p.layout.ok())
+    .ok_or_else(|| Error::new(crate::error::codes::KIND_MISMATCH))?;
+    Ok(RampEdited {
+        ramp: IdParam(id),
+        rise: layout.height,
+        top_off: layout.top_off(),
+        slopes: layout.slopes().to_vec(),
+        elevations: layout.elevations().iter().map(|e| [e.0, e.1]).collect(),
+    })
+}
+
+fn set_ramp_run(ctx: &mut Context<'_>, p: SetRampRun) -> Result<RampEdited> {
+    edit_ramp(ctx, p.ramp.0, |ctx, body| {
+        let length = meters(ctx, p.length.as_ref())?;
+        let landing = meters(ctx, p.landing.as_ref())?;
+        let turn = p.turn.as_ref().map(|t| angle(ctx, t)).transpose()?;
+        let slope = if p.clear_slope {
+            Some(None)
+        } else {
+            p.slope.map(Some)
+        };
+        if p.run == 0 {
+            if turn.is_some() || p.remove {
+                return Err(invalid());
+            }
+            body.length = length.unwrap_or(body.length);
+            body.landing_end = landing.unwrap_or(body.landing_end);
+            body.slope = slope.unwrap_or(body.slope);
+            return Ok(());
+        }
+        let at = p.run - 1;
+        if at >= body.runs.len() {
+            return Err(invalid());
+        }
+        if p.remove {
+            body.runs.remove(at);
+            return Ok(());
+        }
+        let run = &mut body.runs[at];
+        run.length = length.unwrap_or(run.length);
+        run.landing = landing.unwrap_or(run.landing);
+        run.turn = turn.unwrap_or(run.turn);
+        run.slope = slope.unwrap_or(run.slope);
+        Ok(())
+    })
+}
+
+fn add_ramp_run(ctx: &mut Context<'_>, p: AddRampRun) -> Result<RampEdited> {
+    edit_ramp(ctx, p.ramp.0, |ctx, body| {
+        body.runs.push(run_of(
+            ctx,
+            &RunParam {
+                turn: p.turn,
+                length: p.length,
+                landing: p.landing,
+                slope: p.slope,
+            },
+        )?);
+        Ok(())
     })
 }
 
@@ -998,6 +1210,12 @@ const PROMPT_RAMP_START: Msg = Msg {
 const PROMPT_RAMP_END: Msg = Msg {
     message_id: "ab-prompt-ramp-end",
 };
+const PROMPT_RAMP_BOUNDARY: Msg = Msg {
+    message_id: "ab-prompt-ramp-boundary",
+};
+const KEY_SKETCH: Msg = Msg {
+    message_id: "ab-keyword-ramp-sketch",
+};
 
 /// The prompts of `archbuilder.railing.create`: points until Enter.
 #[derive(Debug)]
@@ -1066,7 +1284,9 @@ impl PromptMachine for RailingPrompts {
     }
 }
 
-/// The prompts of `archbuilder.ramp.create`: the foot, then the end of the run.
+/// The prompts of `archbuilder.ramp.create`: the foot, then the end of the run; with the keyword
+/// `sketch` at the first prompt, the run line is followed by the points of the boundary, ended
+/// with Enter.
 #[derive(Debug)]
 pub struct RampPrompts;
 
@@ -1080,10 +1300,28 @@ impl PromptMachine for RampPrompts {
                 _ => None,
             })
             .collect();
-        if let [start, to] = points[..] {
+        let sketch = state
+            .answers
+            .iter()
+            .any(|a| matches!(&a.input, PromptInput::Keyword(k) if k == "sketch"));
+        let done = state
+            .answers
+            .iter()
+            .any(|a| matches!(&a.input, PromptInput::Keyword(k) if k == "done"));
+        let finished = if sketch {
+            done && points.len() >= 5
+        } else {
+            points.len() >= 2
+        };
+        if finished {
             let mut params = Map::new();
-            params.insert("start".into(), Json::from(start.to_vec()));
-            params.insert("to".into(), Json::from(to.to_vec()));
+            params.insert("start".into(), Json::from(points[0].to_vec()));
+            params.insert("to".into(), Json::from(points[1].to_vec()));
+            if sketch {
+                let boundary: Vec<Json> =
+                    points[2..].iter().map(|p| Json::from(p.to_vec())).collect();
+                params.insert("boundary".into(), Json::Array(boundary));
+            }
             for key in ["storey", "ramp_type", "railing_type"] {
                 if let Some(v) = state.preset.get(key) {
                     params.insert(key.into(), v.clone());
@@ -1091,24 +1329,48 @@ impl PromptMachine for RampPrompts {
             }
             return Ok(Step::Done(params));
         }
-        let message = if points.is_empty() {
-            PROMPT_RAMP_START.message_id
-        } else {
-            PROMPT_RAMP_END.message_id
+        let point = Accept::Point {
+            dims: PointDims::Two,
         };
-        Ok(Step::Ask(Prompt::new(
-            format!("point-{}", state.answers.len()),
-            message,
-            Accept::Point {
-                dims: PointDims::Two,
-            },
-        )))
+        let key = format!("point-{}", state.answers.len());
+        Ok(Step::Ask(match (sketch, points.len()) {
+            (false, 0) => {
+                Prompt::new(key, PROMPT_RAMP_START.message_id, point).or(Accept::keywords([
+                    KeywordOption::new("sketch", KEY_SKETCH.message_id).with_shortcut('s'),
+                ]))
+            }
+            (_, 0) => Prompt::new(key, PROMPT_RAMP_START.message_id, point),
+            (_, 1) => Prompt::new(key, PROMPT_RAMP_END.message_id, point),
+            (_, count) => {
+                let prompt = Prompt::new(key, PROMPT_RAMP_BOUNDARY.message_id, point)
+                    .with_arg("count", (count - 2).to_string());
+                if count >= 5 {
+                    prompt
+                        .or(Accept::keywords([KeywordOption::new(
+                            "done",
+                            KEY_DONE.message_id,
+                        )
+                        .with_shortcut('d')]))
+                        .with_default(PromptInput::Keyword("done".to_owned()))
+                } else {
+                    prompt
+                }
+            }
+        }))
     }
 
     fn check(&self, state: &PromptState<'_>, _: &Prompt, input: &PromptInput) -> Result<()> {
-        if let (PromptInput::Point(p), Some(PromptInput::Point(s))) =
-            (input, state.answers.first().map(|a| &a.input))
-            && (p.x - s.x).hypot(p.y - s.y) < 1.0e-6
+        // The end of the run is not on the foot; a boundary point is not on the one before it.
+        let points: Vec<&arc_command::prompt::Point> = state
+            .answers
+            .iter()
+            .filter_map(|a| match &a.input {
+                PromptInput::Point(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        if let (PromptInput::Point(p), Some(last)) = (input, points.last())
+            && (p.x - last.x).hypot(p.y - last.y) < 1.0e-6
         {
             return Err(invalid());
         }
@@ -1178,5 +1440,31 @@ pub fn register(registry: &mut Registry) -> Result<()> {
         label,
         description,
         |ctx: &mut Context<'_>, p: DefineRampType| define_ramp_type(ctx, p),
+    ))?;
+    const RSR_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-set-run-label",
+    };
+    const RSR_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-set-run-description",
+    };
+    let (label, description) = (RSR_LABEL.message_id, RSR_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_SET_RUN,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: SetRampRun| set_ramp_run(ctx, p),
+    ))?;
+    const RAR_LABEL: Msg = Msg {
+        message_id: "ab-cmd-ramp-add-run-label",
+    };
+    const RAR_DESCRIPTION: Msg = Msg {
+        message_id: "ab-cmd-ramp-add-run-description",
+    };
+    let (label, description) = (RAR_LABEL.message_id, RAR_DESCRIPTION.message_id);
+    registry.register(CommandSpec::new(
+        RAMP_ADD_RUN,
+        label,
+        description,
+        |ctx: &mut Context<'_>, p: AddRampRun| add_ramp_run(ctx, p),
     ))
 }

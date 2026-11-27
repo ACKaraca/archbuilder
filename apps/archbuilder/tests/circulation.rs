@@ -215,3 +215,28 @@ fn create_similar_starts_the_tool_with_the_type_of_the_selected_railing_or_ramp(
     rig.document.undo().wait().unwrap();
     assert_eq!(rig.count(RAMP), 0);
 }
+
+#[test]
+fn the_keyword_sketch_makes_a_ramp_from_a_run_line_and_a_boundary() {
+    let mut rig = Rig::new("en-US");
+    rig.step(|t, env, run| t.begin(env, run, RAMP_CREATE));
+    rig.step(|t, env, run| t.text(env, run, "sketch"));
+    rig.step(|t, env, run| t.click(env, run, [1.0, 2.0]));
+    rig.step(|t, env, run| t.click(env, run, [7.0, 2.0]));
+    assert!(rig.prompt_text("en-US").contains("boundary"));
+    for p in [[1.0, 1.0], [8.0, 1.0], [8.0, 3.0]] {
+        rig.step(|t, env, run| t.click(env, run, p));
+    }
+    assert_eq!(rig.count(RAMP), 0, "the boundary is open until Enter");
+    rig.step(|t, env, run| t.click(env, run, [1.0, 3.0]));
+    rig.step(|t, env, run| t.text(env, run, ""));
+    assert_eq!((rig.count(RAMP), rig.count(RAILING)), (1, 2));
+    let snapshot = rig.document.snapshot();
+    let made =
+        archbuilder_model::ramp::Ramp::from_values(&spatial::objects(&snapshot, RAMP)[0].values)
+            .unwrap();
+    assert_eq!(made.boundary.len(), 4);
+    assert_eq!(made.start, [1.0, 2.0]);
+    rig.document.undo().wait().unwrap();
+    assert_eq!((rig.count(RAMP), rig.count(RAILING)), (0, 0));
+}

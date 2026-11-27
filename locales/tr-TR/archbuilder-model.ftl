@@ -69,8 +69,9 @@ ab-model-roof-extrusion-section = "{ $name }" çatısının kalınlığı profil
 ab-model-roof-extrusion-span = "{ $name }" çatısının ekstrüzyonu 10 mm ile 500 m arasında olmalı.
 
 ab-model-ramp-no-top = "{ $name }" rampasının tabanının üstünde varacağı bir seviye ve bir yükseklik farkı yok. Üste bir kat ekleyin, bir üst seviye seçin ya da yükseklik farkı verin.
-ab-model-ramp-malformed = "{ $name }" rampası oluşturulamıyor: genişlik, uzunluk, sahanlık ya da kalınlık geçerli değil.
+ab-model-ramp-malformed = "{ $name }" rampası oluşturulamıyor: genişlik, uzunluk, sahanlık, kalınlık, dönüş ya da eğim geçerli değil, bir dönüş sahanlığına sığmıyor ya da çizim kendini kesiyor.
 ab-model-ramp-slope = "{ $name }" rampasının eğimi % { $slope }; tipinin en büyük eğimi olan % { $max } değerini aşıyor. Rampayı uzatın ya da tipi değiştirin.
+ab-model-ramp-top = "{ $name }" rampası varması gereken kottan { $off } mm farklı bitiyor: bir kolun kendi eğimi var. O eğimi ya da yükseklik farkını değiştirin.
 ab-model-railing-malformed = "{ $name }" korkuluğu oluşturulamıyor: yolu iki farklı nokta gerektirir ve bağlı olduğu elemanın durması gerekir.
 ab-model-railing-gap = "{ $name }" korkuluğunda baluster araları { $gap } mm; { $max } mm sınırını aşıyor. Daha küçük baluster aralığı kullanın.
 ab-model-datum-degenerate = "{ $name }" datumunun kullanılabilir bir çizgisi ya da düzlemi yok: akslar ve referans düzlemleri en az bir milimetre uzunlukta olmalı, çalışma düzlemi için datumu ya da aynı doğru üzerinde olmayan üç nokta gerekir.

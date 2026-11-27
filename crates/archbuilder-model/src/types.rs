@@ -938,6 +938,24 @@ pub mod ramp {
     pub const RAMP_TYPE: usize = 12;
     /// Whether the ramp is pinned.
     pub const PINNED: usize = 13;
+    /// The slope of the first run, when it is not the one shared by the runs.
+    pub const SLOPE: usize = 14;
+    /// The runs after the first (records, see [`run`]).
+    pub const RUNS: usize = 15;
+    /// The boundary of a ramp by sketch (records of `x` and `y`).
+    pub const BOUNDARY: usize = 16;
+
+    /// The fields of one entry of [`RUNS`].
+    pub mod run {
+        /// The turn at the landing before the run.
+        pub const TURN: usize = 0;
+        /// The horizontal length of the sloped part.
+        pub const LENGTH: usize = 1;
+        /// The landing after the run.
+        pub const LANDING: usize = 2;
+        /// The slope of the run, when it has its own.
+        pub const SLOPE: usize = 3;
+    }
 }
 
 /// The field positions of a ramp type record.
@@ -1771,7 +1789,8 @@ fn railing_type_fields() -> Vec<FieldDecl> {
 fn ramp_fields() -> Vec<FieldDecl> {
     use crate::ramp::{
         DEFAULT_LENGTH, DEFAULT_THICKNESS, DEFAULT_WIDTH, Form, LANDING_RANGE, LENGTH_RANGE,
-        RISE_LIMITS, THICKNESS_RANGE as RAMP_THICKNESS, WIDTH_RANGE,
+        MAX_BOUNDARY, MAX_RUNS, RISE_LIMITS, SLOPE_RANGE, THICKNESS_RANGE as RAMP_THICKNESS,
+        WIDTH_RANGE,
     };
     vec![
         name_field("identity"),
@@ -1810,6 +1829,42 @@ fn ramp_fields() -> Vec<FieldDecl> {
         .optional()
         .in_aspect("identity"),
         pinned_field(0),
+        FieldDecl::new("slope", ValueType::F64)
+            .with_bound(real((0.0, SLOPE_RANGE.1)))
+            .optional()
+            .in_aspect("geometry")
+            .since_minor(1),
+        FieldDecl::new(
+            "runs",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                angle_field("turn"),
+                length_field("length", Some(real(LENGTH_RANGE)))
+                    .with_default(length(DEFAULT_LENGTH)),
+                length_field("landing", Some(real(LANDING_RANGE))),
+                FieldDecl::new("slope", ValueType::F64)
+                    .with_bound(real((0.0, SLOPE_RANGE.1)))
+                    .optional(),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_RUNS as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+        FieldDecl::new(
+            "boundary",
+            ValueType::List(Box::new(ValueType::Record(vec![
+                length_field("x", Some(real(COORDINATE_RANGE))),
+                length_field("y", Some(real(COORDINATE_RANGE))),
+            ]))),
+        )
+        .with_bound(Bound::Length {
+            max: MAX_BOUNDARY as u64,
+        })
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
     ]
 }
 

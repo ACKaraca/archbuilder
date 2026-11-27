@@ -589,6 +589,7 @@ ab-prop-circ-return-wall = Duvara dönüş
 ab-prop-circ-return-floor = Zemine dönüş
 ab-prop-circ-ramp-slope = Eğim
 ab-prop-circ-ramp-rise = Yükseklik farkı
+ab-prop-circ-ramp-runs = Kolların eğimi
 ab-prop-circ-ramp-volume = Hacim
 ab-prop-circ-ramp-type-name = Rampa tipi
 ab-prop-circ-railing-type-name = Korkuluk tipi

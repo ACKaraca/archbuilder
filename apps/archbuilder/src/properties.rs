@@ -1303,7 +1303,7 @@ const DEFAULT_VIEW: Message = Message {
 };
 
 /// Labels of the fields of ramps and railings.
-const CIRC_LABELS: [(&str, Message); 25] = [
+const CIRC_LABELS: [(&str, Message); 26] = [
     (
         "length",
         Message {
@@ -1398,6 +1398,12 @@ const CIRC_LABELS: [(&str, Message); 25] = [
         "ramp_rise",
         Message {
             message_id: "ab-prop-circ-ramp-rise",
+        },
+    ),
+    (
+        "ramp_runs",
+        Message {
+            message_id: "ab-prop-circ-ramp-runs",
         },
     ),
     (
@@ -2053,6 +2059,16 @@ fn shown(
                     }),
                 ),
                 ("ramp_rise", layout.map(|l| format!("{:.3} m", l.height))),
+                (
+                    "ramp_runs",
+                    layout.filter(|l| l.slopes().len() > 1).map(|l| {
+                        l.slopes()
+                            .iter()
+                            .map(|s| format!("{:.1} %", s * 100.0))
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    }),
+                ),
                 (
                     "ramp_volume",
                     layout.map(|l| format!("{:.3} m³", l.volume())),

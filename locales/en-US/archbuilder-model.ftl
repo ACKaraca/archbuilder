@@ -69,8 +69,9 @@ ab-model-roof-extrusion-section = The thickness of the roof "{ $name }" is too l
 ab-model-roof-extrusion-span = The extrusion of the roof "{ $name }" must run between 10 mm and 500 m.
 
 ab-model-ramp-no-top = The ramp "{ $name }" has no level above its base to arrive at and no rise. Add a storey above, choose a top level or give a rise.
-ab-model-ramp-malformed = The ramp "{ $name }" cannot be built: a width, length, landing or thickness is not valid.
+ab-model-ramp-malformed = The ramp "{ $name }" cannot be built: a width, length, landing, thickness, turn or slope is not valid, a turn does not fit its landing, or the sketch crosses itself.
 ab-model-ramp-slope = The ramp "{ $name }" has a slope of { $slope } %, over the largest of its type, { $max } %. Lengthen the run or change the type.
+ab-model-ramp-top = The ramp "{ $name }" ends { $off } mm off the elevation it was to reach: a run has a slope of its own. Change that slope, or the rise.
 ab-model-railing-malformed = The railing "{ $name }" cannot be built: its path needs two different points, and a host must still exist.
 ab-model-railing-gap = The railing "{ $name }" has an opening of { $gap } mm between balusters, over { $max } mm. Use a smaller baluster spacing.
 ab-model-datum-degenerate = The datum "{ $name }" has no usable line or plane: a grid or reference plane must be at least a millimeter long and a work plane needs its datum or three points that are not on one line.

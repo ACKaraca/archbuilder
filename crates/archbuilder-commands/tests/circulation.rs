@@ -766,3 +766,230 @@ fn hosted_rails_have_transitions_at_landings_and_turns() {
     let solids = env.railing(edge).solids().unwrap();
     assert!(!solids.is_empty());
 }
+
+fn ramp_of(env: &Env, id: ObjectId) -> archbuilder_model::ramp::Ramp {
+    archbuilder_model::ramp::Ramp::from_values(&spatial::get(&env.snapshot(), id).unwrap().values)
+        .unwrap()
+}
+
+fn warning_codes(env: &Env, id: ObjectId) -> Vec<&'static str> {
+    let snapshot = env.snapshot();
+    let object = spatial::get(&snapshot, id).unwrap();
+    archbuilder_model::validate::circulation_warnings(&snapshot, &object)
+        .iter()
+        .map(|w| w.code())
+        .collect()
+}
+
+#[test]
+fn a_ramp_of_several_runs_turns_at_its_landings_and_a_slope_shifts_what_comes_after() {
+    let env = Env::new();
+    let made = env
+        .ramp(json!({
+            "start": [0.0, 0.0], "to": [12.0, 0.0], "rise": 2.0, "landing_end": 2.0,
+            "runs": [{"turn": "90", "length": 12.0, "landing": 1.0}],
+        }))
+        .unwrap();
+    let ramp = id_at(&made, "ramp");
+    // 2 m over 24 m: 1 in 12 on both runs, no warning; both sides have a railing that follows
+    // the turn.
+    assert!(close(made.value["rise"].as_f64().unwrap(), 2.0));
+    assert!(close(made.value["slope"].as_f64().unwrap(), 1.0 / 12.0));
+    assert!(warning_codes(&env, ramp).is_empty());
+    assert_eq!(made.value["railings"].as_array().unwrap().len(), 2);
+    let left: ObjectId = made.value["railings"][0].as_str().unwrap().parse().unwrap();
+    let turns = env
+        .railing(left)
+        .transitions()
+        .iter()
+        .filter(|t| t.join == archbuilder_model::railing::Join::Turn)
+        .count();
+    assert_eq!(
+        turns, 1,
+        "the rail turns once, at the middle of the landing"
+    );
+    // The second run runs north: its rail ends 13 m from the start of the landing's middle.
+    let end = *env.railing(left).surface.last().unwrap();
+    assert!(close(end.0[2], 2.0));
+    assert!(end.0[1] > 12.0);
+    // Changing the slope of the second run shifts nothing before it and the top after it.
+    let set = env
+        .run(
+            "archbuilder.ramp.set_run",
+            json!({"ramp": ramp.to_string(), "run": 1, "slope": 0.1}),
+        )
+        .unwrap();
+    let e = &set.value["elevations"];
+    assert!(close(e[0][0].as_f64().unwrap(), 0.0) && close(e[0][1].as_f64().unwrap(), 1.0));
+    assert!(close(e[1][0].as_f64().unwrap(), 1.0) && close(e[1][1].as_f64().unwrap(), 2.2));
+    assert!(close(set.value["top_off"].as_f64().unwrap(), 0.2));
+    let codes = warning_codes(&env, ramp);
+    assert!(codes.contains(&"ab.model.ramp_top") && codes.contains(&"ab.model.ramp_slope"));
+    // The hosted rail follows the new top: no one rebuilt it.
+    assert!(close(env.railing(left).surface.last().unwrap().0[2], 2.2));
+    // The slope of the first run moves the second run's start.
+    env.run(
+        "archbuilder.ramp.set_run",
+        json!({"ramp": ramp.to_string(), "run": 0, "slope": 0.05}),
+    )
+    .unwrap();
+    let layout = Placed::of(
+        &env.snapshot(),
+        &spatial::get(&env.snapshot(), ramp).unwrap(),
+    )
+    .unwrap()
+    .layout
+    .unwrap();
+    assert!(close(layout.elevations()[1].0, 0.6));
+    // One undo step each; a clear gives the shared slope again.
+    env.document.undo().wait().unwrap();
+    assert!(close(layout.elevations()[1].0, 0.6));
+    assert_eq!(ramp_of(&env, ramp).slope, None);
+    env.run(
+        "archbuilder.ramp.set_run",
+        json!({"ramp": ramp.to_string(), "run": 1, "clear_slope": true}),
+    )
+    .unwrap();
+    assert!(warning_codes(&env, ramp).is_empty());
+    // A run is added and removed; its turn needs a landing that holds the miter.
+    assert!(
+        env.run(
+            "archbuilder.ramp.add_run",
+            json!({"ramp": ramp.to_string(), "turn": "-90", "length": 6.0})
+        )
+        .is_err()
+    );
+    env.run(
+        "archbuilder.ramp.set_run",
+        json!({"ramp": ramp.to_string(), "run": 1, "landing": 2.0}),
+    )
+    .unwrap();
+    let added = env
+        .run(
+            "archbuilder.ramp.add_run",
+            json!({"ramp": ramp.to_string(), "turn": "-90", "length": 6.0, "landing": 2.0}),
+        )
+        .unwrap();
+    assert_eq!(added.value["slopes"].as_array().unwrap().len(), 3);
+    env.run(
+        "archbuilder.ramp.set_run",
+        json!({"ramp": ramp.to_string(), "run": 2, "remove": true}),
+    )
+    .unwrap();
+    assert_eq!(ramp_of(&env, ramp).runs.len(), 1);
+}
+
+#[test]
+fn runs_that_do_not_fit_are_refused_and_leave_the_ramp_as_it_was() {
+    let env = Env::new();
+    let ramp = id_at(
+        &env.ramp(json!({"start": [0.0, 0.0], "to": [6.0, 0.0], "rise": 0.5, "landing_end": 0.5}))
+            .unwrap(),
+        "ramp",
+    );
+    // A turn needs a landing that holds its miter: 0.5 m does not hold a 90 degree turn of a
+    // 1.2 m wide ramp.
+    assert!(
+        env.run(
+            "archbuilder.ramp.add_run",
+            json!({"ramp": ramp.to_string(), "turn": "90", "length": 4.0})
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.ramp.set_run",
+            json!({"ramp": ramp.to_string(), "run": 0, "turn": "10"})
+        )
+        .is_err()
+    );
+    assert!(
+        env.run(
+            "archbuilder.ramp.set_run",
+            json!({"ramp": ramp.to_string(), "run": 4, "length": 1.0})
+        )
+        .is_err()
+    );
+    assert!(ramp_of(&env, ramp).runs.is_empty());
+    // A turn wider than 135 degrees is refused.
+    assert!(
+        env.ramp(
+            json!({"start": [0.0, 5.0], "to": [6.0, 5.0], "rise": 0.5, "landing_end": 4.0,
+                     "runs": [{"turn": "170", "length": 3.0}]})
+        )
+        .is_err()
+    );
+    assert_eq!(count(&env, RAMP), 1);
+}
+
+#[test]
+fn a_ramp_by_sketch_cuts_the_floor_above_over_its_boundary_and_rotates_and_mirrors() {
+    let env = Env::new();
+    let floor = env.house();
+    // A boundary of 6.5 m x 2 m up to the arrival edge and 1 m more beyond it.
+    let made = env
+        .ramp(json!({
+            "start": [1.0, 2.0], "to": [6.0, 2.0], "landing_start": 0.5, "landing_end": 1.0,
+            "boundary": [[1.0, 1.0], [7.5, 1.0], [7.5, 3.0], [1.0, 3.0]],
+        }))
+        .unwrap();
+    let ramp = id_at(&made, "ramp");
+    assert!(close(made.value["rise"].as_f64().unwrap(), 3.0));
+    assert!(close(
+        made.value["volume"].as_f64().unwrap(),
+        6.5 * 2.0 * 0.2
+    ));
+    // The opening is the boundary up to the arrival edge (x = 6.5): 5.5 m x 2 m.
+    assert!((60.0 - env.floor_area(floor) - 11.0).abs() < 1.0e-6);
+    // Rotating a quarter turn about the foot turns the boundary with it.
+    env.run(
+        "archbuilder.modify.rotate",
+        json!({"objects": [ramp.to_string()], "base": [1.0, 2.0], "angle": "90"}),
+    )
+    .unwrap();
+    let rotated = ramp_of(&env, ramp);
+    assert!(close(rotated.boundary[1][0], 1.0 + 1.0) && close(rotated.boundary[1][1], 2.0 + 6.5));
+    assert!(warning_codes(&env, ramp).contains(&"ab.model.ramp_slope"));
+    env.document.undo().wait().unwrap();
+    assert_eq!(ramp_of(&env, ramp).boundary[1], [7.5, 1.0]);
+    // A sketch that crosses itself is refused with nothing made.
+    assert!(
+        env.ramp(json!({"start": [1.0, 4.0], "to": [4.0, 4.0], "rise": 0.5,
+                     "boundary": [[0.0, 0.0], [4.0, 4.0], [4.0, 0.0], [0.0, 4.0]]}))
+            .is_err()
+    );
+    assert_eq!(count(&env, RAMP), 1);
+    // Undo removes the ramp and gives the floor back.
+    env.document.undo().wait().unwrap();
+    assert!(close(env.floor_area(floor), 60.0));
+}
+
+#[test]
+fn a_mirrored_ramp_of_runs_turns_the_other_way() {
+    let env = Env::new();
+    let ramp = id_at(
+        &env.ramp(json!({
+            "start": [0.0, 0.0], "to": [6.0, 0.0], "rise": 1.0, "landing_end": 2.0,
+            "runs": [{"turn": "90", "length": 6.0}], "railings": [],
+        }))
+        .unwrap(),
+        "ramp",
+    );
+    env.run(
+        "archbuilder.modify.mirror",
+        json!({"objects": [ramp.to_string()], "axis": [[0.0, 0.0], [1.0, 0.0]], "keep": true}),
+    )
+    .unwrap();
+    let all = spatial::objects(&env.snapshot(), RAMP);
+    assert_eq!(all.len(), 2);
+    let turns: Vec<f64> = all
+        .iter()
+        .map(|o| {
+            archbuilder_model::ramp::Ramp::from_values(&o.values)
+                .unwrap()
+                .runs[0]
+                .turn
+        })
+        .collect();
+    assert!(close(turns[0] + turns[1], 0.0) && close(turns[0].abs(), std::f64::consts::FRAC_PI_2));
+}

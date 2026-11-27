@@ -614,6 +614,7 @@ ab-prop-circ-return-wall = Return to wall
 ab-prop-circ-return-floor = Return to floor
 ab-prop-circ-ramp-slope = Slope
 ab-prop-circ-ramp-rise = Rise
+ab-prop-circ-ramp-runs = Slope of each run
 ab-prop-circ-ramp-volume = Volume
 ab-prop-circ-ramp-type-name = Ramp type
 ab-prop-circ-railing-type-name = Railing type

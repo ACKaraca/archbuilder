@@ -451,6 +451,24 @@ continues to another, its rail is mitered at the first point of the next one's r
 the middle of the next one's first bar, where the next one's own rail starts; the next one has no
 extension at its start, as the first has none at its end.
 
+Ramps of several runs and by sketch. After the first run a ramp can have more runs (`runs`, at
+most 16), each with the turn at the middle of the landing before it (to the left when positive, at
+most 135 degrees, and the landing must hold the miter of the turn), its length, its landing and,
+optionally, its own slope. The slope that carries the rise over all the runs is shared by the runs
+that have none of their own; setting the slope of one run (`archbuilder.ramp.set_run`) changes the
+elevations of every run after it and none before it, and the top then differs from the level the
+ramp was to reach, which is a warning (`ab.model.ramp_top`) along with a run steeper than the
+largest slope of the type (`ab.model.ramp_slope`, for any run). `archbuilder.ramp.add_run` adds a
+run, `set_run` changes or removes one. The body is a set of convex pieces over the band along the
+center line (mitered where it turns), each with the plane its top follows; a slab has the
+thickness below the top, a solid a level underside. A ramp by sketch has a `boundary` of straight
+edges (a simple polygon) and the run line of its foot, direction and lengths: the slope rises
+along the run line over the whole boundary, between the two landings. Its opening in the floor of
+the level it arrives at is the boundary up to the arrival edge, and a railing hosted on it stands
+on the extremes of the boundary across the run line. In the tool the keyword `sketch` at the first
+prompt asks for the run line and then the points of the boundary, ended with Enter. The record
+holds `slope`, `runs` and `boundary` only when used (schema 1.1; older files load).
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored
