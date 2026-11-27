@@ -342,6 +342,22 @@ pub(crate) fn paste_content(
             put(kind.field(), Value::Reference(ty));
         }
         crate::element_type::rebind(ctx, WALL, &mut values)?;
+        // A door or window type of a panel that this document does not have is dropped (the
+        // panel becomes a plain door or window).
+        let mut overrides = archbuilder_model::curtain::CellOverride::list(&values);
+        if !overrides.is_empty() {
+            for o in &mut overrides {
+                let kind = o.type_id.and_then(|t| spatial::type_of(ctx.snapshot(), t));
+                if !matches!(kind.as_deref(), Some(types::DOOR_TYPE | types::WINDOW_TYPE)) {
+                    o.type_id = None;
+                }
+            }
+            if let Some(slot) = values.get_mut(types::wall::CELL_OVERRIDES) {
+                *slot = Some(archbuilder_model::curtain::CellOverride::list_value(
+                    &overrides,
+                ));
+            }
+        }
         let new = create(ctx, WALL, Some(storey), values)?;
         map.insert(old, new);
         created.push(new);

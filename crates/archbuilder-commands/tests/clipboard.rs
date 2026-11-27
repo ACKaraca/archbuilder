@@ -358,3 +358,56 @@ fn a_curtain_wall_pastes_with_its_grid_edits_and_panel_overrides() {
     let pasted = derived(&other, other.ids(WALL)[0]);
     assert_eq!(pasted.panels.len(), original.panels.len());
 }
+
+#[test]
+fn a_curtain_door_panel_pastes_into_another_document_without_its_door_type() {
+    let env = Env::new();
+    let ty = env
+        .run(
+            "archbuilder.curtain.type",
+            json!({"name": "CW", "vertical": {"kind": "fixed_distance", "value": 1.0},
+                   "horizontal": {"kind": "fixed_number", "value": 1}}),
+        )
+        .unwrap()
+        .value["type"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let wall: ObjectId = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [3.0, 0.0], "type": ty, "height": 3.0}),
+        )
+        .unwrap()
+        .value["wall"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let door = spatial::objects(&env.snapshot(), types::DOOR_TYPE)[0].id;
+    let made = env
+        .run("archbuilder.type.duplicate", json!({"type": door}))
+        .unwrap()
+        .value;
+    let door_copy = made["type"].as_str().unwrap().to_owned();
+    let s = env.snapshot();
+    let cell = archbuilder_model::curtain::Derived::of(&s, &spatial::get(&s, wall).unwrap())
+        .unwrap()
+        .layout
+        .cells[0]
+        .key
+        .clone();
+    env.run(
+        "archbuilder.curtain.panel",
+        json!({"wall": wall, "cell": cell, "panel": "door", "type": door_copy}),
+    )
+    .unwrap();
+    let content = archbuilder_commands::clip::capture(&env.snapshot(), &[wall]).unwrap();
+    let other = Env::new();
+    let r = other.run(
+        "archbuilder.clipboard.paste",
+        json!({"content": content, "displacement": [10.0, 0.0], "storey": other.storey()}),
+    );
+    // The duplicated door type is not in the other document: the panel keeps a plain door.
+    assert!(r.is_ok(), "{r:?}");
+}
