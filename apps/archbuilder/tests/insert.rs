@@ -470,6 +470,7 @@ fn the_plan_symbol_has_the_leaf_open_on_the_facing_side_and_the_swing_on_the_han
         hand: Hand::Left,
         facing: Facing::Exterior,
         rise: 0.0,
+        profile: None,
     };
     let lines = symbol(&wall, 0.0, &door).unwrap();
     // The outline, the leaf and the arc.

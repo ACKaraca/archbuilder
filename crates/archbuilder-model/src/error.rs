@@ -86,6 +86,13 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-insert-frame",
     };
+    /// The sketched outline of a wall opening crosses itself, has no area or leaves the
+    /// opening's width and height.
+    pub const INSERT_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.insert_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-insert-profile",
+    };
     /// A door or window would open into the body of another wall that meets or crosses its wall.
     pub const INSERT_MEETS_WALL: ErrorCode = ErrorCode {
         code: "ab.model.insert_meets_wall",

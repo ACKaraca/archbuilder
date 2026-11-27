@@ -166,7 +166,7 @@ inserts back. Authored data only, lengths in meters, one layout for both kinds:
 | `width`, `height` | Size of the opening | 0.1 m to 20 m; copies of the type, written only with it |
 | `sill` | Bottom of the opening above the wall's base | 0 to 100 m; the type's default sill when placed or retyped, then the instance's own; the head stays 10 mm below the wall's top |
 | `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall | 10 mm to 0.5 m and 10 mm to 2 m; copies of the type; the solids, the plan symbol and the IFC body use the depth clamped to the host wall's thickness; the frame leaves at least 20 mm clear |
-| `operation` | `single_swing`, `double_swing` or `sliding` for a door; `fixed`, `casement` or `sliding` for a window | A copy of the type; the kind decides what is allowed |
+| `operation` | `single_swing`, `double_swing`, `sliding`, `folding` or `pivot` for a door; `fixed`, `casement`, `awning`, `hopper`, `sliding`, `folding` or `pivot` for a window | A copy of the type; the kind decides what is allowed |
 | `insert_type` | The door or window type (schema 1.1) | A reference to a type of the kind; absent only in files from before types until they are upgraded |
 | `pinned` | Whether the door or window is pinned (schema 1.2) | Absent: unpinned |
 | `hand` | `left` or `right`: the hinge side seen from the side the leaf swings toward | `left` by default |
@@ -196,8 +196,8 @@ placed at the center of the opening at the sill. The opening's body is the prism
 height through the wall's thickness. The insert's body is one faceted B-rep of the frame bars and the
 leaf or pane (and a door's handle), the same solids the viewport draws; they are separate closed
 solids in one shell. The insert's placement has its y axis toward the side a door swings to, so a
-door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; a double door is `DOUBLE_DOOR_SINGLE_SWING`, a sliding door `SLIDING_TO_RIGHT` (left hand) or `SLIDING_TO_LEFT`; fixed and casement windows are `SINGLE_PANEL`, sliding windows `DOUBLE_PANEL_VERTICAL`. IFC4 has no operation on the window itself, so the operation,
-hand and facing of a casement window are reported as approximated and a fixed window loses nothing.
+door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; a double door is `DOUBLE_DOOR_SINGLE_SWING`, a sliding door `SLIDING_TO_RIGHT` (left hand) or `SLIDING_TO_LEFT`; a folding door `FOLDING_TO_RIGHT` (left hand), `FOLDING_TO_LEFT` or, from four leaves, `DOUBLE_DOOR_FOLDING`; a pivot door has no IFC4 value and is written as a user-defined `PIVOT`; fixed, casement, awning, hopper and pivot windows are `SINGLE_PANEL`, sliding and folding windows `DOUBLE_PANEL_VERTICAL`. IFC4 has no operation on the window itself, so the operation,
+hand and facing of a casement, awning, hopper, pivot or folding window are reported as approximated and a fixed window loses nothing. Each door and window also has a `Qto_DoorBaseQuantities` or `Qto_WindowBaseQuantities` set (`Width`, `Height`, `Area`).
 `OverallWidth` and `OverallHeight` come from `width` and `height`.
 
 Derived, never stored: the wall's solid is the joined solid with each opening cut through its whole
@@ -209,8 +209,28 @@ typed distance along the selected wall; the options width, height, sill, hand an
 continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_hand` and
 `archbuilder.insert.flip_facing` flip the selected ones, and `archbuilder.object.delete` deletes the selected
 inserts. A double door has two leaves meeting in the middle, a sliding door or window two panels in
-two tracks. Known limits: no families, no room relations, arched or non-rectangular openings are
-not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
+two tracks, a folding door or window two leaves (four from 1.5 m wide) side by side. The operations are the
+opening recipes: a door or window type is a recipe (operation, size and frame, without a family), and
+`archbuilder.door.place` and `archbuilder.window.place` take an `operation` that gives the insert a type of
+that operation (an existing one of the same size, else a new one); a door may swing, slide, fold or pivot and a
+window may be fixed, casement, awning, hopper, sliding, folding or pivoting, and the model refuses any other
+combination. Converting a recipe type to an editable family waits for families. Known limits: no families.
+`archbuilder.insert.rehost` moves doors, windows and wall openings to another wall in one step (each keeps its place in
+the plan, projected onto the new baseline, or one insert goes to a given distance); a result outside the clear
+span, too tall or in the way of another opening is refused and names the insert and the wall or opening
+involved. Two openings of one wall conflict only where their heights overlap too (`MIN_GAP` along the baseline), so a
+window or opening above a door may stand over the same stretch.
+`archbuilder.insert.rooms` (read only) reports the rooms on both sides of doors and windows, found at the room
+calculation points: the center of the opening, 0.15 m beyond each face of its wall. A door's `to` room is the one its leaf swings
+toward and its `from` room the other, so flipping its facing swaps them; a window's `to` room is the interior one opposite
+its facing. Nothing is stored; a wall that bounds no room gives none. Rooms have no phases yet, so the relation is of the model as it is.
+The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line, a sliding arrow, a folding zigzag, a pivot axis) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
+The symbol follows the detail level of the view: coarse has the outline and the swing of a hinged door, medium the
+leaves and lines of every operation, fine adds the arrows, the sill line of a window and the inner frame outline
+(`insert::symbol_at`). The elevation symbol (`insert::elevation_symbol`, in the plane of the exterior face) has the
+outline, at medium detail the opening direction (a triangle with its apex at the hinge, at the top for an awning
+and the bottom for a hopper, an arrow for sliding, one triangle for each leaf of a folding door, the axis of a
+pivot) and at fine detail the inner frame and the sill line; elevation views themselves are not built yet.
 
 #### The floor of the first slice
 
@@ -733,7 +753,12 @@ door by its distance along the baseline. `distance`, `width`, `height` (the arch
 included), `sill` have the meaning of a door's; `rise` is the sagitta of a circular arch on top (0:
 a rectangle), `pinned`. It is an insert of the wall (`archbuilder_model::insert::Kind::Opening`):
 the wall's body, its plan lines and its quantities are cut by it, it moves, mirrors and copies with the wall
-and is refused where a door would be.
+and is refused where a door would be. `profile` (schema 1.1, optional) is a sketched outline instead of a
+rectangle or an arch: three to 32 points in meters from the opening's lower left corner, x along the baseline and y
+up, kept inside `width` and `height`, never crossing themselves (`ab.model.insert_profile`). `archbuilder.opening.place`
+takes the outline as `profile` in the wall's elevation (x from the baseline's start, y above the wall's base) and
+derives the distance, width, height and sill from its bounds; the wall is cut normal to its face through its whole
+thickness and the opening is exported as an `IfcOpeningElement` with that profile.
 
 `archbuilder.shaft` (schema 1.0) is a footprint (`vertices`, `arcs`) with a base and a top: `base_level`
 (absent: the level of its storey) and `base_offset`, `top_level` (absent: the level above its
@@ -744,7 +769,11 @@ later. `archbuilder.vertical_opening` is a footprint cut in one floor, roof or c
 volume, a ceiling's, and a roof's body have the openings taken out; a cut that crosses a ridge, hip or
 valley of a roof is not cut in its body (the opening is still written as a void, and the loss report
 says so). The plan marks a shaft with its outline and a cross on every storey whose level is within
-its span.
+its span. `archbuilder.dormer_opening.create` cuts a roof where the selected walls of a dormer meet it: it is a
+vertical opening of the roof whose edges follow the faces of the walls (`face`, `edge_offset`), so it moves with
+them. Three or more walls that meet around make a closed outline; two or more in a chain give an open one that the
+roof closes along the line where the dormer meets it. The walls and the roof default to the selection. A dormer roof
+as an element of its own is not tied to the cut.
 
 In the application the tools are in the Architecture tab, the Selection tab and the Structure menu and have the typed shortcuts
 `CL` (ceiling: a click inside a room makes it, `sketch` sketches it), `OP` (wall opening, placed like a door; the

@@ -1455,6 +1455,100 @@ pub fn vertices_of_walls(
         .collect())
 }
 
+/// The vertices of an outline over the open chain `walls` (two or more, in order, each meeting the
+/// next; the last does not meet the first): edges on the chosen `face` follow each wall, and the
+/// closing edge from the end of the last wall back to the start of the first follows none. This is
+/// the outline of a dormer, which a roof closes along the line it meets the dormer's walls.
+/// [`Face::Interior`] and [`Face::Exterior`] look into, or away from, the area the chain encloses.
+///
+/// # Errors
+/// [`WallsRefusal`].
+pub fn vertices_of_chain(
+    walls: &[(ObjectId, Wall)],
+    face: Face,
+    offset: f64,
+) -> std::result::Result<Vec<Vertex>, WallsRefusal> {
+    let n = walls.len();
+    if !(2..MAX_VERTICES).contains(&n) {
+        return Err(WallsRefusal::NoLoop);
+    }
+    let lines = |faces: &[Face]| -> std::result::Result<Vec<Line>, WallsRefusal> {
+        walls
+            .iter()
+            .zip(faces)
+            .map(|((_, w), f)| Line::of_face(w, *f, offset).ok_or(WallsRefusal::Parallel))
+            .collect()
+    };
+    let meets = |lines: &[Line]| -> std::result::Result<Vec<[f64; 2]>, WallsRefusal> {
+        (1..n)
+            .map(|k| {
+                lines[k - 1]
+                    .meet(&lines[k])
+                    .or_else(|| junction(&walls[k - 1].1, &walls[k].1, &lines[k - 1], &lines[k]))
+                    .ok_or(WallsRefusal::Parallel)
+            })
+            .collect()
+    };
+    let centers = lines(&vec![Face::Center; n])?;
+    let joints = meets(&centers)?;
+    // The open ends: the end of each outer wall that is farther from its joint.
+    let far = |w: &Wall, joint: [f64; 2]| {
+        let d = |p: [f64; 2]| sub(p, joint)[0].hypot(sub(p, joint)[1]);
+        if d(w.start) >= d(w.end) {
+            w.start
+        } else {
+            w.end
+        }
+    };
+    let mut polygon = vec![far(&walls[0].1, joints[0])];
+    polygon.extend(joints.iter().copied());
+    polygon.push(far(&walls[n - 1].1, joints[n - 2]));
+    let ccw = signed_area(&polygon) > 0.0;
+    let faces: Vec<Face> = (0..n)
+        .map(|k| {
+            if face == Face::Center {
+                return Face::Center;
+            }
+            let run = sub(polygon[k + 1], polygon[k]);
+            let base = sub(walls[k].1.end, walls[k].1.start);
+            let area_on_left_of_baseline = ccw == (dot(run, base) >= 0.0);
+            let toward_area = if area_on_left_of_baseline {
+                Face::Exterior
+            } else {
+                Face::Interior
+            };
+            let core = matches!(face, Face::CoreInterior | Face::CoreExterior);
+            let toward = matches!(face, Face::Interior | Face::CoreInterior);
+            match (core, (toward_area == Face::Exterior) == toward) {
+                (false, true) => Face::Exterior,
+                (false, false) => Face::Interior,
+                (true, true) => Face::CoreExterior,
+                (true, false) => Face::CoreInterior,
+            }
+        })
+        .collect();
+    let face_lines = lines(&faces)?;
+    let inner = meets(&face_lines)?;
+    let mut points = vec![face_lines[0].project(polygon[0])];
+    points.extend(inner);
+    points.push(face_lines[n - 1].project(polygon[n]));
+    Ok(points
+        .into_iter()
+        .enumerate()
+        .map(|(k, point)| Vertex {
+            loop_index: 0,
+            point,
+            // Vertex k starts the edge that follows wall k; the last one starts the closing edge.
+            edge: walls.get(k).map(|(id, _)| Association {
+                wall: *id,
+                face: faces[k],
+                offset,
+            }),
+            bulge: 0.0,
+        })
+        .collect())
+}
+
 /// What a click picks among the walls of a storey.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pick {

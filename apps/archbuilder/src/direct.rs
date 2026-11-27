@@ -1052,7 +1052,8 @@ fn slide_of(snapshot: &Snapshot, id: ObjectId) -> Option<Slide> {
     let mut lo = low + insert::SIDE_CLEARANCE + half + eps;
     let mut hi = high - insert::SIDE_CLEARANCE - half - eps;
     for (other, theirs) in insert::hosted(snapshot, host.id) {
-        if other.id == id {
+        // An opening at another height does not stop the drag.
+        if other.id == id || item.sill >= theirs.top() || theirs.sill >= item.top() {
             continue;
         }
         let (from, to) = theirs.extent();

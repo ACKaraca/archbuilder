@@ -89,7 +89,7 @@ const FUNCTION_LABELS: [(Function, Message); 5] = [
         },
     ),
 ];
-const OPERATION_LABELS: [(Operation, Message); 5] = [
+const OPERATION_LABELS: [(Operation, Message); 9] = [
     (
         Operation::SingleSwing,
         Message {
@@ -118,6 +118,30 @@ const OPERATION_LABELS: [(Operation, Message); 5] = [
         Operation::Casement,
         Message {
             message_id: "ab-op-casement",
+        },
+    ),
+    (
+        Operation::Folding,
+        Message {
+            message_id: "ab-op-folding",
+        },
+    ),
+    (
+        Operation::Awning,
+        Message {
+            message_id: "ab-op-awning",
+        },
+    ),
+    (
+        Operation::Hopper,
+        Message {
+            message_id: "ab-op-hopper",
+        },
+    ),
+    (
+        Operation::Pivot,
+        Message {
+            message_id: "ab-op-pivot",
         },
     ),
 ];

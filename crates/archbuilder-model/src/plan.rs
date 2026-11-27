@@ -527,7 +527,7 @@ impl PlanSource<'_> {
                 );
             }
         }
-        let lines = crate::insert::symbol(&wall, level, &item).unwrap_or_default();
+        let lines = crate::insert::symbol_at(&wall, level, &item, detail).unwrap_or_default();
         for (k, line) in lines.iter().enumerate() {
             let points: Vec<[f64; 2]> = line.iter().map(|p| [p[0], p[1]]).collect();
             if let Some(c) = curve(&points, false) {
