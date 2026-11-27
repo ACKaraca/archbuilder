@@ -10,8 +10,10 @@ use arc_doc::schema::FieldDecl;
 use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
 use arc_ui::{GridContext, Intent, Localize, PropertyGrid, PropertyModel, PropertyObject};
+use archbuilder_commands::project_parameter::FIELD_PREFIX as PARAMETER_FIELD;
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::element_type::{self as et, TypeKind};
+use archbuilder_model::expr::{DataType, Evaluated, Stored};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
     self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY,
@@ -29,6 +31,12 @@ const PENDING: &str = "…";
 
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "parameters",
+        Message {
+            message_id: "ab-prop-parameters",
+        },
+    ),
     (
         "cut",
         Message {
@@ -2789,6 +2797,14 @@ fn shown(
         BUILDING => read_only.push("elevation".to_owned()),
         _ => {}
     }
+    parameter_rows(
+        snapshot,
+        key,
+        object,
+        &mut fields,
+        &mut values,
+        &mut read_only,
+    );
     // Every element shows its pinned flag last, whatever the arms above kept of its record.
     if let Some(at) = types::pinned_slot(key)
         && !fields.iter().any(|f| f.name == "pinned")
@@ -2803,6 +2819,124 @@ fn shown(
         values,
         read_only,
     })
+}
+
+/// The field of a parameter's value shows its formula after `=`; this one shows what it gives.
+const PARAMETER_RESULT: &str = "parameter_value:";
+
+/// The label of a parameter row (`parameter:<identifier>`): the parameter's display name; of its
+/// result row, the name marked as the value.
+fn parameter_label(snapshot: &Snapshot, localize: &dyn Localize, name: &str) -> Option<String> {
+    const VALUE: Message = Message {
+        message_id: "ab-prop-parameter-value",
+    };
+    let (identifier, result) = match name.strip_prefix(PARAMETER_FIELD) {
+        Some(i) => (i, false),
+        None => (name.strip_prefix(PARAMETER_RESULT)?, true),
+    };
+    let shown = archbuilder_model::parameter::all(snapshot)
+        .into_iter()
+        .find(|p| p.identifier == identifier)
+        .map_or_else(|| identifier.to_owned(), |p| p.name);
+    if !result {
+        return Some(shown);
+    }
+    Some(
+        localize
+            .message(
+                VALUE.message_id,
+                &[("name", arc_base::error::Value::Text(shown.clone()))],
+            )
+            .unwrap_or(shown),
+    )
+}
+
+/// A number with at most six decimals, without trailing zeros.
+fn short(v: f64) -> String {
+    let text = format!("{v:.6}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// A parameter value as the grid shows it: lengths in the project's unit, areas, volumes and
+/// angles with their unit, the rest as they are.
+fn parameter_text(snapshot: &Snapshot, data: DataType, value: &Evaluated) -> String {
+    match value {
+        Evaluated::Number(v) => match data {
+            DataType::Length => {
+                archbuilder_model::units::length_text(*v, spatial::length_unit(snapshot), '.')
+            }
+            DataType::Area => format!("{} m²", short(*v)),
+            DataType::Volume => format!("{} m³", short(*v)),
+            DataType::Angle => format!("{}°", short(v.to_degrees())),
+            _ => short(*v),
+        },
+        Evaluated::Bool(b) => b.to_string(),
+        Evaluated::Text(t) => t.clone(),
+    }
+}
+
+/// The project parameters of `object` as rows grouped by the parameters' groups: a value or
+/// `=formula` that edits through `archbuilder.property.set`, and for a formula a read-only row
+/// with what it gives. A value set on the type is read-only on the element. The stored list
+/// itself is not shown.
+fn parameter_rows(
+    snapshot: &Snapshot,
+    key: &str,
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    use archbuilder_model::parameter;
+    if let Some(at) = fields.iter().position(|f| f.name == "parameters") {
+        fields.remove(at);
+        if at < values.len() {
+            values.remove(at);
+        }
+    }
+    if parameter::field_at(snapshot, key).is_none() {
+        return;
+    }
+    let variables = archbuilder_model::variable::evaluate(snapshot).unwrap_or_default();
+    // A document whose values do not evaluate (one from a newer build) shows no rows; the
+    // commands refuse to leave one in that state.
+    let rows = parameter::evaluate(snapshot, object, &variables).unwrap_or_default();
+    for row in rows {
+        let p = &row.parameter;
+        let aspect = if p.group.is_empty() {
+            "parameters"
+        } else {
+            p.group.as_str()
+        };
+        let name = format!("{PARAMETER_FIELD}{}", p.identifier);
+        let formula = row.stored.as_ref().and_then(Stored::formula);
+        let text = match formula {
+            Some(f) => format!("={}", f.text()),
+            None if row.source == parameter::Source::Unset => String::new(),
+            None => parameter_text(snapshot, p.data, &row.value),
+        };
+        fields.push(
+            FieldDecl::new(&name, ValueType::String)
+                .optional()
+                .in_aspect(aspect),
+        );
+        values.push(Some(Value::String(text)));
+        if !p.set_on(key) {
+            read_only.push(name);
+        }
+        if formula.is_some() {
+            let result = format!("{PARAMETER_RESULT}{}", p.identifier);
+            fields.push(
+                FieldDecl::new(&result, ValueType::String)
+                    .optional()
+                    .in_aspect(aspect),
+            );
+            values.push(Some(Value::String(parameter_text(
+                snapshot, p.data, &row.value,
+            ))));
+            read_only.push(result);
+        }
+    }
 }
 
 /// The rows of a roof: its type, base offset and overhang, one slope for its sloped edges, then
@@ -2990,7 +3124,11 @@ impl Panel for PropertiesPanel {
             return;
         };
         let localize = cx.localize;
-        let label_of = |name: &str| label_text(localize, name);
+        let snapshot_for_labels = tab.document().snapshot();
+        let label_of = |name: &str| {
+            parameter_label(&snapshot_for_labels, localize, name)
+                .unwrap_or_else(|| label_text(localize, name))
+        };
         let snapshot = tab.document().snapshot();
         // A selected storey stands for its level, which the grid shows through it.
         let covered: Vec<arc_base::ObjectId> = view
@@ -3093,7 +3231,9 @@ impl Panel for PropertiesPanel {
             units.set(format);
         }
         let localize = cx.localize;
-        let label = |name: &str| label_text(localize, name);
+        let label = |name: &str| {
+            parameter_label(&snapshot, localize, name).unwrap_or_else(|| label_text(localize, name))
+        };
         let context = GridContext {
             localize,
             label: &label,
@@ -3136,5 +3276,72 @@ impl Panel for PropertiesPanel {
             };
             cx.actions.push(Action::Intent(intent));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "test code")]
+
+    use std::sync::Arc;
+
+    use arc_command::{Invocation, Invoker, Permission, Session, Surface};
+    use arc_doc::graph::Evaluators;
+    use arc_doc::{Document, DocumentConfig};
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn parameters_show_as_rows_with_formulas_and_their_values() {
+        let document = Document::open(
+            Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
+            Arc::new(Evaluators::new()),
+            DocumentConfig {
+                workers: 0,
+                ..DocumentConfig::default()
+            },
+        )
+        .unwrap();
+        let registry = archbuilder_commands::registry().unwrap();
+        let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+        let run = |command: &str, params: serde_json::Value| {
+            Invoker::new(&registry)
+                .invoke(&document, &session, Invocation::new(command, params))
+                .unwrap()
+                .value
+        };
+        run("archbuilder.project.new", json!({}));
+        let wall = run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [4.0, 0.0]}),
+        )["wall"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        run(
+            "archbuilder.parameter.create",
+            json!({"name": "Mark", "data_type": "number", "categories": [WALL],
+                   "formula": "2 * 3", "group": "Marks"}),
+        );
+        run(
+            "archbuilder.parameter.create",
+            json!({"name": "Cost", "data_type": "number", "categories": [WALL], "scope": "type"}),
+        );
+        let snapshot = document.snapshot();
+        let object = spatial::get(&snapshot, wall.parse().unwrap()).unwrap();
+        let shown = shown(&snapshot, WALL, &object, &|n: &str| n.to_owned()).unwrap();
+        let at = |name: &str| shown.fields.iter().position(|f| f.name == name);
+        assert!(at("parameters").is_none());
+        let mark = at("parameter:Mark").unwrap();
+        assert_eq!(shown.fields[mark].aspect, "Marks");
+        assert_eq!(shown.values[mark], Some(Value::String("=2 * 3".into())));
+        let result = at("parameter_value:Mark").unwrap();
+        assert_eq!(shown.values[result], Some(Value::String("6".into())));
+        assert!(shown.read_only.contains(&"parameter_value:Mark".to_owned()));
+        // A type-scope value is edited on the type, not on the wall.
+        assert!(at("parameter:Cost").is_some());
+        assert!(shown.read_only.contains(&"parameter:Cost".to_owned()));
+        assert!(!shown.read_only.contains(&"parameter:Mark".to_owned()));
     }
 }

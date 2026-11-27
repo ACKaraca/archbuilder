@@ -16,7 +16,8 @@
 //! `archbuilder.curtain.schedule` (panel: key, kind, door or window type, material, thickness,
 //! width, height, area, whether overridden; mullion: key, role, upright or not, profile, size,
 //! length), and the `variables` list: each document variable with its identifier, data type,
-//! formula and value (derived).
+//! formula and value (derived), and `parameters`: the project parameters (`parameters`) and the
+//! value of each element and type with its source and formula (`values`, derived).
 //! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
 //! `archbuilder.file.export_ifc`.
@@ -211,6 +212,18 @@ fn variables(args: &[OsString], product: &Product) -> Value {
         .unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
+/// The project parameters of the file named in `args` and the values of the elements and types,
+/// as JSON; `null` when the file cannot be opened.
+fn parameters(args: &[OsString], product: &Product) -> Value {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return Value::Null;
+    };
+    serde_json::to_value(archbuilder_commands::project_parameter::parameter_list(
+        &snapshot, None,
+    ))
+    .unwrap_or(Value::Null)
+}
+
 /// The curtain walls of the file named in `args` with their derived panels and mullions (the rows
 /// of `archbuilder.curtain.schedule`), as JSON; an empty list when the file cannot be opened.
 fn curtain_walls(args: &[OsString], product: &Product) -> Value {
@@ -242,6 +255,7 @@ where
     let (stats, sets) = stats_and_sets(&args, product);
     let curtains = curtain_walls(&args, product);
     let variables = variables(&args, product);
+    let parameters = parameters(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
@@ -265,6 +279,7 @@ where
         map.insert("selection_sets".into(), sets);
         map.insert("curtain_walls".into(), curtains);
         map.insert("variables".into(), variables);
+        map.insert("parameters".into(), parameters);
         map.insert("floors".into(), floors.into());
         map.insert("rooms".into(), rooms.into());
         map.insert("stairs".into(), stairs.into());

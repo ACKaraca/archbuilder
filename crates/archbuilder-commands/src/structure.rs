@@ -231,7 +231,8 @@ pub struct SetProperty {
     /// `core_interior`) of a wall, and `type` (a type's name or identifier, or its number in the
     /// list of the kind's types) of a wall, floor, door or window. The values a type decides
     /// (a wall's or floor's thickness, a door's or window's width, height, frame and operation)
-    /// are edited on the type.
+    /// are edited on the type. `parameter:<identifier>` sets a project parameter's value: a text
+    /// starting with `=` is a formula, an empty text clears the object's own value.
     pub field: String,
     /// The value in canonical JSON form: a text, a number in meters (also as a text without a unit, `"0.35"`), an enum name or code, or a
     /// truth value.
@@ -243,8 +244,8 @@ pub(crate) fn named(name: &str) -> Value {
 }
 
 /// Runs the model's rules on the open transaction.
-/// Whether the open transaction `txn` created `id` or changed it in more than its name and pinned
-/// flag.
+/// Whether the open transaction `txn` created `id` or changed it in more than its name, pinned
+/// flag and parameter values.
 fn changed_by(txn: &arc_doc::Txn, id: ObjectId) -> bool {
     let (base, candidate) = (txn.base(), txn.snapshot());
     txn.touched()
@@ -252,10 +253,18 @@ fn changed_by(txn: &arc_doc::Txn, id: ObjectId) -> bool {
         .is_some_and(|c| *c != arc_doc::Change::Deleted)
         && match (spatial::get(base, id), spatial::get(candidate, id)) {
             (Some(before), Some(after)) => {
-                let pin = spatial::type_of(base, id).and_then(|k| types::pinned_slot(&k));
+                let key = spatial::type_of(base, id);
+                let pin = key.as_deref().and_then(types::pinned_slot);
+                // Parameter values change no geometry, so they are like the name and the pin.
+                let values = key
+                    .as_deref()
+                    .and_then(|k| archbuilder_model::parameter::field_at(base, k));
                 before.header.owner != after.header.owner
-                    || (1..before.values.len().max(after.values.len()))
-                        .any(|k| Some(k) != pin && before.values.get(k) != after.values.get(k))
+                    || (1..before.values.len().max(after.values.len())).any(|k| {
+                        Some(k) != pin
+                            && Some(k) != values
+                            && before.values.get(k) != after.values.get(k)
+                    })
             }
             _ => true,
         }
@@ -725,6 +734,10 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
     reason = "one arm per special field of the property command"
 )]
 pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
+    if let Some(identifier) = p.field.strip_prefix(crate::project_parameter::FIELD_PREFIX) {
+        let objects: Vec<ObjectId> = p.objects.iter().map(|IdParam(id)| *id).collect();
+        return crate::project_parameter::set_property(ctx, &objects, identifier, &p.value);
+    }
     for IdParam(id) in p.objects {
         let snapshot = ctx.snapshot();
         let key = spatial::type_of(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;

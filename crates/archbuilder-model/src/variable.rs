@@ -156,10 +156,11 @@ pub fn default_unit(snapshot: &Snapshot, data: DataType) -> Option<&'static Unit
     }
 }
 
-/// The formula identifiers of the document other than that of `except`.
+/// The formula identifiers of the document other than that of `except`: every variable's and
+/// every project parameter's.
 #[must_use]
 pub fn identifiers(snapshot: &Snapshot, except: Option<ObjectId>) -> Vec<String> {
-    [VARIABLE]
+    [VARIABLE, types::PARAMETER]
         .iter()
         .flat_map(|key| spatial::objects(snapshot, key))
         .filter(|o| Some(o.id) != except)

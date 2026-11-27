@@ -12,10 +12,12 @@
 //! degrees, and none for dimensionless types).
 
 use arc_base::{Error, ObjectId, Result};
+use arc_command::prompt::{Accept, PromptInput, PromptSequence, PromptStep};
 use arc_command::{CommandSpec, Context, IdParam, Permission, Registry, UndoBehavior};
 use arc_doc::{FieldPath, Snapshot, Value};
 use archbuilder_model::error::codes as model_codes;
 use archbuilder_model::expr::{self, DataType, Evaluated, Formula, Stored};
+use archbuilder_model::parameter as project_parameter;
 use archbuilder_model::spatial;
 use archbuilder_model::types::VARIABLE;
 use archbuilder_model::variable::{self, Variable};
@@ -255,13 +257,27 @@ pub(crate) fn stored_input(
     }
 }
 
-/// Evaluates every formula of the open transaction's document.
+/// Evaluates every formula of the open transaction's document and checks the parameter rules;
+/// returns the warnings of rules that only warn, as text.
 ///
 /// # Errors
-/// The first failure: a cycle, or a formula error naming its parameter.
-pub(crate) fn ensure_formulas(ctx: &mut Context<'_>) -> Result<()> {
+/// The first failure: a cycle, a formula error naming its parameter and object, or a broken
+/// reject rule, with the objects that fail.
+pub(crate) fn ensure_formulas(ctx: &mut Context<'_>) -> Result<Vec<String>> {
     let txn = ctx.txn()?;
-    variable::evaluate(txn.snapshot()).map(|_| ())
+    Ok(archbuilder_model::parameter::check(txn.snapshot())?
+        .iter()
+        .map(warning_text)
+        .collect())
+}
+
+/// A rule warning as text: `parameter on object: rule`.
+fn warning_text(error: &Error) -> String {
+    let arg = |name| match error.arguments().get(name) {
+        Some(arc_base::error::Value::Text(t)) => t.clone(),
+        _ => String::new(),
+    };
+    format!("{} on {}: {}", arg("parameter"), arg("object"), arg("rule"))
 }
 
 /// Rewrites every formula of the document that reads `from` to read `to`.
@@ -272,6 +288,29 @@ pub(crate) fn rewrite_identifier(ctx: &mut Context<'_>, from: &str, to: &str) ->
             && let Some(g) = f.renamed(from, to)?
         {
             changes.push((v.id, "value", Stored::Formula(g).to_value()));
+        }
+    }
+    let snapshot = ctx.snapshot();
+    for p in project_parameter::all(snapshot) {
+        if let Some(Stored::Formula(f)) = &p.default
+            && let Some(g) = f.renamed(from, to)?
+        {
+            changes.push((p.id, "default", Stored::Formula(g).to_value()));
+        }
+    }
+    for (_, object) in project_parameter::hosts(snapshot) {
+        let mut entries = project_parameter::stored(snapshot, &object);
+        let mut changed = false;
+        for (_, stored) in &mut entries {
+            if let Stored::Formula(f) = stored
+                && let Some(g) = f.renamed(from, to)?
+            {
+                *stored = Stored::Formula(g);
+                changed = true;
+            }
+        }
+        if let (true, Some(value)) = (changed, project_parameter::stored_value(&entries)) {
+            changes.push((object.id, "parameters", value));
         }
     }
     let txn = ctx.txn()?;
@@ -354,7 +393,7 @@ fn set(ctx: &mut Context<'_>, p: SetVariable) -> Result<()> {
     ctx.txn()?
         .modify(v.id, FieldPath::new("value"), Some(stored.to_value()))?;
     ensure_valid(ctx)?;
-    ensure_formulas(ctx)
+    ensure_formulas(ctx).map(|_| ())
 }
 
 fn rename(ctx: &mut Context<'_>, p: RenameVariable) -> Result<()> {
@@ -381,7 +420,7 @@ fn rename(ctx: &mut Context<'_>, p: RenameVariable) -> Result<()> {
         }
     }
     ensure_valid(ctx)?;
-    ensure_formulas(ctx)
+    ensure_formulas(ctx).map(|_| ())
 }
 
 fn delete(ctx: &mut Context<'_>, p: DeleteVariable) -> Result<()> {
@@ -391,7 +430,7 @@ fn delete(ctx: &mut Context<'_>, p: DeleteVariable) -> Result<()> {
     txn.delete(p.variable.0)?;
     txn.apply_delete_rules(&limits)?;
     ensure_valid(ctx)?;
-    ensure_formulas(ctx)
+    ensure_formulas(ctx).map(|_| ())
 }
 
 #[allow(
@@ -402,23 +441,70 @@ fn list(ctx: &mut Context<'_>, _: ListVariables) -> Result<VariableList> {
     Ok(variable_list(ctx.snapshot()))
 }
 
+/// A text prompt of one to `max` characters.
+pub(crate) fn text_accept(max: usize) -> Accept {
+    Accept::Text {
+        min_chars: 1,
+        max_chars: Some(max),
+    }
+}
+
+/// The prompt of a data type by name; `length` by default.
+pub(crate) fn data_type_step() -> PromptStep {
+    PromptStep::new(
+        "data_type",
+        MessageId {
+            message_id: "ab-prompt-data-type",
+        }
+        .message_id,
+        text_accept(32),
+    )
+    .with_default(PromptInput::Text(DataType::Length.name().to_owned()))
+    .with_check(|_, input| match input {
+        PromptInput::Text(name) => data_type(name.trim()).map(|_| ()),
+        _ => Ok(()),
+    })
+}
+
 /// Registers the commands of this module.
 ///
 /// # Errors
 /// `cmd.duplicate` when an identifier is already registered.
 pub fn register(registry: &mut Registry) -> Result<()> {
-    registry.register(CommandSpec::new(
-        VARIABLE_CREATE,
-        MessageId {
-            message_id: "ab-cmd-variable-create-label",
-        }
-        .message_id,
-        MessageId {
-            message_id: "ab-cmd-variable-create-description",
-        }
-        .message_id,
-        make,
-    ))?;
+    registry.register(
+        CommandSpec::new(
+            VARIABLE_CREATE,
+            MessageId {
+                message_id: "ab-cmd-variable-create-label",
+            }
+            .message_id,
+            MessageId {
+                message_id: "ab-cmd-variable-create-description",
+            }
+            .message_id,
+            make,
+        )
+        .with_prompts(
+            PromptSequence::new()
+                .step(PromptStep::new(
+                    "name",
+                    MessageId {
+                        message_id: "ab-prompt-variable-name",
+                    }
+                    .message_id,
+                    text_accept(256),
+                ))
+                .step(data_type_step())
+                .step(PromptStep::new(
+                    "formula",
+                    MessageId {
+                        message_id: "ab-prompt-variable-formula",
+                    }
+                    .message_id,
+                    text_accept(2048),
+                )),
+        ),
+    )?;
     registry.register(CommandSpec::new(
         VARIABLE_SET,
         MessageId {

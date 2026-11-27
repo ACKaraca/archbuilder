@@ -1,4 +1,5 @@
-//! `inspect` lists the document variables of a saved file, the same text on every run.
+//! `inspect` lists the document variables and project parameters of a saved file, the same text
+//! on every run.
 
 #![allow(clippy::unwrap_used, clippy::panic, reason = "test code")]
 
@@ -69,6 +70,22 @@ fn inspect_lists_variables_with_the_same_text_every_time() {
     assert_eq!(bay["identifier"], "Bay");
     assert_eq!(bay["formula"], "Module * 3");
     assert!((bay["value"].as_f64().unwrap() - 3.6).abs() < 1e-9);
+    run(
+        false,
+        "archbuilder.wall.create",
+        &json!({"start": [0.0, 0.0], "end": [4.0, 0.0]}),
+    );
+    run(
+        false,
+        "archbuilder.parameter.create",
+        &json!({"name": "Mark", "data_type": "length", "categories": ["archbuilder.wall"],
+                "formula": "Bay / 2"}),
+    );
+    let (_, dump) = cli(&["inspect", file]);
+    assert_eq!(dump["parameters"]["parameters"][0]["identifier"], "Mark");
+    let value = &dump["parameters"]["values"][0];
+    assert_eq!(value["source"], "default");
+    assert!((value["value"].as_f64().unwrap() - 1.8).abs() < 1e-9);
     let (_, again) = cli(&["inspect", file]);
     assert_eq!(dump.to_string(), again.to_string());
     let _ = std::fs::remove_dir_all(&dir);

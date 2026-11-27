@@ -15,7 +15,9 @@
 //! `hide_elements`, `show_elements` and `ensure_defaults` (plan views); [`selection`]:
 //! `archbuilder.set.create`, `update`, `rename`, `delete` and `select` (selection sets); [`stats`]:
 //! `archbuilder.model.statistics` (counts of the model, derived); [`parameter`]:
-//! `archbuilder.variable.create`, `set`, `rename`, `delete` and `list` (document variables).
+//! `archbuilder.variable.create`, `set`, `rename`, `delete` and `list` (document variables);
+//! [`project_parameter`]: `archbuilder.parameter.create`, `update`, `rename`, `delete`, `set` and
+//! `list` (project parameters and their values).
 //! Every change reaches a document through one of them, in one
 //! transaction, with the model's validation rules applied.
 //!
@@ -38,6 +40,7 @@ pub mod insert;
 pub mod modify;
 pub mod opening;
 pub mod parameter;
+pub mod project_parameter;
 pub mod roof;
 pub mod roof_extrusion;
 pub mod roof_parts;
@@ -118,6 +121,7 @@ pub fn registry() -> Result<Registry> {
     selection::register(&mut registry)?;
     stats::register(&mut registry)?;
     parameter::register(&mut registry)?;
+    project_parameter::register(&mut registry)?;
     Ok(registry)
 }
 
