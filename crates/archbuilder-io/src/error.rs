@@ -64,14 +64,6 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-window-operation",
     };
-    /// A stair: the IFC writer of the foundation has no stair, stair flight or railing entity
-    /// yet, so the stair is left out (the shaft opening it cuts in the floors is written).
-    pub const STAIR_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.stair_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-stair-not-written",
-    };
     /// A floor edge element: IFC4 has no element for an edge of a slab, so it is written as a
     /// molding covering that carries its swept body.
     pub const FLOOR_EDGE_AS_COVERING: Reason = Reason {
@@ -87,29 +79,6 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-floor-edge-orphan",
     };
-    /// A railing: the writer of the pinned foundation has no railing entity yet.
-    pub const RAILING_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.railing_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-railing-not-written",
-    };
-    /// A ramp: the writer of the pinned foundation has no ramp or ramp flight entity yet, so the
-    /// ramp is left out (the opening it cuts in the floor above is written).
-    pub const RAMP_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.ramp_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-ramp-not-written",
-    };
-    /// A grid: the IFC writer of the foundation has no grid or grid axis entity yet, so the grid
-    /// is left out rather than written as a proxy.
-    pub const GRID_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.grid_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-grid-not-written",
-    };
     /// The geodetic reference of the project (coordinate system, survey point position, true
     /// north): the IFC writer of the foundation has no map conversion or projected coordinate
     /// system entity yet, so it is left out.
@@ -119,21 +88,36 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-georeference-not-written",
     };
-    /// A reference plane or work plane: drawing aids with no IFC entity, left out.
+    /// A reference plane or work plane: a drawing aid with no IFC building element, left out.
     pub const DATUM_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.datum_not_written",
         outcome: Outcome::Dropped,
         severity: Severity::Info,
         message_id: "ab-io-loss-datum-not-written",
     };
-    /// A curtain wall: the IFC writer of the foundation has no curtain wall, plate or member
-    /// entity yet, so the wall, its panels and its mullions are left out. The count is the
-    /// number of entities of that kind the wall would write.
-    pub const CURTAIN_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.curtain_not_written",
+    /// A selection set: a list of elements that could become an `IfcGroup`, which the writer of the
+    /// foundation cannot write yet, so it is left out.
+    pub const SET_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.selection_set_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-selection-set-not-written",
+    };
+    /// The grid lines of a building are all in one direction: `IfcGrid` needs a U and a V family
+    /// of axes, so no grid is written and each line is named.
+    pub const GRID_ONE_DIRECTION: Reason = Reason {
+        code: "ab.io.ifc.grid_one_direction",
         outcome: Outcome::Dropped,
         severity: Severity::Warning,
-        message_id: "ab-io-loss-curtain-not-written",
+        message_id: "ab-io-loss-grid-one-direction",
+    };
+    /// A curtain wall with doors or windows as panels: IFC4 aggregates them in the curtain wall,
+    /// which the writer of the foundation does not do, so each fills an opening in the wall.
+    pub const CURTAIN_PANEL_FILLED: Reason = Reason {
+        code: "ab.io.ifc.curtain_panel_filled",
+        outcome: Outcome::Approximated,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-curtain-panel-filled",
     };
     /// An arc edge of a boundary or an arched opening, written as chords within the model's
     /// flattening tolerance: IFC bodies here are faceted.

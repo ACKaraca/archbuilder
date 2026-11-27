@@ -402,12 +402,20 @@ the walking line from the arrival down to the foot, with the down text (`DN`, `A
 the arrival. Known limits: no winders, spiral or sketched stairs, no stringers, nosings or
 assembled construction, no headroom check, no multistorey repeat.
 
-IFC mapping, planned: an `IfcStair` aggregating an `IfcStairFlight` per run, an `IfcSlab` with
-`PredefinedType` `LANDING` for the landing and an `IfcRailing` per side. As implemented: the IFC
-writer of the foundation has no stair, flight or railing entity yet, so each stair is named in the
-loss report (`ab.io.ifc.stair_not_written`) and nothing is written in its place; its shaft opening is
+IFC mapping: an `IfcStair` (`STRAIGHT_RUN_STAIR`, `QUARTER_TURN_STAIR` for an L, `HALF_TURN_STAIR` for a U) with no body of
+its own, contained in its storey, aggregating (`IfcRelAggregates`, parts not contained) an `IfcStairFlight` per run (`STRAIGHT`;
+`NumberOfRisers`, `NumberOfTreads` (one less than the risers: the last riser meets the landing or the floor), `RiserHeight`,
+`TreadLength`; `Qto_StairFlightBaseQuantities` with the walking-line `Length`, `GrossVolume`, `NetVolume`), an `IfcSlab` `LANDING` for
+the landing (`Qto_SlabBaseQuantities`) and an `IfcRailing` `GUARDRAIL` for each side that has one (`Qto_RailingBaseQuantities.Length`).
+Every part has a faceted B-rep in the storey's frame and a `GlobalId` derived from the stair's. Its shaft opening is
 written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
-have it taken out.
+have it taken out. `Pset_StairCommon`, `Pset_StairFlightCommon`, `Pset_RampCommon`, `Pset_RampFlightCommon` and
+`Pset_RailingCommon` hold only counts, positive lengths, plane angles and identifiers, value types the pinned writer cannot
+write, so none is written; the flight's counts and dimensions are attributes of the `IfcStairFlight`.
+A ramp is an `IfcRamp` (`STRAIGHT_RUN_RAMP`) aggregating an `IfcRampFlight` (`STRAIGHT`, `Qto_RampFlightBaseQuantities`: sloped
+`Length`, `Width` for a slab of constant thickness, areas, volumes), an `IfcSlab` `LANDING` for each landing and its hosted
+railings. A railing record hosted on a stair or ramp is an `IfcRailing` `GUARDRAIL` that is a part of it; a railing by path is a
+`BALUSTRADE` contained in its storey (`Qto_RailingBaseQuantities.Length`).
 
 #### The roof of the first slice
 
@@ -518,7 +526,7 @@ or lower than its upper limit, the room's solid: an extrusion up to the level to
 room name (a room without a number takes its name as `Name` and has no `LongName`).
 `Qto_SpaceBaseQuantities` holds `NetFloorArea` (at the wall faces), `GrossFloorArea` (to the wall
 center lines), `NetPerimeter` (the outer loop plus every courtyard loop), `Height` (the mean height of the solid) and
-`NetVolume` (the volume of the solid), and `Pset_SpaceCommon` holds `Reference` (the number). An unenclosed room has no
+`NetVolume` (the volume of the solid); the number is the `Name`. An unenclosed room has no
 region and a redundant room shares its region with another room; neither is written, and the loss
 report names each one (`ab.io.ifc.room_unenclosed`, `ab.io.ifc.room_redundant`).
 
@@ -1241,8 +1249,7 @@ Three element kinds belong to a building and have no storey: `archbuilder.grid`,
 Commands: `archbuilder.grid.create` (two points, `points` with per-segment `bulges` for a multi-segment line, `from_wall`, or `from_walls` for a chain of walls that meet end to start; `bulge` for an arc; `after` or `label`),
 `archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
 and heads), and `archbuilder.datum.set_view_extent` (per-view extent and head overrides, below). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
-original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
-reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
+original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export writes the grids of a building as one `IfcGrid` in the lowest storey: each line an `IfcGridAxis` tagged with its label (a line as a polyline, an arc as a trimmed circle), the first straight line and the lines within 45 degrees of it the U axes, the others and the arcs the V axes (`RECTANGULAR` when the families are straight and square, else `IRREGULAR`). Lines of one direction only have no valid `IfcGrid` and are reported (`ab.io.ifc.grid_one_direction`). Reference planes and work planes are drawing aids and selection sets are not yet groups in the writer: each is in the loss report (kinds `IFCANNOTATION`, `IFCGROUP`).
 A plan view stores its own overrides of grids in the optional `datum_views` list (records of a grid, `start_inset`, `end_inset`,
 `head_start`, `head_end`, each optional): an inset pulls that end of the drawn line in along the line (positive) or pushes it out
 along the end segment (negative), and a head flag overrides the grid's own. The grid and every other view keep the model extent, a view

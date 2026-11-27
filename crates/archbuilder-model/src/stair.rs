@@ -870,20 +870,31 @@ impl Layout {
     /// # Errors
     /// The solid kernel's errors.
     pub fn railing_solids(&self, base: f64) -> Result<Vec<Polyhedron>> {
-        let lift = |p: [f64; 3]| [p[0], p[1], p[2] + base];
         let mut out = Vec::new();
         for path in self.rails() {
-            for pair in path.windows(2) {
-                let (p, q) = (lift(pair[0]), lift(pair[1]));
-                let gap =
-                    ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt();
-                if gap > 1.0e-3 {
-                    out.push(bar(p, q, RAIL_SIZE)?);
-                }
+            out.extend(Self::rail_solids(&path, base)?);
+        }
+        Ok(out)
+    }
+
+    /// The solids of one rail from [`Layout::rails`]: a bar along each piece of the top rail and
+    /// the posts, the base level at the elevation `base`; none for an empty path.
+    ///
+    /// # Errors
+    /// The solid kernel's errors.
+    pub fn rail_solids(path: &[[f64; 3]], base: f64) -> Result<Vec<Polyhedron>> {
+        let lift = |p: [f64; 3]| [p[0], p[1], p[2] + base];
+        let mut out = Vec::new();
+        for pair in path.windows(2) {
+            let (p, q) = (lift(pair[0]), lift(pair[1]));
+            let gap =
+                ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt();
+            if gap > 1.0e-3 {
+                out.push(bar(p, q, RAIL_SIZE)?);
             }
-            for (foot, top) in Self::posts(&path) {
-                out.push(bar(lift(foot), lift(top), POST_SIZE)?);
-            }
+        }
+        for (foot, top) in Self::posts(path) {
+            out.push(bar(lift(foot), lift(top), POST_SIZE)?);
         }
         Ok(out)
     }

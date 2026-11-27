@@ -57,6 +57,17 @@ coded! {
     }
 }
 
+/// A part of the ramp's body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Part {
+    /// The landing at the foot.
+    Foot,
+    /// The sloped run.
+    Run,
+    /// The landing at the top.
+    Top,
+}
+
 /// The authored data of a ramp, lengths in meters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ramp {
@@ -353,6 +364,11 @@ impl Layout {
     /// # Errors
     /// The solid kernel's errors.
     pub fn solid(&self, base: f64) -> Result<Polyhedron> {
+        self.extruded(&self.profile(), base)
+    }
+
+    /// The profile in `(along, up)` extruded across the width, its level at the elevation `base`.
+    fn extruded(&self, profile: &[[f64; 2]], base: f64) -> Result<Polyhedron> {
         let tolerance = Tolerance::DEFAULT;
         let h = self.ramp.width / 2.0;
         let left = self.at(0.0, h);
@@ -364,13 +380,51 @@ impl Layout {
             &tolerance,
         )?;
         extrude(
-            &region(&self.profile())?,
+            &region(profile)?,
             &frame,
             self.ramp.width,
             CHORD,
             &tolerance,
             &Limits::DEFAULT,
         )
+    }
+
+    /// The body cut at the foot of the slope and at its top into the landing at the foot, the
+    /// run and the landing at the top; a landing of no length is left out. Together they are
+    /// [`Layout::solid`].
+    ///
+    /// # Errors
+    /// The solid kernel's errors.
+    pub fn parts(&self, base: f64) -> Result<Vec<(Part, Polyhedron)>> {
+        let (ls, l, le, h, t) = (
+            self.ramp.landing_start,
+            self.ramp.length,
+            self.ramp.landing_end,
+            self.height,
+            self.ramp.thickness,
+        );
+        let mut out = Vec::new();
+        for (part, from, to, z_from, z_to) in [
+            (Part::Foot, 0.0, ls, 0.0, 0.0),
+            (Part::Run, ls, ls + l, 0.0, h),
+            (Part::Top, ls + l, ls + l + le, h, h),
+        ] {
+            if to - from < 1.0e-9 {
+                continue;
+            }
+            let under = |top: f64| match self.ramp.form {
+                Form::Slab => top - t,
+                Form::Solid => -t,
+            };
+            let profile = [
+                [from, under(z_from)],
+                [to, under(z_to)],
+                [to, z_to],
+                [from, z_from],
+            ];
+            out.push((part, self.extruded(&profile, base)?));
+        }
+        Ok(out)
     }
 
     /// The path of the walking surface along the left or the right edge, [`RAIL_INSET`] in from
