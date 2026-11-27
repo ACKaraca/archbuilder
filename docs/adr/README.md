@@ -16,7 +16,7 @@ are not restated here.
 | [0006](0006-canonical-text-form.md) | Canonical text form for comparison and merge | Accepted |
 | [0007](0007-exchange-identifiers.md) | Exchange identifiers independent of the other application's identifiers | Accepted |
 | [0008](0008-dwg-writing-in-the-first-production-release.md) | DWG writing in the first production release | Accepted |
-| [0009](0009-parameters-expressions-and-family-documents.md) | Parameters, expressions and family documents | Proposed |
+| [0009](0009-parameters-expressions-and-family-documents.md) | Parameters, expressions and family documents | Accepted |
 
 ## Template
 

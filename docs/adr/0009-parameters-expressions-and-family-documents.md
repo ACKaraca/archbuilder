@@ -1,6 +1,6 @@
 # 0009 Parameters, expressions and family documents
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -388,22 +388,20 @@ A reference door, window or casework family cannot be authored with anchored pro
 extrusions and the version 1 function set, recorded in an issue with the family; or `arc-solve`
 changes its grammar or built-in set; or `arc-brep` is available and the form list is extended.
 
-## Open questions
+## Resolutions
 
-1. Accept the version 1 function set without `exp`, `ln` and `log`?
-2. Accept the limits table as the closing values of OQ-01?
-3. Offer faceted blend, revolve and sweep in M1 (in `arc-geom`, tolerance recorded, exported as
-   tessellated geometry) before `arc-brep`, or leave them to a later milestone?
-4. Accept the IFC defaults per category, in particular casework as user-defined furniture and the
-   product property sets `ArchBuilder_Type`, `ArchBuilder_Instance` and `ArchBuilder_Family`?
-5. Accept formula identifiers rather than asking `arc-core` for Unicode names?
-6. Is `.archbfam` the final extension, and may one package hold several definitions, or one
-   definition per file?
-7. May a derived identifier (version 8) be an element identifier in `arc-doc`, whose
-   `ObjectId` is documented as version 7, or should shared nested children get identifiers
-   another way?
-8. Until deterministic trigonometric functions exist in `arc-core`, is comparison of test results
-   within tolerance acceptable?
+The questions raised with this proposal were settled when it was accepted:
+
+1. The version 1 function set is accepted without `exp`, `ln` and `log`.
+2. The limits table closes OQ-01.
+3. M1 offers extrusions and prism voids only; blend, revolve and sweep wait for `arc-brep`.
+4. The IFC defaults per category are accepted, including casework as user-defined furniture and
+   the property sets `ArchBuilder_Type`, `ArchBuilder_Instance` and `ArchBuilder_Family`.
+5. Formulas use ASCII formula identifiers.
+6. `.archbfam` is the extension, and one package may hold several definitions.
+7. Shared nested children use derived identifiers (version 8) as element identifiers.
+8. Until deterministic trigonometric functions exist in `arc-core`, tests compare results within
+   tolerance.
 
 ## Implementation order
 
