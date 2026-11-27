@@ -93,6 +93,10 @@ impl Mapper<'_> {
     }
 
     /// A stair: the `IfcStair`, its flights, its landing and the railings of its sides.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one stair: flights, landing and railings"
+    )]
     pub(super) fn stair(&mut self, object: &Object, storey: ObjectId, level: f64) {
         let Some(placed) = stair::Placed::of(self.snapshot, object) else {
             return self.lose(reasons::NOT_EXPORTED, "IFCSTAIR", object);

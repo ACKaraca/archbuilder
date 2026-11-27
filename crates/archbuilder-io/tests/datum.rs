@@ -122,5 +122,8 @@ fn a_georeferenced_project_is_written_as_a_map_conversion() {
     assert!(text.contains("IFCMAPCONVERSION("), "no map conversion");
     assert!(text.contains("500000."), "eastings missing");
     // True north of 10 degrees turns the model's x axis in the map and the context's north.
-    assert!(text.contains(",0.9848077530122081,-0.17364817766693014,$)"), "x axis");
+    assert!(
+        text.contains(",0.9848077530122081,-0.17364817766693014,$)"),
+        "x axis"
+    );
 }

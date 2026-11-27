@@ -596,6 +596,7 @@ impl Mapper<'_> {
 
     /// [`Self::insert`] for a door or window with no record of its own, such as a panel of a
     /// curtain wall: `own` gives its identifier, name and type, and the losses name `object`.
+    #[allow(clippy::too_many_lines, reason = "one insert: opening, body and sets")]
     fn insert_as(
         &mut self,
         object: &Object,

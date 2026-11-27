@@ -796,6 +796,28 @@ fn a_grid_of_several_segments_is_written_as_a_polyline() {
 }
 
 #[test]
+fn a_grid_of_lines_and_arcs_is_written_as_a_composite_curve() {
+    let doc = Doc::new();
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"start": [0.0, 0.0], "end": [0.0, 8.0], "label": "A"}),
+    );
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"points": [[-1.0, 0.0], [4.0, 0.0], [8.0, 3.0]], "bulges": [0.0, 0.4], "label": "1"}),
+    );
+    doc.run(
+        "archbuilder.grid.create",
+        json!({"start": [-1.0, 6.0], "end": [9.0, 6.0], "label": "2"}),
+    );
+    let (exported, file) = doc.export("grid_composite");
+    assert!(exported.valid, "{:#?}", exported.report.items);
+    assert_eq!(file.instances_of("IFCCOMPOSITECURVE").count(), 1);
+    assert_eq!(file.instances_of("IFCCOMPOSITECURVESEGMENT").count(), 2);
+    assert_eq!(file.instances_of("IFCTRIMMEDCURVE").count(), 1);
+}
+
+#[test]
 fn planes_are_reported_and_a_selection_set_is_a_group() {
     let doc = Doc::new();
     doc.run(

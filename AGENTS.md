@@ -30,7 +30,7 @@ Present:
 ```
 crates/archbuilder-model/     spatial, wall, insert, floor, roof, room and element types, picking order, validation rules, solids, wall joins, readers (headless)
 crates/archbuilder-commands/  type set and the commands (headless)
-crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, floor edges, roofs (footprint and extrusion) with their dormers (opening, walls and roof) and fascias (moldings), ceilings, openings, rooms, stairs, ramps, railings, curtain walls and grids with a loss report (elevators and gutters are named in it); `archbuilder.file.export_ifc` (headless)
+crates/archbuilder-io/        IFC4 export of walls, doors, windows, floors, floor edges, roofs (footprint and extrusion) with their dormers (opening, walls and roof) and fascias (moldings), ceilings, openings, rooms, stairs, ramps, railings, curtain walls and grids with a loss report and a self-validation that adds the conformance findings of `arc-io-ifc` when the build has the schema tables; `archbuilder.file.export_ifc` (headless)
 apps/archbuilder/             desktop application: arc-app shell, panels, extractors, tools
 apps/archbuilder-cli/         headless CLI: the shared subcommands of the suite, `inspect` with wall, door, window, floor and curtain wall (panels, mullions) lists, `export-ifc`
 xtask/                        layers, catalogs, ci

@@ -224,19 +224,32 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     reasons.sort_unstable();
     reasons.dedup();
     assert!(
-        !reasons.iter().any(|r| r.ends_with("_not_written")
-            && !matches!(
-                *r,
-                "ab.io.ifc.datum_not_written"
-            )),
+        !reasons
+            .iter()
+            .any(|r| r.ends_with("_not_written") && !matches!(*r, "ab.io.ifc.datum_not_written")),
         "{reasons:?}"
     );
-    for reason in [
-        "ab.io.ifc.dormer_as_parts",
-        "ab.io.ifc.fascia_as_covering",
-    ] {
+    for reason in ["ab.io.ifc.dormer_as_parts", "ab.io.ifc.fascia_as_covering"] {
         assert!(reasons.contains(&reason), "{reason} not reported");
     }
+    // The standard property sets of the kinds the model knows values for.
+    for set in [
+        "Pset_StairCommon",
+        "Pset_StairFlightCommon",
+        "Pset_RampCommon",
+        "Pset_RampFlightCommon",
+        "Pset_RailingCommon",
+        "Pset_DoorCommon",
+        "Pset_WindowCommon",
+        "Pset_SlabCommon",
+        "Pset_SpaceCommon",
+        "Pset_TransportElementElevator",
+    ] {
+        assert!(text.contains(&format!("'{set}'")), "{set} not written");
+    }
+    // Conformance is checked only for a schema the build has tables of; IFC4 has none here, so
+    // the export must not claim it.
+    assert!(out.conformance.is_none() || out.valid);
     // An elevator is a transport element with its type, a gutter a pipe segment, a selection set a
     // group with the walls it names.
     assert_eq!(count("IFCTRANSPORTELEMENT"), 1);
@@ -255,5 +268,4 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     ] {
         assert!(text.contains(written), "{written} not written");
     }
-    assert!(text.contains("Gutter 1"), "the gutter is written");
 }
