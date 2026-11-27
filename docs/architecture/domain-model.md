@@ -329,7 +329,9 @@ a view from above only those whose point is in the visible area. A tag is center
 rooms, no sloped tops, no separation lines.
 
 Picking in a view from above uses one ordered list for the hover and the click: doors and windows,
-walls, stairs, rooms, floors, levels; a repeated click at the same spot steps down it (within a few pixels and
+walls, the lines of roofs, roofs by extrusion and floor edges, ceiling edges, stairs, ramps and
+railings, shafts and vertical openings, rooms, floors, roofs, ceilings, levels, then grids and
+reference planes; a repeated click at the same spot steps down it (within a few pixels and
 about 1.5 s of the last click; Escape and moving the pointer start again), and the hover shows what
 the click would pick. Other views leave the pick to the viewport, with the door or window first.
 

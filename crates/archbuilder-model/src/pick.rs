@@ -94,6 +94,57 @@ pub fn stack(
             over.push((z, o.id));
         }
     }
+    // A roof by extrusion like a roof: on the lines of its pieces, else over it.
+    for o in spatial::objects(snapshot, crate::types::ROOF_EXTRUSION)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Ok(d) = crate::roof_extrusion::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let pieces = d.pieces();
+        let z = -pieces
+            .iter()
+            .map(|p| p.plane.z)
+            .fold(f64::MIN, f64::max)
+            .max(d.level);
+        let edges = pieces.iter().any(|p| {
+            p.points
+                .iter()
+                .zip(p.points.iter().cycle().skip(1))
+                .any(|(a, b)| segment_distance(*a, *b, at) <= aperture)
+        });
+        if edges {
+            on_lines.push((z, o.id));
+        } else if pieces
+            .iter()
+            .any(|p| crate::floor::Boundary::polygons(vec![p.points.clone()]).contains(at))
+        {
+            over.push((z, o.id));
+        }
+    }
+    // A floor edge lies along its floor's edges: picked on its line, before the floor.
+    for o in spatial::objects(snapshot, crate::types::FLOOR_EDGE)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(d) = crate::floor_edge::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let near = d.chains.iter().any(|c| {
+            c.points
+                .windows(2)
+                .any(|w| segment_distance([w[0][0], w[0][1]], [w[1][0], w[1][1]], at) <= aperture)
+        });
+        let z = d
+            .chains
+            .iter()
+            .flat_map(|c| c.points.iter().map(|p| p[2]))
+            .fold(f64::MIN, f64::max);
+        if near {
+            on_lines.push((-z, o.id));
+        }
+    }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     over.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(on_lines.into_iter().map(|(_, id)| id));
@@ -367,6 +418,17 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         Some(crate::types::GRID | crate::types::REFERENCE_PLANE) => {
             crate::datum::outline(snapshot, &object)
         }
+        Some(crate::types::ROOF_EXTRUSION) => crate::roof_extrusion::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.pieces()
+                    .iter()
+                    .map(|p| close(&p.points, p.plane.z))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Some(crate::types::FLOOR_EDGE) => crate::floor_edge::Derived::of(snapshot, &object)
+            .map(|d| d.chains.iter().map(|c| c.points.clone()).collect())
+            .unwrap_or_default(),
         Some(LEVEL) => {
             let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);
             let (hx, hy) = (LEVEL_HALF[0], LEVEL_HALF[1]);

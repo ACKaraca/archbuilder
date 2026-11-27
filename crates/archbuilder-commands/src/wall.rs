@@ -332,7 +332,7 @@ fn delete_set(
         } else if !kind.as_deref().is_some_and(|k| {
             archbuilder_model::types::is_storey_element(k)
                 || archbuilder_model::types::is_datum(k)
-                || k == archbuilder_model::types::VERTICAL_OPENING
+                || is_hosted_cut(k)
         }) {
             expect(ctx.snapshot(), *id, FLOOR)?;
         }
@@ -358,11 +358,12 @@ fn delete_set(
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
     for id in walls.iter().chain(&alone).chain(&floors) {
-        // A vertical opening goes with its host when both are named.
+        // A vertical opening or floor edge goes with its host when both are named.
         let hosted_in_set = spatial::get(txn.snapshot(), *id)
             .filter(|o| {
-                spatial::type_of(txn.snapshot(), o.id).as_deref()
-                    == Some(archbuilder_model::types::VERTICAL_OPENING)
+                spatial::type_of(txn.snapshot(), o.id)
+                    .as_deref()
+                    .is_some_and(is_hosted_cut)
             })
             .and_then(|o| o.header.owner)
             .is_some_and(|h| floors.contains(&h));
@@ -578,6 +579,12 @@ fn set_join(
 }
 
 /// Deletes the selected walls and inserts; with neither selected, the selected storey.
+/// The elements a floor, roof or ceiling hosts that are deleted by themselves: vertical openings
+/// and floor edges.
+fn is_hosted_cut(key: &str) -> bool {
+    key == archbuilder_model::types::VERTICAL_OPENING || key == archbuilder_model::types::FLOOR_EDGE
+}
+
 fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted> {
     let walls: BTreeSet<ObjectId> = selected_walls(ctx).into_iter().collect();
     let snapshot = ctx.snapshot();
@@ -596,7 +603,7 @@ fn delete_selection(ctx: &mut Context<'_>, _: DeleteSelection) -> Result<Deleted
             spatial::type_of(ctx.snapshot(), *id).is_some_and(|k| {
                 (k != WALL && archbuilder_model::types::is_storey_element(&k))
                     || archbuilder_model::types::is_datum(&k)
-                    || k == archbuilder_model::types::VERTICAL_OPENING
+                    || is_hosted_cut(&k)
             })
         })
         .collect();
