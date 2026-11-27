@@ -6,14 +6,14 @@
 //! caller's. The mapping is described in `docs/architecture/domain-model.md`.
 
 use arc_base::id::Identifier;
-use arc_base::math::{Point2, Point3, Vector3};
+use arc_base::math::{Point2, Point3, Vector2, Vector3};
 use arc_base::{Cancel, Error, Limits, ObjectId, Result};
 use arc_doc::{Object, Snapshot};
 use arc_io_common::loss::{Argument, LossItem, LossReport, Reason};
 use arc_io_ifc::write::{
-    Body, Element, ElementKind, ElementType, LayerDirection, LayerSetUsage, MaterialLayer,
-    Placement, Property, PropertySet, PropertyValue, Quantity, QuantitySet, QuantityValue, Spatial,
-    Storey, derived_id, role,
+    Body, Element, ElementKind, ElementType, Georeference, Group, LayerDirection, LayerSetUsage,
+    MaterialLayer, Measure, Placement, Property, PropertySet, PropertyValue, Quantity, QuantitySet,
+    QuantityValue, Spatial, Storey, derived_id, role,
 };
 use arc_io_ifc::{WriteModel, WriteOptions, write};
 use archbuilder_model::element_type::{
@@ -34,7 +34,11 @@ use crate::error::{codes, reasons};
 mod curtain;
 mod datum;
 mod project;
+mod psets;
 mod stairs;
+
+/// The role of the type of an elevator in [`derived_id`].
+const ELEVATOR_TYPE: u32 = role::CALLER_FIRST + 7;
 
 /// The storey's own frame: the origin, the x axis along the storey's.
 const WORLD: Frame = Frame {
@@ -84,6 +88,11 @@ pub struct Export {
     /// its `GlobalId`, has no repeated `GlobalId` and the product count of the report). A file
     /// that did not is incomplete.
     pub valid: bool,
+    /// The IFC schema the written file was also checked against for conformance (levels 1 to 3 of
+    /// the reader of `arc-core`), whose findings are items with the outcome `failed`. `None` when
+    /// that check did not run because the build has no tables for the schema: the file is then
+    /// valid in the sense of `valid` only, which never claims conformance.
+    pub conformance: Option<&'static str>,
 }
 
 /// The local frame of a wall or an insert in plan: an origin, the direction of its x axis and the
@@ -228,17 +237,81 @@ impl Mapper<'_> {
             self.cancel.check()?;
             self.railing(&railing, storey, level);
         }
-        // An elevator is an IfcTransportElement (ELEVATOR), which the writer cannot produce yet:
-        // named in the loss report. Its shaft is written as openings that void what it passes.
         for lift in spatial::children(self.snapshot, archbuilder_model::types::ELEVATOR, storey) {
             self.cancel.check()?;
-            self.lose(reasons::ELEVATOR_NOT_WRITTEN, "IFCTRANSPORTELEMENT", &lift);
-            match archbuilder_model::elevator::span(self.snapshot, &lift) {
-                Some(span) => self.shaft_openings(&lift, &span, storey, level),
-                None => self.lose(reasons::NOT_EXPORTED, "IFCTRANSPORTELEMENT", &lift),
-            }
+            self.elevator(&lift, storey, level);
         }
         Ok(())
+    }
+
+    /// The selection sets as `IfcGroup`s of the elements they name that are in the file; the
+    /// members that are not are counted in the loss report.
+    fn groups(&mut self, model: &mut WriteModel) {
+        let written: std::collections::BTreeSet<u128> = model
+            .elements
+            .iter()
+            .map(|e| e.id)
+            .chain(model.grids.iter().map(|g| g.id))
+            .collect();
+        for set in archbuilder_model::selection::all(self.snapshot) {
+            let members = archbuilder_model::selection::members(&set.values);
+            let kept: Vec<u128> = members
+                .iter()
+                .map(|m| m.as_u128())
+                .filter(|m| written.contains(m))
+                .collect();
+            let left_out = members.len() - kept.len();
+            let mut group = Group::new(set.id.as_u128(), &name_of(&set), kept);
+            group.object_type = Some("Selection set".to_owned());
+            model.groups.push(group);
+            if left_out > 0 {
+                self.lose_n(reasons::SET_MEMBER_NOT_WRITTEN, "IFCGROUP", &set, left_out);
+            }
+        }
+    }
+
+    /// An elevator as an `IfcTransportElement` of the predefined type `ELEVATOR` with its own
+    /// `IfcTransportElementType`: the car as an extruded body at the base level, the clear width
+    /// and depth of the car in `Pset_TransportElementElevator`. The openings its shaft cuts in the
+    /// floors, roofs and ceilings it passes are written too.
+    fn elevator(&mut self, object: &Object, storey: ObjectId, level: f64) {
+        use archbuilder_model::elevator::{CAR_HEIGHT, derived, span};
+        let Some(lift) = derived(self.snapshot, object) else {
+            return self.lose(reasons::NOT_EXPORTED, "IFCTRANSPORTELEMENT", object);
+        };
+        let (id, name) = (object.id.as_u128(), name_of(object));
+        let type_id = derived_id(id, ELEVATOR_TYPE, 0);
+        let mut kind = ElementType::new(type_id, ElementKind::TransportElement, &name);
+        kind.predefined_type = Some("ELEVATOR".to_owned());
+        self.types.push(kind);
+        let mut element = Element::new(id, ElementKind::TransportElement, &name, storey.as_u128());
+        element.predefined_type = Some("ELEVATOR".to_owned());
+        element.element_type = Some(type_id);
+        element.placement = Placement::new(
+            Point3::new(0.0, 0.0, lift.base - level),
+            Vector3::z(),
+            Vector3::x(),
+        );
+        element.body = Some(Body::Extrusion {
+            outer: profile(&lift.elevator.car_outline(), true),
+            holes: Vec::new(),
+            direction: Vector3::z(),
+            depth: CAR_HEIGHT,
+        });
+        psets::attach(
+            &mut element,
+            "Pset_TransportElementElevator",
+            vec![
+                psets::measure("ClearWidth", Measure::PositiveLength, lift.elevator.car[0]),
+                psets::measure("ClearDepth", Measure::PositiveLength, lift.elevator.car[1]),
+            ],
+        );
+        self.elements.push(element);
+        self.exported += 1;
+        match span(self.snapshot, object) {
+            Some(span) => self.shaft_openings(object, &span, storey, level),
+            None => self.lose(reasons::NOT_EXPORTED, "IFCOPENINGELEMENT", object),
+        }
     }
 
     /// An enclosed room as an `IfcSpace`: the number is the `Name`, the room's name the `LongName`,
@@ -285,6 +358,18 @@ impl Mapper<'_> {
         );
         element.long_name = long_name;
         element.predefined_type = Some("INTERNAL".to_owned());
+        psets::attach(
+            &mut element,
+            "Pset_SpaceCommon",
+            vec![
+                entry
+                    .room
+                    .number
+                    .as_deref()
+                    .and_then(|n| psets::identifier("Reference", n)),
+                psets::flag("IsExternal", false),
+            ],
+        );
         element.placement = Placement::new(
             Point3::new(0.0, 0.0, entry.base - level),
             Vector3::z(),
@@ -511,6 +596,7 @@ impl Mapper<'_> {
 
     /// [`Self::insert`] for a door or window with no record of its own, such as a panel of a
     /// curtain wall: `own` gives its identifier, name and type, and the losses name `object`.
+    #[allow(clippy::too_many_lines, reason = "one insert: opening, body and sets")]
     fn insert_as(
         &mut self,
         object: &Object,
@@ -599,6 +685,19 @@ impl Mapper<'_> {
         {
             self.lose(reasons::WINDOW_OPERATION, label, object);
         }
+        // The wall it is in decides whether it is on the outside.
+        let exterior = et::type_of(self.snapshot, TypeKind::Wall, &host.values)
+            .and_then(|t| WallType::from_values(&t.values))
+            .map(|t| t.exposure == Exposure::Exterior);
+        psets::attach(
+            &mut element,
+            if door {
+                "Pset_DoorCommon"
+            } else {
+                "Pset_WindowCommon"
+            },
+            vec![exterior.and_then(|e| psets::flag("IsExternal", e))],
+        );
         element.quantity_sets.push(QuantitySet::new(
             if door {
                 "Qto_DoorBaseQuantities"
@@ -856,8 +955,8 @@ impl Mapper<'_> {
         self.lose(reasons::DORMER_AS_PARTS, "IFCROOF", object);
     }
 
-    /// A roof edge element: a fascia as an `IfcCovering` of the predefined type `MOLDING` with its
-    /// swept body; a gutter belongs to an `IfcPipeSegment` (`GUTTER`), which the writer lacks.
+    /// A roof edge element with its swept body: a fascia as an `IfcCovering` of the predefined
+    /// type `MOLDING`, a gutter as an `IfcPipeSegment` of the predefined type `GUTTER`.
     fn roof_edge(&mut self, object: &Object, storey: ObjectId, level: f64) {
         use archbuilder_model::roof_edge::{Derived as Swept, Role};
         let Some(derived) = Swept::of(self.snapshot, object) else {
@@ -866,12 +965,15 @@ impl Mapper<'_> {
         if !derived.orphans.is_empty() {
             self.lose(reasons::ROOF_EDGE_ORPHAN, "IFCCOVERING", object);
         }
-        if derived.element.role == Role::Gutter {
-            return self.lose(reasons::GUTTER_NOT_WRITTEN, "IFCPIPESEGMENT", object);
-        }
+        let gutter = derived.element.role == Role::Gutter;
         let frame = Frame {
             origin: [0.0, 0.0],
             u: [1.0, 0.0],
+        };
+        let label = if gutter {
+            "IFCPIPESEGMENT"
+        } else {
+            "IFCCOVERING"
         };
         let Some(body) = derived
             .solid()
@@ -879,23 +981,37 @@ impl Mapper<'_> {
             .flatten()
             .and_then(|s| brep([&s], &frame, level))
         else {
-            return self.lose(reasons::BODY_NOT_EXPORTED, "IFCCOVERING", object);
+            return self.lose(reasons::BODY_NOT_EXPORTED, label, object);
         };
         let mut element = Element::new(
             object.id.as_u128(),
-            ElementKind::Covering,
+            if gutter {
+                ElementKind::PipeSegment
+            } else {
+                ElementKind::Covering
+            },
             &name_of(object),
             storey.as_u128(),
         );
-        element.predefined_type = Some("MOLDING".to_owned());
         element.body = Some(body);
-        let us = derived.element.profile.iter().map(|p| p[0]);
-        let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
-        element.quantity_sets.push(QuantitySet::new(
-            "Qto_CoveringBaseQuantities",
-            vec![Quantity::new("Width", QuantityValue::Length(width))],
-        ));
-        self.lose(reasons::FASCIA_AS_COVERING, "IFCCOVERING", object);
+        if gutter {
+            element.predefined_type = Some("GUTTER".to_owned());
+        } else {
+            element.predefined_type = Some("MOLDING".to_owned());
+            // A fascia is on the outside of the roof.
+            psets::attach(
+                &mut element,
+                "Pset_CoveringCommon",
+                vec![psets::flag("IsExternal", true)],
+            );
+            let us = derived.element.profile.iter().map(|p| p[0]);
+            let width = us.clone().fold(f64::MIN, f64::max) - us.fold(f64::MAX, f64::min);
+            element.quantity_sets.push(QuantitySet::new(
+                "Qto_CoveringBaseQuantities",
+                vec![Quantity::new("Width", QuantityValue::Length(width))],
+            ));
+            self.lose(reasons::FASCIA_AS_COVERING, label, object);
+        }
         self.elements.push(element);
         self.exported += 1;
     }
@@ -1150,6 +1266,13 @@ impl Mapper<'_> {
             Vector3::x(),
         );
         element.predefined_type = Some("FLOOR".to_owned());
+        // The pitch is the angle of the top's steepest slope with the horizontal.
+        let pitch = derived.plane.grad[0].hypot(derived.plane.grad[1]).atan();
+        psets::attach(
+            &mut element,
+            "Pset_SlabCommon",
+            vec![psets::measure("PitchAngle", Measure::PlaneAngle, pitch)],
+        );
         if let Some(found) = et::type_of(self.snapshot, TypeKind::Floor, &object.values) {
             element.element_type = Some(found.id.as_u128());
             // The layers run from the top, the placement's plane, downward.
@@ -1290,6 +1413,47 @@ fn operation(item: &Insert) -> &'static str {
         (Kind::Window, Operation::Sliding | Operation::Folding, _) => "DOUBLE_PANEL_VERTICAL",
         (Kind::Window | Kind::Opening, _, _) => "SINGLE_PANEL",
     }
+}
+
+/// The direction of true north in the model's xy plane: the internal y axis (project north)
+/// turned counterclockwise by the angle to true north; `None` when they coincide.
+fn true_north(location: &archbuilder_model::coordinates::Coordinates) -> Option<Vector2> {
+    (location.true_north != 0.0).then(|| {
+        let (sin, cos) = location.true_north.sin_cos();
+        Vector2::new(-sin, cos)
+    })
+}
+
+/// The map conversion of a georeferenced project: the reference system and the map coordinates of
+/// the internal origin, the direction of the model's x axis in the map (true north) and the scale.
+/// A reference system text longer than an `IfcLabel` (a definition rather than a code) is the
+/// description of a reference system named `User-defined`.
+fn georeference(location: &archbuilder_model::coordinates::Coordinates) -> Option<Georeference> {
+    let crs: String = location
+        .crs
+        .as_deref()?
+        .chars()
+        .filter(|c| *c != '\0')
+        .collect();
+    let [eastings, northings, height] = location.map_of([0.0; 3])?;
+    if crs.is_empty() {
+        return None;
+    }
+    let mut out = if crs.chars().count() <= 255 {
+        Georeference::new(&crs, eastings, northings, height)
+    } else {
+        let mut long = Georeference::new("User-defined", eastings, northings, height);
+        long.description = Some(crs);
+        long
+    };
+    if location.true_north != 0.0 {
+        let (sin, cos) = location.true_north.sin_cos();
+        out.x_axis = Some(Vector2::new(cos, -sin));
+    }
+    if (location.scale - 1.0).abs() > f64::EPSILON {
+        out.scale = Some(location.scale);
+    }
+    Some(out)
 }
 
 /// The element types of the document: wall and floor types with their layers, door and window
@@ -1442,43 +1606,22 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         mapper.storey(entry.storey.id, elevation)?;
     }
     mapper.grids(&mut model, building.id);
-    // Reference planes and work planes are drawing aids with no IFC entity; a selection set is a
-    // list of elements, which the writer cannot yet carry as an `IfcGroup`. Each is reported.
-    for (key, kind, reason) in [
-        (
-            archbuilder_model::types::REFERENCE_PLANE,
-            "IFCANNOTATION",
-            reasons::DATUM_NOT_WRITTEN,
-        ),
-        (
-            archbuilder_model::types::WORK_PLANE,
-            "IFCANNOTATION",
-            reasons::DATUM_NOT_WRITTEN,
-        ),
-        (
-            archbuilder_model::types::SELECTION_SET,
-            "IFCGROUP",
-            reasons::SET_NOT_WRITTEN,
-        ),
+    // Reference planes and work planes are drawing aids with no IFC entity; each is reported.
+    for key in [
+        archbuilder_model::types::REFERENCE_PLANE,
+        archbuilder_model::types::WORK_PLANE,
     ] {
         for object in spatial::objects(snapshot, key) {
-            mapper.lose(reason, kind, &object);
+            mapper.lose(reasons::DATUM_NOT_WRITTEN, "IFCANNOTATION", &object);
         }
-    }
-    // The writer has no map conversion or projected coordinate system yet: a georeference is
-    // reported, not dropped silently.
-    if archbuilder_model::coordinates::Coordinates::of(snapshot).is_georeferenced()
-        && let Some(project) = spatial::project(snapshot)
-    {
-        mapper.lose(
-            reasons::GEOREFERENCE_NOT_WRITTEN,
-            "IFCMAPCONVERSION",
-            &project,
-        );
     }
     model.elements = std::mem::take(&mut mapper.elements);
     model.types = element_types(snapshot);
     model.types.append(&mut mapper.types);
+    mapper.groups(&mut model);
+    let location = archbuilder_model::coordinates::Coordinates::of(snapshot);
+    model.true_north = true_north(&location);
+    model.georeference = georeference(&location);
     let write_options = WriteOptions {
         limits: options.limits,
         cancel: options.cancel.clone(),
@@ -1502,12 +1645,18 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
     report.header.application = Some(options.application.clone());
     report.header.time = Some(options.timestamp.clone());
     add_losses(&mut report, &mapper.losses);
-    let valid = crate::validate::validate(&written.bytes, &model, options.limits, &mut report);
+    let checked = crate::validate::validate(
+        &written.bytes,
+        &model,
+        (options.limits, &options.cancel),
+        &mut report,
+    );
     Ok(Export {
         bytes: written.bytes,
         elements: mapper.exported,
         report,
-        valid,
+        valid: checked.valid,
+        conformance: checked.conformance,
     })
 }
 

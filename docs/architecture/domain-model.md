@@ -435,10 +435,9 @@ each landing door. Shaft walls and per-level door types are not generated.
 `archbuilder.elevator.create` makes it; it is moved, copied and deleted like other storey elements.
 
 IFC: an elevator is an `IfcTransportElement` of the predefined type `ELEVATOR` contained in its base
-storey. The pinned writer of `arc-core` has no transport element yet, so the elevator is named in
-the loss report (`ab.io.ifc.elevator_not_written`, kind `IFCTRANSPORTELEMENT`); the openings its
-shaft cuts are written as `IfcOpeningElement`s voiding the floors. Follow-up in `arc-core`: an
-`ElementKind::TransportElement` with the IFC4 `IfcTransportElementTypeEnum`.
+storey, with an `IfcTransportElementType` of its own and the car (its outline extruded by the car height,
+2.4 m) as its body; `Pset_TransportElementElevator` holds `ClearWidth` and `ClearDepth` of the car. The openings its
+shaft cuts are written as `IfcOpeningElement`s voiding the floors.
 
 #### Dormers
 
@@ -466,9 +465,8 @@ each eave read from the roof surface. Defaults: a 25 x 150 mm board for a fascia
 gutter. Soffits and sweeps along gable edges are not modeled yet.
 
 IFC: a fascia is an `IfcCovering` of the predefined type `MOLDING` with its swept body (IFC4 has no fascia; the
-loss report records the approximation, `ab.io.ifc.fascia_as_covering`). A gutter is an `IfcPipeSegment`
-of the predefined type `GUTTER` in IFC4; the pinned writer has no pipe segment, so it is named in the loss report
-(`ab.io.ifc.gutter_not_written`, kind `IFCPIPESEGMENT`). Follow-up in `arc-core`: an `ElementKind::PipeSegment`.
+loss report records the approximation, `ab.io.ifc.fascia_as_covering`). A fascia carries `Pset_CoveringCommon.IsExternal`. A gutter is an `IfcPipeSegment`
+of the predefined type `GUTTER` with its swept body.
 
 A glazed roof (a curtain grid on the faces of a roof) is not modeled yet: the grid rules of curtain
 walls work on a wall's baseline and height, not on the planes of a roof.
@@ -503,9 +501,13 @@ its own, contained in its storey, aggregating (`IfcRelAggregates`, parts not con
 the landing (`Qto_SlabBaseQuantities`) and an `IfcRailing` `GUARDRAIL` for each side that has one (`Qto_RailingBaseQuantities.Length`).
 Every part has a faceted B-rep in the storey's frame and a `GlobalId` derived from the stair's. Its shaft opening is
 written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
-have it taken out. `Pset_StairCommon`, `Pset_StairFlightCommon`, `Pset_RampCommon`, `Pset_RampFlightCommon` and
-`Pset_RailingCommon` hold only counts, positive lengths, plane angles and identifiers, value types the pinned writer cannot
-write, so none is written; the flight's counts and dimensions are attributes of the `IfcStairFlight`.
+have it taken out. The standard property sets carry typed values with the measure types of the IFC4 templates, only for
+what the model knows: `Pset_StairCommon` (`NumberOfRiser`, `NumberOfTreads`, `RiserHeight`, `TreadLength`, `WaistThickness`,
+`RequiredHeadroom`), `Pset_StairFlightCommon` (the counts, `RiserHeight`, `TreadLength`), `Pset_RampCommon`
+(`RequiredSlope`, the type's largest slope as an angle), `Pset_RampFlightCommon` (`Slope`, `ClearWidth`) and
+`Pset_RailingCommon` (`Height`); the flight's counts and dimensions are also attributes of the `IfcStairFlight`.
+`Pset_DoorCommon` and `Pset_WindowCommon` hold `IsExternal` (the exposure of the host wall's type), `Pset_SlabCommon` the
+`PitchAngle` of a floor, `Pset_SpaceCommon` the room number as `Reference` and `IsExternal`.
 A ramp is an `IfcRamp` (`STRAIGHT_RUN_RAMP`) aggregating an `IfcRampFlight` (`STRAIGHT`, `Qto_RampFlightBaseQuantities`: sloped
 `Length`, `Width` for a slab of constant thickness, areas, volumes), an `IfcSlab` `LANDING` for each landing and its hosted
 railings. A railing record hosted on a stair or ramp is an `IfcRailing` `GUARDRAIL` that is a part of it; a railing by path is a
@@ -1285,6 +1287,10 @@ element types are each in the file under their `GlobalId`, that no two rooted en
 `GlobalId`, and that the file holds as many products and openings as elements were written. Each
 problem is a loss item with the outcome `failed` (`ab.io.ifc.validation_unreadable`,
 `validation_missing`, `validation_duplicate_id`, `validation_count`) and `Export::valid` is false;
+When the build has the schema tables of the file's schema (`SchemaTables`; the IFC4X3 tables are in
+`arc-core`, the IFC4 ones are not, so an IFC4 export is not checked this way), the conformance check of
+`arc-io-ifc` (levels 1 to 3) also runs and each failed rule is an item `ab.io.ifc.validation_conformance`;
+`Export::conformance` names the schema it ran against and is `None` when it did not run, which is not a pass.
 `archbuilder.file.export_ifc` and `export-ifc` return it as `valid`. The file is still written, so
 `valid: false` is what marks it incomplete; it is not renamed or removed. Property sets, geometry
 and relationships are not re-checked yet.
@@ -1539,7 +1545,7 @@ Three element kinds belong to a building and have no storey: `archbuilder.grid`,
 Commands: `archbuilder.grid.create` (two points, `points` with per-segment `bulges` for a multi-segment line, `from_wall`, or `from_walls` for a chain of walls that meet end to start; `bulge` for an arc; `after` or `label`),
 `archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
 and heads), and `archbuilder.datum.set_view_extent` (per-view extent and head overrides, below). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
-original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export writes the grids of a building as one `IfcGrid` in the lowest storey: each line an `IfcGridAxis` tagged with its label (a line as a polyline, an arc as a trimmed circle), the first straight line and the lines within 45 degrees of it the U axes, the others and the arcs the V axes (`RECTANGULAR` when the families are straight and square, else `IRREGULAR`). Lines of one direction only have no valid `IfcGrid` and are reported (`ab.io.ifc.grid_one_direction`). Reference planes and work planes are drawing aids and selection sets are not yet groups in the writer: each is in the loss report (kinds `IFCANNOTATION`, `IFCGROUP`).
+original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export writes the grids of a building as one `IfcGrid` in the lowest storey: each line an `IfcGridAxis` tagged with its label (a line as a polyline, an arc as a trimmed circle, a line of several straight segments as a polyline and one with arcs as a composite curve), the first straight line and the lines within 45 degrees of it the U axes, the others, the arcs and the multi-segment lines the V axes (`RECTANGULAR` when the families are straight and square, else `IRREGULAR`). Lines of one direction only have no valid `IfcGrid` and are reported (`ab.io.ifc.grid_one_direction`). Reference planes and work planes are drawing aids: each is in the loss report (kind `IFCANNOTATION`). A selection set is an `IfcGroup` (`ObjectType` "Selection set") assigned its elements by one `IfcRelAssignsToGroup`; members that are not in the file are counted in `ab.io.ifc.selection_set_member_not_written`.
 A plan view stores its own overrides of grids in the optional `datum_views` list (records of a grid, `start_inset`, `end_inset`,
 `head_start`, `head_end`, each optional): an inset pulls that end of the drawn line in along the line (positive) or pushes it out
 along the end segment (negative), and a head flag overrides the grid's own. The grid and every other view keep the model extent, a view
@@ -1579,7 +1585,7 @@ The project record carries, besides the name, `number`, `client` and `address`, 
 before loads with every one absent. `archbuilder.project.set_info` sets any of them in one undo step (an empty text clears a field;
 without values it selects the project, whose properties list and edit the same fields, as `archbuilder.property.set` does).
 
-The IFC export writes them. The writer of the foundation gives the project, site and building only a name, so `archbuilder-io`
+The IFC export writes them. The writer of the foundation (checked at the pinned revision: `Spatial` is an identifier and a name, and property sets belong to elements) still gives the project, site and building only a name, so `archbuilder-io`
 completes its output before the read-back check: `Name`, `Description` (the description), `LongName` and `Phase` (the status) of the
 `IfcProject`; the address as an `IfcPostalAddress` on the `IfcSite` and the `IfcBuilding` (the building's own address when it has
 one); the client as an `IfcOrganization` with the role `CLIENT` and the author, with the issuing organization, as an
@@ -1621,8 +1627,10 @@ point or turning north changes the coordinates reported for a point and never mo
 
 A point reads in four systems: internal, project (minus the base point), survey (minus the survey point) and map. The map position is
 the survey point's eastings and northings plus the offset from the survey point turned by true north and scaled, the height likewise
-(the conversion an IFC map conversion carries). The IFC export does not write the map conversion or the coordinate reference system
-yet: a georeferenced project names them in the loss report. `archbuilder.coordinates.set` changes the fields (without values it
+(the conversion an IFC map conversion carries). The IFC export writes a georeferenced project as an `IfcMapConversion` of the internal origin (its map
+eastings, northings and height, the model x axis in the map turned by true north, the scale) to an `IfcProjectedCRS` named by the
+reference system text (a text over 255 characters is the description of a system named `User-defined`); true north is also the
+`TrueNorth` of the model context, whether or not the project is georeferenced. The base point and the survey point's own position are not written. `archbuilder.coordinates.set` changes the fields (without values it
 selects the project, whose properties list them), `archbuilder.coordinates.query` reports a picked point (the Coordinates button of
 the Manage tab; the history shows the readout in the project's length unit) and `archbuilder.coordinates.recenter` translates the
 whole model, with both points, so that the survey point lies on the internal origin: every element keeps its map coordinates, and a

@@ -39,6 +39,8 @@ pub const DEFAULT_PIT: f64 = 1.2;
 pub const DEFAULT_OVERRUN: f64 = 1.0;
 /// The most levels an elevator names as served.
 pub const MAX_STOPS: usize = 256;
+/// The height of the car as drawn and exported, in meters.
+pub const CAR_HEIGHT: f64 = 2.4;
 /// The thickness of the shaft wall drawn in plan, in meters.
 pub const WALL_DRAWN: f64 = 0.2;
 

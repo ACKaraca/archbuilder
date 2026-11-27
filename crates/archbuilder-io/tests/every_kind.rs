@@ -224,24 +224,41 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     reasons.sort_unstable();
     reasons.dedup();
     assert!(
-        !reasons.iter().any(|r| r.ends_with("_not_written")
-            && !matches!(
-                *r,
-                "ab.io.ifc.datum_not_written"
-                    | "ab.io.ifc.selection_set_not_written"
-                    | "ab.io.ifc.elevator_not_written"
-                    | "ab.io.ifc.gutter_not_written"
-            )),
+        !reasons
+            .iter()
+            .any(|r| r.ends_with("_not_written") && !matches!(*r, "ab.io.ifc.datum_not_written")),
         "{reasons:?}"
     );
-    for reason in [
-        "ab.io.ifc.elevator_not_written",
-        "ab.io.ifc.gutter_not_written",
-        "ab.io.ifc.dormer_as_parts",
-        "ab.io.ifc.fascia_as_covering",
-    ] {
+    for reason in ["ab.io.ifc.dormer_as_parts", "ab.io.ifc.fascia_as_covering"] {
         assert!(reasons.contains(&reason), "{reason} not reported");
     }
+    // The standard property sets of the kinds the model knows values for.
+    for set in [
+        "Pset_StairCommon",
+        "Pset_StairFlightCommon",
+        "Pset_RampCommon",
+        "Pset_RampFlightCommon",
+        "Pset_RailingCommon",
+        "Pset_DoorCommon",
+        "Pset_WindowCommon",
+        "Pset_SlabCommon",
+        "Pset_SpaceCommon",
+        "Pset_TransportElementElevator",
+    ] {
+        assert!(text.contains(&format!("'{set}'")), "{set} not written");
+    }
+    // Conformance is checked only for a schema the build has tables of; IFC4 has none here, so
+    // the export must not claim it.
+    assert!(out.conformance.is_none() || out.valid);
+    // An elevator is a transport element with its type, a gutter a pipe segment, a selection set a
+    // group with the walls it names.
+    assert_eq!(count("IFCTRANSPORTELEMENT"), 1);
+    assert_eq!(count("IFCTRANSPORTELEMENTTYPE"), 1);
+    assert!(text.contains(".ELEVATOR."));
+    assert_eq!(count("IFCPIPESEGMENT"), 1);
+    assert!(text.contains(".GUTTER."));
+    assert_eq!(count("IFCGROUP"), 1);
+    assert_eq!(count("IFCRELASSIGNSTOGROUP"), 1);
     // A dormer is written as the opening in its roof, walls and a roof; a fascia as a molding.
     for written in [
         "Dormer 1 (front)",
@@ -251,8 +268,4 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     ] {
         assert!(text.contains(written), "{written} not written");
     }
-    assert!(
-        !text.contains("Gutter 1"),
-        "a gutter is reported, not written"
-    );
 }

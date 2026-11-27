@@ -103,24 +103,6 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-floor-edge-orphan",
     };
-    /// The geodetic reference of the project (coordinate system, survey point position, true
-    /// north): the IFC writer of the foundation has no map conversion or projected coordinate
-    /// system entity yet, so it is left out.
-    pub const GEOREFERENCE_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.georeference_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-georeference-not-written",
-    };
-    /// An elevator: the writer of the pinned foundation has no transport element entity yet
-    /// (`IfcTransportElement` of the predefined type `ELEVATOR`), so the elevator is left out; the
-    /// openings its shaft cuts in the floors are written.
-    pub const ELEVATOR_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.elevator_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-elevator-not-written",
-    };
     /// A dormer: IFC4 has no dormer element, so it is written as the opening in its roof, a wall
     /// for each of its front and cheek walls and a roof for its own small roof.
     pub const DORMER_AS_PARTS: Reason = Reason {
@@ -136,14 +118,6 @@ pub mod reasons {
         outcome: Outcome::Approximated,
         severity: Severity::Info,
         message_id: "ab-io-loss-fascia-as-covering",
-    };
-    /// A gutter: IFC4 maps it to a pipe segment of the predefined type `GUTTER`, which the writer
-    /// of the pinned foundation does not have yet, so the gutter is left out.
-    pub const GUTTER_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.gutter_not_written",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-gutter-not-written",
     };
     /// A roof edge element that names edges its roof no longer has or that define no slope: those
     /// edges are not written.
@@ -176,13 +150,22 @@ pub mod reasons {
         severity: Severity::Info,
         message_id: "ab-io-loss-datum-not-written",
     };
-    /// A selection set: a list of elements that could become an `IfcGroup`, which the writer of the
-    /// foundation cannot write yet, so it is left out.
-    pub const SET_NOT_WRITTEN: Reason = Reason {
-        code: "ab.io.ifc.selection_set_not_written",
+    /// Members of a selection set that are not in the IFC file (an element that was not exported):
+    /// the group is written with the members that are.
+    pub const SET_MEMBER_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.selection_set_member_not_written",
         outcome: Outcome::Dropped,
         severity: Severity::Info,
-        message_id: "ab-io-loss-selection-set-not-written",
+        message_id: "ab-io-loss-selection-set-member-not-written",
+    };
+    /// The exported file does not conform to the IFC schema it declares: a finding of the
+    /// conformance check (levels 1 to 3 of the reader of the foundation), which runs only when the
+    /// schema tables are present in the build.
+    pub const VALIDATION_CONFORMANCE: Reason = Reason {
+        code: "ab.io.ifc.validation_conformance",
+        outcome: Outcome::Failed,
+        severity: Severity::Error,
+        message_id: "ab-io-validation-conformance",
     };
     /// The grid lines of a building are all in one direction: `IfcGrid` needs a U and a V family
     /// of axes, so no grid is written and each line is named.
@@ -191,14 +174,6 @@ pub mod reasons {
         outcome: Outcome::Dropped,
         severity: Severity::Warning,
         message_id: "ab-io-loss-grid-one-direction",
-    };
-    /// A grid line of several segments: the writer's grid axis is one line or one arc, so the line
-    /// is named rather than shortened to its ends.
-    pub const GRID_MULTI_SEGMENT: Reason = Reason {
-        code: "ab.io.ifc.grid_multi_segment",
-        outcome: Outcome::Dropped,
-        severity: Severity::Warning,
-        message_id: "ab-io-loss-grid-multi-segment",
     };
     /// A curtain wall with doors or windows as panels: IFC4 aggregates them in the curtain wall,
     /// which the writer of the foundation does not do, so each fills an opening in the wall.
