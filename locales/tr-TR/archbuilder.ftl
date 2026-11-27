@@ -852,3 +852,4 @@ ab-tool-load-family-hint = Aileleri ve türlerini bir paketten ya da başka bir 
 ab-group-components = Bileşenler
 ab-group-families = Aileler
 ab-kind-component = Bileşen
+ab-kind-family-insert = Ana elemana bağlı aile örneği

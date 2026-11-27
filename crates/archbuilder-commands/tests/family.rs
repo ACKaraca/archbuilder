@@ -809,3 +809,96 @@ fn a_hosted_door_cuts_its_wall_and_refuses_what_a_built_in_insert_refuses() {
         "one undo restores the wall"
     );
 }
+
+#[test]
+fn a_hosted_instance_slides_along_its_wall_flips_and_copies_and_undoes_in_one_step() {
+    use arc_base::ObjectId;
+    use archbuilder_model::family::fixtures::hosted_door;
+    use archbuilder_model::family::loaded::FamilyInsert;
+    use archbuilder_model::types::{FAMILY_INSERT, WALL};
+    let env = Env::new("hosted-slide", true);
+    env.load(
+        &env.package("h.archbfam", &[(&hosted_door(), "1.0.0")]),
+        json!({}),
+    )
+    .unwrap();
+    let wall = env
+        .run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [6.0, 0.0], "height": 3.0, "thickness": 0.2}),
+        )
+        .unwrap()
+        .value["wall"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let placed = env
+        .run(
+            "archbuilder.family_insert.place",
+            json!({"host": wall, "type": "Wall door: 0900x2100", "distance": 3.0}),
+        )
+        .unwrap()
+        .value["insert"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let id: ObjectId = placed.parse().unwrap();
+    let read = |env: &Env| {
+        let s = env.snapshot();
+        let object = spatial::get(&s, id).unwrap();
+        FamilyInsert::of(&object).unwrap()
+    };
+    let on_selection = |env: &Env, command: &str, params: Json| {
+        let invocation = Invocation {
+            seed: SEEDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            selection: vec![id],
+            ..Invocation::new(command, params)
+        };
+        Invoker::new(&env.registry).invoke(&env.document, &env.session, invocation)
+    };
+    // Moved along the wall: the displacement is projected onto the baseline.
+    on_selection(
+        &env,
+        "archbuilder.modify.move",
+        json!({"displacement": [1.0, 0.5]}),
+    )
+    .unwrap();
+    assert!((read(&env).distance - 4.0).abs() < 1e-9);
+    assert_eq!(
+        read(&env).host,
+        Some(spatial::objects(&env.snapshot(), WALL)[0].id)
+    );
+    env.undo();
+    assert!((read(&env).distance - 3.0).abs() < 1e-9);
+    // Flipping the hand and the facing: one undo step each.
+    env.run(
+        "archbuilder.insert.flip_hand",
+        json!({"inserts": [id.to_string()]}),
+    )
+    .unwrap();
+    assert_eq!(read(&env).hand, archbuilder_model::insert::Hand::Right);
+    env.run(
+        "archbuilder.insert.flip_facing",
+        json!({"inserts": [id.to_string()]}),
+    )
+    .unwrap();
+    assert_eq!(
+        read(&env).facing,
+        archbuilder_model::insert::Facing::Interior
+    );
+    env.undo();
+    env.undo();
+    assert_eq!(read(&env).hand, archbuilder_model::insert::Hand::Left);
+    // A copy keeps the mark and the family type, at the distance the copy gives.
+    let made = on_selection(
+        &env,
+        "archbuilder.modify.copy",
+        json!({"displacement": [2.0, 0.0]}),
+    )
+    .unwrap();
+    assert_eq!(env.count(FAMILY_INSERT), 2);
+    let copy: ObjectId = made.value["created"][0].as_str().unwrap().parse().unwrap();
+    let copied = FamilyInsert::of(&spatial::get(&env.snapshot(), copy).unwrap()).unwrap();
+    assert_eq!(copied.family_type, read(&env).family_type);
+    assert!((copied.distance - 5.0).abs() < 1e-9);
+}

@@ -877,3 +877,4 @@ ab-tool-load-family-hint = Copy families and their types from a package or anoth
 ab-group-components = Components
 ab-group-families = Families
 ab-kind-component = Component
+ab-kind-family-insert = Hosted family instance

@@ -154,8 +154,9 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 21] = [
+pub const ELEMENTS: [&str; 22] = [
     COMPONENT,
+    FAMILY_INSERT,
     WALL,
     DOOR,
     WINDOW,

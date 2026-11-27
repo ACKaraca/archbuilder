@@ -1489,6 +1489,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        archbuilder_model::types::FAMILY_INSERT,
+        Message {
+            message_id: "ab-kind-family-insert",
+        },
+    ),
+    (
         PROJECT,
         Message {
             message_id: "ab-kind-project",

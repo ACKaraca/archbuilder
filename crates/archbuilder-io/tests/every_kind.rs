@@ -271,6 +271,57 @@ fn a_document_with_every_element_kind_exports_and_validates() {
             .wait()
             .unwrap();
     }
+    // A hosted family instance: a door family in the west wall, which has no opening yet.
+    {
+        use arc_base::id::Identifier;
+        use archbuilder_model::family::fixtures::hosted_door;
+        use archbuilder_model::family::loaded::{FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let definition = hosted_door();
+        let published = publish(
+            &definition,
+            None,
+            archbuilder_model::family::Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let s = document.snapshot();
+        let project = spatial::project(&s).unwrap().id;
+        let (f, t) = (
+            arc_base::ObjectId::from_u128(0xD1),
+            arc_base::ObjectId::from_u128(0xD2),
+        );
+        let ty_name = definition.types[0].name.clone();
+        let ty_values = definition.types[0].values.clone();
+        document
+            .submit(move |txn| {
+                let owned = |owner| arc_doc::Header {
+                    owner: Some(owner),
+                    ..Default::default()
+                };
+                txn.create(
+                    types::FAMILY,
+                    f,
+                    owned(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    types::FAMILY_TYPE,
+                    t,
+                    owned(project),
+                    FamilyType::record(&ty_name, f, &ty_values),
+                )
+            })
+            .wait()
+            .unwrap();
+        r(
+            "archbuilder.family_insert.place",
+            json!({"host": walls[3], "type": t.to_string(), "distance": 3.0}),
+        );
+    }
     let s = document.snapshot();
     for key in ELEMENTS
         .iter()
