@@ -438,6 +438,19 @@ follow walls included), and an edge the floor no longer has leaves the railing w
 reported as such and never moved to another edge. A railing goes with its host when the host is
 deleted. Known limit: copying or pasting a floor does not copy the railings hosted on it.
 
+Rails and joins. The top rail and the handrail are swept along the path in one solid for each
+stretch, with a ring of the section at every point in the plane that bisects the two bars meeting
+there: a true miter, so the joined bars neither overlap nor leave a gap and the solid has the
+volume of the center line times the section. The type's corner setting (miter or fillet) decides
+whether the path is rounded before it is swept. A path that turns back on itself by more than 120
+degrees is cut square there, and a bar shorter than the miters at its ends is drawn as two bars
+that overlap (the only place the overlap remains). A hosted rail has transitions at the joins of
+its path: a landing where the slope changes and the heading does not, a turn where the heading
+changes (`Derived::transitions`), each with a post and the corner of the type. When a railing
+continues to another, its rail is mitered at the first point of the next one's rail and runs to
+the middle of the next one's first bar, where the next one's own rail starts; the next one has no
+extension at its start, as the first has none at its end.
+
 #### The roof of the first slice
 
 `archbuilder.roof` (schema 1.0) is a roof by footprint, owned by its storey. Only the authored

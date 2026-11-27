@@ -19,13 +19,17 @@
 use arc_base::math::{Point3, Vector3};
 use arc_base::{Limits, ObjectId, Result, Tolerance};
 use arc_doc::{Object, Snapshot, Value};
-use arc_geom::{Curve2, Loop2, PlaneFrame, Polyhedron, Region, RegionPart, Segment2, extrude};
+use arc_geom::{
+    Curve2, Loop2, PlaneFrame, PolyFace, Polyhedron, Region, RegionPart, Segment2, extrude,
+};
 
 use crate::spatial;
 use crate::types::{self, RAILING_TYPE, railing, railing_type};
 
 /// The most points of a railing's path.
 pub const MAX_POINTS: usize = 500;
+/// The most railings looked at for one that continues to another.
+const MAX_SCANNED: usize = 100_000;
 /// The default horizontal length of an extension, in meters.
 pub const DEFAULT_EXTENSION: f64 = 0.3;
 /// The range of an extension's length, in meters.
@@ -525,6 +529,171 @@ fn bar(p: [f64; 3], q: [f64; 3], section: &[[f64; 2]]) -> Result<Polyhedron> {
     )
 }
 
+type V3 = [f64; 3];
+
+fn add3(a: V3, b: V3) -> V3 {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn scale3(a: V3, k: f64) -> V3 {
+    [a[0] * k, a[1] * k, a[2] * k]
+}
+
+fn dot3(a: V3, b: V3) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross3(a: V3, b: V3) -> V3 {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// The turn (cosine of the angle between two directions) below which a rail is cut square instead
+/// of mitered: past 120 degrees a miter is longer than the rail is wide.
+const MITER_LIMIT: f64 = -0.5;
+
+/// One sweep of `section` along `points` (at least two, no two consecutive ones coincide, no turn
+/// beyond [`MITER_LIMIT`]): a ring of the section at every point, in the plane that bisects the
+/// two bars that meet there, so that the bars join in a true miter and the rail has no overlaps or
+/// gaps. The section is carried through the joints by reflecting it in each miter plane, so both
+/// bars see the same ring. `None` when a segment is too short for the miters at its ends.
+fn sweep(points: &[V3], section: &[[f64; 2]]) -> Result<Option<Polyhedron>> {
+    let segments = points.len().saturating_sub(1);
+    let dirs: Vec<V3> = points
+        .windows(2)
+        .filter_map(|w| direction(w[0], w[1]).map(|(d, _)| d))
+        .collect();
+    if segments == 0 || dirs.len() != segments || section.len() < 3 {
+        return Ok(None);
+    }
+    let first_u = {
+        let side = cross3([0.0, 0.0, 1.0], dirs[0]);
+        let l = dot3(side, side).sqrt();
+        if l > 1.0e-9 {
+            scale3(side, 1.0 / l)
+        } else {
+            [1.0, 0.0, 0.0]
+        }
+    };
+    // The section's frame in each segment: `u` carried through the miter planes, `v` likewise.
+    let mut frames: Vec<(V3, V3)> = vec![(first_u, cross3(dirs[0], first_u))];
+    let mut planes: Vec<V3> = Vec::with_capacity(segments);
+    for k in 1..segments {
+        let sum = add3(dirs[k - 1], dirs[k]);
+        let l = dot3(sum, sum).sqrt();
+        if l < 1.0e-9 {
+            return Ok(None);
+        }
+        let n = scale3(sum, 1.0 / l);
+        let reflect = |a: V3| add3(a, scale3(n, -2.0 * dot3(a, n)));
+        let (u, v) = frames[k - 1];
+        frames.push((reflect(u), reflect(v)));
+        planes.push(n);
+    }
+    let m = section.len();
+    let mut vertices: Vec<Point3> = Vec::with_capacity(points.len() * m);
+    // How far the inner side of each bar is shortened at each end by the miter.
+    let mut shorten = vec![0.0_f64; points.len()];
+    for (k, p) in points.iter().enumerate() {
+        let (seg, plane) = if k == 0 {
+            (0, dirs[0])
+        } else if k == segments {
+            (segments - 1, dirs[segments - 1])
+        } else {
+            (k - 1, planes[k - 1])
+        };
+        let (u, v) = frames[seg];
+        let d = dirs[seg];
+        let slope = dot3(d, plane);
+        if slope.abs() < 1.0e-6 {
+            return Ok(None);
+        }
+        for q in section {
+            let w = add3(add3(*p, scale3(u, q[0])), scale3(v, q[1]));
+            let t = -dot3([w[0] - p[0], w[1] - p[1], w[2] - p[2]], plane) / slope;
+            shorten[k] = shorten[k].max(-t);
+            let r = add3(w, scale3(d, t));
+            vertices.push(Point3::new(r[0], r[1], r[2]));
+        }
+    }
+    for (k, w) in points.windows(2).enumerate() {
+        if distance(w[0], w[1]) <= shorten[k] + shorten[k + 1] + 1.0e-6 {
+            return Ok(None);
+        }
+    }
+    let at = |ring: usize, j: usize| u32::try_from(ring * m + j % m).unwrap_or(u32::MAX);
+    let mut faces: Vec<PolyFace> = Vec::with_capacity(segments * m + 2);
+    for k in 0..segments {
+        for j in 0..m {
+            faces.push(PolyFace::new(vec![
+                at(k, j),
+                at(k, j + 1),
+                at(k + 1, j + 1),
+                at(k + 1, j),
+            ]));
+        }
+    }
+    // The miter planes mirror the section from one bar to the next and turn the direction with
+    // it, so every bar's frame has the same handedness and the rings run the same way round.
+    faces.push(PolyFace::new((0..m).rev().map(|j| at(0, j)).collect()));
+    faces.push(PolyFace::new((0..m).map(|j| at(segments, j)).collect()));
+    let solid = Polyhedron::new(
+        vertices.clone(),
+        faces.clone(),
+        &Tolerance::DEFAULT,
+        &Limits::DEFAULT,
+    )?;
+    if solid.volume() >= 0.0 {
+        return Ok(Some(solid));
+    }
+    let flipped = faces
+        .into_iter()
+        .map(|f| PolyFace::new(f.outer.into_iter().rev().collect()))
+        .collect();
+    Polyhedron::new(vertices, flipped, &Tolerance::DEFAULT, &Limits::DEFAULT).map(Some)
+}
+
+/// The solids of a rail along `points`: one sweep with true miter joints for each stretch of the
+/// path, cut square where it turns back on itself. A stretch that the sweep cannot make (a bar
+/// shorter than its miters, or a solid the kernel refuses) is drawn as the overlapped bars of
+/// [`rail_bars`] instead.
+fn rail_solids(points: &[V3], section: &[[f64; 2]], width: f64) -> Result<Vec<Polyhedron>> {
+    let mut clean: Vec<V3> = Vec::with_capacity(points.len());
+    for p in points {
+        if clean.last().is_none_or(|q| distance(*q, *p) > 1.0e-6) {
+            clean.push(*p);
+        }
+    }
+    let mut stretches: Vec<&[V3]> = Vec::new();
+    let mut from = 0;
+    for k in 1..clean.len().saturating_sub(1) {
+        let (a, b) = (
+            direction(clean[k - 1], clean[k]),
+            direction(clean[k], clean[k + 1]),
+        );
+        if let (Some((a, _)), Some((b, _))) = (a, b)
+            && dot3(a, b) < MITER_LIMIT
+        {
+            stretches.push(&clean[from..=k]);
+            from = k;
+        }
+    }
+    if clean.len() - from >= 2 {
+        stretches.push(&clean[from..]);
+    }
+    let mut out = Vec::new();
+    for stretch in stretches {
+        match sweep(stretch, section) {
+            Ok(Some(solid)) => out.push(solid),
+            _ => out.extend(rail_bars(stretch, section, width)?),
+        }
+    }
+    Ok(out)
+}
+
 /// The bars of a rail along `points`. Where two bars meet at a corner each is lengthened by half
 /// the width times the tangent of half the turn (at most one width), so that they overlap and the
 /// outer side of the corner is closed.
@@ -563,6 +732,27 @@ fn rail_bars(points: &[[f64; 3]], section: &[[f64; 2]], width: f64) -> Result<Ve
     Ok(out)
 }
 
+/// What a join of a hosted rail is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Join {
+    /// The slope changes (a ramp or a flight meets a landing) and the path keeps its heading.
+    Landing,
+    /// The path turns in plan (a corner of a floor edge, a turn of a stair), whatever the slope.
+    Turn,
+}
+
+/// A join of the rail of a hosted railing: where it is and how the rail turns there, as the
+/// railing's type says (a miter or a fillet).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transition {
+    /// The point of the walking surface, above the level.
+    pub point: [f64; 3],
+    /// Whether the join is a landing or a turn.
+    pub join: Join,
+    /// How the rail turns there.
+    pub corner: Corner,
+}
+
 /// A post or baluster: its foot and its top, heights above the level.
 pub type Post = ([f64; 3], [f64; 3]);
 
@@ -584,6 +774,12 @@ pub struct Derived {
     pub rail: Vec<[f64; 3]>,
     /// The handrail, empty when the type has none.
     pub handrail: Vec<[f64; 3]>,
+    /// Whether another railing's top rail continues to this one.
+    pub preceded: bool,
+    /// The first two points of the top rail of the railing this one continues to.
+    next_rail: Vec<[f64; 3]>,
+    /// The first two points of that railing's handrail.
+    next_handrail: Vec<[f64; 3]>,
 }
 
 /// The path along the chain of a floor edge: the slab's top at the edge, [`ramp::RAIL_INSET`] in
@@ -631,6 +827,35 @@ fn along_chain(chain: &crate::floor_edge::Chain, base: f64) -> Vec<[f64; 3]> {
         .collect()
 }
 
+/// The first two points of a rail: what the rail before it joins.
+type Leg = Vec<[f64; 3]>;
+
+/// The first two points of the top rail and of the handrail of the railing that `railing`
+/// continues to, in the frame of a railing whose storey is at `base`.
+fn continuation(snapshot: &Snapshot, railing: &Railing, base: f64) -> Option<(Leg, Leg)> {
+    let next = spatial::get(snapshot, railing.continues_to?)?;
+    let d = Derived::build(snapshot, &next, false, true).ok()?;
+    let lift = |line: &[[f64; 3]]| -> Leg {
+        line.iter()
+            .take(2)
+            .map(|p| [p[0], p[1], p[2] + d.base - base])
+            .collect()
+    };
+    Some((lift(&d.rail), lift(&d.handrail)))
+}
+
+/// Whether the rail of another railing continues to the railing `id`: that rail runs on through
+/// it, so its own extension at the start is left out.
+fn is_continued(snapshot: &Snapshot, id: ObjectId) -> bool {
+    spatial::objects(snapshot, types::RAILING)
+        .iter()
+        .take(MAX_SCANNED)
+        .any(|o| {
+            o.id != id
+                && Railing::from_values(&o.values).is_some_and(|r| r.continues_to == Some(id))
+        })
+}
+
 /// The surface polyline of a hosted railing: the host's side, lowered to the walking surface.
 fn hosted(
     snapshot: &Snapshot,
@@ -674,13 +899,14 @@ impl Derived {
     /// # Errors
     /// [`Refusal`].
     pub fn of(snapshot: &Snapshot, object: &Object) -> std::result::Result<Self, Refusal> {
-        Self::build(snapshot, object, true)
+        Self::build(snapshot, object, true, false)
     }
 
     fn build(
         snapshot: &Snapshot,
         object: &Object,
         follow: bool,
+        preceded_hint: bool,
     ) -> std::result::Result<Self, Refusal> {
         let railing = Railing::from_values(&object.values).ok_or(Refusal::Malformed)?;
         let base = object
@@ -718,15 +944,12 @@ impl Derived {
             .and_then(|t| RailingType::from_values(&t.values))
             .unwrap_or_default();
         let next = if follow {
-            railing
-                .continues_to
-                .and_then(|t| spatial::get(snapshot, t))
-                .and_then(|t| Self::build(snapshot, &t, false).ok())
-                .and_then(|d| d.rail.first().map(|p| [p[0], p[1], p[2] + d.base - base]))
+            continuation(snapshot, &railing, base)
         } else {
             None
         };
-        let line = |height: f64| -> Vec<[f64; 3]> {
+        let preceded = preceded_hint || (follow && is_continued(snapshot, object.id));
+        let line = |height: f64, hand: bool| -> Vec<[f64; 3]> {
             let raised: Vec<Node> = surface
                 .iter()
                 .map(|(p, n)| ([p[0], p[1], p[2] + height], *n))
@@ -737,15 +960,19 @@ impl Derived {
                 raised
             };
             let mut points: Vec<[f64; 3]> = rounded.into_iter().map(|(p, _)| p).collect();
-            extend(&mut points, &railing, &surface, next.is_some());
-            if let Some(n) = next {
-                points.push([n[0], n[1], n[2] - kind.height + height]);
+            extend(&mut points, &railing, &surface, next.is_some(), preceded);
+            if let Some((rail, handrail)) = &next {
+                match (hand, handrail.first(), rail.first()) {
+                    (true, Some(n), _) => points.push(*n),
+                    (_, _, Some(n)) => points.push([n[0], n[1], n[2] - kind.height + height]),
+                    _ => {}
+                }
             }
             points
         };
-        let rail = line(kind.height);
+        let rail = line(kind.height, false);
         let handrail = if kind.handrail_height > 0.0 {
-            line(kind.handrail_height)
+            line(kind.handrail_height, true)
         } else {
             Vec::new()
         };
@@ -757,6 +984,9 @@ impl Derived {
             surface,
             rail,
             handrail,
+            preceded,
+            next_rail: next.as_ref().map(|n| n.0.clone()).unwrap_or_default(),
+            next_handrail: next.map(|n| n.1).unwrap_or_default(),
         })
     }
 
@@ -860,6 +1090,38 @@ impl Derived {
         (widest - self.kind.baluster_size.max(self.kind.post_size)).max(0.0)
     }
 
+    /// The transitions of a hosted rail, in order along the path: the joins at landings, where
+    /// the slope changes, and at turns, where the heading changes. A rail by path has none: its
+    /// corners are the author's.
+    #[must_use]
+    pub fn transitions(&self) -> Vec<Transition> {
+        if self.railing.host.is_none() {
+            return Vec::new();
+        }
+        let heading = |a: [f64; 3], b: [f64; 3]| (b[1] - a[1]).atan2(b[0] - a[0]);
+        let mut out = Vec::new();
+        for w in self.surface.windows(3) {
+            let [(a, _), (v, node), (b, _)] = [w[0], w[1], w[2]];
+            if !node || turn(a, v, b) < STRAIGHT {
+                continue;
+            }
+            let mut change = (heading(v, b) - heading(a, v)).abs() % std::f64::consts::TAU;
+            if change > std::f64::consts::PI {
+                change = std::f64::consts::TAU - change;
+            }
+            out.push(Transition {
+                point: v,
+                join: if change >= STRAIGHT {
+                    Join::Turn
+                } else {
+                    Join::Landing
+                },
+                corner: self.kind.corner,
+            });
+        }
+        out
+    }
+
     /// The plan line of the rail: the rail with its extensions, as points `[x, y]`.
     #[must_use]
     pub fn plan_line(&self) -> Vec<[f64; 2]> {
@@ -876,9 +1138,26 @@ impl Derived {
         let k = &self.kind;
         let rail = section(k.rail_profile, k.rail_width, k.rail_depth);
         let mut out = Vec::new();
-        for line in [&self.rail, &self.handrail] {
-            let points: Vec<[f64; 3]> = line.iter().map(|p| lift(*p)).collect();
-            out.extend(rail_bars(&points, &rail, k.rail_width)?);
+        for (line, next) in [
+            (&self.rail, &self.next_rail),
+            (&self.handrail, &self.next_handrail),
+        ] {
+            let mut points: Vec<[f64; 3]> = line.iter().map(|p| lift(*p)).collect();
+            // A continuous rail joins the next one in a miter at its first point and runs on to
+            // the middle of that railing's first bar; that railing's own rail starts there.
+            let middle = |a: [f64; 3], b: [f64; 3]| lift(lerp(a, b, 0.5));
+            if let (Some(last), Some(second)) = (line.last(), next.get(1))
+                && !next.is_empty()
+                && !line.is_empty()
+            {
+                points.push(middle(*last, *second));
+            }
+            if self.preceded
+                && let (Some(a), Some(b)) = (line.first(), line.get(1))
+            {
+                points[0] = middle(*a, *b);
+            }
+            out.extend(rail_solids(&points, &rail, k.rail_width)?);
         }
         let post = section(Profile::Square, k.post_size, k.post_size);
         for (foot, top) in self.posts() {
@@ -894,8 +1173,15 @@ impl Derived {
 
 /// Adds the extensions to the ends of the rail `points`: level for the extension length, then a
 /// return to the wall (toward the railing's side, [`RETURN_LENGTH`]) or down to the floor. The end
-/// extension is left out when the rail continues to another railing.
-fn extend(points: &mut Vec<[f64; 3]>, railing: &Railing, surface: &[Node], joined: bool) {
+/// extension is left out when the rail continues to another railing, the start extension when
+/// another railing's rail continues to this one.
+fn extend(
+    points: &mut Vec<[f64; 3]>,
+    railing: &Railing,
+    surface: &[Node],
+    joined: bool,
+    preceded: bool,
+) {
     let n = points.len();
     if n < 2 {
         return;
@@ -931,6 +1217,7 @@ fn extend(points: &mut Vec<[f64; 3]>, railing: &Railing, surface: &[Node], joine
         points.extend(tail(railing.end, end, t, floor));
     }
     if railing.start != Extension::None
+        && !preceded
         && let Some(t) = forward(points[0], points[1])
     {
         let first = points[0];
@@ -974,6 +1261,9 @@ mod tests {
                 .map(|(p, _)| [p[0], p[1], p[2] + kind.height])
                 .collect(),
             handrail: Vec::new(),
+            preceded: false,
+            next_rail: Vec::new(),
+            next_handrail: Vec::new(),
             kind,
             base: 0.0,
             surface,
@@ -1063,18 +1353,22 @@ mod tests {
         let surface: Vec<Node> = vec![([0.0, 0.0, 0.0], true), ([2.0, 0.0, 1.0], true)];
         r.start = Extension::Horizontal;
         r.end = Extension::ReturnWall;
-        extend(&mut points, &r, &surface, false);
+        extend(&mut points, &r, &surface, false, false);
         assert_eq!(points.first(), Some(&[-0.3, 0.0, 0.9]));
         assert_eq!(points[points.len() - 2], [2.3, 0.0, 1.9]);
         // Left side: the return turns to +y by 0.1 m at the same height.
         assert_eq!(points[points.len() - 1], [2.3, RETURN_LENGTH, 1.9]);
         r.end = Extension::ReturnFloor;
         let mut p2 = vec![[0.0, 0.0, 0.9], [2.0, 0.0, 1.9]];
-        extend(&mut p2, &r, &surface, false);
+        extend(&mut p2, &r, &surface, false, false);
         assert_eq!(p2[p2.len() - 1], [2.3, 0.0, 1.0]);
         // A rail that continues to another one gets no end extension.
         let mut p3 = vec![[0.0, 0.0, 0.9], [2.0, 0.0, 1.9]];
-        extend(&mut p3, &r, &surface, true);
+        extend(&mut p3, &r, &surface, true, false);
+        // A rail that another continues to has no start extension either.
+        let mut p4 = vec![[0.0, 0.0, 0.9], [2.0, 0.0, 1.9]];
+        extend(&mut p4, &r, &surface, false, true);
+        assert_eq!(p4.first(), Some(&[0.0, 0.0, 0.9]));
         assert_eq!(p3.last(), Some(&[2.0, 0.0, 1.9]));
     }
 
@@ -1107,6 +1401,127 @@ mod tests {
             ..RailingType::default()
         };
         assert_eq!(RailingType::from_values(&t.values("T")), Some(t));
+    }
+
+    fn volume_of(points: &[[f64; 3]], section: &[[f64; 2]]) -> f64 {
+        rail_solids(points, section, 0.05)
+            .unwrap()
+            .iter()
+            .map(|s| s.volume())
+            .sum()
+    }
+
+    #[test]
+    fn a_rail_is_swept_with_true_miters_that_keep_the_volume_of_its_center_line() {
+        let square = section(Profile::Square, 0.05, 0.04);
+        let area = 0.05 * 0.04;
+        // A straight bar, a right-angle corner, a bend of the slope and a corner with a slope:
+        // the miter adds on the outside what it takes from the inside, so the volume is the
+        // section times the length of the center line. The old overlap of two bars was larger.
+        for (points, length) in [
+            (vec![[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], 3.0),
+            (vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.5, 0.0]], 3.5),
+            (
+                vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [4.0, 0.0, 1.0]],
+                2.0 + 5.0_f64.sqrt(),
+            ),
+            (
+                vec![
+                    [0.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.5],
+                    [2.0, 2.0, 0.5],
+                    [0.0, 3.0, 0.0],
+                ],
+                4.25_f64.sqrt() + 2.0 + 5.25_f64.sqrt(),
+            ),
+        ] {
+            let v = volume_of(&points, &square);
+            assert!((v - area * length).abs() < 1.0e-9, "{points:?}: {v}");
+        }
+        // A round rail turns the same way (twelve-sided: the same equality).
+        let round = section(Profile::Round, 0.05, 0.05);
+        let flat: f64 = {
+            let n = round.len();
+            (0..n)
+                .map(|k| round[k][0] * round[(k + 1) % n][1] - round[(k + 1) % n][0] * round[k][1])
+                .sum::<f64>()
+                / 2.0
+        };
+        let v = volume_of(&[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.5, 0.0]], &round);
+        assert!((v - flat * 3.5).abs() < 1.0e-9, "{v}");
+        let bars: f64 = rail_bars(
+            &[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.5, 0.0]],
+            &square,
+            0.05,
+        )
+        .unwrap()
+        .iter()
+        .map(|s| s.volume())
+        .sum();
+        assert!(bars > area * 3.5 + 1.0e-6, "the overlap is larger: {bars}");
+    }
+
+    #[test]
+    fn a_rail_that_turns_back_or_has_a_bar_shorter_than_its_miters_is_still_drawn() {
+        let square = section(Profile::Square, 0.05, 0.04);
+        // A hairpin is cut square at the turn: two sweeps.
+        let hairpin = rail_solids(
+            &[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.05, 0.0]],
+            &square,
+            0.05,
+        )
+        .unwrap();
+        assert_eq!(hairpin.len(), 2);
+        // A bar of 1 mm between two 90 degree corners cannot hold both miters: the overlapped
+        // bars take over.
+        let tiny = rail_solids(
+            &[
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.001, 0.0],
+                [2.0, 0.001, 0.0],
+            ],
+            &square,
+            0.05,
+        )
+        .unwrap();
+        assert!(tiny.len() >= 2);
+        // Coincident points are one.
+        assert_eq!(
+            rail_solids(
+                &[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                &square,
+                0.05
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_joins_of_a_hosted_rail_are_landings_and_turns() {
+        let mut d = derived(
+            &[
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [3.0, 0.0, 1.0],
+                [3.0, 0.0, 1.0],
+                [3.0, 2.0, 1.0],
+            ],
+            RailingType::default(),
+        );
+        // A path by path has no transitions: its corners are the author's.
+        assert!(d.transitions().is_empty());
+        d.railing.host = Some(ObjectId::from_u128(2));
+        d.surface.remove(3);
+        let t = d.transitions();
+        // The slope starts at (1, 0), where the heading does not change; at (3, 0) the slope
+        // ends and the path turns.
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].join, t[0].point), (Join::Landing, [1.0, 0.0, 0.0]));
+        assert_eq!(t[1].join, Join::Turn);
+        assert_eq!(t[1].corner, Corner::Miter);
     }
 
     #[test]

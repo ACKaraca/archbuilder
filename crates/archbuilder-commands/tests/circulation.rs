@@ -666,3 +666,103 @@ fn a_railing_on_a_floor_edge_or_boundary_follows_the_floor_and_goes_with_it() {
     assert_eq!(count(&env, RAILING), 3);
     assert!(close(env.railing(chain).length(), 6.0));
 }
+
+fn max_y(d: &Derived) -> f64 {
+    d.solids()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s.vertices().iter().map(|v| v.y))
+        .fold(f64::MIN, f64::max)
+}
+
+#[test]
+fn a_continuing_rail_runs_on_through_the_next_one_which_drops_its_own_start_extension() {
+    let env = Env::new();
+    // A runs along x to (2, 0); B turns up along y from there and has a start extension of its own.
+    let b = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[2.0, 0.0], [2.0, 2.0]], "start_extension": "horizontal"}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let before = env.railing(b);
+    assert_eq!(
+        before.rail[0],
+        [2.0, -0.3, 0.9],
+        "alone, B has its extension"
+    );
+    assert!(!before.preceded);
+    let a = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 0.0], [2.0, 0.0]], "continues_to": b.to_string(),
+                   "end_extension": "horizontal"}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    // A's rail is joined to B's start and has no end extension; B has no start extension.
+    let (da, db) = (env.railing(a), env.railing(b));
+    assert!(db.preceded && !da.preceded);
+    assert_eq!(db.rail[0], [2.0, 0.0, 0.9]);
+    assert_eq!(da.rail.last(), Some(&[2.0, 0.0, 0.9]));
+    // A's rail is mitered at B's first point and runs on to the middle of B's first bar: A's
+    // solids reach y = 1 and no farther (the posts and balusters of A stay at y = 0).
+    assert!(close(max_y(&da), 1.0));
+    // Deleting the continuation clears the reference and B takes its extension back.
+    let invocation = Invocation {
+        seed: 7,
+        selection: vec![a],
+        ..Invocation::new("archbuilder.object.delete", json!({}))
+    };
+    Invoker::new(&env.registry)
+        .invoke(&env.document, &env.session, invocation)
+        .unwrap();
+    assert!(!env.railing(b).preceded);
+    assert_eq!(env.railing(b).rail[0], [2.0, -0.3, 0.9]);
+    env.document.undo().wait().unwrap();
+    assert!(env.railing(b).preceded);
+}
+
+#[test]
+fn hosted_rails_have_transitions_at_landings_and_turns() {
+    let env = Env::new();
+    let made = env
+        .run(
+            "archbuilder.ramp.create",
+            json!({"start": [0.0, 0.0], "to": [6.0, 0.0], "rise": 1.0, "landing_start": 1.0,
+                   "landing_end": 1.5, "railings": ["left"]}),
+        )
+        .unwrap();
+    let rail = made.value["railings"][0].as_str().unwrap().parse().unwrap();
+    // The slope starts and ends at the landings; the heading never changes.
+    let t = env.railing(rail).transitions();
+    assert_eq!(t.len(), 2);
+    assert!(
+        t.iter()
+            .all(|t| t.join == archbuilder_model::railing::Join::Landing)
+    );
+    assert!(close(t[0].point[0], 1.0) && close(t[1].point[0], 7.0));
+    // A railing along a floor's boundary turns at its corners.
+    let floor = env.house();
+    let edge = id_at(
+        &env.run(
+            "archbuilder.railing.create",
+            json!({"host": floor.to_string()}),
+        )
+        .unwrap(),
+        "railing",
+    );
+    let t = env.railing(edge).transitions();
+    assert_eq!(t.len(), 3);
+    assert!(
+        t.iter()
+            .all(|t| t.join == archbuilder_model::railing::Join::Turn)
+    );
+    // The solids of a path with corners are mitered sweeps: one solid per rail, posts and
+    // balusters apart.
+    let solids = env.railing(edge).solids().unwrap();
+    assert!(!solids.is_empty());
+}
