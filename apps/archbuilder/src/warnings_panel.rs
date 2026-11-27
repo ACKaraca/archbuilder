@@ -49,7 +49,7 @@ const ERROR: Message = Message {
 const WARNING: Message = Message {
     message_id: "ab-warnings-severity-warning",
 };
-const KINDS: [(WarningKind, Message); 7] = [
+const KINDS: [(WarningKind, Message); 8] = [
     (
         WarningKind::Stair,
         Message {
@@ -90,6 +90,12 @@ const KINDS: [(WarningKind, Message); 7] = [
         WarningKind::Type,
         Message {
             message_id: "ab-warnings-kind-type",
+        },
+    ),
+    (
+        WarningKind::Datum,
+        Message {
+            message_id: "ab-warnings-kind-datum",
         },
     ),
 ];

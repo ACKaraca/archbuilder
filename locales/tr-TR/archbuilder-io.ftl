@@ -18,3 +18,5 @@ ab-io-command-import-shortcuts-description = Yazılan komut kısayol tablosunu b
 ab-io-loss-stair-not-written = Bir merdiven IFC dosyasında yok: merdivenler, kollar ve korkuluklar henüz yazılamıyor. Üstteki döşemede açtığı boşluk dosyada var.
 ab-io-loss-arc-faceted = Bir yay kenarı veya kemerli üst, iki milimetre içinde düz kirişler olarak yazıldı: buradaki IFC gövdeleri çokyüzlü.
 ab-io-loss-cut-not-applied = Bir şaft veya düşey boşluk, geçtiği elemanın gövdesinden kesilemedi: gövde bütün olarak yazıldı, boşluk dosyada elemanın bir boşluğu olarak yer alıyor.
+ab-io-loss-grid-not-written = Bir aks IFC dosyasında yok: aks çizgileri ve eksenleri henüz yazılamıyor, yerine başka bir varlık koymak kaybı gizlerdi.
+ab-io-loss-datum-not-written = Bir referans düzlemi ya da çalışma düzlemi IFC dosyasında yok: IFC karşılığı olmayan bir çizim yardımcısı.

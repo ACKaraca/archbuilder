@@ -72,6 +72,21 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-stair-not-written",
     };
+    /// A grid: the IFC writer of the foundation has no grid or grid axis entity yet, so the grid
+    /// is left out rather than written as a proxy.
+    pub const GRID_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.grid_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-grid-not-written",
+    };
+    /// A reference plane or work plane: drawing aids with no IFC entity, left out.
+    pub const DATUM_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.datum_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-datum-not-written",
+    };
     /// An arc edge of a boundary or an arched opening, written as chords within the model's
     /// flattening tolerance: IFC bodies here are faceted.
     pub const ARC_FACETED: Reason = Reason {

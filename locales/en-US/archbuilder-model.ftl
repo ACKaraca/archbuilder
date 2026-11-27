@@ -61,3 +61,5 @@ ab-model-ceiling-range = The underside of the ceiling "{ $name }" leaves the hei
 ab-model-ceiling-range-element = The underside of the ceiling "{ $name }" would pass through "{ $over }" above it. Lower the ceiling or the slope.
 
 ab-model-view-range = The range of the plan view "{ $name }" is out of order: the view depth must not be above the bottom, the bottom must be below the cut height and the top above it.
+ab-model-datum-degenerate = The datum "{ $name }" has no usable line or plane: a grid or reference plane must be at least a millimeter long and a work plane needs its datum or three points that are not on one line.
+ab-model-datum-label-duplicate = The label "{ $name }" is used by { $count } grids of the building. Rename one of them.

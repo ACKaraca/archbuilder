@@ -56,6 +56,7 @@ macro_rules! coded {
 
 pub mod ceiling;
 pub mod cleanup;
+pub mod datum;
 pub mod element_type;
 pub mod error;
 pub mod floor;
@@ -196,6 +197,27 @@ pub mod defaults {
             format!("Tavan {n}")
         } else {
             format!("Ceiling {n}")
+        }
+    }
+
+    /// The name of the reference plane numbered `n` in `language`: `Reference plane 3`,
+    /// `Referans düzlemi 3`.
+    #[must_use]
+    pub fn reference_plane(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Referans düzlemi {n}")
+        } else {
+            format!("Reference plane {n}")
+        }
+    }
+
+    /// The name of the work plane numbered `n` in `language`: `Work plane 3`, `Çalışma düzlemi 3`.
+    #[must_use]
+    pub fn work_plane(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çalışma düzlemi {n}")
+        } else {
+            format!("Work plane {n}")
         }
     }
 

@@ -61,3 +61,5 @@ ab-model-ceiling-range = "{ $name }" tavanının alt yüzü katın yüksekliğin
 ab-model-ceiling-range-element = "{ $name }" tavanının alt yüzü üstündeki "{ $over }" öğesinin içinden geçiyor. Tavanı ya da eğimi alçaltın.
 
 ab-model-view-range = "{ $name }" plan görünümünün aralığı sırasız: görünüm derinliği alt sınırın üzerinde olamaz, alt sınır kesme yüksekliğinin altında, üst sınır ise üzerinde olmalıdır.
+ab-model-datum-degenerate = "{ $name }" datumunun kullanılabilir bir çizgisi ya da düzlemi yok: akslar ve referans düzlemleri en az bir milimetre uzunlukta olmalı, çalışma düzlemi için datumu ya da aynı doğru üzerinde olmayan üç nokta gerekir.
+ab-model-datum-label-duplicate = "{ $name }" etiketini binadaki { $count } aks kullanıyor. Birini yeniden adlandırın.

@@ -306,6 +306,18 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-no-ceiling-selected",
     };
+    /// A work plane needs a level, a grid, a reference plane or three points that make a plane.
+    pub const NO_WORK_PLANE: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_work_plane",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-work-plane",
+    };
+    /// A grid or reference plane needs two points, or a wall to take its line from.
+    pub const NO_LINE: ErrorCode = ErrorCode {
+        code: "ab.cmd.no_line",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-no-line",
+    };
     /// No floor, roof or ceiling is named or selected to host a vertical opening.
     pub const NO_HOST_SELECTED: ErrorCode = ErrorCode {
         code: "ab.cmd.no_host_selected",

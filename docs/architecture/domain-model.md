@@ -1181,3 +1181,22 @@ Rules:
 3. Detached drawings and drafting views have no dependency edges into the model.
 4. Annotation anchors in detail layers depend on their anchor element's derived geometry; an
    unresolved anchor sets the annotation state to orphaned without failing the transaction.
+
+## Datums: grids, reference planes and work planes
+
+Three element kinds belong to a building and have no storey: `archbuilder.grid`, `archbuilder.reference_plane` and
+`archbuilder.work_plane`. Records hold authored data only; polylines, extents and planes are derived.
+
+| Kind | Authored fields | Rules |
+|---|---|---|
+| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned` | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
+| Reference plane | name, two points, `strength` (strong, weak, none), `bounded`, `pinned` | A vertical plane. Strong and weak planes are found by snapping; an unbounded plane runs 200 m past its points in plan. Names are unique per building. |
+| Work plane | name, `source` (level, grid, reference plane, points), `target`, three points, `active`, `shown` | At most one is active. A plane that follows a datum is derived from it on every read, so moving the datum moves the plane, and deleting the datum deletes the plane. Three points on a line make no plane and are refused. |
+
+Commands: `archbuilder.grid.create` (two points, or `from_wall`; `bulge` for an arc; `after` or `label`),
+`archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
+and heads). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
+original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
+reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
+Not built yet: multi-segment grids, per-view extents and their propagation, element-face work planes, and elements that store the
+work plane they were sketched on.

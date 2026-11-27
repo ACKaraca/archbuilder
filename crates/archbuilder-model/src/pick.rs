@@ -202,6 +202,8 @@ pub fn stack(
         .collect();
     levels.sort_by(|a, b| a.0.total_cmp(&b.0));
     out.extend(levels.into_iter().map(|(_, id)| id));
+    // Datum lines are thin: they are picked where nothing else is.
+    out.extend(crate::datum::pick(snapshot, at, aperture));
     out.dedup();
     let mut seen = std::collections::BTreeSet::new();
     out.retain(|id| seen.insert(*id));
@@ -270,6 +272,7 @@ fn host_top(snapshot: &Snapshot, host: &std::sync::Arc<arc_doc::Object>) -> f64 
 
 /// The closed outlines that mark `id` for the hover: the loops of its plan shape as 3D points.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm per pickable kind")]
 pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f64; 3]>> {
     let Some(object) = spatial::get(snapshot, id) else {
         return Vec::new();
@@ -328,6 +331,9 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         Some(crate::types::STAIR) => crate::stair::Placed::of(snapshot, &object)
             .map(|p| vec![close(&p.outline(), p.base)])
             .unwrap_or_default(),
+        Some(crate::types::GRID | crate::types::REFERENCE_PLANE) => {
+            crate::datum::outline(snapshot, &object)
+        }
         Some(LEVEL) => {
             let z = crate::types::meters(&object.values, level::ELEVATION).unwrap_or(0.0);
             let (hx, hy) = (LEVEL_HALF[0], LEVEL_HALF[1]);

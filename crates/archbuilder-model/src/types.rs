@@ -81,6 +81,16 @@ pub const WINDOW_TYPE: &str = "archbuilder.window_type";
 /// A roof type: layers and a core, from the top down; owned by the project.
 pub const ROOF_TYPE: &str = "archbuilder.roof_type";
 
+/// A grid line: a labeled line (straight or an arc) drawn in plan views and in 3D, with an
+/// extent across levels. Contained in a building.
+pub const GRID: &str = "archbuilder.grid";
+/// A named reference plane: a vertical plane through a line, bounded or not, with a reference
+/// strength. Contained in a building.
+pub const REFERENCE_PLANE: &str = "archbuilder.reference_plane";
+/// A work plane: the plane placement and sketching work on, from a level, a grid, a reference
+/// plane or three points. Contained in a building.
+pub const WORK_PLANE: &str = "archbuilder.work_plane";
+
 /// The element types, in the order of [`crate::element_type::TypeKind::ALL`].
 pub const TYPE_KEYS: [&str; 6] = [
     WALL_TYPE,
@@ -93,7 +103,7 @@ pub const TYPE_KEYS: [&str; 6] = [
 
 /// The building elements: what is selected, copied, hidden, moved and deleted as an object of a
 /// storey (doors and windows through their wall). One list, so a new kind is added once.
-pub const ELEMENTS: [&str; 11] = [
+pub const ELEMENTS: [&str; 13] = [
     WALL,
     DOOR,
     WINDOW,
@@ -105,7 +115,18 @@ pub const ELEMENTS: [&str; 11] = [
     WALL_OPENING,
     SHAFT,
     VERTICAL_OPENING,
+    GRID,
+    REFERENCE_PLANE,
 ];
+
+/// The datums a building owns directly: they have no storey and span levels.
+pub const DATUMS: [&str; 3] = [GRID, REFERENCE_PLANE, WORK_PLANE];
+
+/// Whether `key` is one of [`DATUMS`].
+#[must_use]
+pub fn is_datum(key: &str) -> bool {
+    DATUMS.contains(&key)
+}
 
 /// The elements a storey owns directly.
 pub const STOREY_ELEMENTS: [&str; 7] = [WALL, FLOOR, ROOM, STAIR, ROOF, CEILING, SHAFT];
@@ -126,7 +147,7 @@ pub fn is_storey_element(key: &str) -> bool {
 }
 
 /// Every type key of the model, from the root down.
-pub const KEYS: [&str; 23] = [
+pub const KEYS: [&str; 26] = [
     PROJECT,
     SITE,
     BUILDING,
@@ -150,6 +171,9 @@ pub const KEYS: [&str; 23] = [
     VERTICAL_OPENING,
     CEILING_TYPE,
     PLAN_VIEW,
+    GRID,
+    REFERENCE_PLANE,
+    WORK_PLANE,
 ];
 
 /// The range of an insert's distance along its wall, in meters.
@@ -573,6 +597,69 @@ pub mod shaft {
     pub const TOP_LEVEL: usize = 7;
 }
 
+/// Field positions of `archbuilder.grid`.
+pub mod grid {
+    /// The label.
+    pub const NAME: usize = 0;
+    /// The x coordinate of the start, in meters.
+    pub const START_X: usize = 1;
+    /// The y coordinate of the start, in meters.
+    pub const START_Y: usize = 2;
+    /// The x coordinate of the end, in meters.
+    pub const END_X: usize = 3;
+    /// The y coordinate of the end, in meters.
+    pub const END_Y: usize = 4;
+    /// The bulge of the line: 0 for a straight line, else the tangent of a quarter of the arc's
+    /// included angle (as a floor edge).
+    pub const BULGE: usize = 5;
+    /// Whether the start end shows its head (bubble and label).
+    pub const HEAD_START: usize = 6;
+    /// Whether the end shows its head.
+    pub const HEAD_END: usize = 7;
+    /// The lowest level the grid reaches; the lowest level of the building when absent.
+    pub const BOTTOM_LEVEL: usize = 8;
+    /// The highest level the grid reaches; the highest level of the building when absent.
+    pub const TOP_LEVEL: usize = 9;
+    /// Whether the grid is pinned.
+    pub const PINNED: usize = 10;
+}
+
+/// Field positions of `archbuilder.reference_plane`.
+pub mod reference_plane {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// The x coordinate of the start, in meters.
+    pub const START_X: usize = 1;
+    /// The y coordinate of the start, in meters.
+    pub const START_Y: usize = 2;
+    /// The x coordinate of the end, in meters.
+    pub const END_X: usize = 3;
+    /// The y coordinate of the end, in meters.
+    pub const END_Y: usize = 4;
+    /// The reference strength ([`crate::datum::Strength`] code).
+    pub const STRENGTH: usize = 5;
+    /// Whether the plane ends at its two points; else it runs on without end.
+    pub const BOUNDED: usize = 6;
+    /// Whether the plane is pinned.
+    pub const PINNED: usize = 7;
+}
+
+/// Field positions of `archbuilder.work_plane`.
+pub mod work_plane {
+    /// The name.
+    pub const NAME: usize = 0;
+    /// Where the plane comes from ([`crate::datum::Source`] code).
+    pub const SOURCE: usize = 1;
+    /// The level, grid or reference plane the plane follows; absent for three points.
+    pub const TARGET: usize = 2;
+    /// The three points of a plane from points: `x`, `y`, `z` of each, in meters, from here.
+    pub const POINTS: usize = 3;
+    /// Whether this is the active plane: at most one is.
+    pub const ACTIVE: usize = 12;
+    /// Whether the plane is displayed.
+    pub const SHOWN: usize = 13;
+}
+
 /// Field positions of `archbuilder.vertical_opening`.
 pub mod vertical_opening {
     /// The name.
@@ -847,6 +934,9 @@ pub fn register(registry: &mut TypeRegistry) -> Result<()> {
         (PLAN_VIEW, plan_view_fields()),
         (CEILING, ceiling_fields()),
         (WALL_OPENING, wall_opening_fields()),
+        (GRID, grid_fields()),
+        (REFERENCE_PLANE, reference_plane_fields()),
+        (WORK_PLANE, work_plane_fields()),
         (SHAFT, shaft_fields()),
         (VERTICAL_OPENING, vertical_opening_fields()),
         (CEILING_TYPE, crate::element_type::ceiling_type_fields()),
@@ -1050,6 +1140,100 @@ fn shaft_fields() -> Vec<FieldDecl> {
     ]
 }
 
+fn bool_field(name: &str, on: bool) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Bool)
+        .with_default(Value::Bool(on))
+        .in_aspect("graphics")
+}
+
+/// The optional level a grid's extent ends at; dropped when the level is deleted.
+fn extent_field(name: &str) -> FieldDecl {
+    FieldDecl::new(name, ValueType::Reference(optional_level()))
+        .optional()
+        .in_aspect("geometry")
+}
+
+fn grid_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("start_x", Some(real(COORDINATE_RANGE))),
+        length_field("start_y", Some(real(COORDINATE_RANGE))),
+        length_field("end_x", Some(real(COORDINATE_RANGE))),
+        length_field("end_y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("bulge", ValueType::F64)
+            .with_default(Value::F64(0.0))
+            .with_bound(real((-crate::floor::MAX_BULGE, crate::floor::MAX_BULGE)))
+            .in_aspect("geometry"),
+        bool_field("head_start", true),
+        bool_field("head_end", true),
+        extent_field("bottom_level"),
+        extent_field("top_level"),
+        pinned_field(0),
+    ]
+}
+
+fn strength_variants() -> ValueType {
+    ValueType::Enum(
+        crate::datum::Strength::ALL
+            .iter()
+            .map(|s| EnumVariant::new(s.name(), s.code()))
+            .collect(),
+    )
+}
+
+fn reference_plane_fields() -> Vec<FieldDecl> {
+    vec![
+        name_field("identity"),
+        length_field("start_x", Some(real(COORDINATE_RANGE))),
+        length_field("start_y", Some(real(COORDINATE_RANGE))),
+        length_field("end_x", Some(real(COORDINATE_RANGE))),
+        length_field("end_y", Some(real(COORDINATE_RANGE))),
+        FieldDecl::new("strength", strength_variants())
+            .with_default(Value::Enum(crate::datum::Strength::Weak.code()))
+            .in_aspect("identity"),
+        bool_field("bounded", true).in_aspect("geometry"),
+        pinned_field(0),
+    ]
+}
+
+fn work_plane_fields() -> Vec<FieldDecl> {
+    let mut target = reference_to(LEVEL);
+    target.targets = [LEVEL, GRID, REFERENCE_PLANE]
+        .iter()
+        .filter_map(|k| TypeKey::new(*k).ok())
+        .collect();
+    // A plane that follows a datum goes with it.
+    target.rule.on_delete = OnDelete::Cascade;
+    target.rule.cardinality = Cardinality::Optional;
+    let mut fields = vec![
+        name_field("identity"),
+        FieldDecl::new(
+            "source",
+            ValueType::Enum(
+                crate::datum::Source::ALL
+                    .iter()
+                    .map(|s| EnumVariant::new(s.name(), s.code()))
+                    .collect(),
+            ),
+        )
+        .with_default(Value::Enum(crate::datum::Source::Level.code()))
+        .in_aspect("geometry"),
+        FieldDecl::new("target", ValueType::Reference(target))
+            .optional()
+            .in_aspect("geometry"),
+    ];
+    for point in 1..=3 {
+        for axis in ["x", "y", "z"] {
+            fields.push(
+                length_field(&format!("p{point}_{axis}"), Some(real(COORDINATE_RANGE))).optional(),
+            );
+        }
+    }
+    fields.push(bool_field("active", false).in_aspect("identity"));
+    fields.push(bool_field("shown", false));
+    fields
+}
+
 fn vertical_opening_fields() -> Vec<FieldDecl> {
     vec![
         name_field("identity"),
@@ -1210,6 +1394,8 @@ pub fn pinned_slot(key: &str) -> Option<usize> {
         WALL_OPENING => wall_opening::PINNED,
         SHAFT => shaft::PINNED,
         VERTICAL_OPENING => vertical_opening::PINNED,
+        GRID => grid::PINNED,
+        REFERENCE_PLANE => reference_plane::PINNED,
         _ => return None,
     })
 }

@@ -14,6 +14,7 @@ use arc_app::shell::{
 };
 use arc_base::error::Value;
 use arc_ui::Intent;
+use archbuilder_commands::datum::{GRID_CREATE, REFERENCE_PLANE_CREATE, WORK_PLANE_SET};
 use archbuilder_commands::edit;
 use archbuilder_commands::floor::FLOOR_CREATE;
 use archbuilder_commands::insert::{
@@ -270,6 +271,46 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             ROOM_PLACE_ALL,
                             "room-all",
                             ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-datum",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-grid",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-grid-hint",
+                            }),
+                            GRID_CREATE,
+                            "grid",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-reference-plane",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-reference-plane-hint",
+                            }),
+                            REFERENCE_PLANE_CREATE,
+                            "reference-plane",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-work-plane",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-work-plane-hint",
+                            }),
+                            WORK_PLANE_SET,
+                            "work-plane",
+                            ButtonSize::Large,
                         ),
                     ],
                 ),
@@ -1082,6 +1123,9 @@ pub fn icons() -> Vec<(String, String)> {
         "opening-shaft",
         "opening-vertical",
         "stair",
+        "grid",
+        "reference-plane",
+        "work-plane",
         "room",
         "room-all",
         "storey-add",
