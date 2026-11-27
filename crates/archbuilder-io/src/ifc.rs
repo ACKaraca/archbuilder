@@ -33,6 +33,7 @@ use crate::error::{codes, reasons};
 
 mod curtain;
 mod datum;
+mod project;
 mod stairs;
 
 /// The storey's own frame: the origin, the x axis along the storey's.
@@ -1309,7 +1310,16 @@ pub fn export_ifc(snapshot: &Snapshot, options: &ExportOptions) -> Result<Export
         originating_system: options.application.clone(),
         ..WriteOptions::default()
     };
-    let written = write(&model, &write_options)?;
+    let mut written = write(&model, &write_options)?;
+    // The project information the writer has no attributes for.
+    let info = project::Info::of(&project, &building);
+    match project::apply(&written.bytes, &info, project.id.as_u128()) {
+        Some(bytes) => written.bytes = bytes,
+        None => mapper.lose(reasons::PROJECT_INFO_NOT_WRITTEN, "IFCPROJECT", &project),
+    }
+    if info.issue_date.is_some() {
+        mapper.lose(reasons::ISSUE_DATE_NOT_WRITTEN, "IFCPROJECT", &project);
+    }
     let mut report = written.report;
     report.header.file_name = Some(options.file_name.clone());
     report.header.application = Some(options.application.clone());

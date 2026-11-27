@@ -88,6 +88,22 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-georeference-not-written",
     };
+    /// The project information could not be added to the IFC file: the file is not the shape the
+    /// writer produces, so the project's long name, phase, addresses, actors and building
+    /// properties are left out.
+    pub const PROJECT_INFO_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.project_info_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-project-info-not-written",
+    };
+    /// The issue date of the project: IFC4 has no attribute for it, so it is left out.
+    pub const ISSUE_DATE_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.issue_date_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Info,
+        message_id: "ab-io-loss-issue-date-not-written",
+    };
     /// A reference plane or work plane: a drawing aid with no IFC building element, left out.
     pub const DATUM_NOT_WRITTEN: Reason = Reason {
         code: "ab.io.ifc.datum_not_written",

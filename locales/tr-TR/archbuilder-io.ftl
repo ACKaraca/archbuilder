@@ -29,3 +29,5 @@ ab-io-loss-selection-set-not-written = Bir seçim kümesi IFC dosyasında yok: e
 ab-io-loss-grid-one-direction = Bir aks çizgisi IFC dosyasında yok: IFC aksı iki yönde çizgi ister, bu yapının aksları tek yönde.
 ab-io-loss-grid-multi-segment = Birden çok parçalı bir aks çizgisi IFC dosyasında yok: IFC aks ekseni şimdilik yalnızca tek doğru ya da tek yay olarak yazılabiliyor ve uçlarına kısaltmak onu yanlış yere koyar.
 ab-io-loss-curtain-panel-filled = Bir perde duvarın panelleri arasında { $count } kapı veya pencere var: her biri perde duvarın parçası olarak değil, perde duvarda açılan bir boşluğu dolduran kapı veya pencere olarak yazıldı.
+ab-io-loss-project-info-not-written = Proje bilgisi IFC dosyasına eklenemedi: uzun ad, aşama, adresler, aktörler ve yapı özellikleri dışarıda kaldı.
+ab-io-loss-issue-date-not-written = Projenin yayın tarihi IFC dosyasında yok: IFC4’te bunun için bir öznitelik bulunmaz.

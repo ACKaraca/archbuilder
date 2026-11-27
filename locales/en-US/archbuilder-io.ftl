@@ -29,3 +29,5 @@ ab-io-loss-selection-set-not-written = A selection set is not in the IFC file: i
 ab-io-loss-grid-one-direction = A grid line is not in the IFC file: an IFC grid needs lines in two directions, and the grid lines of this building run in one.
 ab-io-loss-grid-multi-segment = A grid line of several segments is not in the IFC file: an IFC grid axis can be written only as one line or one arc so far, and shortening it to its ends would misplace it.
 ab-io-loss-curtain-panel-filled = A curtain wall has { $count } doors or windows as panels: each is written as a door or window that fills an opening in the curtain wall, not as a part of it.
+ab-io-loss-project-info-not-written = The project information could not be added to the IFC file: its long name, phase, addresses, actors and building properties are left out.
+ab-io-loss-issue-date-not-written = The issue date of the project is not in the IFC file: IFC4 has no attribute for it.
