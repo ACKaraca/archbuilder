@@ -78,6 +78,23 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         "archbuilder.wall.create",
         json!({"start": [20.0, 0.0], "end": [24.0, 0.0], "type": cw["type"]}),
     );
+    // An arc wall, a slanted wall and a curved curtain wall.
+    r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 5.0], "end": [26.0, 5.0], "bulge": 0.4}),
+    );
+    let slanted = r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 8.0], "end": [24.0, 8.0]}),
+    );
+    r(
+        "archbuilder.wall.set_lean",
+        json!({"walls": [slanted["wall"]], "degrees": 10.0}),
+    );
+    r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 12.0], "end": [26.0, 12.0], "type": cw["type"], "bulge": 0.3}),
+    );
     let floor = r(
         "archbuilder.floor.create",
         json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
