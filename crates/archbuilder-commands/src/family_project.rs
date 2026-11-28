@@ -635,9 +635,15 @@ fn plan_update(
         .into_iter()
         .filter(|t| t.family == have.record)
         .collect();
-    let comps = components_of(snapshot, have.record);
+    // The components of group definitions take the new values too, so that the instances they
+    // generate stay what their definition says.
+    let comps: Vec<Component> = spatial::objects_raw(snapshot, types::COMPONENT)
+        .iter()
+        .filter_map(|o| Component::of(o))
+        .filter(|c| mine.iter().any(|t| t.id == c.family_type))
+        .collect();
     report.types = mine.len();
-    report.instances = comps.len();
+    report.instances = components_of(snapshot, have.record).len();
     let mut type_updates = Vec::new();
     let mut component_updates = Vec::new();
     let carried_type: BTreeMap<ObjectId, BTreeMap<String, Stored>> = mine
@@ -789,10 +795,15 @@ fn apply_update(
         ctx.txn()?
             .modify(*id, FieldPath::new("values"), values_value(values))?;
     }
+    let mut before = BTreeMap::new();
     for (id, values) in &plan.components {
+        if let Some(object) = spatial::get(ctx.txn()?.snapshot(), *id) {
+            before.insert(*id, archbuilder_model::group::fingerprint(&object.values));
+        }
         ctx.txn()?
             .modify(*id, FieldPath::new("values"), values_value(values))?;
     }
+    crate::group::accept_derived(ctx, &before)?;
     let mine: BTreeSet<String> = family_types(ctx.snapshot())
         .into_iter()
         .filter(|t| t.family == have.record)

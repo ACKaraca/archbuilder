@@ -1044,3 +1044,61 @@ fn an_edited_definition_commits_as_the_next_version_and_a_starter_loads_as_a_fam
             .any(|f| f.name == "Door" && f.version.to_string() == "1.0.0")
     );
 }
+
+#[test]
+fn an_update_reaches_the_components_of_a_group_definition() {
+    let env = Env::new("update-group", true);
+    env.load(
+        &env.package("a.archbfam", &[(&table(), "1.0.0")]),
+        json!({}),
+    )
+    .unwrap();
+    let ty = type_id(&env, "1800x900");
+    let id = env
+        .run(
+            "archbuilder.component.place",
+            json!({"type": ty, "point": [0, 0], "values": {"LegSize": 0.08}}),
+        )
+        .unwrap()
+        .value["component"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let group = env
+        .run("archbuilder.group.create", json!({"ids": [id]}))
+        .unwrap()
+        .value["group"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let storey =
+        archbuilder_model::spatial::objects(&env.snapshot(), archbuilder_model::types::STOREY)[0]
+            .id
+            .to_string();
+    let place = |x: f64| {
+        env.run(
+            "archbuilder.group.place",
+            json!({"group": group, "storey": storey, "origin": [x, 0.0]}),
+        )
+        .unwrap()
+        .value["instance"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let instance = place(10.0);
+    let major = env.package("d.archbfam", &[(&variant(table(), renamed), "2.0.0")]);
+    env.run(
+        "archbuilder.family.update",
+        json!({"family": "Table", "path": major}),
+    )
+    .unwrap();
+    let snapshot = env.snapshot();
+    let member = archbuilder_model::group::members(&snapshot, group.parse().unwrap()).remove(0);
+    let values = loaded::Component::of(&member.object).unwrap().values;
+    assert!(values.contains_key("Leg") && !values.contains_key("LegSize"));
+    // The update is no direct edit: the group regenerates and places again.
+    env.run("archbuilder.group.edit", json!({"instance": instance}))
+        .unwrap();
+    place(20.0);
+}
