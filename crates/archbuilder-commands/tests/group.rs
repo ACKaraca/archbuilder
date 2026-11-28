@@ -493,3 +493,35 @@ fn every_group_command_undoes_to_the_exact_prior_state() {
         &[],
     );
 }
+
+#[test]
+fn a_type_that_only_a_definition_uses_is_not_purged() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    let wall = env.wall_on(ground, [0.0, 0.0], [4.0, 0.0]);
+    let wall_type =
+        match &spatial::get(&env.snapshot(), wall).unwrap().values[types::wall::WALL_TYPE] {
+            Some(arc_doc::Value::Reference(id)) => *id,
+            other => panic!("{other:?}"),
+        };
+    group_all(&env, "Unit");
+    env.run("archbuilder.object.delete", json!({}), &[wall])
+        .unwrap();
+    // A wall of another type, so that the first wall type is not kept as the last one in use.
+    env.ok(
+        "archbuilder.wall.create",
+        json!({"storey": ground.to_string(), "start": [0.0, 5.0], "end": [4.0, 5.0],
+            "type": "Interior partition 100"}),
+    );
+    let offered = env.ok("archbuilder.project.purge", json!({"preview": true}));
+    assert!(
+        offered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["id"] != wall_type.to_string()),
+        "the definition's wall uses it"
+    );
+    env.ok("archbuilder.project.purge", json!({}));
+    assert!(spatial::get(&env.snapshot(), wall_type).is_some());
+}

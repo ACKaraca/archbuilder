@@ -332,7 +332,9 @@ pub(crate) fn referrers(
     }
     let mut out = BTreeMap::new();
     for decl in snapshot.registry().iter() {
-        for object in spatial::objects(snapshot, decl.key.as_str()) {
+        // The members of group definitions are users too: they are not in the building, but
+        // their types must stay for the instances they generate.
+        for object in spatial::objects_raw(snapshot, decl.key.as_str()) {
             for value in object.values.iter().flatten() {
                 scan(value, object.id, targets, &mut out);
             }
