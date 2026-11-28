@@ -36,6 +36,26 @@ use crate::structure::{create, language};
 /// The most items a clipboard holds.
 pub const MAX_ITEMS: usize = 20_000;
 
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
+}
+
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
+        .collect()
+}
+
 fn encode(value: &Option<Value>) -> Json {
     let Some(value) = value else {
         return Json::Null;
@@ -52,6 +72,8 @@ fn encode(value: &Option<Value>) -> Json {
             json!({ "l": items.iter().map(|v| encode(&Some(v.clone()))).collect::<Vec<_>>() })
         }
         Value::Record(fields) => json!({ "c": fields.iter().map(encode).collect::<Vec<_>>() }),
+        // A foreign element's mesh: without it the paste has no shape to move.
+        Value::Geometry(bytes) => json!({ "g": hex(&bytes.0) }),
         _ => Json::Null,
     }
 }
@@ -69,6 +91,7 @@ fn decode(json: &Json) -> Option<Value> {
         "r" => Value::Reference(v.as_str()?.parse().ok()?),
         "l" => Value::List(v.as_array()?.iter().filter_map(decode).collect()),
         "c" => Value::Record(v.as_array()?.iter().map(decode).collect()),
+        "g" => Value::Geometry(arc_doc::GeometryBytes(unhex(v.as_str()?)?)),
         _ => return None,
     })
 }

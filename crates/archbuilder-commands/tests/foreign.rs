@@ -214,6 +214,15 @@ fn a_foreign_element_is_picked_moved_copied_pasted_hidden_by_kind_and_deleted_wi
     assert_eq!(env.bounds(paste).0[0], 15.0);
     env.undo();
     assert_eq!(env.foreign(), vec![id]);
+    // The clipboard content (another document's paste) carries the mesh too.
+    let pasted = env.ok(
+        "archbuilder.clipboard.paste",
+        json!({"content": content, "displacement": [10.0, 0.0], "storey": env.storey()}),
+        &[],
+    );
+    let paste: ObjectId = pasted["created"][0].as_str().unwrap().parse().unwrap();
+    assert_eq!(env.bounds(paste).0[0], 15.0);
+    env.undo();
 
     // Delete takes the element alone, in one step, and the storey stays.
     let storeys = spatial::objects(&env.snapshot(), STOREY).len();
