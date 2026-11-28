@@ -23,6 +23,7 @@ use arc_doc::{
 
 use crate::error::codes;
 use crate::insert::{Kind, Operation};
+use crate::roof::RafterCut;
 use crate::types::{
     self, CEILING, CEILING_TYPE, DOOR, DOOR_TYPE, FLOOR, FLOOR_TYPE, FRAME_DEPTH_RANGE,
     FRAME_WIDTH_RANGE, INSERT_HEIGHT_RANGE, INSERT_WIDTH_RANGE, NAME_BYTES, ROOF, ROOF_TYPE,
@@ -108,17 +109,20 @@ pub enum TypeKind {
     Roof,
     /// Ceiling types.
     Ceiling,
+    /// Family types (loaded families, ADR 0009).
+    Family,
 }
 
 impl TypeKind {
-    /// Every kind, in the order of [`types::TYPE_KEYS`].
-    pub const ALL: [Self; 6] = [
+    /// Every kind, in the order of [`types::TYPE_KEYS`], then the family types.
+    pub const ALL: [Self; 7] = [
         Self::Wall,
         Self::Floor,
         Self::Door,
         Self::Window,
         Self::Roof,
         Self::Ceiling,
+        Self::Family,
     ];
 
     /// The key of the type records.
@@ -131,6 +135,7 @@ impl TypeKind {
             Self::Window => WINDOW_TYPE,
             Self::Roof => ROOF_TYPE,
             Self::Ceiling => CEILING_TYPE,
+            Self::Family => types::FAMILY_TYPE,
         }
     }
 
@@ -144,6 +149,7 @@ impl TypeKind {
             Self::Window => WINDOW,
             Self::Roof => ROOF,
             Self::Ceiling => CEILING,
+            Self::Family => types::COMPONENT,
         }
     }
 
@@ -168,6 +174,7 @@ impl TypeKind {
             Self::Door | Self::Window => types::insert::INSERT_TYPE,
             Self::Roof => types::roof::ROOF_TYPE,
             Self::Ceiling => types::ceiling::CEILING_TYPE,
+            Self::Family => types::component::FAMILY_TYPE,
         }
     }
 
@@ -180,6 +187,7 @@ impl TypeKind {
             Self::Door | Self::Window => "insert_type",
             Self::Roof => "roof_type",
             Self::Ceiling => "ceiling_type",
+            Self::Family => "family_type",
         }
     }
 
@@ -195,7 +203,7 @@ impl TypeKind {
         match self {
             Self::Door => Some(Kind::Door),
             Self::Window => Some(Kind::Window),
-            Self::Wall | Self::Floor | Self::Roof | Self::Ceiling => None,
+            Self::Wall | Self::Floor | Self::Roof | Self::Ceiling | Self::Family => None,
         }
     }
 }
@@ -607,6 +615,15 @@ pub fn instances(snapshot: &Snapshot, kind: TypeKind, id: ObjectId) -> Vec<Arc<O
         .collect()
 }
 
+/// [`instances`] with the members of group definitions.
+#[must_use]
+pub fn instances_raw(snapshot: &Snapshot, kind: TypeKind, id: ObjectId) -> Vec<Arc<Object>> {
+    crate::spatial::objects_raw(snapshot, kind.instance_key())
+        .into_iter()
+        .filter(|o| type_id(kind, &o.values) == Some(id))
+        .collect()
+}
+
 /// The values a type of `kind` (its record values `values`) decides on its instances: the field
 /// position, the field name and the value. Empty when the record cannot be read.
 #[must_use]
@@ -673,6 +690,8 @@ pub fn copies(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, &'static 
                 ]
             })
             .unwrap_or_default(),
+        // A family instance reads its type at evaluation; nothing is copied (ADR 0009).
+        TypeKind::Family => Vec::new(),
     }
 }
 
@@ -686,6 +705,7 @@ pub fn is_copied(kind: TypeKind, field: &str) -> bool {
             field,
             "width" | "height" | "frame_width" | "frame_depth" | "operation"
         ),
+        TypeKind::Family => false,
     }
 }
 
@@ -811,7 +831,108 @@ pub fn wall_type_fields() -> Vec<FieldDecl> {
         wrap_field("wrap_inserts"),
     ]);
     fields.extend(crate::curtain::type_fields());
+    fields.push(stack_field());
     fields
+}
+
+/// The position of the stack of a stacked wall type in the type record (appended in schema 1.6).
+pub const STACK: usize = 33;
+/// The most segments of a stacked wall type.
+pub const MAX_STACK: usize = 16;
+
+/// One segment of a stacked wall type: the wall type that fills it and its height, which is 0
+/// for the one variable segment.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StackEntry {
+    /// The type of the segment.
+    pub type_id: ObjectId,
+    /// The fixed height in meters; 0 for the variable segment.
+    pub height: f64,
+}
+
+/// The declaration of the stack of a wall type.
+#[must_use]
+pub fn stack_field() -> FieldDecl {
+    FieldDecl::new(
+        "stack",
+        ValueType::List(Box::new(ValueType::Record(vec![
+            FieldDecl::new("type", ValueType::Reference(types::reference_to(WALL_TYPE))),
+            types::length_field("height", Some(types::real((0.0, types::HEIGHT_RANGE.1)))),
+        ]))),
+    )
+    .with_bound(Bound::Length {
+        max: MAX_STACK as u64,
+    })
+    .optional()
+    .in_aspect("data")
+    .since_minor(6)
+}
+
+impl StackEntry {
+    /// The stack of a wall type record, from the base up; empty for a type that is not stacked.
+    #[must_use]
+    pub fn of(values: &[Option<Value>]) -> Vec<Self> {
+        let Some(Some(Value::List(items))) = values.get(STACK) else {
+            return Vec::new();
+        };
+        items
+            .iter()
+            .take(MAX_STACK)
+            .filter_map(|item| {
+                let Value::Record(f) = item else { return None };
+                let Some(Some(Value::Reference(id))) = f.first() else {
+                    return None;
+                };
+                Some(Self {
+                    type_id: *id,
+                    height: types::meters(f, 1)?,
+                })
+            })
+            .collect()
+    }
+
+    /// The records of a stack, for the type's field.
+    #[must_use]
+    pub fn value(stack: &[Self]) -> Value {
+        Value::List(
+            stack
+                .iter()
+                .map(|e| {
+                    Value::Record(vec![
+                        Some(Value::Reference(e.type_id)),
+                        Some(types::length(e.height)),
+                    ])
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The height ranges of the segments of a stack in a wall `height` high, from the base: each
+/// fixed segment its height, the variable one the rest. `None` when the stack has no single
+/// variable segment, fewer than two segments, or the rest is under 1 mm.
+#[must_use]
+pub fn stack_ranges(stack: &[StackEntry], height: f64) -> Option<Vec<(f64, f64)>> {
+    let variable = stack.iter().filter(|e| e.height <= 0.0).count();
+    if stack.len() < 2 || variable != 1 {
+        return None;
+    }
+    let fixed: f64 = stack.iter().map(|e| e.height).sum();
+    let rest = height - fixed;
+    if rest < 1.0e-3 {
+        return None;
+    }
+    let mut at = 0.0;
+    Some(
+        stack
+            .iter()
+            .map(|e| {
+                let h = if e.height <= 0.0 { rest } else { e.height };
+                at += h;
+                (at - h, at)
+            })
+            .collect(),
+    )
 }
 
 /// A wrapping setting of a wall type, appended in schema 1.1.
@@ -829,6 +950,28 @@ fn wrap_field(name: &str) -> FieldDecl {
 #[must_use]
 pub fn floor_type_fields() -> Vec<FieldDecl> {
     layered_fields()
+}
+
+/// The fields of `archbuilder.roof_type`: the layered fields, then the optional `rafter_cut` and
+/// `fascia_depth` (schema 1.1) that shape the eave end of every roof of the type.
+#[must_use]
+pub fn roof_type_fields() -> Vec<FieldDecl> {
+    let mut fields = layered_fields();
+    fields.extend([
+        FieldDecl::new(
+            "rafter_cut",
+            variants(RafterCut::ALL.iter().map(|c| (c.name(), c.code()))),
+        )
+        .with_default(Value::Enum(RafterCut::Plumb.code()))
+        .optional()
+        .in_aspect("geometry")
+        .since_minor(1),
+        types::length_field("fascia_depth", Some(types::real(types::FASCIA_DEPTH_RANGE)))
+            .with_default(types::length(crate::roof::DEFAULT_FASCIA_DEPTH))
+            .optional()
+            .since_minor(1),
+    ]);
+    fields
 }
 
 /// The fields of `archbuilder.ceiling_type`: the layered fields, the height of a new ceiling and

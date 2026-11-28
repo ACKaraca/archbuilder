@@ -1,5 +1,6 @@
-//! Which plan view each tab shows, and the temporary display state laid over it. The 3D view is
-//! the default (no plan view); opening a plan view makes it current. The state is the
+//! Which plan view or model view each tab shows, and the temporary display state laid over it.
+//! The default 3D view is the default (no view); opening a plan view or a model view (a saved 3D
+//! view, a section, an elevation) makes it current. The state is the
 //! application's, not the document's: it is read by the outliner, the viewport header, the
 //! controller, the overlays and the extractor (on the extraction workers), which run in different
 //! places, so it lives here, keyed by tab and by view. Only an open view is drawn
@@ -55,6 +56,13 @@ pub fn is_open_in(snapshot: &Snapshot, view: ObjectId) -> bool {
     open()
         .into_iter()
         .any(|id| resolve(snapshot, id) == Some(view))
+}
+
+/// The model view (a saved 3D view, a section or an elevation) `tab` shows in `snapshot`; `None`
+/// for a plan view, the default 3D view or a model view that is gone.
+#[must_use]
+pub fn model_in(tab: TabId, snapshot: &Snapshot) -> Option<ObjectId> {
+    current(tab).filter(|id| archbuilder_model::model_view::is_model_view(snapshot, *id))
 }
 
 /// The plan views some tab holds, as opened (resolve them with [`resolve`]).

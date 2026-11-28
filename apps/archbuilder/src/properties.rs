@@ -5,18 +5,22 @@
 //! intent for `archbuilder.property.set`.
 
 use arc_app::shell::{Action, Panel, PanelContext};
-use arc_base::{Dimension, DisplayUnits};
+use arc_base::Dimension;
 use arc_doc::schema::FieldDecl;
 use arc_doc::{Bound, Object, Snapshot, Value, ValueType};
 use arc_ui::egui::{ScrollArea, Ui};
 use arc_ui::{GridContext, Intent, Localize, PropertyGrid, PropertyModel, PropertyObject};
+use archbuilder_commands::family_project::VALUE_FIELD as FAMILY_VALUE_FIELD;
+use archbuilder_commands::project_parameter::FIELD_PREFIX as PARAMETER_FIELD;
 use archbuilder_commands::structure::PROPERTY_SET;
 use archbuilder_model::element_type::{self as et, TypeKind};
+use archbuilder_model::expr::{DataType, Evaluated, Stored};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{
     self, BUILDING, DOOR, ELEVATION_RANGE, FLOOR, LEVEL, PROJECT, ROOF, ROOM, SITE, STAIR, STOREY,
     WALL, WINDOW, level, storey,
 };
+use archbuilder_model::units::UnitKind;
 use archbuilder_model::view::PlanView;
 
 /// A message of the application.
@@ -29,6 +33,48 @@ const PENDING: &str = "…";
 
 /// The readable name of every field, enum variant and aspect the grid can show.
 const LABELS: &[(&str, Message)] = &[
+    (
+        "ifc_class",
+        Message {
+            message_id: "ab-prop-ifc-class",
+        },
+    ),
+    (
+        "predefined_type",
+        Message {
+            message_id: "ab-prop-predefined-type",
+        },
+    ),
+    (
+        "object_type",
+        Message {
+            message_id: "ab-prop-object-type",
+        },
+    ),
+    (
+        "tag",
+        Message {
+            message_id: "ab-prop-tag",
+        },
+    ),
+    (
+        "source_schema",
+        Message {
+            message_id: "ab-prop-source-schema",
+        },
+    ),
+    (
+        "foreign_extent",
+        Message {
+            message_id: "ab-prop-foreign-extent",
+        },
+    ),
+    (
+        "parameters",
+        Message {
+            message_id: "ab-prop-parameters",
+        },
+    ),
     (
         "cut",
         Message {
@@ -129,6 +175,24 @@ const LABELS: &[(&str, Message)] = &[
         "show_openings",
         Message {
             message_id: "ab-prop-view-show-openings",
+        },
+    ),
+    (
+        "show_railings",
+        Message {
+            message_id: "ab-prop-view-show-railings",
+        },
+    ),
+    (
+        "show_ramps",
+        Message {
+            message_id: "ab-prop-view-show-ramps",
+        },
+    ),
+    (
+        "show_components",
+        Message {
+            message_id: "ab-prop-view-show-components",
         },
     ),
     (
@@ -375,6 +439,300 @@ const LABELS: &[(&str, Message)] = &[
         "slope_unit",
         Message {
             message_id: "ab-prop-slope-unit",
+        },
+    ),
+    (
+        "area_unit",
+        Message {
+            message_id: "ab-prop-area-unit",
+        },
+    ),
+    (
+        "volume_unit",
+        Message {
+            message_id: "ab-prop-volume-unit",
+        },
+    ),
+    (
+        "angle_unit",
+        Message {
+            message_id: "ab-prop-angle-unit",
+        },
+    ),
+    (
+        "length_precision",
+        Message {
+            message_id: "ab-prop-length-precision",
+        },
+    ),
+    (
+        "area_precision",
+        Message {
+            message_id: "ab-prop-area-precision",
+        },
+    ),
+    (
+        "volume_precision",
+        Message {
+            message_id: "ab-prop-volume-precision",
+        },
+    ),
+    (
+        "angle_precision",
+        Message {
+            message_id: "ab-prop-angle-precision",
+        },
+    ),
+    (
+        "slope_precision",
+        Message {
+            message_id: "ab-prop-slope-precision",
+        },
+    ),
+    (
+        "length_rounding",
+        Message {
+            message_id: "ab-prop-length-rounding",
+        },
+    ),
+    (
+        "area_rounding",
+        Message {
+            message_id: "ab-prop-area-rounding",
+        },
+    ),
+    (
+        "volume_rounding",
+        Message {
+            message_id: "ab-prop-volume-rounding",
+        },
+    ),
+    (
+        "angle_rounding",
+        Message {
+            message_id: "ab-prop-angle-rounding",
+        },
+    ),
+    (
+        "slope_rounding",
+        Message {
+            message_id: "ab-prop-slope-rounding",
+        },
+    ),
+    (
+        "square_meter",
+        Message {
+            message_id: "ab-unit-square-meter",
+        },
+    ),
+    (
+        "square_centimeter",
+        Message {
+            message_id: "ab-unit-square-centimeter",
+        },
+    ),
+    (
+        "square_millimeter",
+        Message {
+            message_id: "ab-unit-square-millimeter",
+        },
+    ),
+    (
+        "square_foot",
+        Message {
+            message_id: "ab-unit-square-foot",
+        },
+    ),
+    (
+        "cubic_meter",
+        Message {
+            message_id: "ab-unit-cubic-meter",
+        },
+    ),
+    (
+        "liter",
+        Message {
+            message_id: "ab-unit-liter",
+        },
+    ),
+    (
+        "cubic_foot",
+        Message {
+            message_id: "ab-unit-cubic-foot",
+        },
+    ),
+    (
+        "cubic_yard",
+        Message {
+            message_id: "ab-unit-cubic-yard",
+        },
+    ),
+    (
+        "degree",
+        Message {
+            message_id: "ab-unit-degree",
+        },
+    ),
+    (
+        "radian",
+        Message {
+            message_id: "ab-unit-radian",
+        },
+    ),
+    (
+        "gradian",
+        Message {
+            message_id: "ab-unit-gradian",
+        },
+    ),
+    (
+        "status",
+        Message {
+            message_id: "ab-prop-status",
+        },
+    ),
+    (
+        "issue_date",
+        Message {
+            message_id: "ab-prop-issue-date",
+        },
+    ),
+    (
+        "author",
+        Message {
+            message_id: "ab-prop-author",
+        },
+    ),
+    (
+        "organization",
+        Message {
+            message_id: "ab-prop-organization",
+        },
+    ),
+    (
+        "description",
+        Message {
+            message_id: "ab-prop-description",
+        },
+    ),
+    (
+        "long_name",
+        Message {
+            message_id: "ab-prop-long-name",
+        },
+    ),
+    (
+        "occupancy_type",
+        Message {
+            message_id: "ab-prop-occupancy-type",
+        },
+    ),
+    (
+        "year_of_construction",
+        Message {
+            message_id: "ab-prop-year-of-construction",
+        },
+    ),
+    (
+        "construction_method",
+        Message {
+            message_id: "ab-prop-construction-method",
+        },
+    ),
+    (
+        "base_x",
+        Message {
+            message_id: "ab-prop-base-x",
+        },
+    ),
+    (
+        "base_y",
+        Message {
+            message_id: "ab-prop-base-y",
+        },
+    ),
+    (
+        "base_z",
+        Message {
+            message_id: "ab-prop-base-z",
+        },
+    ),
+    (
+        "survey_x",
+        Message {
+            message_id: "ab-prop-survey-x",
+        },
+    ),
+    (
+        "survey_y",
+        Message {
+            message_id: "ab-prop-survey-y",
+        },
+    ),
+    (
+        "survey_z",
+        Message {
+            message_id: "ab-prop-survey-z",
+        },
+    ),
+    (
+        "true_north",
+        Message {
+            message_id: "ab-prop-true-north",
+        },
+    ),
+    (
+        "map_scale",
+        Message {
+            message_id: "ab-prop-map-scale",
+        },
+    ),
+    (
+        "crs",
+        Message {
+            message_id: "ab-prop-crs",
+        },
+    ),
+    (
+        "eastings",
+        Message {
+            message_id: "ab-prop-eastings",
+        },
+    ),
+    (
+        "northings",
+        Message {
+            message_id: "ab-prop-northings",
+        },
+    ),
+    (
+        "survey_height",
+        Message {
+            message_id: "ab-prop-survey-height",
+        },
+    ),
+    (
+        "precision_distance",
+        Message {
+            message_id: "ab-prop-precision-distance",
+        },
+    ),
+    (
+        "north",
+        Message {
+            message_id: "ab-prop-view-north",
+        },
+    ),
+    (
+        "project_north",
+        Message {
+            message_id: "ab-prop-north-project",
+        },
+    ),
+    (
+        "face",
+        Message {
+            message_id: "ab-prop-work-plane-face",
         },
     ),
     (
@@ -681,6 +1039,36 @@ const LABELS: &[(&str, Message)] = &[
         "top_offset",
         Message {
             message_id: "ab-prop-top-offset",
+        },
+    ),
+    (
+        "bulge",
+        Message {
+            message_id: "ab-prop-wall-bulge",
+        },
+    ),
+    (
+        "lean_exterior",
+        Message {
+            message_id: "ab-prop-wall-lean-exterior",
+        },
+    ),
+    (
+        "lean_interior",
+        Message {
+            message_id: "ab-prop-wall-lean-interior",
+        },
+    ),
+    (
+        "wall_profile",
+        Message {
+            message_id: "ab-prop-wall-profile",
+        },
+    ),
+    (
+        "wall_bands",
+        Message {
+            message_id: "ab-prop-wall-bands",
         },
     ),
     (
@@ -1132,6 +1520,18 @@ const LABELS: &[(&str, Message)] = &[
 /// The readable name of each kind of object, for the heading of the grid.
 const KINDS: &[(&str, Message)] = &[
     (
+        archbuilder_model::types::COMPONENT,
+        Message {
+            message_id: "ab-kind-component",
+        },
+    ),
+    (
+        archbuilder_model::types::FAMILY_INSERT,
+        Message {
+            message_id: "ab-kind-family-insert",
+        },
+    ),
+    (
         PROJECT,
         Message {
             message_id: "ab-kind-project",
@@ -1228,6 +1628,12 @@ const KINDS: &[(&str, Message)] = &[
         },
     ),
     (
+        types::MODEL_VIEW,
+        Message {
+            message_id: "ab-kind-model-view",
+        },
+    ),
+    (
         types::WALL_OPENING,
         Message {
             message_id: "ab-kind-wall-opening",
@@ -1255,6 +1661,36 @@ const KINDS: &[(&str, Message)] = &[
         types::ROOF_EXTRUSION,
         Message {
             message_id: "ab-kind-roof-extrusion",
+        },
+    ),
+    (
+        types::ELEVATOR,
+        Message {
+            message_id: "ab-kind-elevator",
+        },
+    ),
+    (
+        types::GROUP_INSTANCE,
+        Message {
+            message_id: "ab-kind-group-instance",
+        },
+    ),
+    (
+        types::FOREIGN_ELEMENT,
+        Message {
+            message_id: "ab-kind-foreign-element",
+        },
+    ),
+    (
+        types::DORMER,
+        Message {
+            message_id: "ab-kind-dormer",
+        },
+    ),
+    (
+        types::ROOF_EDGE,
+        Message {
+            message_id: "ab-kind-roof-edge",
         },
     ),
     (
@@ -1302,8 +1738,316 @@ const DEFAULT_VIEW: Message = Message {
     message_id: "ab-prop-view-default-note",
 };
 
+/// Labels of the fields of elevators, dormers, roof edge elements and stairs by sketch.
+const ROOF_LABELS: [(&str, Message); 24] = [
+    (
+        "car_width",
+        Message {
+            message_id: "ab-prop-car-width",
+        },
+    ),
+    (
+        "car_depth",
+        Message {
+            message_id: "ab-prop-car-depth",
+        },
+    ),
+    (
+        "clearance",
+        Message {
+            message_id: "ab-prop-clearance",
+        },
+    ),
+    (
+        "door_width",
+        Message {
+            message_id: "ab-prop-door-width",
+        },
+    ),
+    (
+        "pit",
+        Message {
+            message_id: "ab-prop-pit",
+        },
+    ),
+    (
+        "overrun",
+        Message {
+            message_id: "ab-prop-overrun",
+        },
+    ),
+    (
+        "style",
+        Message {
+            message_id: "ab-prop-style",
+        },
+    ),
+    (
+        "wall_height",
+        Message {
+            message_id: "ab-prop-wall-height",
+        },
+    ),
+    (
+        "pitch",
+        Message {
+            message_id: "ab-prop-pitch",
+        },
+    ),
+    (
+        "role",
+        Message {
+            message_id: "ab-prop-role",
+        },
+    ),
+    (
+        "headroom",
+        Message {
+            message_id: "ab-prop-headroom",
+        },
+    ),
+    (
+        "direction",
+        Message {
+            message_id: "ab-prop-direction",
+        },
+    ),
+    (
+        "elevator_stops",
+        Message {
+            message_id: "ab-prop-elevator-stops",
+        },
+    ),
+    (
+        "elevator_shaft",
+        Message {
+            message_id: "ab-prop-elevator-shaft",
+        },
+    ),
+    (
+        "elevator_span",
+        Message {
+            message_id: "ab-prop-elevator-span",
+        },
+    ),
+    (
+        "dormer_roof",
+        Message {
+            message_id: "ab-prop-dormer-roof",
+        },
+    ),
+    (
+        "dormer_opening",
+        Message {
+            message_id: "ab-prop-dormer-opening",
+        },
+    ),
+    (
+        "dormer_volume",
+        Message {
+            message_id: "ab-prop-dormer-volume",
+        },
+    ),
+    (
+        "roof_edge_roof",
+        Message {
+            message_id: "ab-prop-roof-edge-roof",
+        },
+    ),
+    (
+        "gable",
+        Message {
+            message_id: "ab-prop-gable",
+        },
+    ),
+    (
+        "shed",
+        Message {
+            message_id: "ab-prop-shed",
+        },
+    ),
+    (
+        "fascia",
+        Message {
+            message_id: "ab-prop-fascia",
+        },
+    ),
+    (
+        "gutter",
+        Message {
+            message_id: "ab-prop-gutter",
+        },
+    ),
+    (
+        "sketch",
+        Message {
+            message_id: "ab-prop-sketch",
+        },
+    ),
+];
+
+/// Labels of the fields and choices of model views (3D views, sections, elevations).
+const VIEW_LABELS: [(&str, Message); 26] = [
+    (
+        "kind",
+        Message {
+            message_id: "ab-prop-mv-kind",
+        },
+    ),
+    (
+        "perspective",
+        Message {
+            message_id: "ab-prop-mv-perspective",
+        },
+    ),
+    (
+        "eye_x",
+        Message {
+            message_id: "ab-prop-mv-eye-x",
+        },
+    ),
+    (
+        "eye_y",
+        Message {
+            message_id: "ab-prop-mv-eye-y",
+        },
+    ),
+    (
+        "eye_z",
+        Message {
+            message_id: "ab-prop-mv-eye-z",
+        },
+    ),
+    (
+        "target_x",
+        Message {
+            message_id: "ab-prop-mv-target-x",
+        },
+    ),
+    (
+        "target_y",
+        Message {
+            message_id: "ab-prop-mv-target-y",
+        },
+    ),
+    (
+        "target_z",
+        Message {
+            message_id: "ab-prop-mv-target-z",
+        },
+    ),
+    (
+        "fov",
+        Message {
+            message_id: "ab-prop-mv-fov",
+        },
+    ),
+    (
+        "section_box",
+        Message {
+            message_id: "ab-prop-mv-section-box",
+        },
+    ),
+    (
+        "box_min_x",
+        Message {
+            message_id: "ab-prop-mv-box-min-x",
+        },
+    ),
+    (
+        "box_min_y",
+        Message {
+            message_id: "ab-prop-mv-box-min-y",
+        },
+    ),
+    (
+        "box_min_z",
+        Message {
+            message_id: "ab-prop-mv-box-min-z",
+        },
+    ),
+    (
+        "box_max_x",
+        Message {
+            message_id: "ab-prop-mv-box-max-x",
+        },
+    ),
+    (
+        "box_max_y",
+        Message {
+            message_id: "ab-prop-mv-box-max-y",
+        },
+    ),
+    (
+        "box_max_z",
+        Message {
+            message_id: "ab-prop-mv-box-max-z",
+        },
+    ),
+    (
+        "crop",
+        Message {
+            message_id: "ab-prop-mv-crop",
+        },
+    ),
+    (
+        "camera",
+        Message {
+            message_id: "ab-prop-mv-camera",
+        },
+    ),
+    (
+        "three_d_view",
+        Message {
+            message_id: "ab-prop-mv-three-d",
+        },
+    ),
+    (
+        "section_view",
+        Message {
+            message_id: "ab-prop-mv-section",
+        },
+    ),
+    (
+        "elevation_view",
+        Message {
+            message_id: "ab-prop-mv-elevation",
+        },
+    ),
+    (
+        "wireframe",
+        Message {
+            message_id: "ab-prop-mv-wireframe",
+        },
+    ),
+    (
+        "hidden_line",
+        Message {
+            message_id: "ab-prop-mv-hidden-line",
+        },
+    ),
+    (
+        "shaded",
+        Message {
+            message_id: "ab-prop-mv-shaded",
+        },
+    ),
+    (
+        "shaded_with_edges",
+        Message {
+            message_id: "ab-prop-mv-shaded-edges",
+        },
+    ),
+    (
+        "consistent_colors",
+        Message {
+            message_id: "ab-prop-mv-consistent",
+        },
+    ),
+];
+
 /// Labels of the fields of ramps and railings.
-const CIRC_LABELS: [(&str, Message); 25] = [
+const CIRC_LABELS: [(&str, Message); 26] = [
     (
         "length",
         Message {
@@ -1401,6 +2145,12 @@ const CIRC_LABELS: [(&str, Message); 25] = [
         },
     ),
     (
+        "ramp_runs",
+        Message {
+            message_id: "ab-prop-circ-ramp-runs",
+        },
+    ),
+    (
         "ramp_volume",
         Message {
             message_id: "ab-prop-circ-ramp-volume",
@@ -1487,6 +2237,8 @@ fn label_text(localize: &dyn Localize, name: &str) -> String {
     LABELS
         .iter()
         .chain(CIRC_LABELS.iter())
+        .chain(ROOF_LABELS.iter())
+        .chain(VIEW_LABELS.iter())
         .find(|(n, _)| *n == name)
         .map_or_else(|| name.to_owned(), |(_, m)| say(localize, m))
 }
@@ -1528,13 +2280,29 @@ fn shown(
     label: &dyn Fn(&str) -> String,
 ) -> Option<Shown> {
     let decl = snapshot.registry().get(key)?;
+    let us = spatial::unit_settings(snapshot);
     let mut fields = decl.schema.fields.clone();
     let mut values = object.values.clone();
     let mut read_only = Vec::new();
     match key {
+        // The hidden elements of a model view are counted by the view, not listed.
+        types::MODEL_VIEW
+            if fields.len() > types::model_view::HIDDEN
+                && values.len() > types::model_view::HIDDEN =>
+        {
+            fields.remove(types::model_view::HIDDEN);
+            values.remove(types::model_view::HIDDEN);
+        }
         types::PLAN_VIEW => {
             // The hidden elements are counted, not listed (Show hidden in view of the context
             // menu shows them again); the storey is shown for orientation.
+            // The grid overrides are set by `archbuilder.datum.set_view_extent`.
+            if fields.len() > types::plan_view::DATUM_VIEWS
+                && values.len() > types::plan_view::DATUM_VIEWS
+            {
+                fields.remove(types::plan_view::DATUM_VIEWS);
+                values.remove(types::plan_view::DATUM_VIEWS);
+            }
             if fields.len() > types::plan_view::HIDDEN && values.len() > types::plan_view::HIDDEN {
                 fields.remove(types::plan_view::HIDDEN);
                 values.remove(types::plan_view::HIDDEN);
@@ -1573,9 +2341,26 @@ fn shown(
         // where it comes from and whether it is active and shown.
         types::GRID | types::WORK_PLANE => {
             let hidden: &[usize] = if key == types::GRID {
-                &[types::grid::BOTTOM_LEVEL, types::grid::TOP_LEVEL]
+                &[
+                    types::grid::BOTTOM_LEVEL,
+                    types::grid::TOP_LEVEL,
+                    types::grid::PATH,
+                ]
             } else {
-                &[types::work_plane::TARGET, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+                &[
+                    types::work_plane::TARGET,
+                    3,
+                    4,
+                    5,
+                    6,
+                    7,
+                    8,
+                    9,
+                    10,
+                    11,
+                    types::work_plane::FACE_ELEMENT,
+                    types::work_plane::FACE,
+                ]
             };
             for at in hidden.iter().rev() {
                 if *at < fields.len() && *at < values.len() {
@@ -1638,7 +2423,7 @@ fn shown(
             // The layers of the storey are derived on the extraction workers after an edit: until
             // they are, the volume shows as pending rather than holding the frame up.
             let volume = match archbuilder_model::cleanup::wall_net_volume_ready(snapshot, object) {
-                Some(v) => v.map(|v| Value::String(format!("{v:.3} m³"))),
+                Some(v) => v.map(|v| Value::String(us.volume_text(v, '.'))),
                 None => Some(Value::String(PENDING.to_owned())),
             };
             fields.push(text_field("wall_volume"));
@@ -1652,7 +2437,7 @@ fn shown(
                 let length: f64 = curtain.mullions.iter().map(|m| m.length()).sum();
                 let orphans =
                     curtain.layout.orphans.edits.len() + curtain.layout.orphans.overrides.len();
-                let mut panel_text = format!("{panels} / {area:.2} m²");
+                let mut panel_text = format!("{panels} / {}", us.area_text(area, '.'));
                 if orphans > 0 {
                     panel_text.push_str(&format!(" ({orphans} orphaned)"));
                 }
@@ -1660,7 +2445,10 @@ fn shown(
                 values.push(Some(Value::String(panel_text)));
                 read_only.push("curtain_panels".to_owned());
                 fields.push(text_field("curtain_mullions"));
-                values.push(Some(Value::String(format!("{mullions} / {length:.2} m"))));
+                values.push(Some(Value::String(format!(
+                    "{mullions} / {}",
+                    us.length_text(length, '.')
+                ))));
                 read_only.push("curtain_mullions".to_owned());
             }
             // The top level is a choice below; editing the height disconnects the top.
@@ -1705,6 +2493,33 @@ fn shown(
                 fields.push(field);
                 values.push(value);
             }
+            // The shape of the wall: the bulge of an arc and the lean of each face are edited
+            // here; the profile and the bands are edited by their commands and shown as a count.
+            for at in [
+                types::wall::BULGE,
+                types::wall::LEAN_EXTERIOR,
+                types::wall::LEAN_INTERIOR,
+            ] {
+                if let Some(decl) = decl.schema.fields.get(at) {
+                    fields.push(decl.clone());
+                    values.push(object.values.get(at).cloned().flatten());
+                }
+            }
+            if let Some(profile) = archbuilder_model::wall::Profile::of(&object.values) {
+                let points: usize = profile.loops.iter().map(Vec::len).sum();
+                fields.push(text_field("wall_profile"));
+                values.push(Some(Value::String(format!(
+                    "{points} / {}",
+                    profile.loops.len().saturating_sub(1)
+                ))));
+                read_only.push("wall_profile".to_owned());
+            }
+            let bands = archbuilder_model::wall::Band::of(&object.values).len();
+            if bands > 0 {
+                fields.push(text_field("wall_bands"));
+                values.push(Some(Value::String(bands.to_string())));
+                read_only.push("wall_bands".to_owned());
+            }
             // Last: the fields above are found by their positions in the record.
             with_type(
                 (snapshot, label),
@@ -1744,9 +2559,7 @@ fn shown(
             );
             let slope = derived.as_ref().and_then(|d| {
                 d.arrow.map(|a| {
-                    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-                        archbuilder_model::units::slope_unit(&p.values)
-                    });
+                    let unit = spatial::unit_settings(snapshot);
                     archbuilder_model::units::slope_text(
                         a.gradient(d.floor.top_offset).atan(),
                         unit,
@@ -1759,11 +2572,11 @@ fn shown(
                 ("floor_slope", slope),
                 (
                     "floor_area",
-                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                    derived.as_ref().map(|d| us.area_text(d.area(), '.')),
                 ),
                 (
                     "floor_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
                 (
                     "floor_walls",
@@ -1841,11 +2654,11 @@ fn shown(
             }
             // The room's solid: under the lowest ceiling, roof or slab above it.
             let shape = shape_ready.flatten();
-            let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, unit: &str| {
+            let derived = |f: fn(&archbuilder_model::room::Entry) -> Option<f64>, kind| {
                 entry
                     .as_ref()
                     .and_then(f)
-                    .map(|v| Value::String(format!("{v:.3} {unit}")))
+                    .map(|v| Value::String(us.text(kind, v, '.')))
             };
             for (name, value) in [
                 (
@@ -1853,30 +2666,32 @@ fn shown(
                     entry
                         .as_ref()
                         .and_then(|e| shape.as_ref().map(|s| s.area).or_else(|| e.area()))
-                        .map(|a| Value::String(format!("{a:.3} m²"))),
+                        .map(|a| Value::String(us.area_text(a, '.'))),
                 ),
                 (
                     "room_perimeter",
-                    derived(archbuilder_model::room::Entry::perimeter, "m"),
+                    derived(archbuilder_model::room::Entry::perimeter, UnitKind::Length),
                 ),
                 (
                     "room_volume",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m³", s.volume)))
-                        .or_else(|| derived(archbuilder_model::room::Entry::volume, "m³")),
+                        .map(|s| Value::String(us.volume_text(s.volume, '.')))
+                        .or_else(|| {
+                            derived(archbuilder_model::room::Entry::volume, UnitKind::Volume)
+                        }),
                 ),
                 (
                     "room_height",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m", s.height))),
+                        .map(|s| Value::String(us.length_text(s.height, '.'))),
                 ),
                 (
                     "room_unbounded",
                     shape
                         .as_ref()
-                        .map(|s| Value::String(format!("{:.3} m", s.unbounded))),
+                        .map(|s| Value::String(us.length_text(s.unbounded, '.'))),
                 ),
                 (
                     "room_bounded_by",
@@ -1957,7 +2772,7 @@ fn shown(
             let layout = placed.as_ref().and_then(|p| p.layout.as_ref().ok());
             let direction = placed
                 .as_ref()
-                .map(|p| format!("{:.1}°", p.stair.direction.to_degrees()));
+                .map(|p| us.angle_text(p.stair.direction, '.'));
             let order = [
                 st::NAME,
                 st::SHAPE,
@@ -1970,6 +2785,7 @@ fn shown(
                 st::RAILING_RIGHT,
                 st::X,
                 st::Y,
+                st::HEADROOM,
             ];
             let (decls, vals) = (fields.clone(), values.clone());
             fields = order
@@ -1984,7 +2800,7 @@ fn shown(
             let runs = layout.map(|l| {
                 l.runs
                     .iter()
-                    .map(|r| format!("{:.3} m", r.length))
+                    .map(|r| us.length_text(r.length, '.'))
                     .collect::<Vec<_>>()
                     .join(" + ")
             });
@@ -1997,18 +2813,18 @@ fn shown(
                 ),
                 ("stair_direction", direction),
                 ("stair_risers", layout.map(|l| l.risers.to_string())),
-                ("stair_riser", layout.map(|l| format!("{:.5} m", l.riser))),
+                ("stair_riser", layout.map(|l| us.length_text(l.riser, '.'))),
                 ("stair_runs", runs),
                 (
                     "stair_stride",
                     layout.map(|l| {
                         let warn = if l.stride_ok() { "" } else { " ⚠" };
-                        format!("{:.3} m{warn}", l.stride())
+                        format!("{}{warn}", us.length_text(l.stride(), '.'))
                     }),
                 ),
                 (
                     "stair_volume",
-                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                    layout.map(|l| us.volume_text(l.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2052,10 +2868,20 @@ fn shown(
                         format!("{:.1} %{warn}", l.slope() * 100.0)
                     }),
                 ),
-                ("ramp_rise", layout.map(|l| format!("{:.3} m", l.height))),
+                ("ramp_rise", layout.map(|l| us.length_text(l.height, '.'))),
+                (
+                    "ramp_runs",
+                    layout.filter(|l| l.slopes().len() > 1).map(|l| {
+                        l.slopes()
+                            .iter()
+                            .map(|s| format!("{:.1} %", s * 100.0))
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    }),
+                ),
                 (
                     "ramp_volume",
-                    layout.map(|l| format!("{:.3} m³", l.volume())),
+                    layout.map(|l| us.volume_text(l.volume(), '.')),
                 ),
                 ("ramp_type_name", kind),
             ] {
@@ -2092,7 +2918,7 @@ fn shown(
                 ("railing_continues", name_of(rl::CONTINUES_TO)),
                 (
                     "railing_length",
-                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                    derived.as_ref().map(|d| us.length_text(d.length(), '.')),
                 ),
                 (
                     "railing_posts",
@@ -2165,9 +2991,7 @@ fn shown(
             let slope =
                 archbuilder_model::ceiling::Ceiling::from_values(&object.values).and_then(|c| {
                     c.arrow.map(|a| {
-                        let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-                            archbuilder_model::units::slope_unit(&p.values)
-                        });
+                        let unit = spatial::unit_settings(snapshot);
                         archbuilder_model::units::slope_text(
                             a.gradient(c.height()).atan(),
                             unit,
@@ -2180,11 +3004,11 @@ fn shown(
                 ("ceiling_slope", slope),
                 (
                     "ceiling_area",
-                    derived.as_ref().map(|d| format!("{:.3} m²", d.area())),
+                    derived.as_ref().map(|d| us.area_text(d.area(), '.')),
                 ),
                 (
                     "ceiling_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2253,13 +3077,17 @@ fn shown(
             for (name, value) in [
                 (
                     "shaft_span",
-                    span.as_ref()
-                        .map(|s| format!("{:.3} m – {:.3} m", s.z.0, s.z.1)),
+                    span.as_ref().map(|s| {
+                        format!(
+                            "{} – {}",
+                            us.length_text(s.z.0, '.'),
+                            us.length_text(s.z.1, '.')
+                        )
+                    }),
                 ),
                 (
                     "shaft_area",
-                    span.as_ref()
-                        .map(|s| format!("{:.3} m²", s.boundary.area())),
+                    span.as_ref().map(|s| us.area_text(s.boundary.area(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2279,7 +3107,7 @@ fn shown(
                 archbuilder_model::floor::VERTICAL_SLOTS,
             )
             .and_then(|f| f.boundary_in(snapshot))
-            .map(|b| format!("{:.3} m²", b.area()));
+            .map(|b| us.area_text(b.area(), '.'));
             fields.truncate(types::vertical_opening::VERTICES);
             values.truncate(types::vertical_opening::VERTICES);
             for (name, value) in [("cut_host", host), ("cut_area", area)] {
@@ -2304,11 +3132,125 @@ fn shown(
                     "extrusion_area",
                     derived
                         .as_ref()
-                        .map(|d| format!("{:.3} m²", d.surface_area())),
+                        .map(|d| us.area_text(d.surface_area(), '.')),
                 ),
                 (
                     "extrusion_volume",
-                    derived.as_ref().map(|d| format!("{:.3} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // An imported element shows the source's data read only, and the plan extent of its shape;
+        // the mesh is shown as the shape, not as a value.
+        types::FOREIGN_ELEMENT => {
+            use archbuilder_model::types::foreign_element as f;
+            if fields.len() > f::MESH && values.len() > f::MESH {
+                fields.remove(f::MESH);
+                values.remove(f::MESH);
+            }
+            let extent = archbuilder_model::foreign::bounds(&object.values)
+                .map(|(lo, hi)| format!("{:.2} m × {:.2} m", hi[0] - lo[0], hi[1] - lo[1]));
+            fields.push(text_field("foreign_extent"));
+            values.push(extent.map(Value::String));
+            read_only.extend(
+                [
+                    "ifc_class",
+                    "predefined_type",
+                    "object_type",
+                    "tag",
+                    "source_schema",
+                    "foreign_extent",
+                ]
+                .map(str::to_owned),
+            );
+        }
+        // An elevator shows its sizes, the levels it stops at and the span of its shaft.
+        types::ELEVATOR => {
+            let derived = archbuilder_model::elevator::derived(snapshot, object);
+            fields.truncate(types::elevator::TOP_LEVEL);
+            values.truncate(types::elevator::TOP_LEVEL);
+            for (name, value) in [
+                (
+                    "elevator_stops",
+                    derived.as_ref().map(|d| d.stops.len().to_string()),
+                ),
+                (
+                    "elevator_span",
+                    derived
+                        .as_ref()
+                        .map(|d| format!("{:.2} m … {:.2} m", d.z().0, d.z().1)),
+                ),
+                (
+                    "elevator_shaft",
+                    derived.as_ref().map(|d| {
+                        format!(
+                            "{:.3} m²",
+                            archbuilder_model::floor::signed_area(&d.elevator.shaft_outline())
+                                .abs()
+                        )
+                    }),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A dormer shows its roof, the area of its opening and the volume of its parts.
+        types::DORMER => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::dormer::Derived::of(snapshot, object).ok();
+            fields.truncate(types::dormer::PINNED);
+            values.truncate(types::dormer::PINNED);
+            for (name, value) in [
+                ("dormer_roof", host),
+                (
+                    "dormer_opening",
+                    archbuilder_model::dormer::Dormer::from_values(&object.values).map(|d| {
+                        format!(
+                            "{:.3} m²",
+                            archbuilder_model::floor::signed_area(&d.opening()).abs()
+                        )
+                    }),
+                ),
+                (
+                    "dormer_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                ),
+            ] {
+                fields.push(text_field(name));
+                values.push(value.map(Value::String));
+                read_only.push(name.to_owned());
+            }
+        }
+        // A roof edge element shows its role, its roof, the length it runs along and the volume of
+        // its body; the edges are chosen by the command, the profile edited there.
+        types::ROOF_EDGE => {
+            let host = object
+                .header
+                .owner
+                .and_then(|id| spatial::get(snapshot, id))
+                .and_then(|w| types::text(&w.values, 0).map(str::to_owned));
+            let derived = archbuilder_model::roof_edge::Derived::of(snapshot, object);
+            fields.truncate(types::roof_edge::PROFILE);
+            values.truncate(types::roof_edge::PROFILE);
+            for (name, value) in [
+                ("roof_edge_roof", host),
+                (
+                    "edge_length",
+                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                ),
+                (
+                    "edge_volume",
+                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2331,11 +3273,11 @@ fn shown(
                 ("edge_floor", host),
                 (
                     "edge_length",
-                    derived.as_ref().map(|d| format!("{:.3} m", d.length())),
+                    derived.as_ref().map(|d| us.length_text(d.length(), '.')),
                 ),
                 (
                     "edge_volume",
-                    derived.as_ref().map(|d| format!("{:.4} m³", d.volume())),
+                    derived.as_ref().map(|d| us.volume_text(d.volume(), '.')),
                 ),
             ] {
                 fields.push(text_field(name));
@@ -2369,6 +3311,10 @@ fn shown(
             values.push(host.map(Value::String));
             read_only.push("insert_wall".to_owned());
         }
+        // A placed component or hosted instance: the family's parameters, one row each.
+        archbuilder_model::types::COMPONENT | archbuilder_model::types::FAMILY_INSERT => {
+            family_value_rows(snapshot, object, &mut fields, &mut values, &mut read_only)
+        }
         // The slope unit of a file from before it is degrees, shown as such.
         PROJECT => {
             if let Some(slot) = values.get_mut(types::project::SLOPE_UNIT)
@@ -2383,6 +3329,14 @@ fn shown(
         BUILDING => read_only.push("elevation".to_owned()),
         _ => {}
     }
+    parameter_rows(
+        snapshot,
+        key,
+        object,
+        &mut fields,
+        &mut values,
+        &mut read_only,
+    );
     // Every element shows its pinned flag last, whatever the arms above kept of its record.
     if let Some(at) = types::pinned_slot(key)
         && !fields.iter().any(|f| f.name == "pinned")
@@ -2399,6 +3353,189 @@ fn shown(
     })
 }
 
+/// The field of a parameter's value shows its formula after `=`; this one shows what it gives.
+const PARAMETER_RESULT: &str = "parameter_value:";
+
+/// The label of a parameter row (`parameter:<identifier>`): the parameter's display name; of its
+/// result row, the name marked as the value.
+fn parameter_label(snapshot: &Snapshot, localize: &dyn Localize, name: &str) -> Option<String> {
+    const VALUE: Message = Message {
+        message_id: "ab-prop-parameter-value",
+    };
+    let (identifier, result) = match name.strip_prefix(PARAMETER_FIELD) {
+        Some(i) => (i, false),
+        None => (name.strip_prefix(PARAMETER_RESULT)?, true),
+    };
+    let shown = archbuilder_model::parameter::all(snapshot)
+        .into_iter()
+        .find(|p| p.identifier == identifier)
+        .map_or_else(|| identifier.to_owned(), |p| p.name);
+    if !result {
+        return Some(shown);
+    }
+    Some(
+        localize
+            .message(
+                VALUE.message_id,
+                &[("name", arc_base::error::Value::Text(shown.clone()))],
+            )
+            .unwrap_or(shown),
+    )
+}
+
+/// A number with at most six decimals, without trailing zeros.
+fn short(v: f64) -> String {
+    let text = format!("{v:.6}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+/// A parameter value as the grid shows it: lengths in the project's unit, areas, volumes and
+/// angles with their unit, the rest as they are.
+fn parameter_text(snapshot: &Snapshot, data: DataType, value: &Evaluated) -> String {
+    match value {
+        Evaluated::Number(v) => match data {
+            DataType::Length => {
+                archbuilder_model::units::length_text(*v, spatial::length_unit(snapshot), '.')
+            }
+            DataType::Area => format!("{} m²", short(*v)),
+            DataType::Volume => format!("{} m³", short(*v)),
+            DataType::Angle => format!("{}°", short(v.to_degrees())),
+            _ => short(*v),
+        },
+        Evaluated::Bool(b) => b.to_string(),
+        Evaluated::Text(t) => t.clone(),
+    }
+}
+
+/// The project parameters of `object` as rows grouped by the parameters' groups: a value or
+/// `=formula` that edits through `archbuilder.property.set`, and for a formula a read-only row
+/// with what it gives. A value set on the type is read-only on the element. The stored list
+/// itself is not shown.
+/// The family parameters of a placed component or hosted instance, one row each: the instance's
+/// own value (a formula with its `=`, or a literal) for an instance parameter, edited through
+/// `archbuilder.property.set` as `value.<key>`; the type's value for a type parameter, read-only.
+fn family_value_rows(
+    snapshot: &Snapshot,
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    use archbuilder_model::family::def::Scope;
+    use archbuilder_model::family::loaded::{Component, FamilyInsert, resolve, resolve_insert};
+    let found = match spatial::type_of(snapshot, object.id).as_deref() {
+        Some(archbuilder_model::types::COMPONENT) => {
+            Component::of(object).and_then(|c| resolve(snapshot, &c).ok().map(|r| (r, c.values)))
+        }
+        Some(types::FAMILY_INSERT) => FamilyInsert::of(object)
+            .and_then(|f| resolve_insert(snapshot, &f).ok().map(|r| (r, f.values))),
+        _ => None,
+    };
+    let Some((resolved, own)) = found else {
+        return;
+    };
+    // The keyed list of the instance's values is shown as the rows below.
+    if let Some(at) = fields.iter().position(|f| f.name == "values") {
+        fields.remove(at);
+        if at < values.len() {
+            values.remove(at);
+        }
+    }
+    for p in &resolved.definition.parameters {
+        let name = format!("{FAMILY_VALUE_FIELD}{}", p.key);
+        let text = match p.scope {
+            Scope::Instance => own
+                .get(&p.key)
+                .map(|stored| stored_text(snapshot, p.data, stored)),
+            Scope::Type => resolved
+                .ty
+                .values
+                .get(&p.key)
+                .map(|stored| stored_text(snapshot, p.data, stored)),
+        };
+        fields.push(
+            FieldDecl::new(&name, ValueType::String)
+                .optional()
+                .in_aspect("parameters"),
+        );
+        values.push(Some(Value::String(text.unwrap_or_default())));
+        if p.scope != Scope::Instance {
+            read_only.push(name);
+        }
+    }
+}
+
+/// The text of a stored parameter value: `=formula`, or the literal as the grid shows it.
+fn stored_text(snapshot: &Snapshot, data: DataType, stored: &Stored) -> String {
+    match stored.formula() {
+        Some(f) => format!("={}", f.text()),
+        None => match stored {
+            Stored::Literal(e) => parameter_text(snapshot, data, e),
+            Stored::Formula(_) => String::new(),
+        },
+    }
+}
+
+fn parameter_rows(
+    snapshot: &Snapshot,
+    key: &str,
+    object: &Object,
+    fields: &mut Vec<FieldDecl>,
+    values: &mut Vec<Option<Value>>,
+    read_only: &mut Vec<String>,
+) {
+    use archbuilder_model::parameter;
+    if let Some(at) = fields.iter().position(|f| f.name == "parameters") {
+        fields.remove(at);
+        if at < values.len() {
+            values.remove(at);
+        }
+    }
+    if parameter::field_at(snapshot, key).is_none() {
+        return;
+    }
+    let variables = archbuilder_model::variable::evaluate(snapshot).unwrap_or_default();
+    // A document whose values do not evaluate (one from a newer build) shows no rows; the
+    // commands refuse to leave one in that state.
+    let rows = parameter::evaluate(snapshot, object, &variables).unwrap_or_default();
+    for row in rows {
+        let p = &row.parameter;
+        let aspect = if p.group.is_empty() {
+            "parameters"
+        } else {
+            p.group.as_str()
+        };
+        let name = format!("{PARAMETER_FIELD}{}", p.identifier);
+        let formula = row.stored.as_ref().and_then(Stored::formula);
+        let text = match formula {
+            Some(f) => format!("={}", f.text()),
+            None if row.source == parameter::Source::Unset => String::new(),
+            None => parameter_text(snapshot, p.data, &row.value),
+        };
+        fields.push(
+            FieldDecl::new(&name, ValueType::String)
+                .optional()
+                .in_aspect(aspect),
+        );
+        values.push(Some(Value::String(text)));
+        if !p.set_on(key) {
+            read_only.push(name);
+        }
+        if formula.is_some() {
+            let result = format!("{PARAMETER_RESULT}{}", p.identifier);
+            fields.push(
+                FieldDecl::new(&result, ValueType::String)
+                    .optional()
+                    .in_aspect(aspect),
+            );
+            values.push(Some(Value::String(parameter_text(
+                snapshot, p.data, &row.value,
+            ))));
+            read_only.push(result);
+        }
+    }
+}
+
 /// The rows of a roof: its type, base offset and overhang, one slope for its sloped edges, then
 /// each edge (whether it slopes, its slope, its own overhang), and what derives from it.
 fn roof_rows(
@@ -2412,10 +3549,8 @@ fn roof_rows(
     let derived = archbuilder_model::roof::Derived::of(snapshot, object).ok();
     let roof = archbuilder_model::roof::Roof::from_values(&object.values);
     let kept = archbuilder_model::roof::Roof::kept_slopes(&object.values);
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| {
-        archbuilder_model::units::slope_unit(&p.values)
-    });
-    let text = |a: f64| archbuilder_model::units::slope_text(a, unit, '.');
+    let us = spatial::unit_settings(snapshot);
+    let text = |a: f64| us.slope_text(a, '.');
     let (decls, vals) = (fields.clone(), values.clone());
     let order = [rf::NAME, rf::THICKNESS, rf::BASE_OFFSET, rf::OVERHANG];
     *fields = order
@@ -2489,13 +3624,13 @@ fn roof_rows(
             "roof_area",
             derived
                 .as_ref()
-                .map(|d| format!("{:.3} m²", d.surface.plan_area())),
+                .map(|d| us.area_text(d.surface.plan_area(), '.')),
         ),
         (
             "roof_top",
             derived
                 .as_ref()
-                .map(|d| format!("{:.3} m", d.surface.top())),
+                .map(|d| us.length_text(d.surface.top(), '.')),
         ),
         ("roof_attached", Some(attached.to_string())),
         (
@@ -2584,7 +3719,11 @@ impl Panel for PropertiesPanel {
             return;
         };
         let localize = cx.localize;
-        let label_of = |name: &str| label_text(localize, name);
+        let snapshot_for_labels = tab.document().snapshot();
+        let label_of = |name: &str| {
+            parameter_label(&snapshot_for_labels, localize, name)
+                .unwrap_or_else(|| label_text(localize, name))
+        };
         let snapshot = tab.document().snapshot();
         // A selected storey stands for its level, which the grid shows through it.
         let covered: Vec<arc_base::ObjectId> = view
@@ -2601,7 +3740,10 @@ impl Panel for PropertiesPanel {
         let open_view: Vec<arc_base::ObjectId> = cx
             .tab
             .filter(|_| view.selection().is_empty())
-            .and_then(|t| crate::plan_state::current_in(t, &snapshot))
+            .and_then(|t| {
+                crate::plan_state::current_in(t, &snapshot)
+                    .or_else(|| crate::plan_state::model_in(t, &snapshot))
+            })
             .into_iter()
             .collect();
         // A storey shown as its default view: its settings are those of a new view, and the first
@@ -2682,12 +3824,11 @@ impl Panel for PropertiesPanel {
                 return;
             }
         };
-        let mut units = DisplayUnits::new();
-        if let Some(format) = spatial::length_unit(&snapshot).format() {
-            units.set(format);
-        }
+        let units = spatial::unit_settings(&snapshot).display_units();
         let localize = cx.localize;
-        let label = |name: &str| label_text(localize, name);
+        let label = |name: &str| {
+            parameter_label(&snapshot, localize, name).unwrap_or_else(|| label_text(localize, name))
+        };
         let context = GridContext {
             localize,
             label: &label,
@@ -2730,5 +3871,72 @@ impl Panel for PropertiesPanel {
             };
             cx.actions.push(Action::Intent(intent));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "test code")]
+
+    use std::sync::Arc;
+
+    use arc_command::{Invocation, Invoker, Permission, Session, Surface};
+    use arc_doc::graph::Evaluators;
+    use arc_doc::{Document, DocumentConfig};
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn parameters_show_as_rows_with_formulas_and_their_values() {
+        let document = Document::open(
+            Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
+            Arc::new(Evaluators::new()),
+            DocumentConfig {
+                workers: 0,
+                ..DocumentConfig::default()
+            },
+        )
+        .unwrap();
+        let registry = archbuilder_commands::registry().unwrap();
+        let session = Session::new(Surface::Ui, [Permission::Read, Permission::Edit]);
+        let run = |command: &str, params: serde_json::Value| {
+            Invoker::new(&registry)
+                .invoke(&document, &session, Invocation::new(command, params))
+                .unwrap()
+                .value
+        };
+        run("archbuilder.project.new", json!({}));
+        let wall = run(
+            "archbuilder.wall.create",
+            json!({"start": [0.0, 0.0], "end": [4.0, 0.0]}),
+        )["wall"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        run(
+            "archbuilder.parameter.create",
+            json!({"name": "Mark", "data_type": "number", "categories": [WALL],
+                   "formula": "2 * 3", "group": "Marks"}),
+        );
+        run(
+            "archbuilder.parameter.create",
+            json!({"name": "Cost", "data_type": "number", "categories": [WALL], "scope": "type"}),
+        );
+        let snapshot = document.snapshot();
+        let object = spatial::get(&snapshot, wall.parse().unwrap()).unwrap();
+        let shown = shown(&snapshot, WALL, &object, &|n: &str| n.to_owned()).unwrap();
+        let at = |name: &str| shown.fields.iter().position(|f| f.name == name);
+        assert!(at("parameters").is_none());
+        let mark = at("parameter:Mark").unwrap();
+        assert_eq!(shown.fields[mark].aspect, "Marks");
+        assert_eq!(shown.values[mark], Some(Value::String("=2 * 3".into())));
+        let result = at("parameter_value:Mark").unwrap();
+        assert_eq!(shown.values[result], Some(Value::String("6".into())));
+        assert!(shown.read_only.contains(&"parameter_value:Mark".to_owned()));
+        // A type-scope value is edited on the type, not on the wall.
+        assert!(at("parameter:Cost").is_some());
+        assert!(shown.read_only.contains(&"parameter:Cost".to_owned()));
+        assert!(!shown.read_only.contains(&"parameter:Mark".to_owned()));
     }
 }

@@ -29,6 +29,32 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-nothing-selected",
     };
+    /// A selection holds an element a group cannot take in (only walls with their openings,
+    /// components and rooms are taken).
+    pub const GROUP_KIND_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_kind_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-group-kind-unsupported",
+    };
+    /// A group definition has instances; they are separated or deleted first.
+    pub const GROUP_IN_USE: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_in_use",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-in-use",
+    };
+    /// A generated element of an instance was changed directly; a regeneration would overwrite it.
+    /// Edit the group instead, or separate the instance.
+    pub const GROUP_EDITED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_edited",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-edited",
+    };
+    /// A storey mapped by a group instance cannot be removed until the instance is separated.
+    pub const GROUP_LEVEL_MAPPED: ErrorCode = ErrorCode {
+        code: "ab.cmd.group_level_mapped",
+        category: Category::Conflict,
+        message_id: "ab-cmd-group-level-mapped",
+    };
     /// The object has no such field, or the field cannot be edited.
     pub const FIELD_UNKNOWN: ErrorCode = ErrorCode {
         code: "ab.cmd.field_unknown",
@@ -156,6 +182,18 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-cmd-mirror-axis",
     };
+    /// A foreign element (an imported shape) cannot be mirrored: nothing is changed.
+    pub const FOREIGN_MIRROR: ErrorCode = ErrorCode {
+        code: "ab.cmd.foreign_mirror",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-foreign-mirror",
+    };
+    /// The shape of an imported element cannot be moved or copied (its mesh does not decode).
+    pub const FOREIGN_SHAPE: ErrorCode = ErrorCode {
+        code: "ab.cmd.foreign_shape",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-foreign-shape",
+    };
     /// A point or value is typed while a modify command still waits for its objects.
     pub const SELECT_BEFORE_POINTS: ErrorCode = ErrorCode {
         code: "ab.cmd.select_before_points",
@@ -204,6 +242,19 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-cmd-type-in-use",
     };
+    /// The file is not a template a project can start from: it holds no project, site, building
+    /// and storey, or cannot be read as a document.
+    pub const TEMPLATE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.cmd.template_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-template-invalid",
+    };
+    /// A project is started from a template in a document that already has elements.
+    pub const TEMPLATE_TARGET_HAS_ELEMENTS: ErrorCode = ErrorCode {
+        code: "ab.cmd.template_target_has_elements",
+        category: Category::Conflict,
+        message_id: "ab-cmd-template-target-has-elements",
+    };
     /// The last type of a kind cannot be deleted.
     pub const TYPE_LAST: ErrorCode = ErrorCode {
         code: "ab.cmd.type_last",
@@ -221,6 +272,12 @@ pub mod codes {
         code: "ab.cmd.no_wall_at",
         category: Category::NotFound,
         message_id: "ab-cmd-no-wall-at",
+    };
+    /// The command is for straight walls and the wall is an arc.
+    pub const ARC_WALL_UNSUPPORTED: ErrorCode = ErrorCode {
+        code: "ab.cmd.arc_wall_unsupported",
+        category: Category::InvalidInput,
+        message_id: "ab-cmd-arc-wall-unsupported",
     };
     /// No wall face, wall center line or floor edge lies at the picked point.
     pub const NO_LINE_AT: ErrorCode = ErrorCode {

@@ -22,7 +22,7 @@ properties, relationships) and **edit** (native, parametric editing after import
 | PDF | Write | View | Vector sheets at true scale | AB-SHEET-011 |
 | PDF, PNG, JPEG | Read | View | Underlays | AB-LINK-007 |
 | PNG, JPEG, TIFF | Write | View | Image export | AB-SHEET-013 |
-| glTF, OBJ, STL | Write | View | Meshes with materials and element node names | AB-IO-013 |
+| glTF, OBJ, STL | Write | View | Meshes with materials and element node names (`archbuilder.file.export_mesh`) | AB-IO-013 |
 | glTF, OBJ | Read | View | Context links and generic elements | AB-LINK-008 |
 | OpenUSD | Write | View with element metadata | Aligned with the Arc Scene contract | AB-IO-014 |
 | Arc Scene | Write (stream) | View | To RenderBuilder | AB-VIS-009 |
@@ -96,6 +96,67 @@ in `arc-core`. The mapping principles below apply unchanged, with these addition
 7. **One revision per export.** Exports run against a frozen revision on a worker.
 8. **Coordinates are explicit.** Every export names its coordinate basis (internal, project or
    survey and map); IFC exports write map conversion and projected CRS from the coordinate record.
+
+### IFC4 export as implemented
+
+| Model kind | IFC4 | Notes |
+|---|---|---|
+| Stair | `IfcStair` aggregating `IfcStairFlight`, `IfcSlab` `LANDING`, `IfcRailing` | Predefined type from the shape; `Qto_StairFlightBaseQuantities` |
+| Ramp | `IfcRamp` aggregating `IfcRampFlight`, `IfcSlab` `LANDING`, `IfcRailing` | `Qto_RampFlightBaseQuantities` |
+| Railing | `IfcRailing` (`GUARDRAIL` on a stair or ramp, else `BALUSTRADE`) | `Qto_RailingBaseQuantities` |
+| Curtain wall | `IfcCurtainWall` aggregating `IfcPlate` (`CURTAIN_PANEL`) and `IfcMember` (`MULLION`), types `IfcCurtainWallType`, `IfcPlateType`, `IfcMemberType` | `Pset_CurtainWallCommon`, `Pset_PlateCommon`, `Pset_MemberCommon`, `Qto_CurtainWallQuantities`, `Qto_PlateBaseQuantities`, `Qto_MemberBaseQuantities`; door and window panels fill openings in the wall (reported as approximated) |
+| Arc, slanted, tapered, profiled and banded wall | `IfcWall` like any wall: the body is the faceted B-rep of the layers (an arc within 2 mm of the chord, a slant or taper as the planar sides, a profile with its openings, the bands united with their layer); doors and windows of an arc wall fill an `IfcOpeningElement` on the tangent frame, deepened by the arc's sagitta and by the bands' projection so the void clears them; a stacked wall is an `IfcWall` whose body shows each segment's layers at its heights, typed by an `IfcWallType` with the variable segment's layers, and lists its segments in `ArchBuilder_StackedWall`; a curved curtain wall is an `IfcCurtainWall` whose flat panels are `IfcPlate` and whose bars along the arc are `IfcMember` pieces, each flat within 10 mm | `Qto_WallBaseQuantities` from the same derivation (the length of an arc wall is along the arc); verified for volume against the tessellation by an independent reader |
+| Grid | one `IfcGrid` per building with U and V `IfcGridAxis` | Labels are the axis tags |
+| Reference plane, work plane, selection set | not exported | Reported (`IFCANNOTATION`, `IFCGROUP`) |
+
+Standard property sets are written only with the value types the writer supports; a property whose
+definition asks for a count, positive length, plane angle or identifier is left out.
+
+### IFC import as implemented
+
+`archbuilder.file.import_ifc` (File > Import > IFC, the Exchange tab, `archbuilder-cli import-ifc`)
+reads IFC2X3, IFC4 and IFC4X3 files and maps them in one transaction, so one undo step takes the whole
+import back. It needs the schema tables of the file's schema: those of IFC4X3 are part of every
+build, those of IFC2X3 and IFC4 are generated for a build (`ab.io.import_tables_missing` says so).
+Lengths are read in the project's length unit and stored in meters.
+
+| IFC | Model | Notes |
+|---|---|---|
+| `IfcProject`, `IfcSite`, `IfcBuilding`, `IfcBuildingStorey` | the document's project, site and building; a level with a storey and a plan view for each storey | An open project keeps its own values: only fields it has empty are filled (long name, description, phase, georeference). The first building of the file is the document's building; a further building is merged into it with its storeys (reported), because the export writes one. A storey's elevation is `Elevation`, else its placement. A building without storeys gets one. |
+| `IfcMapConversion` and `IfcProjectedCRS` (or the `ePSet_` pair of IFC2X3) | project location: reference system, eastings, northings, height, true north, scale | Only when the project has no reference system yet. |
+| `IfcWall`, `IfcWallStandardCase` | wall | A vertical prism whose footprint is a strip: two parallel long sides with an end across each. The baseline runs between the middles of the ends and the thickness is the distance between the sides. A square end is not joined, a slanted end is a miter that the model's joins make again. The layers of `IfcMaterialLayerSetUsage` give a wall type (the first layer is the exterior face; the usage's direction and sense decide which side of the baseline that is); layers that do not add up to the body give a one-layer type, reported. Any other body is a foreign element. |
+| `IfcDoor`, `IfcWindow` | door, window | Hosted by the wall that the file's `IfcRelFillsElement` and `IfcRelVoidsElement` name, never by position. Distance, width, height and sill come from the body, else from `OverallWidth` and `OverallHeight`; the operation from the type's operation or partitioning. The body is the model's own frame and leaf, and the swing side is not read (both reported). A door or window whose wall was not mapped, or that the model refuses in its wall (an overlap, a reach past the wall's ends or top), is a foreign element under its own identifier (reported). |
+| `IfcSlab` | floor | A horizontal prism with holes. A flat roof slab also becomes a floor (reported): a roof of the model has sloped edges. Layers run top first. |
+| `IfcCovering` `CEILING` | ceiling | A horizontal prism. |
+| `IfcSpace` | room | At the centroid of its footprint, with the number and the long name. |
+| `IfcGrid` | grid lines of the building | One line per axis; the grid's `GlobalId` is not kept (reported). |
+| `IfcGroup`, `IfcZone`, `IfcSystem` | selection set | Members that became elements of the model. |
+| `IfcOpeningElement` | carried by the door or window that fills it | An opening without a filling is not carried (reported). |
+| every other `IfcElement` (columns, beams, stairs, ramps, railings, roofs, furniture, equipment, proxies, ...) | foreign element | The class in the schema's spelling, the predefined type, object type, tag and description, and the mesh of the foundation's geometry evaluation (openings subtracted) in project coordinates. |
+| any other product (annotations, ports, spatial zones) | not carried | Listed in the loss report as dropped. |
+
+Everything an element has beyond its model fields (property sets with the type's merged in, quantity
+sets, classification references, the material, the type's class and name, the groups) is kept as a
+foreign data row of the element (`ifc_element`), and the original file and the loss report are
+document-level foreign rows (`ifc_source_file`, `ifc_import_report`; a file over 64 MiB is not
+kept). Property values keep their types; lengths, areas and volumes are in meters.
+
+**Identity.** The identifier of an element made from a product is the 128 bits its `GlobalId`
+encodes, so the export writes the same `GlobalId` again (IFC `GlobalId`s are the encoding of the
+element identifier, see the domain model); a `GlobalId` that is malformed, repeated in the file or
+taken by another object gets a new identifier. The source map of the document (`arc_doc::source_map`,
+format `ifc`) binds each `GlobalId` to its object (ADR 0007). A product whose `GlobalId` the document
+already holds, as an identifier or in the source map, is matched and not made again. A copy or paste
+of an imported element is a new element with its own identifier, so it is written with its own `GlobalId`.
+
+**Export of imported content.** Foreign elements are written as their source class: the stand-in the
+writer has (a member with the mesh as a faceted B-rep) is rewritten through the reader's edit API
+with the source class, predefined type, object type and description; a class the output schema lacks
+is written as a building element proxy and reported. Kept property sets and quantity sets are merged
+into the element's own; a value the writer has no type for (list, bounded and table values) is
+reported. An imported room that no loop of walls encloses is written as a space without a body. The
+file is read back and checked, including the conformance rules of the schema when the build has its
+tables.
 
 ## Validation
 

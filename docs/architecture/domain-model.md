@@ -23,7 +23,7 @@ recomputes when something changes. It is the schema contract for `archbuilder-mo
 | Type | Key properties | Relationships |
 |---|---|---|
 | `Project` | Information fields, settings, units, boundary rule, template flag | One per document; root of spatial tree |
-| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document |
+| `CoordinateRecord` | Base point, survey point, true north, CRS, map conversion, precision distance | One per document; kept as optional fields of the `Project` record (see Location) |
 | `Site` | Name, boundary, terrain references | Child of project |
 | `Building` | Name, elevation, address | Child of site |
 | `Storey` | Name, level reference | Child of building; contains elements |
@@ -44,6 +44,7 @@ All physical elements share: `id`, `category`, `type_id` (where applicable), `st
 | `CurtainWall` | Location curve, constraints, grid rule overrides, manual grid lines, cell map (cell key to panel type) | Type `CurtainWallType`; owns `CurtainGridLine`, `Mullion`, `CurtainPanel` |
 | `Floor`, `Ceiling` | Boundary profile, level, offset, slope, shape points, pattern origin | Types `FloorType`, `CeilingType`; host inserts and edges |
 | `Roof` | Footprint or extrusion profile, per-edge slope, pitch, overhang, courtyard flags, base level | Type `RoofType`; owns `Dormer` children; hosts edges and inserts |
+| `ForeignElement` | Source class, predefined type, object type, tag, source schema, mesh (project coordinates, meters) | Made only by an import; owned by a storey; carries no parameters; its source data is a foreign data row of the object; exported as its source class. Picked over the plan box of its mesh; moved, rotated, copied and pasted with the mesh transformed; a mirror is refused (`ab.cmd.foreign_mirror`) |
 | `Dormer` | Host roof, placement, dimensions, owned wall IDs, owned opening ID | Reconciles its children |
 | `EdgeElement` | Kind, profile, host edge references | Hosted by floor or roof edges |
 | `Insert` | Family type, host, host-local position, height, hand, facing | Hosted by a wall, floor, ceiling, roof or face |
@@ -140,7 +141,7 @@ thickness) turns into the end or the reveal: each becomes an L whose foot covers
 middle of the core when both sides wrap), nested outward in, and the core stops short of the end by the total of the
 feet, so the length of the wall and the clear opening do not change. The plan lines and the solids show it.
 
-Known limits: walls have no base attachment or curves, and the only inserts are the doors and windows below; a node of three or more walls without a
+Known limits: walls have no base attachment, and the only inserts are the doors and windows below; a node of three or more walls without a
 straight run (a Y) leaves a small notch at its center; two collinear walls of different layer stacks
 meet square and show the difference in their lines; at a node of walls of different thickness the
 closed star can leave slivers; layer cleanup applies only at ends with the style `auto`; styles other than `auto` apply only at a
@@ -150,6 +151,61 @@ baseline stays; a center line has no side), and `archbuilder.wall.delete`
 deletes walls (the named ones, else the selected ones) in one transaction, so one undo restores
 them; `archbuilder.object.delete`, the Delete key, deletes the selected walls, else the selected
 storey.
+
+#### Wall shapes
+
+A wall record carries optional fields, all appended in schema 1.6, so a document from before them
+opens unchanged and reads every field as absent (a straight, vertical wall with its rectangle and
+no bands). Only authored numbers are stored; the facets, solids, joins and openings derive.
+
+| Field | Meaning | Rule |
+|---|---|---|
+| `bulge` | The tangent of a quarter of the baseline's sweep from the start to the end, positive counter-clockwise | At most 10 in size; 0 or absent is a straight wall. The faces are concentric arcs: the radius of the nearer face must stay at least 5 cm, else the wall is refused. `distance` of a door or window and the wall's length are measured along the arc |
+| `lean_exterior`, `lean_interior` | The lean of each face from the vertical, positive when the top moves toward the left (exterior) side | At most 60 degrees; equal values are a slant, different values a taper; the thickness at the top must stay at least 10 mm. The layers lean in proportion between the faces |
+| `profile` | The sketched elevation: points of distance along the baseline and height above the base, each with its loop; the first loop is the outline, the others are openings | At most 256 points; simple polygons; the outline inside the wall's rectangle; openings inside the outline and apart. Absent restores the rectangle |
+| `bands` | A list of bands: face, horizontal or vertical, position from the base (start) or the top (end), width and signed depth | At most 32; depth 1 mm to 2 m (negative for a recess); the range lies within the wall |
+
+The commands are `archbuilder.wall.set_arc` (a bulge, or a point the arc passes through, or 0),
+`archbuilder.wall.set_lean`, `archbuilder.wall.set_profile` and `archbuilder.wall.set_bands`;
+`archbuilder.wall.create` takes `bulge` or `through`, and `archbuilder.wall.create_arc` is the tool
+that asks for a third point. Each is one transaction and one undo step; the model's rules refuse
+a shape that makes no solid (`ab.model.wall_shape_invalid`), shapes that cannot be combined
+(`ab.model.wall_shape_combination`), a profile that leaves a door or window outside it
+(`ab.model.wall_profile_inserts`, naming them) and a band that does not fit.
+
+- **Arc walls.** A wall on an arc is derived as straight facets on the chords of its baseline, flat
+  within 2 mm, which join each other by miters and join other walls like straight walls: layers,
+  cleanup, plan lines, rooms (which are bounded by the facets) and picking use them; the facets of one
+  layer are united into one polygon. The wall's own solid keeps the arcs. A door or window in an arc
+  wall is made on the tangent of the baseline at its center, so its opening is chord-faceted: the
+  deviation over the width of an opening is the sagitta of the arc over it. Moving, rotating,
+  mirroring, copying, flipping and moving an end keep the arc. Limits: the edit commands align,
+  offset, trim, extend, split and merge (and the arrays of walls) are for straight walls and refuse an
+  arc wall naming it; a wall ending on the baseline of an arc wall in a T is not joined (ends meeting
+  at their end points are); a floor edge cannot follow the face of an arc wall (it is reported); a
+  curtain wall is not embedded in an arc wall.
+- **Leaning walls.** Each layer polygon at the base moves sideways with height by the lean of its
+  position across the wall, so every side is planar. The joined ends keep their vertical cut at the
+  base and lean with the faces. A leaning wall has no arc, no profile and no bands, and keeps its
+  own top where it would follow a roof.
+- **Profile.** The profile is extruded across each layer; its ends stay square, so a wall with a
+  profile has no join cleanup, and is not cut by slabs or a roof. Doors and windows must lie in
+  its material.
+- **Bands.** A projecting band is united with the layer it stands on, a recessed one is cut from the
+  layers it meets; both stop at doors and windows. A band does not continue around a corner, and
+  bands apply to a straight, vertical wall without a profile.
+
+A wall type has one more optional field in schema 1.6, `stack`: records of a wall type (a reference
+that blocks deleting the type) and a height, 0 for the one variable segment. The type's own layers
+are those of the variable segment, so the instance's thickness, core and joins are those of one wall.
+`archbuilder.wall.stack_type` makes such a type and refuses fewer than two or more than sixteen
+segments, not exactly one variable one, a curtain or stacked segment, and segments of different total
+thickness (`ab.model.wall_stack_invalid`, with the reason). The layers of each segment come from its
+type: the layout of a storey is derived once for each segment of its tallest stack, and a band of
+heights uses the layout of its segment.
+
+Wall bands are per wall instance. The IFC body of a shaped wall is the faceted solid of its
+layers, as for every wall; see the IFC table in the interoperability document.
 
 #### The door and window of the first slice
 
@@ -166,7 +222,7 @@ inserts back. Authored data only, lengths in meters, one layout for both kinds:
 | `width`, `height` | Size of the opening | 0.1 m to 20 m; copies of the type, written only with it |
 | `sill` | Bottom of the opening above the wall's base | 0 to 100 m; the type's default sill when placed or retyped, then the instance's own; the head stays 10 mm below the wall's top |
 | `frame_width`, `frame_depth` | Width of the four frame bars, depth across the wall | 10 mm to 0.5 m and 10 mm to 2 m; copies of the type; the solids, the plan symbol and the IFC body use the depth clamped to the host wall's thickness; the frame leaves at least 20 mm clear |
-| `operation` | `single_swing`, `double_swing` or `sliding` for a door; `fixed`, `casement` or `sliding` for a window | A copy of the type; the kind decides what is allowed |
+| `operation` | `single_swing`, `double_swing`, `sliding`, `folding` or `pivot` for a door; `fixed`, `casement`, `awning`, `hopper`, `sliding`, `folding` or `pivot` for a window | A copy of the type; the kind decides what is allowed |
 | `insert_type` | The door or window type (schema 1.1) | A reference to a type of the kind; absent only in files from before types until they are upgraded |
 | `pinned` | Whether the door or window is pinned (schema 1.2) | Absent: unpinned |
 | `hand` | `left` or `right`: the hinge side seen from the side the leaf swings toward | `left` by default |
@@ -196,8 +252,8 @@ placed at the center of the opening at the sill. The opening's body is the prism
 height through the wall's thickness. The insert's body is one faceted B-rep of the frame bars and the
 leaf or pane (and a door's handle), the same solids the viewport draws; they are separate closed
 solids in one shell. The insert's placement has its y axis toward the side a door swings to, so a
-door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; a double door is `DOUBLE_DOOR_SINGLE_SWING`, a sliding door `SLIDING_TO_RIGHT` (left hand) or `SLIDING_TO_LEFT`; fixed and casement windows are `SINGLE_PANEL`, sliding windows `DOUBLE_PANEL_VERTICAL`. IFC4 has no operation on the window itself, so the operation,
-hand and facing of a casement window are reported as approximated and a fixed window loses nothing.
+door's `OperationType` follows the hinge: the product reads a door's hand facing the leaf from the side it swings toward, IFC4 reads it looking along the placement's y axis (the swing direction), the opposite viewpoint. A product `left` door has its hinge at +x and is `SINGLE_SWING_RIGHT`; a `right` door has its hinge at -x and is `SINGLE_SWING_LEFT`; a double door is `DOUBLE_DOOR_SINGLE_SWING`, a sliding door `SLIDING_TO_RIGHT` (left hand) or `SLIDING_TO_LEFT`; a folding door `FOLDING_TO_RIGHT` (left hand), `FOLDING_TO_LEFT` or, from four leaves, `DOUBLE_DOOR_FOLDING`; a pivot door has no IFC4 value and is written as a user-defined `PIVOT`; fixed, casement, awning, hopper and pivot windows are `SINGLE_PANEL`, sliding and folding windows `DOUBLE_PANEL_VERTICAL`. IFC4 has no operation on the window itself, so the operation,
+hand and facing of a casement, awning, hopper, pivot or folding window are reported as approximated and a fixed window loses nothing. Each door and window also has a `Qto_DoorBaseQuantities` or `Qto_WindowBaseQuantities` set (`Width`, `Height`, `Area`).
 `OverallWidth` and `OverallHeight` come from `width` and `height`.
 
 Derived, never stored: the wall's solid is the joined solid with each opening cut through its whole
@@ -209,8 +265,28 @@ typed distance along the selected wall; the options width, height, sill, hand an
 continue until Enter or Escape, one undo step each), `archbuilder.insert.flip_hand` and
 `archbuilder.insert.flip_facing` flip the selected ones, and `archbuilder.object.delete` deletes the selected
 inserts. A double door has two leaves meeting in the middle, a sliding door or window two panels in
-two tracks. Known limits: no families, no room relations, arched or non-rectangular openings are
-not offered. The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
+two tracks, a folding door or window two leaves (four from 1.5 m wide) side by side. The operations are the
+opening recipes: a door or window type is a recipe (operation, size and frame, without a family), and
+`archbuilder.door.place` and `archbuilder.window.place` take an `operation` that gives the insert a type of
+that operation (an existing one of the same size, else a new one); a door may swing, slide, fold or pivot and a
+window may be fixed, casement, awning, hopper, sliding, folding or pivoting, and the model refuses any other
+combination. Converting a recipe type to an editable family waits for families. Known limits: no families.
+`archbuilder.insert.rehost` moves doors, windows and wall openings to another wall in one step (each keeps its place in
+the plan, projected onto the new baseline, or one insert goes to a given distance); a result outside the clear
+span, too tall or in the way of another opening is refused and names the insert and the wall or opening
+involved. Two openings of one wall conflict only where their heights overlap too (`MIN_GAP` along the baseline), so a
+window or opening above a door may stand over the same stretch.
+`archbuilder.insert.rooms` (read only) reports the rooms on both sides of doors and windows, found at the room
+calculation points: the center of the opening, 0.15 m beyond each face of its wall. A door's `to` room is the one its leaf swings
+toward and its `from` room the other, so flipping its facing swaps them; a window's `to` room is the interior one opposite
+its facing. Nothing is stored; a wall that bounds no room gives none. Rooms have no phases yet, so the relation is of the model as it is.
+The plan symbol (the opening across the wall, a door's open leaf with its swing arc, a window's frame and glass line, a sliding arrow, a folding zigzag, a pivot axis) is drawn as a viewport overlay at a cut 1 m above the wall's base, and an insert is picked from its opening in plan and in 3D ahead of its wall.
+The symbol follows the detail level of the view: coarse has the outline and the swing of a hinged door, medium the
+leaves and lines of every operation, fine adds the arrows, the sill line of a window and the inner frame outline
+(`insert::symbol_at`). The elevation symbol (`insert::elevation_symbol`, in the plane of the exterior face) has the
+outline, at medium detail the opening direction (a triangle with its apex at the hinge, at the top for an awning
+and the bottom for a hopper, an arrow for sliding, one triangle for each leaf of a folding door, the axis of a
+pivot) and at fine detail the inner frame and the sill line; elevation views themselves are not built yet.
 
 #### The floor of the first slice
 
@@ -378,6 +454,78 @@ both runs and the gap). The opening is derived, never stored; overlapping openin
 a new hole; across the slab's edge it is subtracted as a notch; an opening that cannot be cut
 leaves the slab whole with a warning (`ab.model.stair_opening_uncut`). The floor's area, volume,
 solid, picking and IFC body follow; moving or deleting the stair moves or removes the opening.
+
+#### Stairs by sketch and the headroom check
+
+A stair of the shape `sketch` takes its runs from `runs` (schema 1.2, optional): one record per run
+line, the start `x0`, `y0` (the middle of the first riser) and the end `x1`, `y1` (the direction;
+the run's length comes from its risers). The rules are those of the component stairs: the riser
+count is `ceil(height / max_riser)`, at least two per run, shared among the runs in proportion to the
+lengths of the lines; each run keeps the stair's `width`, `tread` and `waist`; between two runs
+the landing is the convex hull of the last riser of one and the first riser of the next (none when
+they meet); solids, rails, plan symbol and the shaft opening (the convex hull of the footprint plus 5 cm on
+every side) are derived the same way and the stair is copied, moved and mirrored with its run
+lines. `archbuilder.stair.create_sketch` takes the lines in `runs`. Boundary lines and riser lines
+that override the generated outline are not modeled yet.
+
+The headroom check (`ab.model.stair_headroom`, a warning) samples the walking surface at the middle
+and near both edges of every tread and at the middle and corners of every landing, and looks
+up at the undersides of the floors (with the shaft openings already cut out of them) and roofs
+of the document; what lies below the walking surface is ignored. It reports the least clear
+height, where it is and the element in the way when that is below the stair's `headroom` (schema 1.2,
+optional; 2 m when absent).
+
+#### The elevator
+
+`archbuilder.elevator` is owned by its base storey. Stored: `x`, `y` (the middle of the car),
+`direction` (where the doors face), `car_width` (across the doors, 1.1 m by default),
+`car_depth` (1.4 m), `clearance` (the shaft wall clearance on every side, 0.15 m), `door_width`
+(0.9 m, at most the shaft's width), `pit` (1.2 m below the base level), `overrun` (1 m above the top level),
+`top_level` (else the highest level of the building) and `stops` (the levels served; else every level
+from the base to the top). Derived (`archbuilder_model::elevator`): the shaft (the car grown by the clearance), a
+landing door on its front side at every stop, and the shaft span, from the base level to the top
+level plus the overrun. The shaft is read like a shaft element: it cuts every floor, roof and
+ceiling its span passes through (the floor it stands on is not cut), so areas, solids, picking and
+the room boundaries follow. The plan symbol is the shaft, the car with its cross, and a mark across
+each landing door. Shaft walls and per-level door types are not generated.
+`archbuilder.elevator.create` makes it; it is moved, copied and deleted like other storey elements.
+
+IFC: an elevator is an `IfcTransportElement` of the predefined type `ELEVATOR` contained in its base
+storey, with an `IfcTransportElementType` of its own and the car (its outline extruded by the car height,
+2.4 m) as its body; `Pset_TransportElementElevator` holds `ClearWidth` and `ClearDepth` of the car. The openings its
+shaft cuts are written as `IfcOpeningElement`s voiding the floors.
+
+#### Dormers
+
+`archbuilder.dormer` is owned by its roof and goes with it. Stored: `x`, `y` (the middle of the opening in
+the roof, in plan), `direction` (where the front faces; down the slope by default), `width` (1.5 m),
+`depth` (2 m), `pitch` (30°), `style` (`gable` or `shed`), `wall_height` (the eave above the roof at the
+front, 1.2 m) and `thickness` (0.15 m). Derived (`archbuilder_model::dormer`): the opening, which the host roof reads
+like a vertical opening, and the front wall (a pentagon under a gable), two cheek walls that stand on the roof and the
+dormer's own roof (two planes, or one for a shed). A dormer whose opening leaves the roof, or whose
+eave lies below the roof at the back, is refused. The roof's dormers move and copy with it. The
+assembly ends at the depth of the opening; where it meets the host further back is not modeled.
+
+IFC: IFC4 has no dormer. The dormer is written as the `IfcOpeningElement` voiding its roof, an
+`IfcWall` for the front wall and one for the cheek walls, and an `IfcRoof` (`GABLE_ROOF` or `SHED_ROOF`)
+for its roof, each with its faceted body, with the loss report entry `ab.io.ifc.dormer_as_parts`.
+
+#### Roof edge elements
+
+`archbuilder.roof_edge` is owned by its roof. Stored: `role` (`fascia` or `gutter`), `profile` (a
+closed loop of `u`, `v`: `u` outward from the eave, `v` up from the underside at the eave) and `edges`
+(numbers in the roof's edge list). Only an edge that defines a slope has an eave; another is an orphan
+(`ab.model.roof_edge_orphan`, a warning), never rebound. The profile is swept along the roof's outline with its
+overhangs by the machinery of floor edges (`floor_edge::sweep`), mitered at the corners, the height of
+each eave read from the roof surface. Defaults: a 25 x 150 mm board for a fascia, a 120 x 100 mm box channel for a
+gutter. Soffits and sweeps along gable edges are not modeled yet.
+
+IFC: a fascia is an `IfcCovering` of the predefined type `MOLDING` with its swept body (IFC4 has no fascia; the
+loss report records the approximation, `ab.io.ifc.fascia_as_covering`). A fascia carries `Pset_CoveringCommon.IsExternal`. A gutter is an `IfcPipeSegment`
+of the predefined type `GUTTER` with its swept body.
+
+A glazed roof (a curtain grid on the faces of a roof) is not modeled yet: the grid rules of curtain
+walls work on a wall's baseline and height, not on the planes of a roof.
 Stairs do not bound rooms.
 
 `archbuilder.stair.create` takes `start`, `to` (a point the first run heads toward) or
@@ -402,12 +550,96 @@ the walking line from the arrival down to the foot, with the down text (`DN`, `A
 the arrival. Known limits: no winders, spiral or sketched stairs, no stringers, nosings or
 assembled construction, no headroom check, no multistorey repeat.
 
-IFC mapping, planned: an `IfcStair` aggregating an `IfcStairFlight` per run, an `IfcSlab` with
-`PredefinedType` `LANDING` for the landing and an `IfcRailing` per side. As implemented: the IFC
-writer of the foundation has no stair, flight or railing entity yet, so each stair is named in the
-loss report (`ab.io.ifc.stair_not_written`) and nothing is written in its place; its shaft opening is
+IFC mapping: an `IfcStair` (`STRAIGHT_RUN_STAIR`, `QUARTER_TURN_STAIR` for an L, `HALF_TURN_STAIR` for a U) with no body of
+its own, contained in its storey, aggregating (`IfcRelAggregates`, parts not contained) an `IfcStairFlight` per run (`STRAIGHT`;
+`NumberOfRisers`, `NumberOfTreads` (one less than the risers: the last riser meets the landing or the floor), `RiserHeight`,
+`TreadLength`; `Qto_StairFlightBaseQuantities` with the walking-line `Length`, `GrossVolume`, `NetVolume`), an `IfcSlab` `LANDING` for
+the landing (`Qto_SlabBaseQuantities`) and an `IfcRailing` `GUARDRAIL` for each side that has one (`Qto_RailingBaseQuantities.Length`).
+Every part has a faceted B-rep in the storey's frame and a `GlobalId` derived from the stair's. Its shaft opening is
 written as a hole (or notch) of the profile of the slab above, and that slab's net area and volume
-have it taken out.
+have it taken out. The standard property sets carry typed values with the measure types of the IFC4 templates, only for
+what the model knows: `Pset_StairCommon` (`NumberOfRiser`, `NumberOfTreads`, `RiserHeight`, `TreadLength`, `WaistThickness`,
+`RequiredHeadroom`), `Pset_StairFlightCommon` (the counts, `RiserHeight`, `TreadLength`), `Pset_RampCommon`
+(`RequiredSlope`, the type's largest slope as an angle), `Pset_RampFlightCommon` (`Slope`, `ClearWidth`) and
+`Pset_RailingCommon` (`Height`); the flight's counts and dimensions are also attributes of the `IfcStairFlight`.
+`Pset_DoorCommon` and `Pset_WindowCommon` hold `IsExternal` (the exposure of the host wall's type), `Pset_SlabCommon` the
+`PitchAngle` of a floor, `Pset_SpaceCommon` the room number as `Reference` and `IsExternal`.
+A ramp is an `IfcRamp` (`STRAIGHT_RUN_RAMP`) aggregating an `IfcRampFlight` (`STRAIGHT`, `Qto_RampFlightBaseQuantities`: sloped
+`Length`, `Width` for a slab of constant thickness, areas, volumes), an `IfcSlab` `LANDING` for each landing and its hosted
+railings. A railing record hosted on a stair or ramp is an `IfcRailing` `GUARDRAIL` that is a part of it; a railing by path is a
+`BALUSTRADE` contained in its storey (`Qto_RailingBaseQuantities.Length`).
+
+#### Railings and ramps
+
+`archbuilder.railing` is a railing by path (points with a height above the level and the bulge of
+the arc to the next point) or hosted on another element, with a type, the extension at each end of
+the rail and the railing its top rail continues to. `archbuilder.ramp` is a straight run with a
+landing at each end, a width, a thickness and a form. `archbuilder.railing_type` holds the height
+of the top rail, the profiles, an optional handrail, the baluster spacing, the post size and how
+the rail turns at a corner (miter or fillet); `archbuilder.ramp_type` holds the largest slope and
+the thickness. Only these inputs are stored; the walking surface, the posts, the balusters, the
+rails and the solids are derived each time.
+
+Types. The type editor lists railing types and ramp types next to the element types: it shows the
+type of the selected railing or ramp, edits all its values (checked as typed, one
+`archbuilder.railing_type.define` or `archbuilder.ramp_type.define` on Apply, so every railing or
+ramp of the type changes in one undo step), duplicates it (`archbuilder.type.duplicate`) and
+deletes it, asking for the type its railings or ramps get instead (`archbuilder.type.delete`).
+Create similar starts the railing or ramp tool with the type of the selected one; match type
+(`archbuilder.type.match`) gives the railings or ramps picked after the source its type, and
+leaves objects of another kind alone.
+
+Hosts. A railing is hosted on a stair, a ramp, a floor or a floor edge element (`host`, with
+`side`). On a floor it stands on one edge of the boundary (`host_edge`, the number of the vertex
+the edge starts at) or, without a number, on the whole outer boundary; on a floor edge element it
+stands on one of its chains (`host_edge`, the first chain without it). The rail is on the top of
+the slab, 0.05 m in from the edge, so it follows the floor whenever the boundary moves (edges that
+follow walls included), and an edge the floor no longer has leaves the railing without a path,
+reported as such and never moved to another edge. A railing goes with its host when the host is
+deleted. Known limit: copying or pasting a floor does not copy the railings hosted on it.
+
+Rails and joins. The top rail and the handrail are swept along the path in one solid for each
+stretch, with a ring of the section at every point in the plane that bisects the two bars meeting
+there: a true miter, so the joined bars neither overlap nor leave a gap and the solid has the
+volume of the center line times the section. The type's corner setting (miter or fillet) decides
+whether the path is rounded before it is swept. A path that turns back on itself by more than 120
+degrees is cut square there, and a bar shorter than the miters at its ends is drawn as two bars
+that overlap (the only place the overlap remains). A hosted rail has transitions at the joins of
+its path: a landing where the slope changes and the heading does not, a turn where the heading
+changes (`Derived::transitions`), each with a post and the corner of the type. When a railing
+continues to another, its rail is mitered at the first point of the next one's rail and runs to
+the middle of the next one's first bar, where the next one's own rail starts; the next one has no
+extension at its start, as the first has none at its end.
+
+Ramps of several runs and by sketch. After the first run a ramp can have more runs (`runs`, at
+most 16), each with the turn at the middle of the landing before it (to the left when positive, at
+most 135 degrees, and the landing must hold the miter of the turn), its length, its landing and,
+optionally, its own slope. The slope that carries the rise over all the runs is shared by the runs
+that have none of their own; setting the slope of one run (`archbuilder.ramp.set_run`) changes the
+elevations of every run after it and none before it, and the top then differs from the level the
+ramp was to reach, which is a warning (`ab.model.ramp_top`) along with a run steeper than the
+largest slope of the type (`ab.model.ramp_slope`, for any run). `archbuilder.ramp.add_run` adds a
+run, `set_run` changes or removes one. The body is a set of convex pieces over the band along the
+center line (mitered where it turns), each with the plane its top follows; a slab has the
+thickness below the top, a solid a level underside. A ramp by sketch has a `boundary` of straight
+edges (a simple polygon) and the run line of its foot, direction and lengths: the slope rises
+along the run line over the whole boundary, between the two landings. Its opening in the floor of
+the level it arrives at is the boundary up to the arrival edge, and a railing hosted on it stands
+on the extremes of the boundary across the run line. In the tool the keyword `sketch` at the first
+prompt asks for the run line and then the points of the boundary, ended with Enter. The record
+holds `slope`, `runs` and `boundary` only when used (schema 1.1; older files load).
+
+Bounds and drawing. A railing gets at most 4 000 balusters ([`railing::MAX_BALUSTERS`]): one that
+would need more has none, keeps its rails and posts and is reported (`ab.model.railing_balusters`),
+and `archbuilder.railing.create` says so (`balusters_capped`); the count is computed before any
+baluster is. In a plan view ramps and railings are drawn under their own categories (`ramp`,
+`railing`, flags `show_ramps` and `show_railings`), not under stairs; components are drawn under
+`component` (flag `show_components`, in plan and model views, absent in older files and then shown), and each run of a ramp has
+its slope in percent written at its middle (with the decimal separator of the language, marked when
+it passes the type's largest slope). While the railing or ramp tool asks for points, a dashed
+preview follows the pointer: the path so far for a railing, the outline and walking line of the
+ramp from its foot, the run line and the boundary so far for a ramp by sketch. Typing `railing`
+(`korkuluk`) or `ramp` (`rampa`) at the command line starts the tool, and Repeat repeats it.
 
 #### The roof of the first slice
 
@@ -462,8 +694,28 @@ stairs. Roof types are as floor types (layers from the top down); a new project 
 generic 300 mm roof type and timber rafters with insulation under tiles, and a document without
 roof types gets the same two when its first roof is made.
 
+The eave cut. A roof type decides how the eave end of the slab is cut on every sloped edge of
+every roof of that type; the setting is the type's, so changing it re-derives all of those roofs
+in one undo step, and a gable edge keeps its vertical plane. It is measured in the vertical section
+square to the eave edge, from the slab's top corner on the outline (the line the overhang
+reaches); no cut reaches outside the outline, and the overhang, the base height and the underside
+that walls attach to do not change. `plumb` is a vertical end face from the underside up to the top
+(the form of every roof before the setting existed). `square` is an end face square to the slope
+through the top corner, which pulls the underside back from the outline by the thickness times the
+sine of the slope. `two_cut_plumb` is a vertical face of the `fascia_depth`, measured down from the
+top corner, and then a level soffit back to the underside; `two_cut_square` is a face square to the
+slope whose length along it is the `fascia_depth`, and then a level soffit. A fascia depth at least
+as long as the whole end face leaves no soffit and the cut equals the single form. All layers of
+the type share the cut faces: the layer boundaries are parallel to the slope, so each layer ends at
+the same cut plane and keeps its thickness square to the slope. Where two neighboring sloped edges
+meet at a corner the cut planes meet in a miter, and the soffits of two-cut ends must end at one
+height there (equal overhang, slope and fascia depth on both edges); otherwise the roof is refused
+with `ab.model.roof_cut_conflict`, naming the point, rather than given a step. The viewport, the
+volumes and the IFC body (`IfcFacetedBrep`) all follow the cut. Roofs by extrusion keep the
+square end of their profile; the setting does not reach them.
+
 The `.archb` addition is backward compatible: the record types `archbuilder.roof` and
-`archbuilder.roof_type`, the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
+`archbuilder.roof_type` (whose optional `rafter_cut` and `fascia_depth` are schema 1.1), the wall's optional `top_offset` and `top_attach` (schema 1.4) and the
 project's optional `slope_unit` (schema 1.1) are new, so files from before roofs load unchanged.
 
 In the application the Roof tool (Architecture tab, Structure menu, `RF`, the words `roof`, `çatı`, `cati`,
@@ -518,7 +770,7 @@ or lower than its upper limit, the room's solid: an extrusion up to the level to
 room name (a room without a number takes its name as `Name` and has no `LongName`).
 `Qto_SpaceBaseQuantities` holds `NetFloorArea` (at the wall faces), `GrossFloorArea` (to the wall
 center lines), `NetPerimeter` (the outer loop plus every courtyard loop), `Height` (the mean height of the solid) and
-`NetVolume` (the volume of the solid), and `Pset_SpaceCommon` holds `Reference` (the number). An unenclosed room has no
+`NetVolume` (the volume of the solid); the number is the `Name`. An unenclosed room has no
 region and a redundant room shares its region with another room; neither is written, and the loss
 report names each one (`ab.io.ifc.room_unenclosed`, `ab.io.ifc.room_redundant`).
 
@@ -580,7 +832,12 @@ door by its distance along the baseline. `distance`, `width`, `height` (the arch
 included), `sill` have the meaning of a door's; `rise` is the sagitta of a circular arch on top (0:
 a rectangle), `pinned`. It is an insert of the wall (`archbuilder_model::insert::Kind::Opening`):
 the wall's body, its plan lines and its quantities are cut by it, it moves, mirrors and copies with the wall
-and is refused where a door would be.
+and is refused where a door would be. `profile` (schema 1.1, optional) is a sketched outline instead of a
+rectangle or an arch: three to 32 points in meters from the opening's lower left corner, x along the baseline and y
+up, kept inside `width` and `height`, never crossing themselves (`ab.model.insert_profile`). `archbuilder.opening.place`
+takes the outline as `profile` in the wall's elevation (x from the baseline's start, y above the wall's base) and
+derives the distance, width, height and sill from its bounds; the wall is cut normal to its face through its whole
+thickness and the opening is exported as an `IfcOpeningElement` with that profile.
 
 `archbuilder.shaft` (schema 1.0) is a footprint (`vertices`, `arcs`) with a base and a top: `base_level`
 (absent: the level of its storey) and `base_offset`, `top_level` (absent: the level above its
@@ -591,7 +848,11 @@ later. `archbuilder.vertical_opening` is a footprint cut in one floor, roof or c
 volume, a ceiling's, and a roof's body have the openings taken out; a cut that crosses a ridge, hip or
 valley of a roof is not cut in its body (the opening is still written as a void, and the loss report
 says so). The plan marks a shaft with its outline and a cross on every storey whose level is within
-its span.
+its span. `archbuilder.dormer_opening.create` cuts a roof where the selected walls of a dormer meet it: it is a
+vertical opening of the roof whose edges follow the faces of the walls (`face`, `edge_offset`), so it moves with
+them. Three or more walls that meet around make a closed outline; two or more in a chain give an open one that the
+roof closes along the line where the dormer meets it. The walls and the roof default to the selection. A dormer roof
+as an element of its own is not tied to the cut.
 
 In the application the tools are in the Architecture tab, the Selection tab and the Structure menu and have the typed shortcuts
 `CL` (ceiling: a click inside a room makes it, `sketch` sketches it), `OP` (wall opening, placed like a door; the
@@ -613,13 +874,14 @@ the storeys, the stairs and the openings are the same objects.
 
 #### The plan view of the first slice
 
-`archbuilder.plan_view` (schema 1.0) is the plan view of a storey, owned by it (deleting the storey
+`archbuilder.plan_view` (schema 1.1) is the plan view of a storey, owned by it (deleting the storey
 deletes its views). Its record holds authored settings only: the cut height above the storey's level
 (1.2 m by default), an optional top above the level (else the next level, else 3 m), whether the
 overhead range between the cut and the top is drawn, the scale denominator (100), the detail level
 (`coarse`, `medium`, `fine`), whether the storey below shows faint underneath, one flag per category
-(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts; ceilings are off
-in a new view, since they belong to ceiling plans), the elements hidden in this view (one optional
+(walls, floors, roofs, ceilings, doors, windows, stairs, rooms, openings and shafts, and, in schema
+1.1, railings and ramps, which a file from before it shows; ceilings are off in a new view, since
+they belong to ceiling plans), the elements hidden in this view (one optional
 reference each; deleting an element drops its entry), the bottom of the range relative to the level
 (0 by default) and the view depth below it (1 cm under the level by default, so a slab whose top is
 the level is beyond the cut). Everything below the cut down to the view depth draws beyond the cut.
@@ -698,6 +960,93 @@ going back to the 3D view restores the 3D camera. Temporary hide, isolate and hi
 plan view as in the 3D view: they are the tab's state, never saved or undone, and filter the drawing
 through object overrides of its definition. Hide in view is the view's own list, a document edit;
 Unhide all ends only the temporary state, and Show hidden in view empties the view's list.
+
+#### Document variables and project parameters
+
+`archbuilder.variable` (schema 1.0) is a named value of the whole document, owned by the project
+([ADR 0009](../adr/0009-parameters-expressions-and-family-documents.md)). The record holds a display
+name (unique among the variables, case folded), a formula identifier (ASCII letters, digits and `_`,
+not a function, unit, `true` or `false`, unique among the variables and project parameters), a data
+type (length, area, volume, angle, slope, number, integer, boolean, text, enumeration, material,
+family type) and a stored value. A stored value is a record of which one field is set: a literal
+number in SI base units (`number`), a truth value (`flag`), a text (`text`), or a formula (`formula`,
+its canonical text with `.` as the decimal separator, with `unit`, the symbol of the unit its bare
+numbers take, so a change of the project's display units never changes what it means). The parsed
+formula, the names it reads and every result are derived and never stored; the record's canonical
+encoding is that of `arc-doc` for these fields. A formula of a variable reads other variables only,
+with the version 1 function set and limits of
+[families.md](families.md#bounded-expression-language) (`archbuilder_model::expr`). Variables
+evaluate in dependency order, ties broken by identifier; a formula that closes a cycle is refused
+with the cycle named by display name. `archbuilder.variable.create`, `set`, `rename` and `delete`
+are each one undo step and evaluate every formula of the document before they commit: a change that
+leaves a formula failing (an unknown name, a dimension error, a deleted variable still read) is
+refused with the parameter, the span and the reason. A new formula identifier is written into every
+formula that reads the old one, token by token from the parsed spans, in the same step. Formulas typed
+in a language with a decimal comma are stored with `.`. `archbuilder.variable.list` and
+`archbuilder-cli inspect` (`variables`) list each variable with its formula and derived value.
+
+`archbuilder.parameter` (schema 1.0) is a project parameter: a display name, a formula identifier
+and a data type as for variables, a scope (`instance`, the default, or `type`), the categories it is
+bound to (the type keys of physical elements: every element but grids and reference planes), a
+group and an order (how the property grid shows it), an optional default (a stored value) and an
+optional rule (minimum, maximum, allowed texts, required; `reject` refuses a change that breaks
+it, otherwise it warns). Values live in the `parameters` field that every physical element and
+every element type record gained as a minor schema version (optional, so files from before load
+unchanged): a list of (parameter, stored value) kept in parameter identifier order, holding only
+values set on that object; deleting a parameter clears its entries. In instance scope values are
+set on the elements of the bound categories, in type scope on their element types. An element reads
+its own value, else its type's, else the default; a type formula reads type parameters and
+variables, an instance formula also the element's other parameters. Each scope evaluates in
+dependency order with cycles refused by name; nothing evaluated is stored. Built-in values of the
+element (a wall's thickness) are not readable by formulas yet.
+
+`archbuilder.parameter.create` (categories given, or those of the selected elements), `update`
+(scope, categories, group, order, default, rule), `rename`, `delete` (its values go with it) and
+`set` (a value or formula on elements or types, or clearing their own value) are each one undo step
+and, like the variable commands, evaluate every variable and parameter value of the document and
+check the rules before they commit: a failing formula or broken reject rule refuses the change and
+names up to 20 objects that fail; warnings come back in the result. A scope change keeps every
+stored value: going to type scope, a type without a value takes that of its first instance (by
+identifier) that has one, and the elements whose own value differs are reported (`diverging`);
+going to instance scope, an instance without a value takes its type's; the values left behind stay
+stored and apply again when the scope changes back.
+`archbuilder.parameter.list` and `inspect` (`parameters`) report the definitions and each object's
+value with its source (`own`, `type`, `default`, `unset`) and formula. The property grid shows the
+parameters of the selected objects in their groups (the common group is Parameters): a value, or a
+formula after `=` with a read-only row of what it gives; an edit goes through
+`archbuilder.property.set` with the field `parameter:<identifier>` (text after `=` is a formula, an
+empty text clears the own value); a type-scope value is read-only on an element. The Manage tab's
+Parameters group adds a variable (name, data type, value or formula) or a project parameter bound
+to the categories of the selection.
+
+## Loaded families and components
+
+`archbuilder.family` (schema 1.0) is a family loaded into the project: the identifier, version,
+checksum, name, category, hosting, IFC assignment, source and license of a published definition, and
+its canonical text ([families.md](families.md#canonical-text-and-packages)); the project owns it and
+never refers to the library file. `archbuilder.family_type` is a named set of values (a keyed list
+of parameter identifier and literal or formula) of one family, unique by name within the family and
+the fifth kind of the type commands (`archbuilder.type.set` takes `values`; duplicate, delete,
+assign and match work as for the other kinds). `archbuilder.component` is a freestanding instance on
+a storey: a family type, a distance above the level, an insertion point, a rotation, a mirror flag
+and the instance's own values. A component copies nothing from its type: evaluation reads the
+definition, the type and the instance together, so its solids and plan symbols are derived and never
+stored, and a change that would leave a component unable to evaluate is refused with the form,
+parameter or reason named.
+
+`archbuilder.family.load` copies definitions and types from a `.archbfam` package or another
+document in one undo step; a type name the family has already is kept, replaced or renamed;
+another checksum at a loaded identifier and version is a conflict (it may be loaded as a new family
+that records the original as its source), another version is an update.
+`archbuilder.family.update` moves a family to a newer version: values follow by parameter
+identifier (a rename follows too), parameters that were removed or retyped need an entry in
+`mapping`, and the update is refused with the instances that would fail. `load_preview` and
+`update_preview` report without changing anything. `archbuilder.component.place` places an instance
+(the Component button of the Architecture tab); the Manage tab's Load family button opens a file
+dialog for `load`. A plan view draws a component's solids as cut parts and the symbolic geometry its
+definition shows at the view's detail level; the viewport draws the solids shown in 3D. The
+IFC export writes each family instance with the entity its family declares; a generic model or
+specialty equipment that declares none is listed in the loss report.
 
 ## Selection and modify commands
 
@@ -802,6 +1151,14 @@ Shift) still starts the selection band. A drag shorter than 4 pixels is a click.
   handle about the center of its bounds, in steps of 15 degrees (free with Shift)
   (`archbuilder.modify.rotate`). A selected door or window has two flip handles that flip its hand
   and its facing on a click.
+- **Handles** of a single selected ramp: a square at the foot (`archbuilder.ramp.move_end`, the
+  end of the first run stays, so the run turns and changes length), a square at the end of the
+  first sloped run (the foot and the landing in front of the slope stay) and a diamond at the
+  middle of the left edge of that run, in steps of 50 mm (`archbuilder.property.set` of `width`; a
+  ramp by sketch has none). A single selected railing by path has a square at each point of its
+  path (`archbuilder.railing.move_point`, the height stays; a point dropped on its neighbor makes
+  nothing); a railing on a stair, ramp or floor follows its host and has none. A selected ramp or
+  railing by path is dragged and turned like a stair.
 - **Alt** held during a drag turns snapping off (the pointer's own point, whole millimeters of
   height, free rotation). Escape ends a drag and leaves the keyboard focus in the viewport.
 - **Temporary dimensions.** A single selected wall shows the distance between its center line and
@@ -970,6 +1327,36 @@ thickness; a slab cut into several parts is a faceted B-rep. The slab takes its 
 `GrossArea` and `GrossVolume` (the outer loop alone), `NetArea` and `NetVolume` (holes taken out,
 the rule of `inspect`), all of the authored boundary, not of the cut body.
 
+Mesh export: `archbuilder.file.export_mesh` (Exchange tab, Mesh group, and File > Export) writes the
+elements as OBJ with an MTL library beside it, binary STL or glTF 2.0 (`.gltf` with the buffer
+embedded, or `.glb`), through the writers of `arc-io-mesh`; `archbuilder-cli export-mesh <file.archb>
+<out> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]` does the same
+headless and prints the loss report. The format is the `format` parameter or else the file
+extension; without a path the application asks in a save dialog whose extension picks the format.
+Every body the viewport draws is written (walls by layer, curtain walls by panel and mullion, doors
+and windows by part, floors, floor edges, both kinds of roof with their eave cut, fascias and
+gutters, dormers, ceilings, stairs, ramps, railings and elevator cars, family components with
+their shared nested children), each solid derived from the records as the viewport derives it, and
+the stored mesh of each foreign element. Family instances hosted by walls are not derived for a mesh
+yet: the loss report counts them (`ab.io.mesh.hosted_family_not_exported`). An element is one object (OBJ), one node (glTF) or part of the
+single solid (STL); its name is `<name> [<identifier>]`, with `#` and `\` written as `_`, and a
+glTF node also carries `{"archbuilder": {"id", "kind", "name"}}` as `extras`. A glTF file has a
+root node, named after the project, that turns the model's Z axis up into glTF's Y axis up; the
+positions stay the model's own. Options: `selection` (only the selected elements) or `elements` (a
+list), `hidden` (elements to leave out: the application passes what its view hides or isolates away,
+since that state is not in the document), `merge` (one object for the model, split by material),
+`materials` (on by default) and `unit` (meters by default; centimeters, millimeters, feet and inches
+for OBJ and STL, which record no unit; glTF is always in meters and refuses another). Materials are
+named by role (`wall.core`, `wall.finish`, `door.leaf`, `window.glass`, `roof`, ...) with the
+viewport's colors, glass being translucent; the MTL colors are sRGB-encoded and the glTF base
+colors linear. Coordinates are single precision in STL and glTF, so a model far from the origin
+loses precision there; recenter the project (`archbuilder.coordinates.recenter`) first. The loss report
+lists what a mesh cannot carry: parameters, types, layers and quantities (one item with the element
+count), hosting, joins, attachments and room relations, objects without a body (rooms, grids,
+reference and work planes, selection sets, by kind), curved surfaces written as triangles, the
+missing unit of OBJ and STL, and any element whose solid could not be derived (named). The command
+changes nothing in the document and is not undoable.
+
 Export: `archbuilder-io` writes the first building of the document with `arc-io-ifc`; `export_ifc`
 takes a snapshot and the caller's file name and time stamp (no clock in the crate) and returns the
 bytes, the number of walls, floors, doors and windows, and a loss report (`archbuilder-cli
@@ -988,6 +1375,10 @@ element types are each in the file under their `GlobalId`, that no two rooted en
 `GlobalId`, and that the file holds as many products and openings as elements were written. Each
 problem is a loss item with the outcome `failed` (`ab.io.ifc.validation_unreadable`,
 `validation_missing`, `validation_duplicate_id`, `validation_count`) and `Export::valid` is false;
+When the build has the schema tables of the file's schema (`SchemaTables`; the IFC4X3 tables are in
+`arc-core`, the IFC4 ones are not, so an IFC4 export is not checked this way), the conformance check of
+`arc-io-ifc` (levels 1 to 3) also runs and each failed rule is an item `ab.io.ifc.validation_conformance`;
+`Export::conformance` names the schema it ran against and is `None` when it did not run, which is not a pass.
 `archbuilder.file.export_ifc` and `export-ifc` return it as `valid`. The file is still written, so
 `valid: false` is what marks it incomplete; it is not renamed or removed. Property sets, geometry
 and relationships are not re-checked yet.
@@ -1009,6 +1400,7 @@ instance's own.
 |---|---|---|
 | Wall type | `name`; `layers` from the exterior face to the interior face, each a record of `function` (`structure`, `substrate`, `thermal` for insulation and air gaps, `membrane`, `finish`), `material` (text) and `thickness`; `core_start`, `core_end` (the index range of the core layers); `exposure` (`exterior` or `interior`), `load_bearing`, `room_bounding`; `wrap_ends`, `wrap_inserts` (`none`, `exterior`, `interior` or `both`: the wrapping of finish layers at free ends and at the openings of doors and windows; schema 1.1, absent in older files, read as `none`) | 1 to 32 layers; every layer thicker than 0 and at most 5 m except a membrane, which has no thickness; at least one core layer inside the list; a total of 1 mm to 5 m. Each broken rule is refused with a message that names the layer and what to change |
 | Floor type | `name`, `layers` from the top down, `core_start`, `core_end` | As a wall type |
+| Roof type | The fields of a floor type, then the optional `rafter_cut` (`plumb`, `square`, `two_cut_plumb` or `two_cut_square`) and `fascia_depth` (schema 1.1; absent in older files and in types that never set them: a plumb cut) | As a wall type; `fascia_depth` 10 mm to 2 m, used by the two-cut forms; see the eave cut below |
 | Door type, window type | `name`, `width`, `height`, `frame_width`, `frame_depth`, `operation`, `sill` (the default sill height of new instances) | The ranges of an insert; the frame leaves an opening; the operation suits the kind |
 
 A new project starts with three wall types (a generic 200 mm type, an exterior masonry cavity type
@@ -1020,7 +1412,7 @@ formatted in the interface language from the commands' message catalog when the 
 and are user data afterwards.
 
 Commands, one transaction and one undo step each: `archbuilder.type.set` changes a type's name,
-layers, core, flags, size, operation or default sill, and in the same transaction writes the new
+layers, core, flags, size, operation, default sill or, for a roof type, `rafter_cut` and `fascia_depth`, and in the same transaction writes the new
 copies on every instance, so walls rethicken around their location lines, joins re-derive, floors
 that follow wall faces move, openings are checked against the new walls (a change that would break
 one is refused, naming it) and rooms re-derive; `archbuilder.type.duplicate` copies a type under the
@@ -1099,8 +1491,9 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | `RoomRuleTable`, `RequirementTable`, `DevelopmentLimits` | Rows by use and basis, limits, source and edition | Compared with rooms, area schemes and provided counts |
 | `WorkItemCatalog`, `WorkItemMapping` | Item code, unit, measurement rule, rate; mapping from types, layers and materials | Feed bills of quantities through the quantity rules |
 | `UnitLibraryEntry` | Identity, version, group content, placement rules, derived descriptors | Stored in library packages and immutable per version; a group definition placed from it records its identity and version |
-| `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories | Values on elements and types |
-| `DocumentVariable` | Name, value or expression | Drives parameters |
+| `ParameterDefinition`, `ParameterBinding` | Stable ID, data type, scope, categories (`archbuilder.parameter`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Values on elements and types (`parameters` field) |
+| `Family`, `FamilyType`, `Component` | Published text with version and checksum; named value set; family type, placement and values (`archbuilder.family`, `archbuilder.family_type`, `archbuilder.component`, see [Loaded families and components](#loaded-families-and-components)) | Evaluated to solids and plan symbols; listed in the IFC loss report until unit 8 |
+| `DocumentVariable` | Name, formula identifier, data type, literal or formula (`archbuilder.variable`, see [Document variables and project parameters](#document-variables-and-project-parameters)) | Read by formulas of parameters and other variables |
 | `Constraint` | Kind, references (persistent references), value | Solved in transactions |
 | `Phase`, `PhaseDisplayRule` | Order, status display | Elements, views |
 | `OptionSet`, `DesignOption` | Primary flag | Elements |
@@ -1115,7 +1508,7 @@ occurrence's); a window type is `SINGLE_PANEL` or `DOUBLE_PANEL_VERTICAL`.
 | Type | Key properties | Relationships |
 |---|---|---|
 | `PlanView` | Cut height, top, overhead flag, scale, detail level, underlay flag, category flags, hidden elements, bottom, view depth | Owned by its storey; first slice of `ModelView` |
-| `ModelView` | Kind, definition (range, plane, camera), scale, detail level, style, phase, template, parent | Owns one `DetailLayer`; see [views-and-documentation.md](views-and-documentation.md) |
+| `ModelView` | Kind, definition (range, plane, camera), scale, detail level, style, phase, template, parent | Owns one `DetailLayer`; see [views-and-documentation.md](views-and-documentation.md). Stored today as `archbuilder.model_view` for saved 3D views (camera, visual style, section box, category flags, hidden elements; owned by the project) and for sections and elevations (line in plan, far clip, crop, vertical range; owned by their building) |
 | `ViewTemplate`, `ViewFilter` | Controlled properties, rule tree | Bound by views |
 | `DetailLayer` | Drafting entities, annotations | Owned by one model view |
 | `Annotation` | Kind, anchors, style, overrides, state | Owned by a detail layer, drafting view or sheet |
@@ -1234,14 +1627,109 @@ Three element kinds belong to a building and have no storey: `archbuilder.grid`,
 
 | Kind | Authored fields | Rules |
 |---|---|---|
-| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned` | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
+| Grid | label (`name`), start, end, `bulge` (0 straight, else an arc as a floor edge has), `head_start`, `head_end`, `bottom_level`, `top_level`, `pinned`, `path` (the vertices between start and end of a multi-segment grid, each with the `bulge` of the segment that arrives at it; `bulge` is that of the last segment) | Shows on every storey whose level lies in its extent (absent levels mean the lowest and highest of the building, at least one storey tall). Labels increment in numeric, alphabetic and sub-grid (`A.1`) sequences; a label used twice is a warning (Warnings panel, kind Grids), never a refusal. |
 | Reference plane | name, two points, `strength` (strong, weak, none), `bounded`, `pinned` | A vertical plane. Strong and weak planes are found by snapping; an unbounded plane runs 200 m past its points in plan. Names are unique per building. |
-| Work plane | name, `source` (level, grid, reference plane, points), `target`, three points, `active`, `shown` | At most one is active. A plane that follows a datum is derived from it on every read, so moving the datum moves the plane, and deleting the datum deletes the plane. Three points on a line make no plane and are refused. |
+| Work plane | name, `source` (level, grid, reference plane, points, face), `target`, three points, `active`, `shown`, `face_element` and `face` (`exterior`, `interior`, `top`, `bottom`) | At most one is active. A plane that follows a datum or an element face is derived from it on every read, so moving the datum or the element moves the plane, and deleting it deletes the plane. A wall's faces are vertical planes standing on its base (the exterior is the baseline's left), a floor's or ceiling's top and underside follow its slope; normals point away from the body. Three points on a line make no plane and are refused. |
 
-Commands: `archbuilder.grid.create` (two points, or `from_wall`; `bulge` for an arc; `after` or `label`),
+Commands: `archbuilder.grid.create` (two points, `points` with per-segment `bulges` for a multi-segment line, `from_wall`, or `from_walls` for a chain of walls that meet end to start; `bulge` for an arc; `after` or `label`),
 `archbuilder.reference_plane.create`, `archbuilder.work_plane.set` and `show`, and `archbuilder.datum.set_extent` (extent levels
-and heads). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
-original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export lists grids,
-reference planes and work planes in the loss report, because the foundation's writer has no grid entity and no proxy is written.
-Not built yet: multi-segment grids, per-view extents and their propagation, element-face work planes, and elements that store the
-work plane they were sketched on.
+and heads), and `archbuilder.datum.set_view_extent` (per-view extent and head overrides, below). Move, copy, rotate, mirror, pin and delete work through the existing commands; a copied grid takes the label after its
+original. Snapping finds grid ends, crossings of datum lines and the nearest point of a line. IFC4 export writes the grids of a building as one `IfcGrid` in the lowest storey: each line an `IfcGridAxis` tagged with its label (a line as a polyline, an arc as a trimmed circle, a line of several straight segments as a polyline and one with arcs as a composite curve), the first straight line and the lines within 45 degrees of it the U axes, the others, the arcs and the multi-segment lines the V axes (`RECTANGULAR` when the families are straight and square, else `IRREGULAR`). Lines of one direction only have no valid `IfcGrid` and are reported (`ab.io.ifc.grid_one_direction`). Reference planes and work planes are drawing aids: each is in the loss report (kind `IFCANNOTATION`). A selection set is an `IfcGroup` (`ObjectType` "Selection set") assigned its elements by one `IfcRelAssignsToGroup`; members that are not in the file are counted in `ab.io.ifc.selection_set_member_not_written`.
+A plan view stores its own overrides of grids in the optional `datum_views` list (records of a grid, `start_inset`, `end_inset`,
+`head_start`, `head_end`, each optional): an inset pulls that end of the drawn line in along the line (positive) or pushes it out
+along the end segment (negative), and a head flag overrides the grid's own. The grid and every other view keep the model extent, a view
+that pulls a line in past its other end draws nothing, and an override of a deleted grid is dropped. One
+`archbuilder.datum.set_view_extent` call changes the chosen grids in a list of views (an adjusted view and the parallel views it is
+propagated to are all plan views) in one transaction, copies the overrides from a view (`from_view`), or drops them (`reset`). Levels
+have no extent of their own in a plan view; their extent belongs to the elevation views, which do not exist yet.
+Work planes on faces: `archbuilder.work_plane.set` takes an `element` (or a selected wall, floor or ceiling) and a `face`. Floors,
+ceilings, roofs, roofs by extrusion, railings, shafts and vertical openings take an optional `work_plane` when created and store it
+(`work_plane`, cleared when the plane is deleted; the plane must belong to the element's building). A roof by extrusion made on a
+vertical work plane takes the plane's line and follows it: moving the datum moves the roof, moving the roof by hand (or giving it a
+plane of its own) detaches it, and when the plane is deleted it returns to the plane stored at creation. The other sketch-based kinds
+store the plane without following it. In a 3D view the active work plane is where the tools' points land (the wall, floor, railing
+and datum tools draw along it); a plan view keeps the storey's plane.
+
+## Display units
+
+Stored values are SI whatever the display units are. The project record sets, per kind, how values are shown and read: `length_unit`
+(meter, millimeter, centimeter, foot, inch), `area_unit` (square meter, square centimeter, square millimeter, square foot),
+`volume_unit` (cubic meter, liter, cubic foot, cubic yard), `angle_unit` (degree, radian, gradian) and `slope_unit` (degrees, percent,
+rise to run); then `<kind>_precision` (0 to 8 decimals) and `<kind>_rounding` (a step in the display unit) for each of the five kinds.
+Every field is optional and appended in schema 1.3, so a file from before loads unchanged with the defaults (meters, square meters,
+cubic meters, degrees; the decimals the unit usually needs; no rounding). `archbuilder.project.set_units` sets any of them in one
+undo step (`reset` clears every precision and rounding; without values it selects the project, whose properties list the same fields).
+
+`UnitSettings` (`archbuilder_model::units`) writes and reads the text. The property grid, the temporary dimensions and live labels
+of the viewport, the level labels, the slope labels and the statistics report write in these units. A typed value takes a unit symbol
+(`350 mm`, `100 ft²`, `500 L`, `100 gon`; `m2`, `m3` and `deg` are accepted spellings). A bare number in a command parameter keeps the
+rule above: meters, square meters, cubic meters; a bare angle or slope is read in the project's angle or slope unit (degrees by
+default). The command line of the shell reads a bare typed number in the project's length, area, volume or angle unit.
+
+## Project information
+
+The project record carries, besides the name, `number`, `client` and `address`, the optional text fields `status`, `issue_date`
+(a calendar date `YYYY-MM-DD`, refused otherwise), `author`, `organization`, `description`, `long_name`, and for the building
+`occupancy_type`, `year_of_construction` (four digits) and `construction_method`; all are appended in schema 1.4, so a file from
+before loads with every one absent. `archbuilder.project.set_info` sets any of them in one undo step (an empty text clears a field;
+without values it selects the project, whose properties list and edit the same fields, as `archbuilder.property.set` does).
+
+The IFC export writes them. The writer of the foundation (checked at the pinned revision: `Spatial` is an identifier and a name, and property sets belong to elements) still gives the project, site and building only a name, so `archbuilder-io`
+completes its output before the read-back check: `Name`, `Description` (the description), `LongName` and `Phase` (the status) of the
+`IfcProject`; the address as an `IfcPostalAddress` on the `IfcSite` and the `IfcBuilding` (the building's own address when it has
+one); the client as an `IfcOrganization` with the role `CLIENT` and the author, with the issuing organization, as an
+`IfcPersonAndOrganization`, each in an `IfcActor` assigned to the project by an `IfcRelAssignsToActor`; and `Pset_BuildingCommon` on the
+building with `Reference` (the project number), `OccupancyType`, `YearOfConstruction` and `ConstructionMethod`, the names and data
+types of the IFC4 template. IFC4 has no `Pset_ProjectCommon` and no attribute for an issue date: the date is named in the loss
+report. The file validates against the IFC4 schema with the EXPRESS rules.
+
+## Templates, standards transfer and purge
+
+A template is an ordinary `.archb` document; the project's `template` flag marks it as one (`archbuilder.property.set` edits it).
+`archbuilder.file.new_from_template` (File > New From Template; a path or the open dialog) starts the open document's project from
+one. It is for a document without elements: the document's structure is replaced by copies of the template's project (with its
+units and information, `template` cleared and the file name kept as `template_source`, schema 1.4), site, building, storeys,
+levels, element types and plan views, under new identifiers, so the `GlobalId`s of two projects never coincide. The hidden elements and
+grid overrides of the template's views are not carried over. Elements, datums and selection sets of the template are not copied and
+are listed in the result. The template file is only read, and the command is one undo step.
+
+`archbuilder.file.transfer_standards` copies element types (wall, floor, door, window, roof, ceiling, railing and ramp types) and the
+display unit settings from another document file, which it reads without changing (an open document is reached through its saved
+file). A type whose name the document already has is `keep` (default), `overwrite` (only when nothing refers to it) or `rename`
+(copied as `Name (2)`), set for all types and over by name; a type that refers to other objects is skipped. The result lists each type
+with what happened and why a type was left out. It is one undo step.
+
+`archbuilder.project.purge` lists (`preview`) or removes the element types that nothing refers to, in one undo step, each with its
+reason: `unused`, or `used_only_by_unused` for a type that only other removed types use, which go together. A type that anything in
+use refers to is never offered and is refused when asked for, and the last type of a kind stays. Materials are layer names of the
+types, so they are removed with a type; there are no other families, styles, filters or view templates yet.
+
+## Location: origins, north and the geodetic reference
+
+The internal origin is fixed: every stored coordinate is measured from it. The project record holds, as optional fields (a file
+from before loads with every one absent), the **project base point** (`base_x`, `base_y`, `base_z`) and the **survey point**
+(`survey_x`, `survey_y`, `survey_z`), both positions in internal coordinates, the angle `true_north` from project north (the internal
+y axis) to true north, counterclockwise, and the geodetic reference: `crs` (an EPSG code or a WKT text), `eastings`, `northings`
+and `survey_height` of the survey point in that system, `map_scale`, and the `precision_distance`. Absent points are the origin,
+absent north is 0 and absent scale is 1; a project is georeferenced when `crs` and the eastings and northings are all set. Moving a
+point or turning north changes the coordinates reported for a point and never moves an element.
+
+A point reads in four systems: internal, project (minus the base point), survey (minus the survey point) and map. The map position is
+the survey point's eastings and northings plus the offset from the survey point turned by true north and scaled, the height likewise
+(the conversion an IFC map conversion carries). The IFC export writes a georeferenced project as an `IfcMapConversion` of the internal origin (its map
+eastings, northings and height, the model x axis in the map turned by true north, the scale) to an `IfcProjectedCRS` named by the
+reference system text (a text over 255 characters is the description of a system named `User-defined`); true north is also the
+`TrueNorth` of the model context, whether or not the project is georeferenced. The base point and the survey point's own position are not written. `archbuilder.coordinates.set` changes the fields (without values it
+selects the project, whose properties list them), `archbuilder.coordinates.query` reports a picked point (the Coordinates button of
+the Manage tab; the history shows the readout in the project's length unit) and `archbuilder.coordinates.recenter` translates the
+whole model, with both points, so that the survey point lies on the internal origin: every element keeps its map coordinates, and a
+pinned element refuses the move.
+
+A plan view has an optional `north` (`project_north`, the default, or `true_north`) stored with its settings;
+`Coordinates::view_rotation` derives the turn of the drawing that points true north up. The viewport of the shell does not turn a
+plan yet, so the choice is stored and the property grid edits it, but the drawing stays in project north.
+
+Geometry beyond the precision distance (20 km when the project sets none) from the internal origin, measured in plan at the authored
+points of each element, is one warning of the register (kind Location) that names how many elements and how far the farthest lies;
+it clears when the model is recentered or the distance raised. Imports do not exist yet, so the check runs on whatever the document
+holds.

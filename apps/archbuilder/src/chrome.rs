@@ -14,6 +14,7 @@ use arc_app::shell::{
 };
 use arc_base::error::Value;
 use arc_ui::Intent;
+use archbuilder_commands::coordinates::{COORDINATES_QUERY, COORDINATES_RECENTER, COORDINATES_SET};
 use archbuilder_commands::datum::{GRID_CREATE, REFERENCE_PLANE_CREATE, WORK_PLANE_SET};
 use archbuilder_commands::edit;
 use archbuilder_commands::floor::FLOOR_CREATE;
@@ -41,9 +42,18 @@ pub const TYPED_WORDS: &[&str] = &[
     "createsimilar",
     "matchtype",
     "edittype",
+    "editfamily",
     "warnings",
     "plan",
     "3d",
+    "style wireframe",
+    "style hidden_line",
+    "style shaded",
+    "style shaded_with_edges",
+    "style consistent_colors",
+    "view3d",
+    "savecamera",
+    "sectionbox",
 ];
 
 /// The most tabs whose selection is remembered.
@@ -138,6 +148,17 @@ pub fn command_tabs() -> Vec<CommandTab> {
                         ),
                         icon_button(
                             Message {
+                                message_id: "ab-tool-wall-arc",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-wall-arc-hint",
+                            }),
+                            archbuilder_commands::wall::WALL_CREATE_ARC,
+                            "wall-arc",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
                                 message_id: "ab-tool-door",
                             },
                             Some(Message {
@@ -159,6 +180,22 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             ButtonSize::Large,
                         ),
                     ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-components",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-component",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-component-hint",
+                        }),
+                        archbuilder_commands::family_project::COMPONENT_PLACE,
+                        "component",
+                        ButtonSize::Large,
+                    )],
                 ),
                 group(
                     Message {
@@ -231,6 +268,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             "roof-extrusion",
                             ButtonSize::Small,
                         ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-dormer",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-dormer-hint",
+                            }),
+                            archbuilder_commands::roof_parts::DORMER_CREATE,
+                            "dormer",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-roof-edge",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-roof-edge-hint",
+                            }),
+                            archbuilder_commands::roof_parts::ROOF_EDGE_CREATE,
+                            "roof-edge",
+                            ButtonSize::Small,
+                        ),
                     ],
                 ),
                 group(
@@ -271,6 +330,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             "opening-vertical",
                             ButtonSize::Small,
                         ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-dormer",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-dormer-hint",
+                            }),
+                            archbuilder_commands::opening::DORMER_OPENING_CREATE,
+                            "opening-dormer",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-rehost",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-rehost-hint",
+                            }),
+                            archbuilder_commands::insert::INSERT_REHOST,
+                            "opening-rehost",
+                            ButtonSize::Small,
+                        ),
                     ],
                 ),
                 group(
@@ -309,6 +390,28 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             }),
                             archbuilder_commands::circulation::RAMP_CREATE,
                             "ramp",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-elevator",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-elevator-hint",
+                            }),
+                            archbuilder_commands::elevator::ELEVATOR_CREATE,
+                            "elevator",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-stair-sketch",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-stair-sketch-hint",
+                            }),
+                            archbuilder_commands::stair::STAIR_CREATE_SKETCH,
+                            "stair-sketch",
                             ButtonSize::Small,
                         ),
                     ],
@@ -674,6 +777,120 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-model-views",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-view-3d-new",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-view-3d-new-hint",
+                            }),
+                            "view3d",
+                            "view-3d-new",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-save-camera",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-save-camera-hint",
+                            }),
+                            "savecamera",
+                            "save-camera",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-section-box",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-section-box-hint",
+                            }),
+                            "sectionbox",
+                            "section-box",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-section",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-section-hint",
+                            }),
+                            "archbuilder.view.create_section",
+                            "section",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-elevations",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-elevations-hint",
+                            }),
+                            "archbuilder.view.create_elevations",
+                            "elevation",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-visual-style",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-wireframe",
+                            },
+                            None,
+                            "style wireframe",
+                            "style-wireframe",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-hidden-line",
+                            },
+                            None,
+                            "style hidden_line",
+                            "style-hidden-line",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-shaded",
+                            },
+                            None,
+                            "style shaded",
+                            "style-shaded",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-shaded-with-edges",
+                            },
+                            None,
+                            "style shaded_with_edges",
+                            "style-shaded-edges",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-style-consistent-colors",
+                            },
+                            None,
+                            "style consistent_colors",
+                            "style-consistent",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-visibility",
                     },
                     vec![
@@ -761,6 +978,17 @@ pub fn command_tabs() -> Vec<CommandTab> {
                         ),
                         icon_button(
                             Message {
+                                message_id: "ab-tool-edit-family",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-edit-family-hint",
+                            }),
+                            "editfamily",
+                            "edit-family",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
                                 message_id: "ab-menu-create-similar",
                             },
                             None,
@@ -795,6 +1023,102 @@ pub fn command_tabs() -> Vec<CommandTab> {
                 ),
                 group(
                     Message {
+                        message_id: "ab-group-families",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-load-family",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-load-family-hint",
+                        }),
+                        archbuilder_commands::family_project::FAMILY_LOAD,
+                        "load-family",
+                        ButtonSize::Large,
+                    )],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-groups",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-create",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-create-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_CREATE,
+                            "group-create",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-place",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-place-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_PLACE,
+                            "group-place",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-edit",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-edit-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_EDIT,
+                            "group-edit",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-group-separate",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-group-separate-hint",
+                            }),
+                            archbuilder_commands::group::GROUP_SEPARATE,
+                            "group-separate",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-parameters",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-variables",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-variables-hint",
+                            }),
+                            archbuilder_commands::parameter::VARIABLE_CREATE,
+                            "variables",
+                            ButtonSize::Small,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-parameters",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-parameters-hint",
+                            }),
+                            archbuilder_commands::project_parameter::PARAMETER_CREATE,
+                            "parameters",
+                            ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
                         message_id: "ab-group-sets",
                     },
                     vec![
@@ -819,6 +1143,97 @@ pub fn command_tabs() -> Vec<CommandTab> {
                             archbuilder_commands::selection::SET_SELECT,
                             "select",
                             ButtonSize::Small,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-location",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-location",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-location-hint",
+                            }),
+                            COORDINATES_SET,
+                            "project-location",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-coordinates",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-coordinates-hint",
+                            }),
+                            COORDINATES_QUERY,
+                            "coordinates",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-recenter",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-recenter-hint",
+                            }),
+                            COORDINATES_RECENTER,
+                            "recenter",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-project",
+                    },
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-project-info",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-project-info-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_SET_INFO,
+                            "project-info",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-units",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-units-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_SET_UNITS,
+                            "units",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-purge",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-purge-hint",
+                            }),
+                            archbuilder_commands::project::PROJECT_PURGE,
+                            "purge",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-transfer-standards",
+                            },
+                            Some(Message {
+                                message_id: "ab-tool-transfer-standards-hint",
+                            }),
+                            archbuilder_io::standards::TRANSFER_STANDARDS,
+                            "transfer-standards",
+                            ButtonSize::Large,
                         ),
                     ],
                 ),
@@ -872,20 +1287,49 @@ pub fn command_tabs() -> Vec<CommandTab> {
             }
             .message_id
             .to_owned(),
-            groups: vec![group(
-                Message {
-                    message_id: "ab-group-ifc",
-                },
-                vec![icon_button(
+            groups: vec![
+                group(
                     Message {
-                        message_id: "ab-tool-export-ifc",
+                        message_id: "ab-group-ifc",
                     },
-                    None,
-                    archbuilder_io::command::EXPORT_IFC,
-                    "export-ifc",
-                    ButtonSize::Large,
-                )],
-            )],
+                    vec![
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-import-ifc",
+                            },
+                            None,
+                            archbuilder_io::import::IMPORT_IFC,
+                            "import-ifc",
+                            ButtonSize::Large,
+                        ),
+                        icon_button(
+                            Message {
+                                message_id: "ab-tool-export-ifc",
+                            },
+                            None,
+                            archbuilder_io::command::EXPORT_IFC,
+                            "export-ifc",
+                            ButtonSize::Large,
+                        ),
+                    ],
+                ),
+                group(
+                    Message {
+                        message_id: "ab-group-mesh",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-export-mesh",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-export-mesh-hint",
+                        }),
+                        archbuilder_io::command::EXPORT_MESH,
+                        "export-mesh",
+                        ButtonSize::Large,
+                    )],
+                ),
+            ],
             context: None,
         },
         CommandTab {
@@ -895,6 +1339,22 @@ pub fn command_tabs() -> Vec<CommandTab> {
             .message_id
             .to_owned(),
             groups: vec![
+                group(
+                    Message {
+                        message_id: "ab-group-family",
+                    },
+                    vec![icon_button(
+                        Message {
+                            message_id: "ab-tool-edit-family",
+                        },
+                        Some(Message {
+                            message_id: "ab-tool-edit-family-hint",
+                        }),
+                        "editfamily",
+                        "edit-family",
+                        ButtonSize::Large,
+                    )],
+                ),
                 group(
                     Message {
                         message_id: "ab-group-transform",
@@ -1213,6 +1673,7 @@ pub fn quick_access() -> Vec<ToolItem> {
 
 /// The icons of the application, by name: the SVG sources of `apps/archbuilder/icons`.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one entry per icon")]
 pub fn icons() -> Vec<(String, String)> {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -1220,6 +1681,7 @@ pub fn icons() -> Vec<(String, String)> {
         };
     }
     icons![
+        "edit-family",
         "new",
         "open",
         "save",
@@ -1228,6 +1690,7 @@ pub fn icons() -> Vec<(String, String)> {
         "redo",
         "wall",
         "curtain-wall",
+        "wall-arc",
         "door",
         "window",
         "floor",
@@ -1236,12 +1699,29 @@ pub fn icons() -> Vec<(String, String)> {
         "opening-wall",
         "opening-shaft",
         "opening-vertical",
+        "opening-dormer",
+        "opening-rehost",
         "stair",
         "floor-slope",
         "floor-edge",
         "roof-extrusion",
+        "elevator",
+        "dormer",
+        "roof-edge",
+        "stair-sketch",
         "set",
         "statistics",
+        "variables",
+        "parameters",
+        "component",
+        "load-family",
+        "group-create",
+        "group-place",
+        "group-edit",
+        "group-separate",
+        "project-location",
+        "coordinates",
+        "recenter",
         "railing",
         "ramp",
         "grid",
@@ -1272,6 +1752,16 @@ pub fn icons() -> Vec<(String, String)> {
         "plan-view",
         "view-3d",
         "zoom-extents",
+        "view-3d-new",
+        "save-camera",
+        "section-box",
+        "section",
+        "elevation",
+        "style-wireframe",
+        "style-hidden-line",
+        "style-shaded",
+        "style-shaded-edges",
+        "style-consistent",
         "hide",
         "isolate",
         "reveal",
@@ -1282,6 +1772,12 @@ pub fn icons() -> Vec<(String, String)> {
         "properties",
         "outliner",
         "export-ifc",
+        "import-ifc",
+        "project-info",
+        "units",
+        "purge",
+        "transfer-standards",
+        "export-mesh",
     ]
 }
 

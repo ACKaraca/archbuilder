@@ -213,11 +213,14 @@ fn the_file_menu_has_export_ifc_after_save_as() {
                 command: "archbuilder.file.export_ifc".into()
             },
             MenuItem::Command {
+                command: "archbuilder.file.export_mesh".into()
+            },
+            MenuItem::Command {
                 command: "archbuilder.shortcuts.export".into()
             }
         ]
     );
-    // The shortcut table comes back through File > Import.
+    // File > Import reads an IFC file; the shortcut table comes back through it too.
     let MenuItem::Submenu {
         label,
         items: import,
@@ -228,9 +231,14 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(label, "ab-menu-import");
     assert_eq!(
         import,
-        &[MenuItem::Command {
-            command: "archbuilder.shortcuts.import".into()
-        }]
+        &[
+            MenuItem::Command {
+                command: "archbuilder.file.import_ifc".into()
+            },
+            MenuItem::Command {
+                command: "archbuilder.shortcuts.import".into()
+            }
+        ]
     );
     let owner = LockOwner {
         user: "t".into(),
@@ -251,6 +259,17 @@ fn the_file_menu_has_export_ifc_after_save_as() {
     assert_eq!(dialog.mode, arc_app::product::PathMode::Save);
     assert_eq!(dialog.filters[0].extensions, ["ifc"]);
     assert_eq!(dialog.default_name.as_deref(), Some("{document}.ifc"));
+    // Export mesh asks in a save dialog whose extension names the format.
+    let dialog = product.path_dialog("archbuilder.file.export_mesh").unwrap();
+    let extensions: Vec<_> = dialog.filters.iter().flat_map(|f| &f.extensions).collect();
+    assert_eq!(extensions, ["obj", "stl", "gltf", "glb"]);
+    assert!(
+        product
+            .headless()
+            .registry
+            .get("archbuilder.file.export_mesh")
+            .is_some()
+    );
 }
 
 #[test]
@@ -320,6 +339,15 @@ fn every_line_of_the_command_tabs_names_a_command_and_every_icon_exists() {
         archbuilder_io::command::EXPORT_IFC,
     ];
     for line in old {
+        assert!(lines.iter().any(|l| l == line), "{line} unreachable");
+    }
+    // The Manage tab's project group: information, units, purge and standards transfer.
+    for line in [
+        archbuilder_commands::project::PROJECT_SET_INFO,
+        archbuilder_commands::project::PROJECT_SET_UNITS,
+        archbuilder_commands::project::PROJECT_PURGE,
+        archbuilder_io::standards::TRANSFER_STANDARDS,
+    ] {
         assert!(lines.iter().any(|l| l == line), "{line} unreachable");
     }
     let items = all_items();

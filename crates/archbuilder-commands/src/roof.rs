@@ -54,6 +54,10 @@ pub const WALL_DETACH_TOP: &str = "archbuilder.wall.detach_top";
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRoof {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey; else the storey of the selection, else the lowest storey.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -229,7 +233,7 @@ pub(crate) fn next_roof_name(snapshot: &Snapshot, storey: ObjectId, language: &s
 
 /// The refusal of a slope outside the range, the range written in the project's slope unit.
 pub(crate) fn slope_invalid(snapshot: &Snapshot) -> Error {
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| slope_unit(&p.values));
+    let unit = spatial::unit_settings(snapshot);
     let (low, high) = model::SLOPE_RANGE;
     Error::new(codes::SLOPE_INVALID)
         .with_arg("low", slope_text(low, unit, '.'))
@@ -415,6 +419,7 @@ fn create_roof(ctx: &mut Context<'_>, p: CreateRoof) -> Result<RoofCreated> {
         ],
     )?;
     crate::element_type::assign(ctx, id, TypeKind::Roof, roof_type)?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let (area, top) = derived_numbers(ctx, id)?;
     ctx.set_selection_after(vec![id]);
@@ -1057,9 +1062,8 @@ impl RoofPrompts {
             .unwrap_or_default();
         let turkish = language.starts_with("tr");
         let separator = decimal_separator(&language);
-        let unit = spatial::length_unit(state.snapshot);
-        let slopes = spatial::project(state.snapshot)
-            .map_or_else(Default::default, |p| slope_unit(&p.values));
+        let unit = spatial::unit_settings(state.snapshot);
+        let slopes = spatial::unit_settings(state.snapshot);
         let number = |key: &str| preset.get(key).and_then(Json::as_f64);
         let mut scan = Scan {
             sketch: preset.get("mode").and_then(Json::as_str) == Some("sketch"),

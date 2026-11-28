@@ -7,7 +7,7 @@ use std::sync::Arc;
 use arc_base::ObjectId;
 use arc_doc::{Object, Snapshot, Value};
 
-use crate::types::{self, BUILDING, LEVEL, PROJECT, SITE, STOREY, WALL};
+use crate::types::{self, BUILDING, GROUP, LEVEL, PROJECT, SITE, STOREY, WALL};
 use crate::units::LengthUnit;
 
 /// A storey with its level, when the reference resolves.
@@ -44,15 +44,42 @@ pub fn get(snapshot: &Snapshot, id: ObjectId) -> Option<Arc<Object>> {
     snapshot.get(handle).ok().cloned()
 }
 
-/// The objects of type `key`, in identifier order.
+/// The objects of type `key`, in identifier order, the members of model group definitions
+/// excepted: those are read with [`objects_raw`] by the group code only.
 #[must_use]
 pub fn objects(snapshot: &Snapshot, key: &str) -> Vec<Arc<Object>> {
+    let mut found = objects_raw(snapshot, key);
+    if !objects_raw(snapshot, GROUP).is_empty() {
+        found.retain(|o| !in_definition(snapshot, o));
+    }
+    found
+}
+
+/// The objects of type `key` in identifier order, including the members of group definitions.
+#[must_use]
+pub fn objects_raw(snapshot: &Snapshot, key: &str) -> Vec<Arc<Object>> {
     let mut found: Vec<Arc<Object>> = snapshot
         .iter_type(key)
         .map(|it| it.map(|(_, o)| Arc::clone(o)).collect())
         .unwrap_or_default();
     found.sort_by_key(|o| o.id);
     found
+}
+
+/// Whether `object` is a member of a group definition: owned by one, or by an object that is
+/// (a door in a wall of a definition). A definition's members are not part of the building.
+fn in_definition(snapshot: &Snapshot, object: &Object) -> bool {
+    let mut owner = object.header.owner;
+    for _ in 0..4 {
+        let Some(id) = owner else {
+            return false;
+        };
+        if type_of(snapshot, id).as_deref() == Some(GROUP) {
+            return true;
+        }
+        owner = get(snapshot, id).and_then(|o| o.header.owner);
+    }
+    false
 }
 
 /// The objects of type `key` contained in `owner`, in identifier order.
@@ -173,6 +200,14 @@ pub fn lowest_storey(snapshot: &Snapshot) -> Option<Arc<Object>> {
         .into_iter()
         .next()
         .map(|s| s.storey)
+}
+
+/// The display units of the project (AB-DATUM-004); the defaults without a project.
+#[must_use]
+pub fn unit_settings(snapshot: &Snapshot) -> crate::units::UnitSettings {
+    project(snapshot).map_or_else(Default::default, |p| {
+        crate::units::UnitSettings::of(&p.values)
+    })
 }
 
 /// The length unit of the project; meters without one.

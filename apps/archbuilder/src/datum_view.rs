@@ -34,11 +34,13 @@ fn ring(center: [f64; 2], z: f64) -> Vec<Point3> {
 }
 
 /// The overlays of the datums of `snapshot`. `plan` is the view's storey and whether it is a plan
-/// view; `hidden` says what is hidden.
+/// view; `hidden` says what is hidden; `overrides` are the grid extents and heads the plan view
+/// sets itself.
 #[must_use]
 pub fn overlays(
     snapshot: &Snapshot,
     plan: Option<f64>,
+    overrides: &[archbuilder_model::view::DatumView],
     hidden: &dyn Fn(arc_base::ObjectId) -> bool,
 ) -> Vec<ProductOverlay> {
     let mut out = Vec::new();
@@ -52,9 +54,15 @@ pub fn overlays(
         }
         let (_, top) = datum::grid_extent(snapshot, object);
         let z = plan.map_or(top, |level| level + 3.05);
+        // Only a plan view has its own extent and heads; the 3D view shows the grid whole.
+        let over = plan.and_then(|_| overrides.iter().find(|d| d.datum == object.id));
+        let Some(shown) = g.in_view(over) else {
+            continue;
+        };
         if plan.is_some() {
             out.push(path(
-                g.polyline()
+                shown
+                    .line
                     .iter()
                     .map(|p| Point3::new(p[0], p[1], z))
                     .collect(),
@@ -62,10 +70,9 @@ pub fn overlays(
                 GRID_RGBA,
             ));
         }
-        let (d0, d1) = g.directions();
         for (on, end, dir) in [
-            (g.head_start, g.start, [-d0[0], -d0[1]]),
-            (g.head_end, g.end, d1),
+            (shown.head_start, shown.start, shown.toward_start),
+            (shown.head_end, shown.end, shown.toward_end),
         ] {
             if !on {
                 continue;

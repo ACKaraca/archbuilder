@@ -86,17 +86,21 @@ pub fn shaft_span(snapshot: &Snapshot, object: &Object) -> Option<ShaftSpan> {
 /// Every readable shaft of the document.
 #[must_use]
 pub fn shafts(snapshot: &Snapshot) -> Vec<ShaftSpan> {
-    spatial::objects(snapshot, SHAFT)
+    let mut out: Vec<ShaftSpan> = spatial::objects(snapshot, SHAFT)
         .iter()
         .take(MAX_CUTS)
         .filter_map(|o| shaft_span(snapshot, o))
-        .collect()
+        .collect();
+    // An elevator's shaft cuts what it passes like a shaft element.
+    out.extend(crate::elevator::spans(snapshot));
+    out
 }
 
 /// Adds to `deps` what [`cuts`] reads besides the element and its own children: the shafts and,
 /// when there are any, the levels and storeys that decide their spans.
 pub(crate) fn shaft_deps(snapshot: &Snapshot, deps: &mut Deps) {
-    let found = spatial::objects(snapshot, SHAFT);
+    let mut found = spatial::objects(snapshot, SHAFT);
+    found.extend(spatial::objects(snapshot, types::ELEVATOR));
     if found.is_empty() {
         return;
     }
@@ -148,6 +152,14 @@ pub fn cuts(snapshot: &Snapshot, host: &Object, z: (f64, f64)) -> Vec<Vec<[f64; 
         })
         .map(|s| s.outline)
         .collect();
+    // A dormer cuts the roof that owns it, over its own rectangle.
+    out.extend(
+        spatial::children(snapshot, types::DORMER, host.id)
+            .iter()
+            .take(MAX_CUTS)
+            .filter_map(|o| crate::dormer::Dormer::from_values(&o.values))
+            .map(|d| d.opening()),
+    );
     out.extend(
         spatial::children(snapshot, VERTICAL_OPENING, host.id)
             .iter()

@@ -17,6 +17,7 @@ mod attach;
 mod habits;
 mod sketch;
 mod types;
+mod views;
 
 pub use types::upgrade_invocation;
 
@@ -73,11 +74,13 @@ fn mixed(state: u64) -> u64 {
 }
 
 /// The commands whose button starts their prompts once, on the stair tool's machinery.
-const PROMPTED: [&str; 4] = [
+const PROMPTED: [&str; 6] = [
+    archbuilder_commands::family_project::COMPONENT_PLACE,
     FLOOR_SET_SLOPE,
     ROOF_EXTRUSION_CREATE,
     SET_CREATE,
     SET_SELECT,
+    archbuilder_commands::coordinates::COORDINATES_QUERY,
 ];
 
 /// The report of `archbuilder.model.statistics` as one line: the elements by kind, then the
@@ -119,6 +122,16 @@ fn statistics_text(localizer: &arc_app::locale::Localizer, value: &serde_json::V
         .text
 }
 
+const PURGED: Message = Message {
+    message_id: "ab-notice-purged",
+};
+const PURGE_NOTHING: Message = Message {
+    message_id: "ab-notice-purge-nothing",
+};
+const STANDARDS_DONE: Message = Message {
+    message_id: "ab-notice-standards",
+};
+
 const STATISTICS_REPORT: Message = Message {
     message_id: "ab-statistics-report",
 };
@@ -143,6 +156,14 @@ const MODIFY_MEETS: Message = Message {
     message_id: "ab-notice-modify-meets",
 };
 
+/// The readout of a coordinate query, and its map part.
+const COORDINATES_READOUT: Message = Message {
+    message_id: "ab-notice-coordinates",
+};
+const COORDINATES_MAP: Message = Message {
+    message_id: "ab-notice-coordinates-map",
+};
+
 /// The point a click picked, echoed in the history.
 const PICKED_POINT: Message = Message {
     message_id: "ab-notice-picked-point",
@@ -161,6 +182,16 @@ const IFC_EXPORTED: Message = Message {
 /// What an export says when its loss report is not empty.
 const IFC_LOSS: Message = Message {
     message_id: "ab-notice-ifc-loss",
+};
+
+/// What a mesh export says when it wrote the file.
+const MESH_EXPORTED: Message = Message {
+    message_id: "ab-notice-mesh-exported",
+};
+
+/// What a mesh export says when its loss report is not empty.
+const MESH_LOSS: Message = Message {
+    message_id: "ab-notice-mesh-loss",
 };
 
 /// What a delete says when walls lost the roof or floor their top was attached to.
@@ -317,7 +348,8 @@ fn plan_candidates(
 pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Option<WorkPlane> {
     let snapshot = app.tab(tab).ok()?.document().snapshot();
     // In a plan view the tools work on the view's storey.
-    let found = crate::plan_state::current_in(tab, &snapshot)
+    let planned = crate::plan_state::current_in(tab, &snapshot);
+    let found = planned
         .and_then(|v| crate::plan_state::storey_of(&snapshot, v))
         .or_else(|| storey_for(&snapshot, selection));
     // The command tabs and the status bar learn the selection and the storey from here.
@@ -333,6 +365,20 @@ pub fn work_plane(app: &Application, tab: TabId, selection: &[ObjectId]) -> Opti
     let rooms = crate::room_view::shared();
     rooms.set_active(Some(storey));
     rooms.set_selection(selection);
+    // In a 3D view the active work plane of the storey's building is where points land (a plan
+    // view looks straight down and keeps the storey's plane).
+    let active = planned.is_none().then(|| {
+        spatial::get(&snapshot, storey)
+            .and_then(|s| s.header.owner)
+            .and_then(|b| archbuilder_model::datum::active(&snapshot, b))
+            .and_then(|(_, plane)| plane)
+    });
+    if let Some(Some(p)) = active {
+        return Some(WorkPlane {
+            origin: Point3::new(p.origin[0], p.origin[1], p.origin[2]),
+            normal: Vector3::new(p.normal[0], p.normal[1], p.normal[2]),
+        });
+    }
     Some(WorkPlane {
         origin: Point3::new(0.0, 0.0, elevation),
         normal: Vector3::z(),
@@ -580,7 +626,7 @@ pub struct WallInteraction {
     /// The pixels per meter of the last pointer event, which sizes the handles.
     ppu: f64,
     /// The project's length unit and the language's decimal separator, for the live labels.
-    label_units: (archbuilder_model::units::LengthUnit, char),
+    label_units: (archbuilder_model::units::UnitSettings, char),
     /// Tab, the context menu, the clipboard, shortcuts, hide and isolate (see [`habits`]).
     habits: habits::Habits,
     /// Match type while it runs: the source once picked.
@@ -650,7 +696,7 @@ impl WallInteraction {
             ppu: 0.0,
             near_cube: false,
             right_xy: [1.0, 0.0],
-            label_units: (archbuilder_model::units::LengthUnit::Meter, '.'),
+            label_units: (archbuilder_model::units::UnitSettings::default(), '.'),
             habits: habits::Habits::default(),
             matching: None,
             attaching: None,
@@ -661,20 +707,24 @@ impl WallInteraction {
     }
 
     /// The shell's session (it carries the interface language, `app.language`) with the project's
-    /// length unit and degrees as the context units of typed numbers.
+    /// length, area, volume and angle units as the context units of typed numbers.
     fn session(cx: &InteractionContext<'_>) -> Session {
         let mut session = cx.session().clone();
         if session.setting(LANGUAGE_SETTING).is_none() {
             let _ = session.set_setting(LANGUAGE_SETTING, serde_json::Value::from(cx.language()));
         }
         if let Ok(document) = cx.document() {
-            let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
-            session.units = unit
-                .unit()
-                .copied()
-                .into_iter()
-                .chain(arc_base::Unit::by_name("degree").ok().copied())
-                .collect();
+            let unit = archbuilder_model::spatial::unit_settings(&document.snapshot());
+            session.units = [
+                archbuilder_model::units::UnitKind::Length,
+                archbuilder_model::units::UnitKind::Area,
+                archbuilder_model::units::UnitKind::Volume,
+                archbuilder_model::units::UnitKind::Angle,
+            ]
+            .into_iter()
+            .filter_map(|kind| unit.unit_name(kind))
+            .filter_map(|name| arc_base::Unit::by_name(name).ok().copied())
+            .collect();
         }
         session
     }
@@ -827,15 +877,26 @@ impl WallInteraction {
         // The members a selection set command chose become the tab's selection, which the shell
         // applies only for commands it runs itself.
         let mut chosen: Option<Vec<arc_base::ObjectId>> = None;
+        let mut read: Option<serde_json::Value> = None;
         let result = step(&mut self.stairs, &env, &mut |invocation| {
             let outcome = cx.invoke(invocation)?;
             if outcome.command == SET_SELECT {
                 chosen.clone_from(&outcome.selection);
             }
+            if outcome.command == archbuilder_commands::coordinates::COORDINATES_QUERY {
+                read = Some(outcome.value.clone());
+            }
             Ok(outcome)
         });
         if let Some(ids) = chosen {
             cx.ask(habits::select_intent(&ids, "replace"));
+        }
+        if let Some(value) = read {
+            self.say_outcome(
+                cx,
+                archbuilder_commands::coordinates::COORDINATES_QUERY,
+                &value,
+            );
         }
         result
     }
@@ -1262,7 +1323,7 @@ impl Interaction for WallInteraction {
         let right = cx.camera().right();
         self.right_xy = [right.x, right.y];
         if let Ok(document) = cx.document() {
-            let unit = archbuilder_model::spatial::length_unit(&document.snapshot());
+            let unit = archbuilder_model::spatial::unit_settings(&document.snapshot());
             self.label_units = (unit, cx.decimal_separator());
         }
         if self.wake > 0 {
@@ -1589,6 +1650,7 @@ impl Interaction for WallInteraction {
             .and(fresh.map_or(Ok(()), Err))
     }
 
+    #[allow(clippy::too_many_lines, reason = "one field of the output per line")]
     fn output(&self) -> InteractionOutput {
         let line = self.current_line();
         let prompt = line
@@ -1677,6 +1739,8 @@ impl Interaction for WallInteraction {
             banner: self.habits.banner.clone(),
             hidden: self.habits.lists.hidden.clone(),
             isolated: self.habits.lists.isolated.clone(),
+            shading: self.habits.shading,
+            section: self.habits.section.clone(),
             history: self.notices.clone(),
             history_first: self.notices_first,
             // An idle line takes inline arguments (`app.file.open path=<file>`); answers end at Enter.
@@ -1852,7 +1916,7 @@ impl WallInteraction {
         let Some(unit) = cx
             .document()
             .ok()
-            .map(|d| archbuilder_model::spatial::length_unit(&d.snapshot()))
+            .map(|d| archbuilder_model::spatial::unit_settings(&d.snapshot()))
         else {
             return;
         };
@@ -1976,12 +2040,14 @@ impl WallInteraction {
         if !copying {
             for wall in archbuilder_commands::modify::preview(snapshot, objects, &xf) {
                 out.push(ProductOverlay::Path {
-                    points: wall
-                        .plain_footprint()
-                        .iter()
-                        .chain(std::iter::once(&wall.plain_footprint()[0]))
-                        .map(|p| at3(*p))
-                        .collect(),
+                    points: {
+                        let outline = wall.plain_outline();
+                        outline
+                            .iter()
+                            .chain(outline.first())
+                            .map(|p| at3(*p))
+                            .collect()
+                    },
                     dashed: true,
                 });
             }
@@ -1992,7 +2058,7 @@ impl WallInteraction {
             };
             if let Some(wall) = archbuilder_model::wall::Wall::from_values(&object.values) {
                 if copying {
-                    out.push(path(&wall.plain_footprint()));
+                    out.push(path(&wall.plain_outline()));
                 }
             } else if let Some(boundary) =
                 archbuilder_model::floor::Floor::from_values(&object.values)
@@ -2047,7 +2113,7 @@ impl WallInteraction {
             return;
         };
         let snapshot = document.snapshot();
-        let unit = archbuilder_model::spatial::length_unit(&snapshot);
+        let unit = archbuilder_model::spatial::unit_settings(&snapshot);
         let frame = Self::direct_frame(cx, self.ppu);
         self.direct_overlays = self.direct.overlays(
             &snapshot,
@@ -2105,7 +2171,7 @@ impl WallInteraction {
             shift: event.modifiers.shift,
             ctrl: event.modifiers.ctrl,
             free: event.modifiers.alt || !self.habits.snap_on,
-            unit: archbuilder_model::spatial::length_unit(&snapshot),
+            unit: archbuilder_model::spatial::unit_settings(&snapshot),
             separator: cx.decimal_separator(),
             plan: candidates.as_deref(),
         };
@@ -2197,10 +2263,23 @@ impl WallInteraction {
                 .and_then(serde_json::Value::as_str);
             return self.export_ifc(cx, path.map(str::to_owned));
         }
+        if command == archbuilder_io::command::EXPORT_MESH {
+            self.stop_all();
+            let path = intent
+                .params
+                .get("path")
+                .and_then(serde_json::Value::as_str);
+            return self.export_mesh(cx, path.map(str::to_owned));
+        }
         if command == WALL_CREATE && intent.params.is_empty() {
             self.inserts.stop();
             self.hover = None;
             return self.with_tool(cx, |tool, env, run| tool.begin(env, run));
+        }
+        if command == archbuilder_commands::wall::WALL_CREATE_ARC && intent.params.is_empty() {
+            self.inserts.stop();
+            self.hover = None;
+            return self.with_tool(cx, |tool, env, run| tool.begin_arc(env, run));
         }
         if command == archbuilder_commands::curtain::CURTAIN_WALL && intent.params.is_empty() {
             self.inserts.stop();
@@ -2272,6 +2351,7 @@ impl WallInteraction {
         if let Some(made) = [
             archbuilder_commands::datum::GRID_CREATE,
             archbuilder_commands::datum::REFERENCE_PLANE_CREATE,
+            archbuilder_commands::model_view::VIEW_CREATE_SECTION,
         ]
         .into_iter()
         .find(|c| *c == command)
@@ -2279,6 +2359,22 @@ impl WallInteraction {
         {
             self.stop_all();
             return self.with_datums(cx, |tool, env, run| tool.begin(env, run, made));
+        }
+        // A component of a family hosted by walls goes into a wall: the insert tool asks for it.
+        if command == archbuilder_commands::family_project::COMPONENT_PLACE
+            && intent.params.is_empty()
+        {
+            let snapshot = cx.document()?.snapshot();
+            let picked = crate::tool_type::current_param(
+                &snapshot,
+                archbuilder_model::element_type::TypeKind::Family,
+            );
+            if let Some(family) = picked
+                .filter(|f| archbuilder_commands::family_project::hosted_by_walls(&snapshot, f))
+            {
+                self.stop_all();
+                return self.with_inserts(cx, |tool, env, run| tool.begin_family(env, run, family));
+            }
         }
         if let Some(command) = PROMPTED
             .iter()
@@ -2384,6 +2480,125 @@ impl WallInteraction {
         })
     }
 
+    /// The readout of a coordinate query as one line, in the project's length unit.
+    fn coordinates_text(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        value: &serde_json::Value,
+    ) -> Option<String> {
+        let unit = archbuilder_model::spatial::unit_settings(&cx.document().ok()?.snapshot());
+        let separator = cx.decimal_separator();
+        let triple = |v: &serde_json::Value| -> Option<String> {
+            let parts: Vec<String> = v
+                .as_array()?
+                .iter()
+                .map(|n| {
+                    n.as_f64()
+                        .map(|m| archbuilder_model::units::length_text(m, unit, separator))
+                })
+                .collect::<Option<_>>()?;
+            Some(parts.join("; "))
+        };
+        let l = self.localizer(cx.language())?;
+        let map = value
+            .get("map")
+            .and_then(&triple)
+            .map_or_else(String::new, |m| {
+                let crs = value
+                    .get("crs")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                l.format(
+                    COORDINATES_MAP.message_id,
+                    &[("map", m.into()), ("crs", crs.to_owned().into())],
+                )
+                .text
+            });
+        Some(
+            l.format(
+                COORDINATES_READOUT.message_id,
+                &[
+                    ("internal", triple(value.get("internal")?)?.into()),
+                    ("project", triple(value.get("project")?)?.into()),
+                    ("survey", triple(value.get("survey")?)?.into()),
+                    ("map", map.into()),
+                ],
+            )
+            .text,
+        )
+    }
+
+    /// The notices of the project commands: what a purge removed, what a standards transfer
+    /// copied.
+    fn say_project_outcome(
+        &mut self,
+        cx: &InteractionContext<'_>,
+        command: &str,
+        value: &serde_json::Value,
+    ) {
+        if command == archbuilder_commands::project::PROJECT_PURGE
+            && value.get("preview").and_then(serde_json::Value::as_bool) == Some(false)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let removed = value
+                .get("removed")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let names: Vec<&str> = value
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|i| i.get("name").and_then(serde_json::Value::as_str))
+                .collect();
+            let text = localizer
+                .format(
+                    PURGED.message_id,
+                    &[
+                        ("count", arc_base::error::Value::Int(removed)),
+                        ("names", arc_base::error::Value::Text(names.join(", "))),
+                    ],
+                )
+                .text;
+            self.push_notice(text);
+        } else if command == archbuilder_commands::project::PROJECT_PURGE
+            && value.get("preview").and_then(serde_json::Value::as_bool) == Some(true)
+            && value
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty)
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            // Nothing was offered, so nothing was removed.
+            let text = localizer.format(PURGE_NOTHING.message_id, &[]).text;
+            self.push_notice(text);
+        }
+        if command == archbuilder_io::standards::TRANSFER_STANDARDS
+            && let Some(localizer) = self.localizer(cx.language())
+        {
+            let number = |key: &str| {
+                value
+                    .get(key)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+            };
+            let text = localizer
+                .format(
+                    STANDARDS_DONE.message_id,
+                    &[
+                        (
+                            "count",
+                            arc_base::error::Value::Int(number("copied") + number("overwritten")),
+                        ),
+                        ("skipped", arc_base::error::Value::Int(number("skipped"))),
+                    ],
+                )
+                .text;
+            self.push_notice(text);
+        }
+    }
+
     /// The notices a command's result asks for: slivers, frozen floor edges, removed inserts.
     fn say_outcome(
         &mut self,
@@ -2391,6 +2606,12 @@ impl WallInteraction {
         command: &str,
         value: &serde_json::Value,
     ) {
+        if command == archbuilder_commands::coordinates::COORDINATES_QUERY
+            && let Some(text) = self.coordinates_text(cx, value)
+        {
+            self.push_notice(text);
+        }
+        self.say_project_outcome(cx, command, value);
         if command == STATISTICS
             && let Some(localizer) = self.localizer(cx.language())
         {
@@ -2604,6 +2825,78 @@ impl WallInteraction {
             if loss > 0 {
                 lines.push(said(
                     IFC_LOSS.message_id,
+                    &[("count", arc_base::error::Value::Int(loss))],
+                ));
+            }
+            for line in lines {
+                self.push_notice(line);
+            }
+        }
+        Ok(())
+    }
+
+    /// Exports the elements as a mesh file to `path`, as [`Self::export_ifc`] does: the selection
+    /// when there is one, else the whole model, without the elements this view hides (the hide
+    /// and isolate state belongs to the view, so it is handed to the command).
+    fn export_mesh(&mut self, cx: &InteractionContext<'_>, path: Option<String>) -> Result<()> {
+        use archbuilder_io::command::EXPORT_MESH;
+        let Some(path) = path else {
+            cx.ask(Intent::new(EXPORT_MESH));
+            return Ok(());
+        };
+        let path = Some(path)
+            .filter(|p| !p.trim().is_empty())
+            .ok_or_else(|| Error::new(archbuilder_io::error::codes::PATH_REQUIRED))?;
+        let target = export_base(cx.document_path()).join(path.trim());
+        let target = std::path::absolute(target)
+            .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
+        let directory = target
+            .parent()
+            .map_or_else(|| target.clone(), PathBuf::from);
+        let mut session = Self::session(cx);
+        session.roots = Roots::new([&directory], [&directory])?;
+        let seed = self.next_seed();
+        let (Some(registry), document) = (self.registry.as_ref(), cx.document()?) else {
+            return Ok(());
+        };
+        let snapshot = document.snapshot();
+        let hidden: Vec<String> = archbuilder_model::types::ELEMENTS
+            .into_iter()
+            .flat_map(|key| archbuilder_model::spatial::objects(&snapshot, key))
+            .filter(|o| !self.habits.vis.shows(&snapshot, o.id))
+            .take(100_000)
+            .map(|o| o.id.to_string())
+            .collect();
+        let mut invocation = Invocation::new(
+            EXPORT_MESH.to_owned(),
+            serde_json::json!({
+                "path": target.display().to_string(),
+                "selection": !cx.selection().is_empty(),
+                "hidden": hidden,
+            }),
+        );
+        invocation.seed = seed;
+        invocation.selection = cx.selection().to_vec();
+        let outcome = Invoker::new(registry).invoke(document, &session, invocation)?;
+        let number = |key: &str| outcome.value.get(key).and_then(serde_json::Value::as_i64);
+        let name = target.display().to_string();
+        let (count, loss) = (
+            number("elements").unwrap_or(0),
+            number("dropped").unwrap_or(0) + number("approximated").unwrap_or(0),
+        );
+        if let Some(localizer) = self.localizer(cx.language()) {
+            let said =
+                |id: &str, args: &[(&str, arc_base::error::Value)]| localizer.format(id, args).text;
+            let mut lines = vec![said(
+                MESH_EXPORTED.message_id,
+                &[
+                    ("name", name.into()),
+                    ("count", arc_base::error::Value::Int(count)),
+                ],
+            )];
+            if loss > 0 {
+                lines.push(said(
+                    MESH_LOSS.message_id,
                     &[("count", arc_base::error::Value::Int(loss))],
                 ));
             }
@@ -2879,8 +3172,9 @@ impl WallInteraction {
                         z,
                     ),
                     text: format!(
-                        "{}  {degrees:.1}\u{b0}",
-                        archbuilder_model::units::length_text(length, unit, separator)
+                        "{}  {}",
+                        unit.length_text(length, separator),
+                        unit.angle_text(degrees.to_radians(), separator)
                     ),
                 });
             }
@@ -2888,7 +3182,10 @@ impl WallInteraction {
         let ([x, y], degrees) = self.angle?;
         Some(ProductOverlay::Label {
             at: Point3::new(x, y, z),
-            text: format!("{degrees}\u{b0}"),
+            text: self
+                .label_units
+                .0
+                .angle_text(f64::from(degrees).to_radians(), self.label_units.1),
         })
     }
 
@@ -2979,6 +3276,8 @@ impl WallInteraction {
                     .unwrap_or(location),
                 start_join: archbuilder_model::wall::JoinStyle::Auto,
                 end_join: archbuilder_model::wall::JoinStyle::Auto,
+                bulge: 0.0,
+                lean: [0.0; 2],
             };
             let (low, high) = wall.extent();
             let (nx, ny) = (-(end[1] - start[1]) / length, (end[0] - start[0]) / length);
@@ -3171,6 +3470,22 @@ impl WallInteraction {
                 self.stair_ghost = at
                     .and_then(|at| self.stairs.preview(&snapshot, at))
                     .map(|stair| stair_ghost(&snapshot, storey, z, &stair))
+                    .or_else(|| {
+                        // A railing or a ramp: the path or the outline it would make.
+                        at.and_then(|at| self.stairs.sketch(at)).map(|sketch| {
+                            sketch
+                                .lines
+                                .iter()
+                                .map(|line| ProductOverlay::Path {
+                                    points: line
+                                        .iter()
+                                        .map(|p| Point3::new(p[0], p[1], z))
+                                        .collect(),
+                                    dashed: true,
+                                })
+                                .collect()
+                        })
+                    })
                     .unwrap_or_default();
                 false
             }
@@ -3589,6 +3904,22 @@ mod tests {
         assert_eq!(notices.first().map(String::as_str), Some("10"));
     }
     use std::path::Path;
+
+    #[test]
+    fn the_words_of_the_railing_and_ramp_tools_start_them() {
+        use archbuilder_commands::circulation::{RAILING_CREATE, RAMP_CREATE};
+        for (word, command) in [
+            ("railing", RAILING_CREATE),
+            ("Korkuluk", RAILING_CREATE),
+            ("ramp", RAMP_CREATE),
+            ("RAMPA", RAMP_CREATE),
+        ] {
+            let intent = super::habits::typed_word(word).unwrap();
+            assert_eq!(intent.command, command, "{word}");
+            assert!(intent.params.is_empty());
+        }
+        assert!(super::habits::typed_word("railing 3").is_none());
+    }
 
     #[test]
     fn every_typed_word_of_the_command_tabs_is_a_command_of_the_line() {

@@ -15,22 +15,28 @@ publish = false
 # Third-party versions follow the arc-core lock; every crate listed must also appear in
 # xtask/layers.toml.
 [workspace.dependencies]
-arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-draft = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-view = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
-arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "2501bd5ec689c6b3218205899f5f84f02f828917" }
+arc-base = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-geom = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-doc = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-draft = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-view = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-command = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-app = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-gpu = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-ui = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-io-common = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-io-ifc = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+arc-io-mesh = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
+# The expression engine of parameters, document variables and families (ADR 0009); only
+# archbuilder-model depends on it.
+arc-solve = { git = "https://github.com/ACKaraca/arc-core", rev = "d768c3ee898e0bf8e440afa6a6eae897c93c0a29" }
 
 # Formats the names of the default element types from the message catalogs.
 fluent-bundle = { version = "0.16.0", default-features = false }
 unic-langid = { version = "0.9.6", default-features = false }
+# The checksum of a published family definition (BLAKE3 of its canonical text), as in arc-core.
+blake3 = { version = "1.8.7", default-features = false }
 schemars = { version = "1.2.3", default-features = false, features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: a number read back from JSON is the number that was written.

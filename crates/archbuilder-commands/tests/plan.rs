@@ -571,3 +571,56 @@ fn ceilings_are_off_by_default_and_a_shown_ceiling_draws_a_part_per_layer_of_its
     assert!(!keys.is_empty());
     assert_eq!(keys.len(), layers, "{keys:?}");
 }
+
+#[test]
+fn ramps_and_railings_are_drawn_under_their_own_categories_and_not_under_stairs() {
+    let env = Env::new();
+    let ground = env.ground();
+    env.house(ground);
+    let stair = Env::id(
+        &env.run(
+            "archbuilder.stair.create",
+            json!({"start": [1.0, 1.0], "to": [4.0, 1.0]}),
+        )
+        .unwrap(),
+        "stair",
+    );
+    let made = env
+        .run(
+            "archbuilder.ramp.create",
+            json!({"start": [1.0, 4.0], "to": [8.0, 4.0], "rise": 0.5, "railings": ["left"]}),
+        )
+        .unwrap();
+    let ramp = Env::id(&made, "ramp");
+    let railing: ObjectId = made.value["railings"][0].as_str().unwrap().parse().unwrap();
+    let view = env.view(ground).id;
+    let drawn = |env: &Env, id: ObjectId| !links_of(&env.built(ground), id).is_empty();
+    assert!(drawn(&env, stair) && drawn(&env, ramp) && drawn(&env, railing));
+    // Each flag takes away its own kind and leaves the others.
+    for (field, gone) in [
+        ("show_stairs", stair),
+        ("show_ramps", ramp),
+        ("show_railings", railing),
+    ] {
+        env.set(view, field, json!(false));
+        for id in [stair, ramp, railing] {
+            assert_eq!(drawn(&env, id), id != gone, "{field}");
+        }
+        env.set(view, field, json!(true));
+    }
+    // A view from a file before the two flags shows both.
+    let snapshot = env.document.snapshot();
+    let object = spatial::get(&snapshot, view).unwrap();
+    let mut values = object.values.clone();
+    values.truncate(archbuilder_model::types::plan_view::SHOW_RAILINGS);
+    let settings = archbuilder_model::view::PlanView::from_values(&values).unwrap();
+    assert!(
+        settings.shows(archbuilder_model::view::Category::Ramp)
+            && settings.shows(archbuilder_model::view::Category::Railing)
+    );
+    // The record round-trips through the settings, flags and all.
+    assert_eq!(
+        archbuilder_model::view::PlanView::from_values(&settings.values()),
+        Some(settings)
+    );
+}

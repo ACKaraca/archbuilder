@@ -40,6 +40,25 @@ fn stair_of(values: &Value) -> Option<Stair> {
     })
 }
 
+/// The run lines of a stair by sketch: records `[x0, y0, x1, y1]` in meters.
+fn run_lines_of(values: &Value) -> Vec<archbuilder_model::stair::RunLine> {
+    let n = |r: &Value, k: usize| r.get(k)?.as_f64();
+    values["runs"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|r| {
+                    Some(archbuilder_model::stair::RunLine {
+                        from: [n(r, 0)?, n(r, 1)?],
+                        to: [n(r, 2)?, n(r, 3)?],
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn level_elevation(objects: &[Value], id: &Value) -> Option<f64> {
     objects
         .iter()
@@ -83,7 +102,7 @@ fn rows(objects: &[Value]) -> Vec<Row<'_>> {
                 .map(|(_, l)| l)
         };
         let layout = match top.as_ref().and_then(|l| level_elevation(objects, l)) {
-            Some(e) => Layout::new(&stair, e - base),
+            Some(e) => Layout::build(&stair, &run_lines_of(&object["values"]), e - base),
             None => Err(Refusal::NoTop),
         };
         out.push(Row {

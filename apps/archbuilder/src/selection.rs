@@ -147,6 +147,7 @@ pub fn base_point(snapshot: &Snapshot, ids: &[ObjectId]) -> Option<[f64; 2]> {
 /// their chains, grids and reference planes by their ends, doors, windows and wall openings by
 /// their place in their wall. Empty for anything else or an element that has no place.
 #[must_use]
+#[allow(clippy::too_many_lines, reason = "one arm for each kind")]
 pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
     use archbuilder_model::types;
     let Some(object) = spatial::get(snapshot, id) else {
@@ -154,7 +155,11 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
     };
     match spatial::type_of(snapshot, id).as_deref() {
         Some(WALL) => Wall::from_values(&object.values)
-            .map(|w| w.plain_footprint().to_vec())
+            .map(|w| w.plain_outline())
+            .unwrap_or_default(),
+        // An instance is picked and dimensioned at its reference point.
+        Some(types::GROUP_INSTANCE) => archbuilder_model::group::Instance::of(&object)
+            .map(|i| vec![i.origin])
             .unwrap_or_default(),
         Some(FLOOR) => archbuilder_model::floor::Floor::from_values(&object.values)
             .and_then(|f| f.boundary_in(snapshot))
@@ -198,6 +203,23 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
             archbuilder_model::floor::VERTICAL_SLOTS,
         )
         .unwrap_or_default(),
+        Some(types::ELEVATOR) => archbuilder_model::elevator::span(snapshot, &object)
+            .map(|s| s.outline)
+            .unwrap_or_default(),
+        Some(types::COMPONENT) => archbuilder_model::family::loaded::Component::of(&object)
+            .map(|c| archbuilder_model::family::loaded::outline(snapshot, &c))
+            .unwrap_or_default(),
+        Some(types::DORMER) => archbuilder_model::dormer::Dormer::from_values(&object.values)
+            .map(|d| d.opening())
+            .unwrap_or_default(),
+        Some(types::ROOF_EDGE) => archbuilder_model::roof_edge::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.chains
+                    .iter()
+                    .flat_map(|c| c.points.iter().map(|p| [p[0], p[1]]))
+                    .collect()
+            })
+            .unwrap_or_default(),
         Some(types::FLOOR_EDGE) => archbuilder_model::floor_edge::Derived::of(snapshot, &object)
             .map(|d| {
                 d.chains
@@ -206,15 +228,18 @@ pub fn plan_points(snapshot: &Snapshot, id: ObjectId) -> Vec<[f64; 2]> {
                     .collect()
             })
             .unwrap_or_default(),
+        Some(types::FOREIGN_ELEMENT) => {
+            archbuilder_model::foreign::plan_outline(&object.values).unwrap_or_default()
+        }
         Some(types::GRID) => archbuilder_model::datum::Grid::from_values(&object.values)
-            .map(|g| vec![g.start, g.end])
+            .map(|g| g.points())
             .unwrap_or_default(),
         Some(types::REFERENCE_PLANE) => {
             archbuilder_model::datum::RefPlane::from_values(&object.values)
                 .map(|r| vec![r.start, r.end])
                 .unwrap_or_default()
         }
-        Some(DOOR | WINDOW | types::WALL_OPENING) => {
+        Some(DOOR | WINDOW | types::WALL_OPENING | types::FAMILY_INSERT) => {
             let host = object
                 .header
                 .owner

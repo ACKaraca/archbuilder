@@ -18,6 +18,7 @@ use archbuilder_model::element_type::{
     self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
+use archbuilder_model::roof::RafterCut;
 use archbuilder_model::{names, spatial, types};
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use schemars::JsonSchema;
@@ -54,6 +55,9 @@ const GENERIC_WALL: Msg = Msg {
 };
 const CURTAIN_WALL: Msg = Msg {
     message_id: "ab-type-wall-curtain",
+};
+const STACKED_WALL: Msg = Msg {
+    message_id: "ab-type-wall-stacked",
 };
 const CAVITY_WALL: Msg = Msg {
     message_id: "ab-type-wall-cavity",
@@ -302,6 +306,72 @@ fn create_type(
 ) -> Result<ObjectId> {
     let owner = project(ctx.txn()?.snapshot())?;
     create(ctx, kind.key(), Some(owner), values)
+}
+
+/// Creates a stacked wall type named `name` (or the first free `Stacked wall`) of `stack`: its
+/// layers are those of the variable segment, so the stacked wall has one thickness for placement,
+/// joins and hosting.
+///
+/// # Errors
+/// `ab.model.wall_stack_invalid` for a stack that breaks the rules; the transaction's errors.
+pub(crate) fn create_stacked_type(
+    ctx: &mut Context<'_>,
+    name: Option<&str>,
+    stack: &[et::StackEntry],
+) -> Result<ObjectId> {
+    let snapshot = ctx.txn()?.snapshot().clone();
+    let wanted = name.map(str::trim).filter(|t| !t.is_empty()).map_or_else(
+        || Names::new(&language(ctx)).text(&STACKED_WALL, &[]),
+        str::to_owned,
+    );
+    let invalid = |reason: &str| {
+        Error::new(archbuilder_model::error::codes::WALL_STACK_INVALID)
+            .with_arg("name", wanted.clone())
+            .with_arg("reason", reason)
+    };
+    if stack.len() < 2 || stack.len() > et::MAX_STACK {
+        return Err(invalid("count"));
+    }
+    if stack.iter().filter(|e| e.height <= 0.0).count() != 1
+        || stack
+            .iter()
+            .any(|e| !e.height.is_finite() || e.height < 0.0)
+    {
+        return Err(invalid("variable"));
+    }
+    let mut parts = Vec::new();
+    for e in stack {
+        let ty = spatial::get(&snapshot, e.type_id)
+            .filter(|t| spatial::type_of(&snapshot, t.id).as_deref() == Some(TypeKind::Wall.key()))
+            .filter(|t| {
+                et::StackEntry::of(&t.values).is_empty()
+                    && archbuilder_model::curtain::CurtainType::from_values(&t.values).is_none()
+            })
+            .ok_or_else(|| invalid("kind"))?;
+        let wall = WallType::from_values(&ty.values).ok_or_else(|| invalid("kind"))?;
+        parts.push(wall);
+    }
+    let thickness = parts[0].layers.total();
+    if parts
+        .iter()
+        .any(|p| (p.layers.total() - thickness).abs() > 1.0e-6)
+    {
+        return Err(invalid("thickness"));
+    }
+    let variable = stack
+        .iter()
+        .position(|e| e.height <= 0.0)
+        .and_then(|k| parts.get(k))
+        .ok_or_else(|| invalid("variable"))?;
+    let n = Names::new(&language(ctx));
+    let name = free_name(&snapshot, TypeKind::Wall, &wanted, &n);
+    let id = create_type(ctx, TypeKind::Wall, et::wall_type_values(&name, variable))?;
+    ctx.txn()?.modify(
+        id,
+        arc_doc::FieldPath::new("stack"),
+        Some(et::StackEntry::value(stack)),
+    )?;
+    Ok(id)
 }
 
 /// Creates the default types of a new project, named in the interface language: three wall
@@ -556,6 +626,8 @@ pub fn generic(kind: TypeKind) -> Vec<(usize, Value)> {
             types::ceiling::THICKNESS,
             types::length(archbuilder_model::ceiling::DEFAULT_THICKNESS),
         )],
+        // A family type holds the values of a loaded family; a new one comes from loading.
+        TypeKind::Family => Vec::new(),
         TypeKind::Door | TypeKind::Window => {
             let window = kind == TypeKind::Window;
             let (width, height, operation) = if window {
@@ -786,6 +858,7 @@ fn wanted(kind: TypeKind, values: &[Option<Value>]) -> Vec<(usize, Value)> {
         TypeKind::Floor => &[types::floor::THICKNESS],
         TypeKind::Roof => &[types::roof::THICKNESS],
         TypeKind::Ceiling => &[types::ceiling::THICKNESS],
+        TypeKind::Family => &[],
         TypeKind::Door | TypeKind::Window => &[
             types::insert::WIDTH,
             types::insert::HEIGHT,
@@ -904,6 +977,7 @@ pub fn ensure(
                 },
             )
         }
+        TypeKind::Family => return Err(Error::new(codes::KIND_MISMATCH)),
         TypeKind::Door | TypeKind::Window => {
             let t = InsertType {
                 width: length(types::insert::WIDTH),
@@ -1069,6 +1143,14 @@ pub enum OperationParam {
     Fixed,
     /// A window with a hinged leaf.
     Casement,
+    /// A door or window of leaves that fold against each other.
+    Folding,
+    /// A window hinged at the top.
+    Awning,
+    /// A window hinged at the bottom.
+    Hopper,
+    /// A door or window whose leaf turns on a vertical axis.
+    Pivot,
 }
 
 impl From<OperationParam> for Operation {
@@ -1079,6 +1161,35 @@ impl From<OperationParam> for Operation {
             OperationParam::Sliding => Self::Sliding,
             OperationParam::Fixed => Self::Fixed,
             OperationParam::Casement => Self::Casement,
+            OperationParam::Folding => Self::Folding,
+            OperationParam::Awning => Self::Awning,
+            OperationParam::Hopper => Self::Hopper,
+            OperationParam::Pivot => Self::Pivot,
+        }
+    }
+}
+
+/// The cut of the eave end of a roof type as a command parameter.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RafterCutParam {
+    /// A vertical end face.
+    Plumb,
+    /// An end face square to the slope.
+    Square,
+    /// A vertical fascia face, then a level soffit.
+    TwoCutPlumb,
+    /// A fascia face square to the slope, then a level soffit.
+    TwoCutSquare,
+}
+
+impl From<RafterCutParam> for RafterCut {
+    fn from(c: RafterCutParam) -> Self {
+        match c {
+            RafterCutParam::Plumb => Self::Plumb,
+            RafterCutParam::Square => Self::Square,
+            RafterCutParam::TwoCutPlumb => Self::TwoCutPlumb,
+            RafterCutParam::TwoCutSquare => Self::TwoCutSquare,
         }
     }
 }
@@ -1136,6 +1247,15 @@ pub struct SetType {
     /// Doors and windows: the sill height new instances get.
     #[serde(default)]
     pub sill: Option<QuantityParam>,
+    /// Roofs: how the eave ends of every roof of the type are cut.
+    #[serde(default)]
+    pub rafter_cut: Option<RafterCutParam>,
+    /// Roofs: the depth of the fascia face of a two-cut end, 10 mm to 2 m.
+    #[serde(default)]
+    pub fascia_depth: Option<QuantityParam>,
+    /// Family types: values by parameter key, each a literal or `{"formula", "unit"}`.
+    #[serde(default)]
+    pub values: Option<std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 /// What a type command returns.
@@ -1158,12 +1278,29 @@ fn meters(ctx: &Context<'_>, param: Option<&QuantityParam>) -> Result<Option<f64
 }
 
 /// Edits a type and, in the same transaction, every instance that takes values from it.
+#[allow(clippy::too_many_lines, reason = "one branch for each kind of type")]
 fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
     let IdParam(id) = p.element_type;
     let (kind, object) = type_record(ctx.snapshot(), id)?;
+    if kind == TypeKind::Family {
+        let empty = std::collections::BTreeMap::new();
+        crate::family_project::set_type_values(
+            ctx,
+            id,
+            p.name.as_deref(),
+            p.values.as_ref().unwrap_or(&empty),
+        )?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(id)),
+            ..TypeChanged::default()
+        });
+    }
     let mut fields: Vec<(&str, Option<Value>)> = Vec::new();
     if let Some(name) = &p.name {
         fields.push(("name", Some(Value::String(name.trim().to_owned()))));
+    }
+    if kind != TypeKind::Roof && (p.rafter_cut.is_some() || p.fascia_depth.is_some()) {
+        return Err(Error::new(codes::KIND_MISMATCH));
     }
     if kind.layered() {
         let mut layers =
@@ -1195,6 +1332,14 @@ fn set_type(ctx: &mut Context<'_>, p: SetType) -> Result<TypeChanged> {
             ("core_start", Some(start)),
             ("core_end", Some(end)),
         ]);
+        if kind == TypeKind::Roof {
+            if let Some(c) = p.rafter_cut {
+                fields.push(("rafter_cut", Some(Value::Enum(RafterCut::from(c).code()))));
+            }
+            if let Some(m) = meters(ctx, p.fascia_depth.as_ref())? {
+                fields.push(("fascia_depth", Some(types::length(m))));
+            }
+        }
         if kind == TypeKind::Wall {
             if let Some(e) = p.exposure {
                 let e = match e {
@@ -1258,7 +1403,17 @@ pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> 
     };
     let copies = et::copies(kind, &found.values);
     let mut changed = 0;
-    for instance in et::instances(&snapshot, kind, id) {
+    let mut before = std::collections::BTreeMap::new();
+    let shown: std::collections::BTreeSet<ObjectId> = et::instances(&snapshot, kind, id)
+        .iter()
+        .map(|o| o.id)
+        .collect();
+    // The members of group definitions follow their type too, so that the elements their
+    // instances generate stay what the definition says.
+    let users = spatial::objects_raw(&snapshot, kind.instance_key())
+        .into_iter()
+        .filter(|o| et::type_id(kind, &o.values) == Some(id));
+    for instance in users {
         let mut touched = false;
         for (at, name, value) in &copies {
             let differs = instance
@@ -1272,8 +1427,15 @@ pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> 
                 touched = true;
             }
         }
-        changed += usize::from(touched);
+        if touched {
+            before.insert(
+                instance.id,
+                archbuilder_model::group::fingerprint(&instance.values),
+            );
+        }
+        changed += usize::from(touched && shown.contains(&instance.id));
     }
+    crate::group::accept_derived(ctx, &before)?;
     Ok(changed)
 }
 
@@ -1291,6 +1453,14 @@ pub struct DuplicateType {
 }
 
 fn duplicate_type(ctx: &mut Context<'_>, p: DuplicateType) -> Result<TypeChanged> {
+    if crate::circulation::instance_of_type(ctx.snapshot(), p.element_type.0).is_some() {
+        let id = crate::circulation::duplicate_type(ctx, p.element_type.0, p.name.as_deref())?;
+        ensure_valid(ctx)?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(id)),
+            ..TypeChanged::default()
+        });
+    }
     let (kind, object) = type_record(ctx.snapshot(), p.element_type.0)?;
     let n = Names::new(&language(ctx));
     let base = p
@@ -1328,11 +1498,21 @@ pub struct DeleteType {
 
 fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
     let IdParam(id) = p.element_type;
+    if crate::circulation::instance_of_type(ctx.snapshot(), id).is_some() {
+        return delete_circulation_type(ctx, id, p.replacement.map(|r| r.0));
+    }
     let (kind, object) = type_record(ctx.snapshot(), id)?;
     if spatial::objects(ctx.snapshot(), kind.key()).len() <= 1 {
         return Err(Error::new(codes::TYPE_LAST).with_arg("name", et::name(&object).to_owned()));
     }
     let users = et::instances(ctx.snapshot(), kind, id);
+    // Members of group definitions are hidden from the readers but use the type all the same.
+    let shown: std::collections::BTreeSet<ObjectId> = users.iter().map(|o| o.id).collect();
+    let hidden: Vec<ObjectId> = spatial::objects_raw(ctx.snapshot(), kind.instance_key())
+        .into_iter()
+        .filter(|o| et::type_id(kind, &o.values) == Some(id) && !shown.contains(&o.id))
+        .map(|o| o.id)
+        .collect();
     let replacement = match p.replacement {
         Some(IdParam(r)) => {
             let (other, _) = type_record(ctx.snapshot(), r)?;
@@ -1341,16 +1521,62 @@ fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
             }
             Some(r)
         }
-        None if users.is_empty() => None,
+        None if users.is_empty() && hidden.is_empty() => None,
+        None => {
+            return Err(Error::new(codes::TYPE_IN_USE)
+                .with_arg("name", et::name(&object).to_owned())
+                .with_arg(
+                    "count",
+                    i64::try_from(users.len() + hidden.len()).unwrap_or(i64::MAX),
+                ));
+        }
+    };
+    if let Some(r) = replacement {
+        let mut before = std::collections::BTreeMap::new();
+        for user in &users {
+            before.insert(user.id, archbuilder_model::group::fingerprint(&user.values));
+            assign(ctx, user.id, kind, r)?;
+        }
+        // The members follow, and the elements their instances generated are no direct edits.
+        for member in &hidden {
+            assign(ctx, *member, kind, r)?;
+        }
+        crate::group::allow_members(ctx, hidden.iter().copied())?;
+        crate::group::accept_derived(ctx, &before)?;
+    }
+    ctx.txn()?.delete(id)?;
+    ensure_valid(ctx)?;
+    Ok(TypeChanged {
+        element_type: replacement.map(IdParam),
+        instances: users.len(),
+        resynced: None,
+    })
+}
+
+/// Deletes the railing type or ramp type `id`; its railings or ramps get `replacement`, a type
+/// of the same kind, which is required while it has users.
+fn delete_circulation_type(
+    ctx: &mut Context<'_>,
+    id: ObjectId,
+    replacement: Option<ObjectId>,
+) -> Result<TypeChanged> {
+    let key = spatial::type_of(ctx.snapshot(), id).ok_or_else(|| Error::new(codes::TYPE_KIND))?;
+    let object = spatial::get(ctx.snapshot(), id)
+        .ok_or_else(|| Error::new(codes::TYPE_UNKNOWN).with_arg("name", id.to_string()))?;
+    if spatial::objects(ctx.snapshot(), &key).len() <= 1 {
+        return Err(Error::new(codes::TYPE_LAST).with_arg("name", et::name(&object).to_owned()));
+    }
+    let users = crate::circulation::type_users(ctx.snapshot(), id);
+    match replacement {
+        Some(r) if r != id && spatial::type_of(ctx.snapshot(), r).as_deref() == Some(&key) => {
+            crate::circulation::retype(ctx, r, &users)?;
+        }
+        Some(_) => return Err(Error::new(codes::TYPE_KIND)),
+        None if users.is_empty() => {}
         None => {
             return Err(Error::new(codes::TYPE_IN_USE)
                 .with_arg("name", et::name(&object).to_owned())
                 .with_arg("count", i64::try_from(users.len()).unwrap_or(i64::MAX)));
-        }
-    };
-    if let Some(r) = replacement {
-        for user in &users {
-            assign(ctx, user.id, kind, r)?;
         }
     }
     ctx.txn()?.delete(id)?;
@@ -1388,6 +1614,7 @@ fn kind_named(name: &str) -> Option<TypeKind> {
         TypeKind::Window => name == "window",
         TypeKind::Roof => name == "roof",
         TypeKind::Ceiling => name == "ceiling",
+        TypeKind::Family => name == "family",
     })
 }
 
@@ -1474,6 +1701,21 @@ fn match_type(ctx: &mut Context<'_>, p: MatchType) -> Result<TypeChanged> {
     let objects = targets(ctx, p.objects)?;
     let source =
         spatial::get(ctx.snapshot(), p.source.0).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    // A railing or a ramp: its type goes to the railings or ramps among the objects.
+    let circulation = match spatial::type_of(ctx.snapshot(), source.id).as_deref() {
+        Some(types::RAILING) => types::railing::RAILING_TYPE,
+        Some(types::RAMP) => types::ramp::RAMP_TYPE,
+        _ => usize::MAX,
+    };
+    if let Some(Some(Value::Reference(type_id))) = source.values.get(circulation) {
+        let others: Vec<ObjectId> = objects.into_iter().filter(|id| *id != source.id).collect();
+        let n = crate::circulation::retype(ctx, *type_id, &others)?;
+        return Ok(TypeChanged {
+            element_type: Some(IdParam(*type_id)),
+            instances: n,
+            resynced: None,
+        });
+    }
     let (kind, found) =
         et::type_of_object(ctx.snapshot(), &source).ok_or_else(|| Error::new(codes::TYPE_KIND))?;
     let objects: Vec<ObjectId> = objects.into_iter().filter(|id| *id != source.id).collect();

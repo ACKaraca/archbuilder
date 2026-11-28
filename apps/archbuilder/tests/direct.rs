@@ -180,7 +180,7 @@ impl Pointer {
             shift: false,
             ctrl: self.ctrl,
             free: false,
-            unit: LengthUnit::Meter,
+            unit: LengthUnit::Meter.into(),
             separator: '.',
             plan: None,
         }
@@ -693,4 +693,115 @@ fn in_a_plan_view_a_drag_takes_the_wall_the_drawing_shows_not_the_one_above_it()
         rig.wall_now(ground)
     );
     assert!((rig.wall_now(upper).start[0] - 5.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_handles_of_a_ramp_and_of_a_railing_by_path_move_what_they_belong_to() {
+    use archbuilder::direct::{HandleKind, handles};
+    let rig = Rig::new();
+    let made = rig
+        .run(
+            "archbuilder.ramp.create",
+            json!({"start": [1.0, 1.0], "to": [7.0, 1.0], "rise": 1.0, "landing_start": 1.0,
+                   "railings": ["left"]}),
+        )
+        .unwrap();
+    let ramp: ObjectId = made.value["ramp"].as_str().unwrap().parse().unwrap();
+    let hosted: ObjectId = made.value["railings"][0].as_str().unwrap().parse().unwrap();
+    let ramp_now = |rig: &Rig| {
+        archbuilder_model::ramp::Ramp::from_values(
+            &spatial::get(&rig.document.snapshot(), ramp).unwrap().values,
+        )
+        .unwrap()
+    };
+    // The foot, the end of the first run (the run starts after the 1 m landing) and the width.
+    let shown = handles(&rig.document.snapshot(), &[ramp], &plan());
+    let at_of = |f: &dyn Fn(&HandleKind) -> bool| {
+        shown
+            .iter()
+            .find(|h| f(&h.kind))
+            .map(|h| (h.at[0], h.at[1]))
+            .unwrap()
+    };
+    assert_eq!(
+        at_of(&|k| matches!(k, HandleKind::RampStart(_))),
+        (1.0, 1.0)
+    );
+    assert_eq!(at_of(&|k| matches!(k, HandleKind::RampEnd(_))), (8.0, 1.0));
+    let width = at_of(&|k| matches!(k, HandleKind::RampWidth(_)));
+    assert!((width.0 - 5.0).abs() < 1.0e-9 && (width.1 - 1.6).abs() < 1.0e-9);
+    // A railing on a ramp follows it and has no handle.
+    assert!(handles(&rig.document.snapshot(), &[hosted], &plan()).is_empty());
+    // Dragging the end handle from (8, 1) to (2, 5) turns the run north (it starts at (2, 1)) and
+    // shortens it to 4 m.
+    let mut direct = Direct::new();
+    let pointer = Pointer::plan(&[ramp]);
+    let done = drag(&rig, &mut direct, &pointer, [8.0, 1.0], [2.0, 5.0]).unwrap();
+    assert_eq!(done.commands[0].name, "archbuilder.ramp.move_end");
+    rig.execute(&done);
+    let r = ramp_now(&rig);
+    assert_eq!(r.start, [1.0, 1.0]);
+    assert!(
+        (r.length - 4.0).abs() < 1.0e-9
+            && (r.direction - std::f64::consts::FRAC_PI_2).abs() < 1.0e-9
+    );
+    rig.undo();
+    assert!((ramp_now(&rig).length - 6.0).abs() < 1.0e-9);
+    // The foot handle: the end of the run stays at (8, 1); the foot goes to (1, 3).
+    let done = drag(&rig, &mut direct, &pointer, [1.0, 1.0], [1.0, 3.0]).unwrap();
+    rig.execute(&done);
+    assert_eq!(ramp_now(&rig).start, [1.0, 3.0]);
+    rig.undo();
+    // The width handle: 0.5 m across the run line makes the ramp 1 m wide; the command is a
+    // property change, one undo step.
+    let done = drag(&rig, &mut direct, &pointer, [5.0, 1.6], [5.0, 1.5]).unwrap();
+    assert_eq!(done.commands[0].name, "archbuilder.property.set");
+    rig.execute(&done);
+    assert!((ramp_now(&rig).width - 1.0).abs() < 1.0e-9);
+    rig.undo();
+    assert!((ramp_now(&rig).width - 1.2).abs() < 1.0e-9);
+    // A railing by path has a handle at every point; a point is moved in plan.
+    let rail: ObjectId = rig
+        .run(
+            "archbuilder.railing.create",
+            json!({"points": [[0.0, 8.0], [4.0, 8.0], [4.0, 11.0]]}),
+        )
+        .unwrap()
+        .value["railing"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let points = handles(&rig.document.snapshot(), &[rail], &plan())
+        .iter()
+        .filter(|h| matches!(h.kind, HandleKind::RailingPoint { .. }))
+        .count();
+    assert_eq!(points, 3);
+    let pointer = Pointer::plan(&[rail]);
+    let done = drag(&rig, &mut direct, &pointer, [4.0, 8.0], [6.0, 8.0]).unwrap();
+    assert_eq!(done.commands[0].name, "archbuilder.railing.move_point");
+    rig.execute(&done);
+    let path_now = |rig: &Rig| {
+        archbuilder_model::railing::Railing::from_values(
+            &spatial::get(&rig.document.snapshot(), rail).unwrap().values,
+        )
+        .unwrap()
+        .path
+    };
+    assert_eq!(path_now(&rig)[1].point[..2], [6.0, 8.0]);
+    rig.undo();
+    assert_eq!(path_now(&rig)[1].point[..2], [4.0, 8.0]);
+    // A point dropped on its neighbor makes nothing.
+    let nothing = drag(&rig, &mut direct, &pointer, [4.0, 8.0], [0.0, 8.0]);
+    assert!(nothing.is_none());
+    // A selected ramp is dragged whole like a stair.
+    let done = drag(
+        &rig,
+        &mut direct,
+        &Pointer::plan(&[ramp]),
+        [5.0, 1.0],
+        [5.0, 3.0],
+    )
+    .unwrap();
+    assert_eq!(done.commands[0].name, "archbuilder.modify.move");
 }

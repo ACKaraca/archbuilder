@@ -12,11 +12,18 @@
 //! `floors` list: each with its storey, thickness, area, volume and the walls its edges follow, and the
 //! `rooms` list: each with its storey, number, name, state, area, perimeter and volume, the
 //! `statistics` report (counts by kind, type and storey; derived), the `selection_sets` list and
-//! the `curtain_walls` list: each curtain wall with its panels (key, kind, door or window type,
-//! width, height, area, whether overridden) and mullions (key, role, upright or not, length).
-//! `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
+//! the `curtain_walls` list: each curtain wall with its panels and mullions, the rows of
+//! `archbuilder.curtain.schedule` (panel: key, kind, door or window type, material, thickness,
+//! width, height, area, whether overridden; mullion: key, role, upright or not, profile, size,
+//! length), and the `variables` list: each document variable with its identifier, data type,
+//! formula and value (derived), and `parameters`: the project parameters (`parameters`) and the
+//! value of each element and type with its source and formula (`values`, derived).
+//! `family check` and `family publish` read and write `.archbfam` packages ([`family`]).
+//! `import-ifc <file.archb> <in.ifc>` reads an IFC file into a document ([`import`]) and prints the
+//! loss report. `export-ifc <file.archb> <out.ifc> [--timestamp ISO8601]` writes the document as an IFC4 file
 //! ([`export`]) and prints the loss report; the shared `run` also has the command
-//! `archbuilder.file.export_ifc`.
+//! `archbuilder.file.export_ifc`. `export-mesh <file.archb> <out.obj|stl|gltf|glb> [options]` writes
+//! the elements as a mesh ([`export::run_mesh`]) and prints the loss report.
 
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
@@ -28,7 +35,9 @@ use serde_json::Value;
 
 pub mod check;
 pub mod export;
+pub mod family;
 pub mod floors;
+pub mod import;
 pub mod rooms;
 pub mod stairs;
 pub mod walls;
@@ -86,8 +95,17 @@ where
         archbuilder_commands::install(document);
         Ok(())
     };
+    if args.first().and_then(|a| a.to_str()) == Some("family") {
+        return family::run(&args[1..], product, stdout, stderr);
+    }
     if args.first().and_then(|a| a.to_str()) == Some("export-ifc") {
         return export::run(&args[1..], product, stdout, stderr);
+    }
+    if args.first().and_then(|a| a.to_str()) == Some("import-ifc") {
+        return import::run(&args[1..], product, &setup, stdin, stdout, stderr);
+    }
+    if args.first().and_then(|a| a.to_str()) == Some("export-mesh") {
+        return export::run_mesh(&args[1..], product, stdout, stderr);
     }
     if args.first().and_then(|a| a.to_str()) == Some("help") {
         let exit = headless::run_with_setup(
@@ -101,7 +119,23 @@ where
         );
         let _ = writeln!(
             stderr,
+            "  import-ifc <file.archb> <in.ifc>   read an IFC file into the document (created when missing); prints the result and the loss report"
+        );
+        let _ = writeln!(
+            stderr,
             "  export-ifc <file> <out.ifc> [--timestamp T]   write the document as an IFC4 file; prints the loss report"
+        );
+        let _ = writeln!(
+            stderr,
+            "  export-mesh <file> <out.obj|stl|gltf|glb> [--format F] [--unit m|cm|mm|ft|in] [--element ID]... [--merge] [--no-materials]   write meshes; prints the loss report"
+        );
+        let _ = writeln!(
+            stderr,
+            "  family check <file.archbfam> [--available name@version]   verify a family package; exit 3 when it is refused"
+        );
+        let _ = writeln!(
+            stderr,
+            "  family publish --out <file.archbfam> --name N --version V --family <definition.txt>=<version>   publish families into a new package"
         );
         return exit;
     }
@@ -198,59 +232,36 @@ fn stats_and_sets(args: &[OsString], product: &Product) -> (Value, Value) {
     (stats, Value::Array(sets))
 }
 
-/// The curtain walls of the file named in `args` with their derived panels and mullions, as JSON;
-/// an empty list when the file cannot be opened.
-fn curtain_walls(args: &[OsString], product: &Product) -> Value {
-    use archbuilder_model::curtain::{Derived, MullionRole};
+/// The document variables of the file named in `args` with their formulas and values, as
+/// JSON; an empty list when the file cannot be opened.
+fn variables(args: &[OsString], product: &Product) -> Value {
     let Some(snapshot) = open_snapshot(args, product) else {
         return Value::Array(Vec::new());
     };
-    let walls = archbuilder_model::spatial::objects(&snapshot, archbuilder_model::types::WALL);
-    let list = walls
-        .iter()
-        .filter_map(|w| Some((w, Derived::of(&snapshot, w)?)))
-        .map(|(w, d)| {
-            let panels: Vec<Value> = d
-                .panels
-                .iter()
-                .map(|p| {
-                    serde_json::json!({
-                        "key": p.key,
-                        "kind": p.kind.name(),
-                        "type": p.type_ref.as_ref().map(|(_, name)| name.clone()),
-                        "width": p.width(),
-                        "height": p.height(),
-                        "area": p.width() * p.height(),
-                        "overridden": p.overridden,
-                    })
-                })
-                .collect();
-            let mullions: Vec<Value> = d
-                .mullions
-                .iter()
-                .map(|m| {
-                    let role = match m.role {
-                        MullionRole::Interior => "interior",
-                        MullionRole::Border => "border",
-                        MullionRole::Corner => "corner",
-                    };
-                    serde_json::json!({
-                        "key": m.key,
-                        "role": role,
-                        "vertical": m.vertical,
-                        "length": m.length(),
-                    })
-                })
-                .collect();
-            serde_json::json!({
-                "id": w.id.to_string(),
-                "name": archbuilder_model::types::text(&w.values, 0).unwrap_or_default(),
-                "panels": panels,
-                "mullions": mullions,
-            })
-        })
-        .collect();
-    Value::Array(list)
+    serde_json::to_value(archbuilder_commands::parameter::variable_list(&snapshot).variables)
+        .unwrap_or_else(|_| Value::Array(Vec::new()))
+}
+
+/// The project parameters of the file named in `args` and the values of the elements and types,
+/// as JSON; `null` when the file cannot be opened.
+fn parameters(args: &[OsString], product: &Product) -> Value {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return Value::Null;
+    };
+    serde_json::to_value(archbuilder_commands::project_parameter::parameter_list(
+        &snapshot, None,
+    ))
+    .unwrap_or(Value::Null)
+}
+
+/// The curtain walls of the file named in `args` with their derived panels and mullions (the rows
+/// of `archbuilder.curtain.schedule`), as JSON; an empty list when the file cannot be opened.
+fn curtain_walls(args: &[OsString], product: &Product) -> Value {
+    let Some(snapshot) = open_snapshot(args, product) else {
+        return Value::Array(Vec::new());
+    };
+    serde_json::to_value(archbuilder_commands::curtain::schedule(&snapshot, None))
+        .unwrap_or_else(|_| Value::Array(Vec::new()))
 }
 
 /// The shared `inspect`, with the `walls` list added to its JSON line.
@@ -273,6 +284,8 @@ where
     let nets = room_nets(&args, product);
     let (stats, sets) = stats_and_sets(&args, product);
     let curtains = curtain_walls(&args, product);
+    let variables = variables(&args, product);
+    let parameters = parameters(&args, product);
     let mut out = Vec::new();
     let exit = headless::run_with_setup(args, product, None, Some(setup), stdin, &mut out, stderr);
     let text = String::from_utf8_lossy(&out);
@@ -295,6 +308,8 @@ where
         map.insert("statistics".into(), stats);
         map.insert("selection_sets".into(), sets);
         map.insert("curtain_walls".into(), curtains);
+        map.insert("variables".into(), variables);
+        map.insert("parameters".into(), parameters);
         map.insert("floors".into(), floors.into());
         map.insert("rooms".into(), rooms.into());
         map.insert("stairs".into(), stairs.into());

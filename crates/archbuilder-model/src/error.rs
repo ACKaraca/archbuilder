@@ -19,6 +19,31 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-name-taken",
     };
+    /// A group instance names a definition that is not one, or the definition is gone.
+    pub const GROUP_DEFINITION_MISSING: ErrorCode = ErrorCode {
+        code: "ab.model.group_definition_missing",
+        category: Category::Conflict,
+        message_id: "ab-model-group-definition-missing",
+    };
+    /// A group instance does not map each level of its definition to a storey of one building.
+    pub const GROUP_LEVELS_UNMAPPED: ErrorCode = ErrorCode {
+        code: "ab.model.group_levels_unmapped",
+        category: Category::Conflict,
+        message_id: "ab-model-group-levels-unmapped",
+    };
+    /// A group instance excludes a member its definition does not have.
+    pub const GROUP_MEMBER_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.model.group_member_unknown",
+        category: Category::Conflict,
+        message_id: "ab-model-group-member-unknown",
+    };
+    /// A member of a group definition was changed, moved or deleted directly; only the group
+    /// commands and the propagation of types, families and parameters may write it.
+    pub const GROUP_MEMBER_DIRECT: ErrorCode = ErrorCode {
+        code: "ab.model.group_member_direct",
+        category: Category::Conflict,
+        message_id: "ab-model-group-member-direct",
+    };
     /// An object is not contained in an object of the kind its type belongs to.
     pub const PARENT_INVALID: ErrorCode = ErrorCode {
         code: "ab.model.parent_invalid",
@@ -30,6 +55,14 @@ pub mod codes {
         code: "ab.model.project_not_unique",
         category: Category::Conflict,
         message_id: "ab-model-project-not-unique",
+    };
+    /// A project information field has a value it cannot hold: an issue date that is no calendar
+    /// date `YYYY-MM-DD`, or a year of construction that is not four digits. The `field` argument
+    /// names it.
+    pub const PROJECT_INFO_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.project_info_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-project-info-invalid",
     };
     /// A wall's baseline is shorter than [`crate::types::MIN_WALL_LENGTH`].
     pub const WALL_TOO_SHORT: ErrorCode = ErrorCode {
@@ -85,6 +118,13 @@ pub mod codes {
         code: "ab.model.insert_frame",
         category: Category::InvalidInput,
         message_id: "ab-model-insert-frame",
+    };
+    /// The sketched outline of a wall opening crosses itself, has no area or leaves the
+    /// opening's width and height.
+    pub const INSERT_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.insert_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-insert-profile",
     };
     /// A door or window would open into the body of another wall that meets or crosses its wall.
     pub const INSERT_MEETS_WALL: ErrorCode = ErrorCode {
@@ -219,11 +259,23 @@ pub mod codes {
         category: Category::InvalidInput,
         message_id: "ab-model-ramp-slope",
     };
+    /// A ramp or railing finding (see the message `ab-model-ramp-top`).
+    pub const RAMP_TOP: ErrorCode = ErrorCode {
+        code: "ab.model.ramp_top",
+        category: Category::InvalidInput,
+        message_id: "ab-model-ramp-top",
+    };
     /// A ramp or railing finding (see the message `ab-model-railing-malformed`).
     pub const RAILING_MALFORMED: ErrorCode = ErrorCode {
         code: "ab.model.railing_malformed",
         category: Category::InvalidInput,
         message_id: "ab-model-railing-malformed",
+    };
+    /// A ramp or railing finding (see the message `ab-model-railing-balusters`).
+    pub const RAILING_BALUSTERS: ErrorCode = ErrorCode {
+        code: "ab.model.railing_balusters",
+        category: Category::InvalidInput,
+        message_id: "ab-model-railing-balusters",
     };
     /// A ramp or railing finding (see the message `ab-model-railing-gap`).
     pub const RAILING_GAP: ErrorCode = ErrorCode {
@@ -297,13 +349,6 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-curtain-cell-shape",
     };
-    /// A curtain wall with grid edits or panel overrides cannot be split or merged: they belong
-    /// to its own grid.
-    pub const CURTAIN_EDITED: ErrorCode = ErrorCode {
-        code: "ab.model.curtain_edited",
-        category: Category::Conflict,
-        message_id: "ab-model-curtain-edited",
-    };
     /// The wall is not a curtain wall.
     pub const CURTAIN_NOT_CURTAIN: ErrorCode = ErrorCode {
         code: "ab.model.curtain_not_curtain",
@@ -376,11 +421,53 @@ pub mod codes {
         category: Category::FailedOperation,
         message_id: "ab-model-roof-degenerate",
     };
+    /// Two neighboring eaves of a roof cannot both be cut level at their own heights.
+    pub const ROOF_CUT_CONFLICT: ErrorCode = ErrorCode {
+        code: "ab.model.roof_cut_conflict",
+        category: Category::Conflict,
+        message_id: "ab-model-roof-cut-conflict",
+    };
     /// A wall attached to a roof or floor cannot follow its underside and keeps its own top: a warning.
     pub const WALL_ATTACH_FAILED: ErrorCode = ErrorCode {
         code: "ab.model.wall_attach_failed",
         category: Category::Conflict,
         message_id: "ab-model-wall-attach-failed",
+    };
+    /// The shape numbers of a wall (arc, lean, profile, bands) cannot make a solid.
+    pub const WALL_SHAPE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_shape_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-shape-invalid",
+    };
+    /// A wall's profile has an opening or an outline that does not fit.
+    pub const WALL_PROFILE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_profile_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-profile-invalid",
+    };
+    /// Doors or windows of a wall fall outside the profile it was given.
+    pub const WALL_PROFILE_INSERTS: ErrorCode = ErrorCode {
+        code: "ab.model.wall_profile_inserts",
+        category: Category::Conflict,
+        message_id: "ab-model-wall-profile-inserts",
+    };
+    /// Two shapes of a wall cannot be combined.
+    pub const WALL_SHAPE_COMBINATION: ErrorCode = ErrorCode {
+        code: "ab.model.wall_shape_combination",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-shape-combination",
+    };
+    /// A stacked wall type is not usable.
+    pub const WALL_STACK_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_stack_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-stack-invalid",
+    };
+    /// A band of a wall does not fit it.
+    pub const WALL_BAND_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.wall_band_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-wall-band-invalid",
     };
     /// A wall is attached to something that is not a roof or a floor of its building.
     pub const WALL_ATTACH_TARGET: ErrorCode = ErrorCode {
@@ -429,6 +516,37 @@ pub mod codes {
         code: "ab.model.floor_edge_orphan",
         category: Category::Conflict,
         message_id: "ab-model-floor-edge-orphan",
+    };
+    /// An elevator's sizes are out of range, or its door is wider than the shaft.
+    pub const ELEVATOR_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.elevator_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-elevator-invalid",
+    };
+    /// A dormer's sizes are out of range.
+    pub const DORMER_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.dormer_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-dormer-invalid",
+    };
+    /// The profile of a roof edge element is not a simple loop, or it names no edge.
+    pub const ROOF_EDGE_PROFILE: ErrorCode = ErrorCode {
+        code: "ab.model.roof_edge_profile",
+        category: Category::InvalidInput,
+        message_id: "ab-model-roof-edge-profile",
+    };
+    /// A roof edge element names an edge its roof no longer has, or one without a slope (a
+    /// warning).
+    pub const ROOF_EDGE_ORPHAN: ErrorCode = ErrorCode {
+        code: "ab.model.roof_edge_orphan",
+        category: Category::Conflict,
+        message_id: "ab-model-roof-edge-orphan",
+    };
+    /// A stair has less clear height above its treads or landings than its minimum (a warning).
+    pub const STAIR_HEADROOM: ErrorCode = ErrorCode {
+        code: "ab.model.stair_headroom",
+        category: Category::Conflict,
+        message_id: "ab-model-stair-headroom",
     };
     /// The profile of a roof by extrusion is unreadable or has too few points, a segment of no
     /// length or a point out of range.
@@ -485,10 +603,152 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-datum-label-duplicate",
     };
+    /// Geometry lies farther from the internal origin than the document's precision distance (a
+    /// warning).
+    pub const LOCATION_DISTANT: ErrorCode = ErrorCode {
+        code: "ab.model.location_distant",
+        category: Category::Conflict,
+        message_id: "ab-model-location-distant",
+    };
     /// A plan view's range is out of order: view depth, bottom, cut and top must rise.
     pub const VIEW_RANGE: ErrorCode = ErrorCode {
         code: "ab.model.view_range",
         category: Category::InvalidInput,
         message_id: "ab-model-view-range",
+    };
+    /// A formula identifier is not an ASCII identifier, or is `true`, `false`, a function or a
+    /// unit.
+    pub const PARAM_IDENTIFIER_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.param_identifier_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-identifier-invalid",
+    };
+    /// Another parameter or document variable has the formula identifier.
+    pub const PARAM_IDENTIFIER_TAKEN: ErrorCode = ErrorCode {
+        code: "ab.model.param_identifier_taken",
+        category: Category::Conflict,
+        message_id: "ab-model-param-identifier-taken",
+    };
+    /// A value does not fit its data type: a literal of another kind, a formula where only
+    /// literals are allowed, an integer that is not whole.
+    pub const PARAM_VALUE_INVALID: ErrorCode = ErrorCode {
+        code: "ab.model.param_value_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-value-invalid",
+    };
+    /// Formulas read each other in a cycle; the argument `cycle` names it.
+    pub const PARAM_CYCLE: ErrorCode = ErrorCode {
+        code: "ab.model.param_cycle",
+        category: Category::Conflict,
+        message_id: "ab-model-param-cycle",
+    };
+    /// A parameter value breaks its rule (a refusal for a reject rule, a warning otherwise).
+    pub const PARAM_RULE: ErrorCode = ErrorCode {
+        code: "ab.model.param_rule",
+        category: Category::Conflict,
+        message_id: "ab-model-param-rule",
+    };
+    /// A document would hold more document variables or project parameters than the limit.
+    pub const PARAM_TOO_MANY: ErrorCode = ErrorCode {
+        code: "ab.model.param_too_many",
+        category: Category::LimitExceeded,
+        message_id: "ab-model-param-too-many",
+    };
+    /// A parameter is bound to something that is not a category of physical elements, or a
+    /// value is set on an object the parameter is not bound to in that scope.
+    pub const PARAM_CATEGORY: ErrorCode = ErrorCode {
+        code: "ab.model.param_category",
+        category: Category::InvalidInput,
+        message_id: "ab-model-param-category",
+    };
+    /// A family definition is invalid; the arguments `part` and `reason` name what.
+    pub const FAMILY_INVALID: ErrorCode = ErrorCode {
+        code: "ab.family.invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-invalid",
+    };
+    /// A family definition, text or evaluation passes a limit; `limit` names it.
+    pub const FAMILY_LIMIT: ErrorCode = ErrorCode {
+        code: "ab.family.limit_exceeded",
+        category: Category::LimitExceeded,
+        message_id: "ab-family-limit-exceeded",
+    };
+    /// A canonical family text is malformed; `line` and `reason` say where and why.
+    pub const FAMILY_TEXT: ErrorCode = ErrorCode {
+        code: "ab.family.text_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-text-invalid",
+    };
+    /// A form of a family cannot be built; `form` names it and `reason` the cause.
+    pub const FAMILY_FORM: ErrorCode = ErrorCode {
+        code: "ab.family.form_failed",
+        category: Category::InvalidInput,
+        message_id: "ab-family-form-failed",
+    };
+    /// A reference plane of a family does not evaluate to a position; `plane` names it.
+    pub const FAMILY_PLANE: ErrorCode = ErrorCode {
+        code: "ab.family.plane_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-plane-invalid",
+    };
+    /// The family has no type of that name.
+    pub const FAMILY_TYPE_UNKNOWN: ErrorCode = ErrorCode {
+        code: "ab.family.type_unknown",
+        category: Category::NotFound,
+        message_id: "ab-family-type-unknown",
+    };
+    /// A test case of a family failed; `test` and `reason` say which and why.
+    pub const FAMILY_TEST: ErrorCode = ErrorCode {
+        code: "ab.family.test_failed",
+        category: Category::Conflict,
+        message_id: "ab-family-test-failed",
+    };
+    /// The family needs a newer function set than this build has.
+    pub const FAMILY_FUNCTIONS: ErrorCode = ErrorCode {
+        code: "ab.family.functions_newer",
+        category: Category::Conflict,
+        message_id: "ab-family-functions-newer",
+    };
+    /// The checksum of a family definition does not match its text.
+    pub const FAMILY_CHECKSUM: ErrorCode = ErrorCode {
+        code: "ab.family.checksum_mismatch",
+        category: Category::Conflict,
+        message_id: "ab-family-checksum-mismatch",
+    };
+    /// A package depends on a package that is not available.
+    pub const FAMILY_DEPENDENCY: ErrorCode = ErrorCode {
+        code: "ab.family.dependency_missing",
+        category: Category::Conflict,
+        message_id: "ab-family-dependency-missing",
+    };
+    /// A family package is malformed or incomplete.
+    pub const FAMILY_PACKAGE: ErrorCode = ErrorCode {
+        code: "ab.family.package_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-package-invalid",
+    };
+    /// The family and version are loaded already with another checksum.
+    pub const FAMILY_CONFLICT: ErrorCode = ErrorCode {
+        code: "ab.family.family_conflict",
+        category: Category::Conflict,
+        message_id: "ab-family-family-conflict",
+    };
+    /// A major update needs a value mapping for parameters that were removed or retyped.
+    pub const FAMILY_MAPPING: ErrorCode = ErrorCode {
+        code: "ab.family.mapping_required",
+        category: Category::Conflict,
+        message_id: "ab-family-mapping-required",
+    };
+    /// The version is not newer than the loaded one, or is larger than the step chosen.
+    pub const FAMILY_VERSION: ErrorCode = ErrorCode {
+        code: "ab.family.version_invalid",
+        category: Category::InvalidInput,
+        message_id: "ab-family-version-invalid",
+    };
+    /// A family instance would not evaluate.
+    pub const FAMILY_EVALUATION: ErrorCode = ErrorCode {
+        code: "ab.family.evaluation_failed",
+        category: Category::Conflict,
+        message_id: "ab-family-evaluation-failed",
     };
 }

@@ -13,7 +13,7 @@ use arc_doc::{Object, Snapshot};
 use arc_ui::ProductOverlay;
 use archbuilder_model::spatial;
 use archbuilder_model::types::{self, level};
-use archbuilder_model::units::LengthUnit;
+use archbuilder_model::units::UnitSettings;
 
 use crate::extract_level::HALF;
 use crate::room_view::{PixelRect, ViewRect, label_size};
@@ -24,13 +24,13 @@ pub use archbuilder_model::units::decimal_separator;
 
 /// `meters` in `unit` with the decimal separator `separator`.
 #[must_use]
-pub fn elevation_text(meters: f64, unit: LengthUnit, separator: char) -> String {
+pub fn elevation_text(meters: f64, unit: impl Into<UnitSettings>, separator: char) -> String {
     archbuilder_model::units::length_text(meters, unit, separator)
 }
 
 /// The text of a level's label: its name, then its elevation.
 #[must_use]
-pub fn label(level_object: &Object, unit: LengthUnit, language: &str) -> String {
+pub fn label(level_object: &Object, unit: impl Into<UnitSettings>, language: &str) -> String {
     let name = types::text(&level_object.values, level::NAME).unwrap_or_default();
     let meters = types::meters(&level_object.values, level::ELEVATION).unwrap_or(0.0);
     format!(
@@ -56,7 +56,7 @@ const EDGE_PX: f64 = 4.0;
 /// of the level outlines) moves in so that the labels stay inside the image and out of the view
 /// cube's corner; they stack downward from there, as the viewport steps overlapping labels down.
 fn placed(snapshot: &Snapshot, language: &str, view: Option<&ViewRect>) -> Vec<Placed> {
-    let unit = spatial::length_unit(snapshot);
+    let unit = spatial::unit_settings(snapshot);
     let mut levels = spatial::objects(snapshot, types::LEVEL);
     let elevation = |o: &Object| types::meters(&o.values, level::ELEVATION).unwrap_or(0.0);
     levels.sort_by(|a, b| elevation(b).total_cmp(&elevation(a)));
@@ -152,7 +152,12 @@ pub fn symbols(
     shown: &dyn Fn(arc_base::ObjectId) -> bool,
 ) -> Vec<ProductOverlay> {
     let mut out = Vec::new();
-    for key in [types::DOOR, types::WINDOW, types::WALL_OPENING] {
+    for key in [
+        types::DOOR,
+        types::WINDOW,
+        types::WALL_OPENING,
+        types::FAMILY_INSERT,
+    ] {
         for object in spatial::objects(snapshot, key).iter().take(MAX_SYMBOLS) {
             if !shown(object.id) {
                 continue;

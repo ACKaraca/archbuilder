@@ -22,14 +22,17 @@ use archbuilder_model::element_type::{
     self as et, Exposure, Function, InsertType, Layer, Layers, TypeKind, WallType, Wrap,
 };
 use archbuilder_model::insert::Operation;
+use archbuilder_model::roof::{EaveCut, RafterCut};
 use archbuilder_model::spatial;
+
+use crate::circ_types::{self, CircKind};
 
 /// A message of the application.
 struct Message {
     message_id: &'static str,
 }
 
-const KIND_LABELS: [(TypeKind, Message); 4] = [
+const KIND_LABELS: [(TypeKind, Message); 5] = [
     (
         TypeKind::Wall,
         Message {
@@ -52,6 +55,12 @@ const KIND_LABELS: [(TypeKind, Message); 4] = [
         TypeKind::Window,
         Message {
             message_id: "ab-types-kind-window",
+        },
+    ),
+    (
+        TypeKind::Family,
+        Message {
+            message_id: "ab-types-kind-family",
         },
     ),
 ];
@@ -87,7 +96,7 @@ const FUNCTION_LABELS: [(Function, Message); 5] = [
         },
     ),
 ];
-const OPERATION_LABELS: [(Operation, Message); 5] = [
+const OPERATION_LABELS: [(Operation, Message); 9] = [
     (
         Operation::SingleSwing,
         Message {
@@ -118,7 +127,85 @@ const OPERATION_LABELS: [(Operation, Message); 5] = [
             message_id: "ab-op-casement",
         },
     ),
+    (
+        Operation::Folding,
+        Message {
+            message_id: "ab-op-folding",
+        },
+    ),
+    (
+        Operation::Awning,
+        Message {
+            message_id: "ab-op-awning",
+        },
+    ),
+    (
+        Operation::Hopper,
+        Message {
+            message_id: "ab-op-hopper",
+        },
+    ),
+    (
+        Operation::Pivot,
+        Message {
+            message_id: "ab-op-pivot",
+        },
+    ),
 ];
+const CIRC_LABELS: [(CircKind, Message); 2] = [
+    (
+        CircKind::Railing,
+        Message {
+            message_id: "ab-types-kind-railing",
+        },
+    ),
+    (
+        CircKind::Ramp,
+        Message {
+            message_id: "ab-types-kind-ramp",
+        },
+    ),
+];
+const PROFILE_LABELS: [(archbuilder_model::railing::Profile, Message); 2] = [
+    (
+        archbuilder_model::railing::Profile::Square,
+        Message {
+            message_id: "ab-types-profile-square",
+        },
+    ),
+    (
+        archbuilder_model::railing::Profile::Round,
+        Message {
+            message_id: "ab-types-profile-round",
+        },
+    ),
+];
+const CORNER_LABELS: [(archbuilder_model::railing::Corner, Message); 2] = [
+    (
+        archbuilder_model::railing::Corner::Miter,
+        Message {
+            message_id: "ab-types-corner-miter",
+        },
+    ),
+    (
+        archbuilder_model::railing::Corner::Fillet,
+        Message {
+            message_id: "ab-types-corner-fillet",
+        },
+    ),
+];
+const RAIL_PROFILE: Message = Message {
+    message_id: "ab-types-rail-profile",
+};
+const BALUSTER_PROFILE: Message = Message {
+    message_id: "ab-types-baluster-profile",
+};
+const CORNER: Message = Message {
+    message_id: "ab-types-corner",
+};
+const CIRC_INVALID: Message = Message {
+    message_id: "ab-types-circ-invalid",
+};
 const TYPE_LABEL: Message = Message {
     message_id: "ab-types-type",
 };
@@ -181,6 +268,38 @@ const WRAP_LABELS: [(Wrap, Message); 4] = [
         Wrap::Both,
         Message {
             message_id: "ab-types-wrap-both",
+        },
+    ),
+];
+const EAVE_CUT: Message = Message {
+    message_id: "ab-types-eave-cut",
+};
+const FASCIA_DEPTH: Message = Message {
+    message_id: "ab-types-fascia-depth-mm",
+};
+const EAVE_LABELS: [(RafterCut, Message); 4] = [
+    (
+        RafterCut::Plumb,
+        Message {
+            message_id: "ab-types-eave-plumb",
+        },
+    ),
+    (
+        RafterCut::Square,
+        Message {
+            message_id: "ab-types-eave-square",
+        },
+    ),
+    (
+        RafterCut::TwoCutPlumb,
+        Message {
+            message_id: "ab-types-eave-two-cut-plumb",
+        },
+    ),
+    (
+        RafterCut::TwoCutSquare,
+        Message {
+            message_id: "ab-types-eave-two-cut-square",
         },
     ),
 ];
@@ -277,6 +396,9 @@ struct Draft {
     wrap_inserts: Wrap,
     sizes: [String; 5],
     operation: Operation,
+    /// Roof types: how the eave ends are cut, and the fascia depth in millimeters as typed.
+    rafter_cut: RafterCut,
+    fascia: String,
 }
 
 fn mm(meters: f64) -> String {
@@ -312,8 +434,18 @@ impl Draft {
             wrap_inserts: Wrap::None,
             sizes: Default::default(),
             operation: Operation::SingleSwing,
+            rafter_cut: RafterCut::Plumb,
+            fascia: mm(EaveCut::default().fascia_depth),
         };
-        if kind.layered() {
+        if kind == TypeKind::Roof {
+            let cut = EaveCut::from_values(&object.values);
+            draft.rafter_cut = cut.cut;
+            draft.fascia = mm(cut.fascia_depth);
+        }
+        if kind == TypeKind::Family {
+            // The values of a family type are listed beside the name; they change through
+            // `archbuilder.type.set` with `values`.
+        } else if kind.layered() {
             let layers = Layers::from_values(&object.values)?;
             draft.rows = layers
                 .layers
@@ -387,7 +519,9 @@ impl Draft {
         let Some(map) = params.as_object_mut() else {
             return Err(String::new());
         };
-        if kind.layered() {
+        if kind == TypeKind::Family {
+            // Only the name is edited here.
+        } else if kind.layered() {
             let layers = self.layers(localize)?;
             map.insert(
                 "layers".into(),
@@ -403,6 +537,17 @@ impl Draft {
                 "core".into(),
                 serde_json::json!([layers.core.0, layers.core.1]),
             );
+            if kind == TypeKind::Roof {
+                let depth = meters(&self.fascia).filter(|v| *v > 0.0).ok_or_else(|| {
+                    say(
+                        localize,
+                        &NUMBER_INVALID,
+                        &[("layer", arc_base::error::Value::Int(0))],
+                    )
+                })?;
+                map.insert("rafter_cut".into(), self.rafter_cut.name().into());
+                map.insert("fascia_depth".into(), depth.into());
+            }
             if kind == TypeKind::Wall {
                 map.insert("exposure".into(), self.exposure.name().into());
                 map.insert("load_bearing".into(), self.load_bearing.into());
@@ -523,7 +668,108 @@ pub struct TypePanel {
     followed: Vec<ObjectId>,
     /// After Duplicate: the kind and the types it had, so the panel shows the copy once it exists.
     copying: Option<(TypeKind, Vec<ObjectId>)>,
+    /// The railing or ramp types the panel shows instead of an element kind.
+    circ: Option<CircKind>,
+    /// The draft of a railing or ramp type, as read and as edited.
+    circ_draft: Option<(ObjectId, circ_types::Draft, circ_types::Draft)>,
+    /// After Duplicate of a railing or ramp type: the types it had.
+    circ_copying: Option<Vec<ObjectId>>,
 }
+
+/// The family types of the project grouped by family: each family with its version and its own
+/// types, then the families it nests, each with its version and types indented under it. Returns
+/// the family type clicked.
+fn family_menu(
+    ui: &mut Ui,
+    snapshot: &Snapshot,
+    all: &[std::sync::Arc<arc_doc::Object>],
+    current: Option<ObjectId>,
+) -> Option<ObjectId> {
+    use archbuilder_model::family::loaded::{FamilyType, Loaded, families};
+    let family_of = |id: ObjectId| {
+        spatial::get(snapshot, id)
+            .and_then(|o| FamilyType::of(&o))
+            .map(|t| t.family)
+    };
+    let heading = |f: &Loaded| {
+        let v = f.version;
+        format!("{} {}.{}.{}", f.name, v.major, v.minor, v.patch)
+    };
+    let mut picked = None;
+    let mut row = |ui: &mut Ui, indent: f32, t: &std::sync::Arc<arc_doc::Object>| {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            if ui
+                .selectable_label(current == Some(t.id), et::name(t))
+                .clicked()
+            {
+                picked = Some(t.id);
+            }
+        });
+    };
+    let families = families(snapshot);
+    for family in &families {
+        ui.label(RichText::new(heading(family)).strong());
+        for t in all
+            .iter()
+            .filter(|t| family_of(t.id) == Some(family.record))
+        {
+            row(ui, 8.0, t);
+        }
+        let Ok(definition) = family.definition() else {
+            continue;
+        };
+        for nested in &definition.nested {
+            let Some(child) = families.iter().find(|f| f.family == nested.family) else {
+                continue;
+            };
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                ui.label(RichText::new(format!("nests {}", heading(child))).italics());
+            });
+            for t in all.iter().filter(|t| family_of(t.id) == Some(child.record)) {
+                row(ui, 20.0, t);
+            }
+        }
+    }
+    picked
+}
+
+/// The values of a family type, one row each: the parameter and its literal or formula.
+fn family_values(ui: &mut Ui, snapshot: &Snapshot, id: ObjectId, localize: &dyn Localize) {
+    use archbuilder_model::expr::{Evaluated, Stored};
+    use archbuilder_model::family::loaded::{FamilyType, Loaded};
+    let Some(ty) = spatial::get(snapshot, id).and_then(|o| FamilyType::of(&o)) else {
+        return;
+    };
+    let definition = spatial::get(snapshot, ty.family)
+        .and_then(|o| Loaded::of(&o))
+        .and_then(|f| f.definition().ok());
+    ui.label(RichText::new(say(localize, &FAMILY_VALUES_HEADING, &[])).strong());
+    egui::Grid::new("archbuilder-types-family-values")
+        .striped(true)
+        .num_columns(2)
+        .show(ui, |ui| {
+            for (key, value) in &ty.values {
+                let name = definition
+                    .as_ref()
+                    .and_then(|d| d.parameter(key))
+                    .map_or_else(|| key.clone(), |p| p.name.clone());
+                ui.label(name);
+                ui.label(match value {
+                    Stored::Formula(f) => format!("= {}", f.text()),
+                    Stored::Literal(Evaluated::Number(v)) => v.to_string(),
+                    Stored::Literal(Evaluated::Bool(b)) => b.to_string(),
+                    Stored::Literal(Evaluated::Text(t)) => t.clone(),
+                });
+                ui.end_row();
+            }
+        });
+}
+
+const FAMILY_VALUES_HEADING: Message = Message {
+    message_id: "ab-types-family-values",
+};
 
 fn combo_text<T: PartialEq + Copy>(
     items: &[(T, Message)],
@@ -544,6 +790,248 @@ impl Panel for TypePanel {
 }
 
 impl TypePanel {
+    /// The railing or ramp types: the kind and type choosers, name, duplicate, delete, the
+    /// fields of the draft and Apply.
+    #[allow(clippy::too_many_lines, reason = "the panel's rows, top to bottom")]
+    fn circ_body(
+        &mut self,
+        ui: &mut Ui,
+        cx: &mut PanelContext<'_>,
+        snapshot: &Snapshot,
+        circ: CircKind,
+    ) {
+        let localize = cx.localize;
+        let all = circ_types::types_of(snapshot, circ);
+        if let Some(before) = &self.circ_copying
+            && let Some((copy, _)) = all.iter().find(|(id, _)| !before.contains(id))
+        {
+            self.chosen = Some(*copy);
+            self.circ_copying = None;
+            self.circ_draft = None;
+        }
+        let id = self
+            .chosen
+            .filter(|id| all.iter().any(|(t, _)| t == id))
+            .or_else(|| all.first().map(|(t, _)| *t));
+        let mut actions: Vec<Intent> = Vec::new();
+        ui.horizontal(|ui| {
+            ComboBox::from_id_salt("archbuilder-types-kind")
+                .selected_text(
+                    CIRC_LABELS
+                        .iter()
+                        .find(|(c, _)| *c == circ)
+                        .map(|(_, m)| say(localize, m, &[]))
+                        .unwrap_or_default(),
+                )
+                .show_ui(ui, |ui| {
+                    for (k, m) in &KIND_LABELS {
+                        if ui.selectable_label(false, say(localize, m, &[])).clicked() {
+                            self.kind = Some(*k);
+                            self.chosen = None;
+                            self.circ = None;
+                        }
+                    }
+                    for (c, m) in &CIRC_LABELS {
+                        if ui
+                            .selectable_label(*c == circ, say(localize, m, &[]))
+                            .clicked()
+                        {
+                            self.circ = Some(*c);
+                            self.chosen = None;
+                        }
+                    }
+                });
+            ui.label(say(localize, &TYPE_LABEL, &[]));
+            let current = all
+                .iter()
+                .find(|(t, _)| Some(*t) == id)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_default();
+            ComboBox::from_id_salt("archbuilder-types-type")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (t, name) in &all {
+                        if ui.selectable_label(Some(*t) == id, name).clicked() {
+                            self.chosen = Some(*t);
+                        }
+                    }
+                });
+        });
+        let Some(id) = id else {
+            ui.weak(say(localize, &EMPTY, &[]));
+            return;
+        };
+        let Some(fresh) = circ_types::Draft::of(snapshot, circ, id) else {
+            return;
+        };
+        let follow = self
+            .circ_draft
+            .as_ref()
+            .is_none_or(|(at, base, draft)| *at != id || (draft == base && *base != fresh));
+        if follow {
+            self.circ_draft = Some((id, fresh.clone(), fresh));
+        }
+        let Some((_, base, draft)) = self.circ_draft.as_mut() else {
+            return;
+        };
+        let base = base.clone();
+        let users = circ_types::users(snapshot, id);
+        let mut copying = None;
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(say(localize, &NAME, &[]));
+            ui.add(TextEdit::singleline(draft.name_mut()).desired_width(180.0));
+            if ui.button(say(localize, &DUPLICATE, &[])).clicked() {
+                actions.push(Intent::new(TYPE_DUPLICATE).with("type", id.to_string()));
+                copying = Some(all.iter().map(|(t, _)| *t).collect::<Vec<_>>());
+            }
+        });
+        ui.horizontal(|ui| {
+            let count = arc_base::error::Value::Int(i64::try_from(users).unwrap_or(0));
+            ui.weak(say(localize, &IN_USE, &[("count", count)]));
+            let others: Vec<_> = all.iter().filter(|(t, _)| *t != id).collect();
+            if users > 0 && !others.is_empty() {
+                ui.label(say(localize, &REPLACE_WITH, &[]));
+                let replacement = self
+                    .replacement
+                    .filter(|r| others.iter().any(|(t, _)| t == r))
+                    .unwrap_or(others[0].0);
+                let name = others
+                    .iter()
+                    .find(|(t, _)| *t == replacement)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_default();
+                ComboBox::from_id_salt("archbuilder-types-replacement")
+                    .selected_text(name)
+                    .show_ui(ui, |ui| {
+                        for (t, n) in &others {
+                            if ui.selectable_label(*t == replacement, n).clicked() {
+                                self.replacement = Some(*t);
+                            }
+                        }
+                    });
+                if ui.button(say(localize, &DELETE, &[])).clicked() {
+                    actions.push(
+                        Intent::new(TYPE_DELETE)
+                            .with("type", id.to_string())
+                            .with("replacement", replacement.to_string()),
+                    );
+                }
+            } else if ui.button(say(localize, &DELETE, &[])).clicked() {
+                actions.push(Intent::new(TYPE_DELETE).with("type", id.to_string()));
+            }
+        });
+        let edited = base != *draft;
+        let params = draft.params(id);
+        if let Err(label) = &params {
+            let field = localize
+                .message(label, &[])
+                .unwrap_or_else(|| (*label).to_owned());
+            ui.colored_label(
+                Color32::from_rgb(230, 90, 80),
+                say(localize, &CIRC_INVALID, &[("field", field.into())]),
+            );
+        }
+        ui.horizontal(|ui| {
+            let apply = ui.add_enabled(
+                edited && params.is_ok(),
+                egui::Button::new(say(localize, &APPLY, &[])),
+            );
+            if apply.clicked()
+                && let Ok((command, serde_json::Value::Object(map))) = &params
+            {
+                let mut intent = Intent::new(*command);
+                intent.params = map.clone();
+                actions.push(intent);
+            }
+            if ui
+                .add_enabled(edited, egui::Button::new(say(localize, &REVERT, &[])))
+                .clicked()
+            {
+                *draft = base.clone();
+            }
+        });
+        ui.separator();
+        egui::ScrollArea::both()
+            .id_salt("archbuilder-types-details")
+            .auto_shrink([false, false])
+            .show(ui, |ui| match draft {
+                circ_types::Draft::Railing(d) => {
+                    egui::Grid::new("archbuilder-types-railing")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (label, text) in
+                                circ_types::RAILING_LABELS.iter().zip(d.lengths.iter_mut())
+                            {
+                                ui.label(
+                                    localize.message(label.message_id, &[]).unwrap_or_default(),
+                                );
+                                ui.add(TextEdit::singleline(text).desired_width(70.0));
+                                ui.end_row();
+                            }
+                            for (label, salt, value) in [
+                                (
+                                    &RAIL_PROFILE,
+                                    "archbuilder-types-rail-profile",
+                                    &mut d.rail_profile,
+                                ),
+                                (
+                                    &BALUSTER_PROFILE,
+                                    "archbuilder-types-baluster-profile",
+                                    &mut d.baluster_profile,
+                                ),
+                            ] {
+                                ui.label(say(localize, label, &[]));
+                                ComboBox::from_id_salt(salt)
+                                    .selected_text(combo_text(&PROFILE_LABELS, *value, localize))
+                                    .show_ui(ui, |ui| {
+                                        for (p, m) in &PROFILE_LABELS {
+                                            ui.selectable_value(value, *p, say(localize, m, &[]));
+                                        }
+                                    });
+                                ui.end_row();
+                            }
+                            ui.label(say(localize, &CORNER, &[]));
+                            ComboBox::from_id_salt("archbuilder-types-corner")
+                                .selected_text(combo_text(&CORNER_LABELS, d.corner, localize))
+                                .show_ui(ui, |ui| {
+                                    for (c, m) in &CORNER_LABELS {
+                                        ui.selectable_value(
+                                            &mut d.corner,
+                                            *c,
+                                            say(localize, m, &[]),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                }
+                circ_types::Draft::Ramp(d) => {
+                    egui::Grid::new("archbuilder-types-ramp")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (label, text) in circ_types::RAMP_LABELS
+                                .iter()
+                                .zip([&mut d.max_slope, &mut d.thickness])
+                            {
+                                ui.label(
+                                    localize.message(label.message_id, &[]).unwrap_or_default(),
+                                );
+                                ui.add(TextEdit::singleline(text).desired_width(70.0));
+                                ui.end_row();
+                            }
+                        });
+                }
+            });
+        if !actions.is_empty() {
+            self.circ_draft = None;
+        }
+        if copying.is_some() {
+            self.circ_copying = copying;
+        }
+        cx.actions.extend(actions.into_iter().map(Action::Intent));
+    }
+
     #[allow(clippy::too_many_lines, reason = "the panel's rows, top to bottom")]
     fn body(&mut self, ui: &mut Ui, cx: &mut PanelContext<'_>) {
         let (Some(view), Some(tab)) = (cx.view.as_deref(), cx.tab) else {
@@ -560,7 +1048,19 @@ impl TypePanel {
             if let Some((kind, Some(id))) = crate::tool_type::shown(&snapshot, view.selection()) {
                 self.kind = Some(kind);
                 self.chosen = Some(id);
+                self.circ = None;
+            } else if let Some((circ, found)) = view
+                .selection()
+                .iter()
+                .find_map(|id| CircKind::of_object(&snapshot, *id))
+            {
+                self.circ = Some(circ);
+                self.chosen = found;
             }
+        }
+        if let Some(circ) = self.circ {
+            self.circ_body(ui, cx, &snapshot, circ);
+            return;
         }
         // The copy a Duplicate made is the type shown next, so a rename edits the copy.
         if let Some((kind, before)) = &self.copying {
@@ -594,6 +1094,12 @@ impl TypePanel {
                             self.chosen = None;
                         }
                     }
+                    for (c, m) in &CIRC_LABELS {
+                        if ui.selectable_label(false, say(localize, m, &[])).clicked() {
+                            self.circ = Some(*c);
+                            self.chosen = None;
+                        }
+                    }
                 });
             ui.label(say(localize, &TYPE_LABEL, &[]));
             let current = all
@@ -604,6 +1110,12 @@ impl TypePanel {
             ComboBox::from_id_salt("archbuilder-types-type")
                 .selected_text(current)
                 .show_ui(ui, |ui| {
+                    if kind == TypeKind::Family {
+                        if let Some(picked) = family_menu(ui, &snapshot, &all, id) {
+                            self.chosen = Some(picked);
+                        }
+                        return;
+                    }
                     for t in &all {
                         if ui.selectable_label(Some(t.id) == id, et::name(t)).clicked() {
                             self.chosen = Some(t.id);
@@ -756,7 +1268,35 @@ impl TypePanel {
                         }
                     });
                 }
-                if kind.layered() {
+                if kind == TypeKind::Roof {
+                    ui.horizontal(|ui| {
+                        ui.label(say(localize, &EAVE_CUT, &[]));
+                        ComboBox::from_id_salt("archbuilder-types-eave-cut")
+                            .selected_text(combo_text(&EAVE_LABELS, draft.rafter_cut, localize))
+                            .show_ui(ui, |ui| {
+                                for (c, m) in &EAVE_LABELS {
+                                    ui.selectable_value(
+                                        &mut draft.rafter_cut,
+                                        *c,
+                                        say(localize, m, &[]),
+                                    );
+                                }
+                            });
+                        if matches!(
+                            draft.rafter_cut,
+                            RafterCut::TwoCutPlumb | RafterCut::TwoCutSquare
+                        ) {
+                            ui.label(say(localize, &FASCIA_DEPTH, &[]));
+                            ui.add_sized(
+                                [60.0, 20.0],
+                                egui::TextEdit::singleline(&mut draft.fascia),
+                            );
+                        }
+                    });
+                }
+                if kind == TypeKind::Family {
+                    family_values(ui, &snapshot, id, localize);
+                } else if kind.layered() {
                     ui.label(RichText::new(say(localize, &LAYERS_HEADING, &[])).strong());
                     let mut swap: Option<(usize, usize)> = None;
                     let mut remove: Option<usize> = None;

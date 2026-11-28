@@ -11,7 +11,8 @@
 //! The insert lies in the clear span of its wall: the stretch of the baseline where the joined
 //! solid has both faces ([`clear_span`]). An end that is mitered at a corner has a shorter span, so
 //! an insert that would reach into the corner is refused instead of being cut through the miter.
-//! Inserts of one wall keep [`MIN_GAP`] between their openings, whatever their heights.
+//! Inserts of one wall keep [`MIN_GAP`] between their openings along the baseline when their
+//! heights overlap; openings at separate heights (a window above a door) may overlap in plan.
 
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ use arc_geom::{
 use crate::error::codes;
 use crate::spatial;
 use crate::types::{self, DOOR, WALL, WALL_OPENING, WINDOW, insert};
+use crate::view::Detail;
 use crate::wall::Wall;
 
 /// The least distance between an opening and the end of the clear span, in meters.
@@ -49,6 +51,84 @@ const OVERLAP: f64 = 0.05;
 const CHORD: f64 = 0.01;
 /// The most inserts one wall can hold.
 pub const MAX_PER_WALL: usize = 1_000;
+/// The most vertices of the sketched profile of a wall opening.
+pub const MAX_PROFILE: usize = 32;
+
+/// The sketched outline of a wall opening: points in the wall's elevation, in meters from the
+/// opening's lower left corner (x along the baseline, y up), kept inside its width and height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Profile {
+    len: usize,
+    points: [[f64; 2]; MAX_PROFILE],
+}
+
+impl Profile {
+    /// The profile of `points`; `None` for fewer than three or more than [`MAX_PROFILE`].
+    #[must_use]
+    pub fn new(points: &[[f64; 2]]) -> Option<Self> {
+        if !(3..=MAX_PROFILE).contains(&points.len()) {
+            return None;
+        }
+        let mut stored = [[0.0; 2]; MAX_PROFILE];
+        stored[..points.len()].copy_from_slice(points);
+        Some(Self {
+            len: points.len(),
+            points: stored,
+        })
+    }
+
+    /// The vertices, in the order they are stored.
+    #[must_use]
+    pub fn points(&self) -> &[[f64; 2]] {
+        &self.points[..self.len]
+    }
+
+    /// Whether the outline is a simple polygon of positive area inside `width` by `height`.
+    #[must_use]
+    pub fn fits(&self, width: f64, height: f64) -> bool {
+        let p = self.points();
+        let area: f64 = (0..p.len())
+            .map(|k| {
+                let (a, b) = (p[k], p[(k + 1) % p.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            / 2.0;
+        let inside = p.iter().all(|v| {
+            v[0].is_finite()
+                && v[1].is_finite()
+                && v[0] >= -1e-9
+                && v[1] >= -1e-9
+                && v[0] <= width + 1e-9
+                && v[1] <= height + 1e-9
+        });
+        inside && area.abs() > 1e-6 && !self.crosses()
+    }
+
+    /// Whether two edges that do not share a vertex cross each other.
+    fn crosses(&self) -> bool {
+        let p = self.points();
+        let n = p.len();
+        let side = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+            (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        };
+        for i in 0..n {
+            for j in i + 1..n {
+                if j == i + 1 || (i == 0 && j == n - 1) {
+                    continue;
+                }
+                let (a, b) = (p[i], p[(i + 1) % n]);
+                let (c, d) = (p[j], p[(j + 1) % n]);
+                let (d1, d2) = (side(a, b, c), side(a, b, d));
+                let (d3, d4) = (side(c, d, a), side(c, d, b));
+                if d1 * d2 <= 0.0 && d3 * d4 <= 0.0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
 
 /// Whether an insert is a door or a window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,17 +178,38 @@ coded! {
         DoubleSwing = 3, "double_swing";
         /// A door or window whose leaf slides along the wall.
         Sliding = 4, "sliding";
+        /// A door or window of leaves that fold against each other toward one jamb.
+        Folding = 5, "folding";
+        /// A window hinged at the top that opens outward at the bottom.
+        Awning = 6, "awning";
+        /// A window hinged at the bottom that tips inward at the top.
+        Hopper = 7, "hopper";
+        /// A door or window whose leaf turns on a vertical axis through its own width.
+        Pivot = 8, "pivot";
     }
 }
 
 impl Operation {
-    /// Whether an insert of `kind` can operate this way: a door swings with one or two leaves or
-    /// slides; a window is fixed, casement or sliding.
+    /// Whether an insert of `kind` can operate this way: a door swings with one or two leaves,
+    /// slides, folds or pivots; a window is fixed, casement, awning, hopper, sliding, folding or
+    /// pivoting.
     #[must_use]
     pub const fn allowed(self, kind: Kind) -> bool {
         match kind {
-            Kind::Door => matches!(self, Self::SingleSwing | Self::DoubleSwing | Self::Sliding),
-            Kind::Window => matches!(self, Self::Fixed | Self::Casement | Self::Sliding),
+            Kind::Door => matches!(
+                self,
+                Self::SingleSwing | Self::DoubleSwing | Self::Sliding | Self::Folding | Self::Pivot
+            ),
+            Kind::Window => matches!(
+                self,
+                Self::Fixed
+                    | Self::Casement
+                    | Self::Sliding
+                    | Self::Folding
+                    | Self::Awning
+                    | Self::Hopper
+                    | Self::Pivot
+            ),
             Kind::Opening => true,
         }
     }
@@ -183,6 +284,35 @@ pub struct Insert {
     pub facing: Facing,
     /// The rise of the arched top of a bare opening, which counts in `height`; 0 for a rectangle.
     pub rise: f64,
+    /// The sketched outline of a bare opening; when present it replaces the rectangle and the arch.
+    pub profile: Option<Profile>,
+}
+
+/// The profile stored at `at` in a wall opening's values; `None` when it is absent or has no
+/// readable outline.
+fn profile_of(values: &[Option<Value>], at: usize) -> Option<Profile> {
+    let Some(Some(Value::List(items))) = values.get(at) else {
+        return None;
+    };
+    let mut points = Vec::with_capacity(items.len().min(MAX_PROFILE));
+    for item in items.iter().take(MAX_PROFILE + 1) {
+        let Value::Record(fields) = item else {
+            return None;
+        };
+        points.push([types::meters(fields, 0)?, types::meters(fields, 1)?]);
+    }
+    Profile::new(&points)
+}
+
+/// The value of a profile for a wall opening's record.
+#[must_use]
+pub fn profile_values(points: &[[f64; 2]]) -> Value {
+    Value::List(
+        points
+            .iter()
+            .map(|p| Value::Record(vec![Some(types::length(p[0])), Some(types::length(p[1]))]))
+            .collect(),
+    )
 }
 
 impl Insert {
@@ -205,6 +335,7 @@ impl Insert {
                 facing: Facing::default(),
                 // The arch cannot rise above the opening.
                 rise: m(o::RISE).unwrap_or(0.0).clamp(0.0, m(o::HEIGHT)?),
+                profile: profile_of(values, o::PROFILE),
             });
         }
         Some(Self {
@@ -219,6 +350,7 @@ impl Insert {
             hand: Hand::of_field(values, insert::HAND),
             facing: Facing::of_field(values, insert::FACING),
             rise: 0.0,
+            profile: None,
         })
     }
 
@@ -226,7 +358,26 @@ impl Insert {
     #[must_use]
     pub fn of(snapshot: &Snapshot, object: &Object) -> Option<Self> {
         let key = spatial::type_of(snapshot, object.id)?;
+        if key == types::FAMILY_INSERT {
+            return crate::family::loaded::insert_of(snapshot, object);
+        }
         Self::from_values(Kind::of_key(&key)?, &object.values)
+    }
+
+    /// The distance a hosted object stores for its insertion point, given the distance of its
+    /// opening's centre. A built-in insert stores the centre; a family instance stores its
+    /// insertion point, which the cut of its family may offset from it.
+    #[must_use]
+    pub fn stored_distance(snapshot: &Snapshot, object: &Object, centre: f64) -> f64 {
+        let Some(item) = Self::of(snapshot, object) else {
+            return centre;
+        };
+        let family = spatial::type_of(snapshot, object.id).as_deref() == Some(types::FAMILY_INSERT);
+        let stored = match crate::family::loaded::FamilyInsert::of(object) {
+            Some(f) if family => f.distance,
+            _ => item.distance,
+        };
+        stored + (centre - item.distance)
     }
 
     /// The stretch of the baseline the opening covers: `(from, to)` distances from the start.
@@ -261,7 +412,7 @@ impl Insert {
 /// The inserts hosted by the wall `wall`, with their records, by distance and then identifier.
 #[must_use]
 pub fn hosted(snapshot: &Snapshot, wall: arc_base::ObjectId) -> Vec<(Arc<Object>, Insert)> {
-    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW, WALL_OPENING]
+    let mut found: Vec<(Arc<Object>, Insert)> = [DOOR, WINDOW, WALL_OPENING, types::FAMILY_INSERT]
         .into_iter()
         .flat_map(|key| spatial::children(snapshot, key, wall))
         .filter_map(|o| Insert::of(snapshot, &o).map(|i| (o, i)))
@@ -288,11 +439,42 @@ pub fn openings_of(snapshot: &Snapshot, id: arc_base::ObjectId) -> Vec<Insert> {
     out
 }
 
+/// A straight wall that stands for the stretch of an arc wall around `item`: tangent to the
+/// baseline at the insert's center, with the insert at its middle, and the insert in its own
+/// distances. An insert in an arc wall is made on this tangent frame (its opening is faceted to
+/// the chord within the arc's sagitta over the opening's width). A straight wall is its own.
+#[must_use]
+pub fn on_arc(wall: &Wall, item: &Insert) -> (Wall, Insert) {
+    if !wall.is_arc() {
+        return (*wall, *item);
+    }
+    let at = item.distance.clamp(0.0, wall.length());
+    let (c, t) = (wall.point_at(at), wall.tangent_at(at));
+    let half = item.width / 2.0 + item.frame_width + 0.1;
+    let straight = Wall {
+        start: [c[0] - t[0] * half, c[1] - t[1] * half],
+        end: [c[0] + t[0] * half, c[1] + t[1] * half],
+        bulge: 0.0,
+        ..*wall
+    };
+    (
+        straight,
+        Insert {
+            distance: half,
+            ..*item
+        },
+    )
+}
+
 /// The stretch of the baseline, as distances from its start, where the joined solid with the
 /// corners `footprint` has both faces: between the inner corners of the two ends.
 #[must_use]
 pub fn clear_span(wall: &Wall, footprint: [[f64; 2]; 4]) -> (f64, f64) {
     let length = wall.length();
+    if wall.is_arc() {
+        // The footprint's ends are cut radially: the faces are as long as the baseline.
+        return (0.0, length);
+    }
     if length <= 0.0 {
         return (0.0, 0.0);
     }
@@ -325,6 +507,10 @@ fn meets_wall(
     name: &str,
 ) -> Option<Error> {
     let storey = wall_object.header.owner?;
+    if wall.is_arc() {
+        // shortcut: a wall meeting an arc wall's opening is not checked, until arcs have a T test.
+        return None;
+    }
     let axes = Axes::new(wall, 0.0).ok()?;
     let (from, to) = item.extent();
     for other in spatial::walls(snapshot, storey) {
@@ -367,6 +553,16 @@ fn meets_wall(
 /// containment rule reports it.
 #[must_use]
 pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
+    let Some(item) = Insert::of(snapshot, object) else {
+        return Vec::new();
+    };
+    problems_of(snapshot, object, item)
+}
+
+/// [`problems`] for `object` with the insert `item` it stands for: a hosted family instance
+/// passes the opening its host-cutting void makes.
+#[must_use]
+pub fn problems_of(snapshot: &Snapshot, object: &Object, item: Insert) -> Vec<Error> {
     let mut out = Vec::new();
     let Some(wall_object) = object
         .header
@@ -376,10 +572,7 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     else {
         return out;
     };
-    let (Some(item), Some(wall)) = (
-        Insert::of(snapshot, object),
-        Wall::of(snapshot, &wall_object),
-    ) else {
+    let Some(wall) = Wall::of(snapshot, &wall_object) else {
         return out;
     };
     let name = types::text(&object.values, 0)
@@ -399,9 +592,28 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
                 .with_arg("operation", item.operation.name()),
         );
     }
+    if let Some(sketch) = item.profile
+        && !sketch.fits(item.width, item.height)
+    {
+        out.push(Error::new(codes::INSERT_PROFILE).with_arg("name", name.clone()));
+    }
     let bar = 2.0 * item.frame_width + MIN_CLEAR;
     if item.width < bar || item.height < bar {
         out.push(Error::new(codes::INSERT_FRAME).with_arg("name", name.clone()));
+    }
+    if let Some(profile) = crate::wall::Profile::of(&wall_object.values)
+        && profile.fits(wall.length(), wall.height)
+    {
+        let (from, to) = item.extent();
+        if !profile.holds((from, to), (item.sill, item.top())) {
+            out.push(
+                Error::new(codes::INSERT_OUTSIDE)
+                    .with_arg("name", name.clone())
+                    .with_arg("wall", host.clone())
+                    .with_arg("from", format!("{from:.2}"))
+                    .with_arg("to", format!("{to:.2}")),
+            );
+        }
     }
     if let Some((low, high)) = clear_span_of(snapshot, &wall_object) {
         let (from, to) = item.extent();
@@ -429,7 +641,8 @@ pub fn problems(snapshot: &Snapshot, object: &Object) -> Vec<Error> {
     );
     for (other, theirs) in hosted(snapshot, wall_object.id) {
         let (a, b) = (item.extent(), theirs.extent());
-        if other.id != object.id && a.0 < b.1 + MIN_GAP && b.0 < a.1 + MIN_GAP {
+        let stacked = item.sill >= theirs.top() || theirs.sill >= item.top();
+        if other.id != object.id && !stacked && a.0 < b.1 + MIN_GAP && b.0 < a.1 + MIN_GAP {
             out.push(
                 Error::new(codes::INSERT_OVERLAP)
                     .with_arg("name", name.clone())
@@ -480,6 +693,20 @@ pub(crate) struct Axes {
     pub(crate) low: f64,
     pub(crate) high: f64,
     pub(crate) base: f64,
+    /// The arc wall these axes are of: points along the baseline follow the arc.
+    pub(crate) arc: Option<Wall>,
+}
+
+fn axes_copy(a: &Axes) -> Axes {
+    Axes {
+        origin: a.origin,
+        u: a.u,
+        n: a.n,
+        low: a.low,
+        high: a.high,
+        base: a.base,
+        arc: a.arc,
+    }
 }
 
 impl Axes {
@@ -488,9 +715,11 @@ impl Axes {
         if !(length >= types::MIN_WALL_LENGTH && length.is_finite()) {
             return Err(Error::new(codes::WALL_TOO_SHORT).with_arg("name", ""));
         }
+        // An arc wall has no frame of its own: this one is of its chord.
+        let chord = wall.chord().max(f64::MIN_POSITIVE);
         let u = [
-            (wall.end[0] - wall.start[0]) / length,
-            (wall.end[1] - wall.start[1]) / length,
+            (wall.end[0] - wall.start[0]) / chord,
+            (wall.end[1] - wall.start[1]) / chord,
         ];
         let (low, high) = wall.extent();
         Ok(Self {
@@ -500,11 +729,17 @@ impl Axes {
             low,
             high,
             base: level + wall.base_offset,
+            arc: wall.is_arc().then_some(*wall),
         })
     }
 
-    /// The plan point `x` along the baseline and `y` to the left of it.
+    /// The plan point `x` along the baseline (along the arc for an arc wall) and `y` to the
+    /// left of it.
     pub(crate) fn at(&self, x: f64, y: f64) -> Point2 {
+        if let Some(wall) = &self.arc {
+            let (p, t) = (wall.point_at(x), wall.tangent_at(x));
+            return Point2::new(p[0] - t[1] * y, p[1] + t[0] * y);
+        }
         Point2::new(
             self.origin[0] + self.u[0] * x + self.n[0] * y,
             self.origin[1] + self.u[1] * x + self.n[1] * y,
@@ -529,6 +764,33 @@ fn region(points: [Point2; 4], tolerance: &Tolerance) -> Result<Region> {
 /// The outline of an opening across its wall, in the wall's frame (x along the baseline, y up):
 /// a rectangle, or, for an opening with a rise, a rectangle with a circular arch on top.
 fn profile(item: &Insert, from: f64, to: f64, tolerance: &Tolerance) -> Result<Region> {
+    if let Some(sketch) = item.profile {
+        let mut points: Vec<Point2> = sketch
+            .points()
+            .iter()
+            .map(|p| Point2::new(from + p[0], item.sill + p[1]))
+            .collect();
+        let area: f64 = (0..points.len())
+            .map(|k| {
+                let (a, b) = (points[k], points[(k + 1) % points.len()]);
+                a.x * b.y - b.x * a.y
+            })
+            .sum();
+        if area < 0.0 {
+            points.reverse();
+        }
+        let mut curves = Vec::with_capacity(points.len());
+        for k in 0..points.len() {
+            curves.push(Curve2::Segment(Segment2::new(
+                points[k],
+                points[(k + 1) % points.len()],
+            )?));
+        }
+        return Region::new(vec![RegionPart::new(
+            Loop2::new(curves, tolerance)?,
+            Vec::new(),
+        )]);
+    }
     let rise = if item.rise > tolerance.linear && item.rise < item.height {
         item.rise
     } else {
@@ -577,6 +839,24 @@ fn profile(item: &Insert, from: f64, to: f64, tolerance: &Tolerance) -> Result<R
 /// The errors of the solid kernel: an opening outside the supported case (see
 /// [`arc_geom::PrismTool`]) is refused, never cut wrongly.
 pub fn cut(wall: &Wall, level: f64, solid: Polyhedron, inserts: &[Insert]) -> Result<Polyhedron> {
+    if wall.is_arc() {
+        let mut current = solid;
+        for (k, item) in inserts.iter().enumerate() {
+            let (straight, local) = on_arc(wall, item);
+            current = cut_straight(&straight, level, current, &[local], k)?;
+        }
+        return Ok(current);
+    }
+    cut_straight(wall, level, solid, inserts, 0)
+}
+
+fn cut_straight(
+    wall: &Wall,
+    level: f64,
+    solid: Polyhedron,
+    inserts: &[Insert],
+    first: usize,
+) -> Result<Polyhedron> {
     if inserts.is_empty() {
         return Ok(solid);
     }
@@ -599,7 +879,7 @@ pub fn cut(wall: &Wall, level: f64, solid: Polyhedron, inserts: &[Insert]) -> Re
             start: -axes.high - OVERSHOOT,
             end: -axes.low + OVERSHOOT,
             chord: CHORD,
-            opening: u32::try_from(k).unwrap_or(u32::MAX),
+            opening: u32::try_from(first + k).unwrap_or(u32::MAX),
             allow_split: false,
         };
         current = current.subtract_prism(&tool, &tolerance, &Limits::DEFAULT)?;
@@ -654,7 +934,14 @@ pub fn gross_solid(
     footprint: [[f64; 2]; 4],
     level: f64,
 ) -> Result<Polyhedron> {
+    if let Some(profile) = crate::wall::Profile::of(&object.values)
+        && profile.fits(wall.length(), wall.height)
+    {
+        return profile.solid(wall, level, wall.extent());
+    }
     if let Some((_, surface)) = attached_roof(snapshot, object)
+        && !wall.leans()
+        && !wall.is_arc()
         && let Ok(solid) = crate::wall::under_roof(wall, footprint, level, &surface)
     {
         return Ok(solid);
@@ -681,10 +968,16 @@ pub enum Role {
 ///
 /// # Errors
 /// The errors of the solid kernel for numbers it cannot make solids of.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the frame and one arm for each operation"
+)]
 pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyhedron)>> {
     if item.kind == Kind::Opening {
         return Ok(Vec::new());
     }
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let tolerance = Tolerance::DEFAULT;
     let boxed = |x: (f64, f64), y: (f64, f64), z: (f64, f64)| -> Result<Polyhedron> {
@@ -747,6 +1040,16 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
                 boxed((mid - OVERLAP / 2.0, c1), across(track), clear.1)?,
             ));
         }
+        // Leaves of equal width side by side, folded against each other when open.
+        Operation::Folding => {
+            let n = folding_leaves(item);
+            let step = (c1 - c0) / f64::from(n);
+            for k in 0..n {
+                let (a, b) = (c0 + step * f64::from(k), c0 + step * f64::from(k + 1));
+                let (a, b) = (a + GAP / 2.0, b - GAP / 2.0);
+                out.push((role, boxed((a, b), across(0.0), clear.1)?));
+            }
+        }
         _ => out.push((role, boxed(clear.0, across(0.0), clear.1)?)),
     }
     if item.kind == Kind::Door
@@ -779,14 +1082,85 @@ pub fn pieces(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<(Role, Polyh
     Ok(out)
 }
 
-/// The plan symbol of an insert, as polylines in project coordinates at a cut 1 m above the wall's
-/// base: the opening's outline across the wall; for a door the leaf open at 90 degrees on the
-/// facing side, hinged at the jamb the hand names, with the quarter-circle of its swing; for a
-/// window the frame outline and the glass line in the wall's center.
+/// How many leaves a folding door or window has: two, or four when it is wide.
+#[must_use]
+pub fn folding_leaves(item: &Insert) -> u32 {
+    if item.width >= 1.5 { 4 } else { 2 }
+}
+
+/// A polyline with an arrowhead from `from` to `to` along the baseline at distance `y` across it.
+fn arrow(at: &dyn Fn(f64, f64) -> [f64; 3], from: f64, to: f64, y: f64) -> Vec<[f64; 3]> {
+    let back = if to >= from { -0.08 } else { 0.08 };
+    vec![
+        at(from, y),
+        at(to, y),
+        at(to + back, y + 0.04),
+        at(to, y),
+        at(to + back, y - 0.04),
+    ]
+}
+
+/// The zigzag of folded leaves: `n` leaves of width `leaf` from `start.0` along the baseline in
+/// direction `start.1` (a sign), each pair folded to the side by `side.1` from `side.0`.
+fn zigzag(
+    at: &dyn Fn(f64, f64) -> [f64; 3],
+    start: (f64, f64),
+    n: f64,
+    leaf: f64,
+    side: (f64, f64),
+) -> Vec<[f64; 3]> {
+    let mut k = 0.0;
+    let mut out = Vec::new();
+    while k <= n + 0.5 {
+        let y = if (k % 2.0) >= 1.0 {
+            side.0 + side.1
+        } else {
+            side.0
+        };
+        out.push(at(start.0 + start.1 * k * leaf * 0.8, y));
+        k += 1.0;
+    }
+    out
+}
+
+/// A small diamond marking the pivot axis at distance `x` along the baseline and `y` across it.
+fn pivot_mark(at: &dyn Fn(f64, f64) -> [f64; 3], x: f64, y: f64) -> Vec<[f64; 3]> {
+    vec![
+        at(x - 0.03, y),
+        at(x, y + 0.03),
+        at(x + 0.03, y),
+        at(x, y - 0.03),
+        at(x - 0.03, y),
+    ]
+}
+
+/// The plan symbol of an insert at medium detail; see [`symbol_at`].
 ///
 /// # Errors
 /// `ab.model.wall_too_short` for a wall without a length.
 pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]>>> {
+    symbol_at(wall, level, item, Detail::Medium)
+}
+
+/// The plan symbol of an insert, as polylines in project coordinates at a cut 1 m above the wall's
+/// base: the opening's outline across the wall; for a door the leaf open at 90 degrees on the
+/// facing side, hinged at the jamb the hand names, with the quarter-circle of its swing; for a
+/// window the frame outline and the glass line in the wall's center. A sliding leaf carries an
+/// arrow, a folding one a zigzag, a pivoting one its axis. `detail` decides how much is drawn:
+/// coarse the outline and the swing of a hinged door; medium the leaves and lines of every
+/// operation; fine adds the arrows, the sill line of a window and the inner frame outline.
+///
+/// # Errors
+/// `ab.model.wall_too_short` for a wall without a length.
+#[allow(clippy::too_many_lines, reason = "one arm for each operation")]
+pub fn symbol_at(
+    wall: &Wall,
+    level: f64,
+    item: &Insert,
+    detail: Detail,
+) -> Result<Vec<Vec<[f64; 3]>>> {
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let z = axes.base + 1.0;
     let at = |x: f64, y: f64| {
@@ -803,51 +1177,114 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
     ]];
     let fw = item.frame_width;
     let middle = (axes.low + axes.high) / 2.0;
+    let swinging = item.kind == Kind::Door
+        && matches!(
+            item.operation,
+            Operation::SingleSwing | Operation::DoubleSwing
+        );
+    if detail == Detail::Coarse && !swinging {
+        return Ok(lines);
+    }
+    // The face a leaf opens toward and the direction away from the wall there.
+    let (face, out) = if item.facing == Facing::Exterior {
+        (axes.high, 1.0)
+    } else {
+        (axes.low, -1.0)
+    };
+    let fine = detail == Detail::Fine;
     match item.kind {
         Kind::Opening => {}
         Kind::Window => {
-            let half = item.frame_depth.min(wall.thickness) / 2.0;
-            lines.push(vec![
-                at(x0, middle - half),
-                at(x1, middle - half),
-                at(x1, middle + half),
-                at(x0, middle + half),
-                at(x0, middle - half),
-            ]);
-            if item.operation == Operation::Sliding {
-                let mid = item.distance;
+            if detail != Detail::Coarse {
+                let half = item.frame_depth.min(wall.thickness) / 2.0;
                 lines.push(vec![
-                    at(x0 + fw, middle - 0.015),
-                    at(mid + 0.025, middle - 0.015),
+                    at(x0, middle - half),
+                    at(x1, middle - half),
+                    at(x1, middle + half),
+                    at(x0, middle + half),
+                    at(x0, middle - half),
                 ]);
-                lines.push(vec![
-                    at(mid - 0.025, middle + 0.015),
-                    at(x1 - fw, middle + 0.015),
-                ]);
-            } else {
-                lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]);
+                match item.operation {
+                    Operation::Sliding => {
+                        let mid = item.distance;
+                        lines.push(vec![
+                            at(x0 + fw, middle - 0.015),
+                            at(mid + 0.025, middle - 0.015),
+                        ]);
+                        lines.push(vec![
+                            at(mid - 0.025, middle + 0.015),
+                            at(x1 - fw, middle + 0.015),
+                        ]);
+                        if fine {
+                            lines.push(arrow(
+                                &at,
+                                x0 + fw + 0.05,
+                                item.distance,
+                                face + out * 0.06,
+                            ));
+                        }
+                    }
+                    Operation::Folding => {
+                        let leaf = (item.width - 2.0 * fw) / f64::from(folding_leaves(item));
+                        lines.push(zigzag(
+                            &at,
+                            (
+                                item.distance + item.hinge_direction() * (item.width / 2.0 - fw),
+                                -item.hinge_direction(),
+                            ),
+                            f64::from(folding_leaves(item)),
+                            leaf,
+                            (middle - half, 2.0 * half),
+                        ));
+                    }
+                    Operation::Pivot => lines.push(pivot_mark(&at, item.distance, middle)),
+                    _ => lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]),
+                }
+                if fine {
+                    // The sill projects a little beyond the exterior face.
+                    lines.push(vec![
+                        at(x0 - 0.03, axes.high + 0.03),
+                        at(x1 + 0.03, axes.high + 0.03),
+                    ]);
+                    lines.push(vec![at(x0 + fw, middle - half), at(x0 + fw, middle + half)]);
+                    lines.push(vec![at(x1 - fw, middle - half), at(x1 - fw, middle + half)]);
+                }
             }
         }
         Kind::Door if item.operation == Operation::Sliding => {
             // The panel in front of the opening, slid half open toward the hinge side.
             let hinge = item.hinge_direction();
-            let (face, out) = if item.facing == Facing::Exterior {
-                (axes.high, 1.0)
-            } else {
-                (axes.low, -1.0)
-            };
             let clear = item.width - 2.0 * fw;
             let from = item.distance - hinge * (clear / 2.0);
             let to = item.distance + hinge * clear;
             lines.push(vec![at(from, face + out * 0.03), at(to, face + out * 0.03)]);
             lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]);
+            if fine {
+                lines.push(arrow(&at, from, to, face + out * 0.06));
+            }
+        }
+        Kind::Door if item.operation == Operation::Folding => {
+            let leaf = (item.width - 2.0 * fw) / f64::from(folding_leaves(item));
+            lines.push(zigzag(
+                &at,
+                (
+                    item.distance + item.hinge_direction() * (item.width / 2.0 - fw),
+                    -item.hinge_direction(),
+                ),
+                f64::from(folding_leaves(item)),
+                leaf,
+                (face, out * leaf * 0.6),
+            ));
+            lines.push(vec![at(x0 + fw, middle), at(x1 - fw, middle)]);
+        }
+        Kind::Door if item.operation == Operation::Pivot => {
+            // The leaf turned across the wall about an axis a fifth of the width from the hinge.
+            let axis = item.distance + item.hinge_direction() * (item.width * 0.3);
+            let reach = (item.width - 2.0 * fw) / 2.0;
+            lines.push(vec![at(axis, middle - reach), at(axis, middle + reach)]);
+            lines.push(pivot_mark(&at, axis, middle));
         }
         Kind::Door if item.operation == Operation::DoubleSwing => {
-            let (face, out) = if item.facing == Facing::Exterior {
-                (axes.high, 1.0)
-            } else {
-                (axes.low, -1.0)
-            };
             let leaf = (item.width - 2.0 * fw) / 2.0;
             for (hx, toward) in [(x0 + fw, 1.0), (x1 - fw, -1.0)] {
                 lines.push(vec![at(hx, face), at(hx, face + out * leaf)]);
@@ -867,11 +1304,6 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
                 item.width - 2.0 * fw,
             );
             // The leaf starts on the facing face of the wall and runs out across it.
-            let (face, out) = if item.facing == Facing::Exterior {
-                (axes.high, 1.0)
-            } else {
-                (axes.low, -1.0)
-            };
             lines.push(vec![at(hx, face), at(hx, face + out * clear)]);
             let arc: Vec<[f64; 3]> = (0..=12)
                 .map(|k| {
@@ -885,12 +1317,180 @@ pub fn symbol(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]
     Ok(lines)
 }
 
+/// The elevation symbol of an insert, as polylines in project coordinates in the plane of the
+/// wall's exterior face (x along the baseline, heights above the level): the opening's outline;
+/// at medium detail the opening direction (a triangle whose apex is at the hinge, a hinge at the
+/// top for an awning and at the bottom for a hopper, a sliding arrow, the leaves of a folding
+/// door, the axis of a pivot); at fine detail also the inner frame outline and, for a window, the
+/// sill line. A bare opening has its outline only.
+///
+/// # Errors
+/// `ab.model.wall_too_short` for a wall without a length.
+pub fn elevation_symbol(
+    wall: &Wall,
+    level: f64,
+    item: &Insert,
+    detail: Detail,
+) -> Result<Vec<Vec<[f64; 3]>>> {
+    let axes = Axes::new(wall, level)?;
+    let at = |x: f64, z: f64| {
+        let p = axes.at(x, axes.high);
+        [p.x, p.y, axes.base + z]
+    };
+    let (x0, x1) = item.extent();
+    let (z0, z1) = (item.sill, item.top());
+    let mut lines = vec![vec![
+        at(x0, z0),
+        at(x1, z0),
+        at(x1, z1),
+        at(x0, z1),
+        at(x0, z0),
+    ]];
+    if detail == Detail::Coarse || item.kind == Kind::Opening {
+        return Ok(lines);
+    }
+    let fw = item.frame_width;
+    let mid = (z0 + z1) / 2.0;
+    let hinge = item.hinge_direction();
+    let (hx, fx) = (
+        item.distance + hinge * (item.width / 2.0),
+        item.distance - hinge * (item.width / 2.0),
+    );
+    match item.operation {
+        Operation::SingleSwing | Operation::Casement => {
+            lines.push(vec![at(fx, z1), at(hx, mid), at(fx, z0)]);
+        }
+        Operation::DoubleSwing => {
+            lines.push(vec![
+                at(item.distance, z1),
+                at(x0, mid),
+                at(item.distance, z0),
+            ]);
+            lines.push(vec![
+                at(item.distance, z1),
+                at(x1, mid),
+                at(item.distance, z0),
+            ]);
+        }
+        Operation::Awning => lines.push(vec![at(x0, z0), at(item.distance, z1), at(x1, z0)]),
+        Operation::Hopper => lines.push(vec![at(x0, z1), at(item.distance, z0), at(x1, z1)]),
+        Operation::Sliding => {
+            lines.push(arrow(
+                &at,
+                item.distance - hinge * item.width / 4.0,
+                item.distance + hinge * item.width / 4.0,
+                mid,
+            ));
+        }
+        Operation::Folding => {
+            let n = folding_leaves(item);
+            let leaf = item.width / f64::from(n);
+            for k in 0..n {
+                let (a, b) = (x0 + leaf * f64::from(k), x0 + leaf * f64::from(k + 1));
+                let (near, far) = if (hinge > 0.0) == (k % 2 == 0) {
+                    (b, a)
+                } else {
+                    (a, b)
+                };
+                lines.push(vec![at(far, z1), at(near, mid), at(far, z0)]);
+            }
+        }
+        Operation::Pivot => {
+            let axis = if item.kind == Kind::Door {
+                item.distance + hinge * item.width * 0.3
+            } else {
+                item.distance
+            };
+            lines.push(vec![at(axis, z0), at(axis, z1)]);
+        }
+        Operation::Fixed => {}
+    }
+    if detail == Detail::Fine {
+        lines.push(vec![
+            at(x0 + fw, z0 + fw),
+            at(x1 - fw, z0 + fw),
+            at(x1 - fw, z1 - fw),
+            at(x0 + fw, z1 - fw),
+            at(x0 + fw, z0 + fw),
+        ]);
+        if item.kind == Kind::Window {
+            lines.push(vec![at(x0 - 0.05, z0 - 0.02), at(x1 + 0.05, z0 - 0.02)]);
+        }
+    }
+    Ok(lines)
+}
+
+/// How far beyond a face of the wall the room calculation point lies, in meters.
+pub const CALC_OFFSET: f64 = 0.15;
+
+/// The rooms on the two sides of a door or window: derived, never stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Relation {
+    /// The room on the side the leaf swings away from (a door), or on the facing side (a window).
+    pub from: Option<arc_base::ObjectId>,
+    /// The room on the side the leaf swings toward (a door), or on the interior side, opposite
+    /// the facing (a window).
+    pub to: Option<arc_base::ObjectId>,
+}
+
+impl Relation {
+    /// The room of a window: the interior side, else the other one.
+    #[must_use]
+    pub fn room(&self) -> Option<arc_base::ObjectId> {
+        self.to.or(self.from)
+    }
+}
+
+/// The rooms of the door, window or opening `object`, found at its room calculation points: the
+/// center of the opening, [`CALC_OFFSET`] beyond each face of its wall. A door's `to` room is on
+/// the side its leaf swings toward, so flipping its facing swaps the two; a window's `to` room is
+/// the one opposite its facing. `None` when the record is no insert or its wall has no length.
+#[must_use]
+pub fn relation(snapshot: &Snapshot, object: &Object) -> Option<Relation> {
+    let host = spatial::get(snapshot, object.header.owner?)?;
+    let wall = Wall::of(snapshot, &host)?;
+    let item = Insert::of(snapshot, object)?;
+    let storey = spatial::get(snapshot, host.header.owner?)?;
+    let level = spatial::storey_elevation(snapshot, &storey);
+    let axes = Axes::new(&wall, level).ok()?;
+    let rooms = crate::room::of_storey(snapshot, storey.id);
+    let find = |y: f64| {
+        let p = axes.at(item.distance, y);
+        rooms
+            .iter()
+            .find(|e| {
+                e.state() == crate::room::State::Enclosed
+                    && e.footprint.boundary().contains([p.x, p.y])
+            })
+            .map(|e| e.id)
+    };
+    let (exterior, interior) = (find(axes.high + CALC_OFFSET), find(axes.low - CALC_OFFSET));
+    let (facing, behind) = if item.facing == Facing::Exterior {
+        (exterior, interior)
+    } else {
+        (interior, exterior)
+    };
+    Some(if item.kind == Kind::Door {
+        Relation {
+            from: behind,
+            to: facing,
+        }
+    } else {
+        Relation {
+            from: facing,
+            to: behind,
+        }
+    })
+}
+
 /// The polylines that mark a selected insert: its opening outline on the top of the wall and in
 /// each face of the wall, in project coordinates.
 ///
 /// # Errors
 /// `ab.model.wall_too_short` for a wall without a length.
 pub fn outline(wall: &Wall, level: f64, item: &Insert) -> Result<Vec<Vec<[f64; 3]>>> {
+    let (wall, item) = on_arc(wall, item);
+    let (wall, item) = (&wall, &item);
     let axes = Axes::new(wall, level)?;
     let (x0, x1) = item.extent();
     let at = |x: f64, y: f64, z: f64| {
@@ -963,7 +1563,7 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
         }
     }
     let mut best: Option<(f64, arc_base::ObjectId, arc_base::ObjectId)> = None;
-    for key in [DOOR, WINDOW, WALL_OPENING] {
+    for key in [DOOR, WINDOW, WALL_OPENING, types::FAMILY_INSERT] {
         for object in spatial::objects(snapshot, key) {
             let (Some(item), Some((host, _, lo, ld, axes))) = (
                 Insert::of(snapshot, &object),
@@ -971,10 +1571,26 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
             ) else {
                 continue;
             };
+            let (lo, ld, axes, item) = match walls.iter().find(|w| w.0.id == host.id) {
+                Some((_, wall, ..)) if wall.is_arc() => {
+                    // An arc wall's opening is picked on its tangent frame.
+                    let level = host
+                        .header
+                        .owner
+                        .and_then(|id| spatial::get(snapshot, id))
+                        .map_or(0.0, |s| spatial::storey_elevation(snapshot, &s));
+                    let (straight, local_item) = on_arc(wall, &item);
+                    match local(&straight, level) {
+                        Some((a, b, c)) => (a, b, c, local_item),
+                        None => continue,
+                    }
+                }
+                _ => (*lo, *ld, axes_copy(axes), item),
+            };
             let (x0, x1) = item.extent();
             if let Some(t) = enters(
-                *lo,
-                *ld,
+                lo,
+                ld,
                 [x0, axes.low, item.sill],
                 [x1, axes.high, item.top()],
             ) && best.is_none_or(|(b, _, _)| t < b)
@@ -986,7 +1602,8 @@ pub fn pick(snapshot: &Snapshot, ray: ([f64; 3], [f64; 3])) -> Option<arc_base::
     let (t, id, host) = best?;
     // A wall in front of the opening, other than its own, hides it.
     let hidden = walls.iter().any(|(object, wall, lo, ld, axes)| {
-        object.id != host
+        !wall.is_arc()
+            && object.id != host
             && enters(
                 *lo,
                 *ld,

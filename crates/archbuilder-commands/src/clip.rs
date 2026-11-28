@@ -36,6 +36,26 @@ use crate::structure::{create, language};
 /// The most items a clipboard holds.
 pub const MAX_ITEMS: usize = 20_000;
 
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
+}
+
+fn unhex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
+        .collect()
+}
+
 fn encode(value: &Option<Value>) -> Json {
     let Some(value) = value else {
         return Json::Null;
@@ -52,6 +72,8 @@ fn encode(value: &Option<Value>) -> Json {
             json!({ "l": items.iter().map(|v| encode(&Some(v.clone()))).collect::<Vec<_>>() })
         }
         Value::Record(fields) => json!({ "c": fields.iter().map(encode).collect::<Vec<_>>() }),
+        // A foreign element's mesh: without it the paste has no shape to move.
+        Value::Geometry(bytes) => json!({ "g": hex(&bytes.0) }),
         _ => Json::Null,
     }
 }
@@ -69,8 +91,32 @@ fn decode(json: &Json) -> Option<Value> {
         "r" => Value::Reference(v.as_str()?.parse().ok()?),
         "l" => Value::List(v.as_array()?.iter().filter_map(decode).collect()),
         "c" => Value::Record(v.as_array()?.iter().map(decode).collect()),
+        "g" => Value::Geometry(arc_doc::GeometryBytes(unhex(v.as_str()?)?)),
         _ => return None,
     })
+}
+
+/// The ids to copy: the selection, with the generated elements of each group instance in it. A
+/// group instance is copied as its elements, which are ordinary once copied; its own record is
+/// kept in the content for identity and is not pasted as an element.
+fn with_group_elements(snapshot: &Snapshot, selected: &[ObjectId]) -> Vec<ObjectId> {
+    let mut ids: Vec<ObjectId> = Vec::new();
+    for id in selected {
+        ids.push(*id);
+        let instance = spatial::get(snapshot, *id)
+            .filter(|_| spatial::type_of(snapshot, *id).as_deref() == Some(types::GROUP_INSTANCE))
+            .and_then(|o| archbuilder_model::group::Instance::of(&o));
+        let Some(instance) = instance else {
+            continue;
+        };
+        for m in archbuilder_model::group::members(snapshot, instance.definition) {
+            let child = archbuilder_model::group::member_id(instance.id, m.id);
+            if !instance.excluded(m.id) && spatial::get(snapshot, child).is_some() {
+                ids.push(child);
+            }
+        }
+    }
+    ids
 }
 
 /// The content of the clipboard for `ids`: the walls, floors and rooms among them, the doors and
@@ -79,7 +125,8 @@ fn decode(json: &Json) -> Option<Value> {
 /// # Errors
 /// `ab.cmd.nothing_selected` when none of `ids` can be copied.
 #[allow(clippy::too_many_lines, reason = "one arm for each kind captured")]
-pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
+pub fn capture(snapshot: &Snapshot, selected: &[ObjectId]) -> Result<Json> {
+    let ids = with_group_elements(snapshot, selected);
     let mut items: Vec<Json> = Vec::new();
     let mut walls: Vec<ObjectId> = Vec::new();
     let mut seen: Vec<ObjectId> = Vec::new();
@@ -172,7 +219,11 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
             | types::RAMP
             | types::GRID
             | types::REFERENCE_PLANE
-            | types::ROOF_EXTRUSION => push(
+            | types::ELEVATOR
+            | types::COMPONENT
+            | types::GROUP_INSTANCE
+            | types::ROOF_EXTRUSION
+            | types::FOREIGN_ELEMENT => push(
                 &mut items,
                 *id,
                 None,
@@ -208,6 +259,19 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
                 );
             }
         }
+        if key == ROOF {
+            for key in [types::DORMER, types::ROOF_EDGE] {
+                for part in spatial::children(snapshot, key, *id) {
+                    push(
+                        &mut items,
+                        part.id,
+                        Some(*id),
+                        Json::Array(part.values.iter().map(encode).collect()),
+                        key,
+                    );
+                }
+            }
+        }
         // The railings hosted on a stair or ramp go with it.
         if key == STAIR || key == types::RAMP {
             for railing in spatial::objects(snapshot, types::RAILING) {
@@ -239,7 +303,10 @@ pub fn capture(snapshot: &Snapshot, ids: &[ObjectId]) -> Result<Json> {
     for id in ids.iter().take(MAX_ITEMS) {
         let key = spatial::type_of(snapshot, *id).unwrap_or_default();
         if let (true, Some(object)) = (
-            key == DOOR || key == WINDOW || key == WALL_OPENING,
+            matches!(
+                key.as_str(),
+                DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT
+            ),
             spatial::get(snapshot, *id),
         ) && let Some(host) = object.header.owner.filter(|h| walls.contains(h))
         {
@@ -363,12 +430,22 @@ pub(crate) fn paste_content(
         created.push(new);
     }
     for (key, _, host, mut values) in decoded.iter().cloned() {
-        if key != DOOR && key != WINDOW && key != WALL_OPENING {
+        if !matches!(
+            key.as_str(),
+            DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT
+        ) {
             continue;
         }
-        let (Some(kind), Some(host)) =
-            (Kind::of_key(&key), host.and_then(|h| map.get(&h).copied()))
-        else {
+        let Some(host) = host.and_then(|h| map.get(&h).copied()) else {
+            continue;
+        };
+        // A family instance keeps its mark and its family type, which must exist here as for a
+        // component.
+        if key == types::FAMILY_INSERT {
+            created.push(create(ctx, &key, Some(host), values)?);
+            continue;
+        }
+        let Some(kind) = Kind::of_key(&key) else {
             continue;
         };
         let seen = ctx.txn()?.snapshot().clone();
@@ -491,6 +568,78 @@ pub(crate) fn paste_content(
         hosts.insert(old, new);
         created.push(new);
     }
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::ELEVATOR {
+            continue;
+        }
+        let mut moved = archbuilder_model::elevator::Elevator::from_values(&values)
+            .ok_or_else(invalid)?
+            .moved(&xf);
+        // The levels belong to the storeys of the document the elevator came from.
+        moved.top_level = None;
+        moved.stops.clear();
+        let seen = ctx.txn()?.snapshot().clone();
+        let name = crate::elevator::next_name(&seen, storey, &tongue);
+        created.push(create(
+            ctx,
+            types::ELEVATOR,
+            Some(storey),
+            moved.values(&name),
+        )?);
+    }
+    // A component moves with the paste; its family type stays (the type must exist here).
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::FOREIGN_ELEMENT {
+            continue;
+        }
+        created.push(crate::foreign::paste_foreign(ctx, &values, &xf, storey)?);
+    }
+    for (key, _, _, values) in decoded.iter().cloned() {
+        if key != types::COMPONENT {
+            continue;
+        }
+        let mut values = values;
+        let at = |i: usize, v: &[Option<Value>]| types::meters(v, i).unwrap_or(0.0);
+        let moved = xf.point([
+            at(types::component::X, &values),
+            at(types::component::Y, &values),
+        ]);
+        for (slot, m) in [
+            (types::component::X, moved[0]),
+            (types::component::Y, moved[1]),
+        ] {
+            if let Some(v) = values.get_mut(slot) {
+                *v = Some(types::length(m));
+            }
+        }
+        crate::element_type::rebind(ctx, types::COMPONENT, &mut values)?;
+        created.push(create(ctx, types::COMPONENT, Some(storey), values)?);
+    }
+    for (key, _, host, values) in decoded.iter().cloned() {
+        if key != types::DORMER && key != types::ROOF_EDGE {
+            continue;
+        }
+        let Some(host) = host.and_then(|h| hosts.get(&h).copied()) else {
+            continue;
+        };
+        let seen = ctx.txn()?.snapshot().clone();
+        let mut values = values;
+        if key == types::DORMER {
+            let moved = archbuilder_model::dormer::Dormer::from_values(&values)
+                .ok_or_else(invalid)?
+                .moved(&xf);
+            let name = crate::roof_parts::next_dormer_name(&seen, host, &tongue);
+            values = moved.values(&name);
+        } else {
+            let gutter = archbuilder_model::roof_edge::RoofEdge::from_values(&values)
+                .is_some_and(|e| e.role == archbuilder_model::roof_edge::Role::Gutter);
+            let name = crate::roof_parts::next_roof_edge_name(&seen, host, gutter, &tongue);
+            if let Some(slot) = values.get_mut(types::roof_edge::NAME) {
+                *slot = Some(Value::String(name));
+            }
+        }
+        created.push(create(ctx, &key, Some(host), values)?);
+    }
     for (key, _, host, mut values) in decoded.iter().cloned() {
         if key != types::FLOOR_EDGE {
             continue;
@@ -538,13 +687,11 @@ pub(crate) fn paste_content(
         if key != STAIR {
             continue;
         }
-        let mut moved = archbuilder_model::stair::Stair::from_values(&values)
-            .ok_or_else(invalid)?
-            .moved(&xf);
-        moved.top_level = None;
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, storey, &tongue);
-        let new = create(ctx, STAIR, Some(storey), moved.values(&name))?;
+        let moved = archbuilder_model::stair::Stair::moved_values(&values, &name, &xf, true)
+            .ok_or_else(invalid)?;
+        let new = create(ctx, STAIR, Some(storey), moved)?;
         circulation.insert(old, new);
         created.push(new);
     }
@@ -665,7 +812,9 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
         } else if key == STAIR {
             let stair = archbuilder_model::stair::Stair::from_values(&values);
             // The outline at a rise of three meters stands for the stair; the storey sets the rise.
-            if let Some(Ok(layout)) = stair.map(|s| archbuilder_model::stair::Layout::new(&s, 3.0))
+            let lines = archbuilder_model::stair::run_lines(&values);
+            if let Some(Ok(layout)) =
+                stair.map(|s| archbuilder_model::stair::Layout::build(&s, &lines, 3.0))
             {
                 let f = layout.footprint();
                 out.push(f.iter().chain(f.first()).copied().collect());
@@ -690,7 +839,7 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
         } else if key == types::GRID
             && let Some(g) = archbuilder_model::datum::Grid::from_values(&values)
         {
-            out.push(vec![g.start, g.end]);
+            out.push(g.points());
         } else if key == types::REFERENCE_PLANE
             && let Some(r) = archbuilder_model::datum::RefPlane::from_values(&values)
         {
@@ -707,6 +856,12 @@ pub fn outlines(content: &Json) -> Vec<Vec<[f64; 2]>> {
             if lo <= hi {
                 out.push(vec![at(lo), at(hi)]);
             }
+        } else if key == types::FOREIGN_ELEMENT
+            && let Some(outline) = archbuilder_model::foreign::plan_outline(&values)
+        {
+            let mut l = outline;
+            l.extend(l.first().copied());
+            out.push(l);
         } else if (key == FLOOR || key == CEILING)
             && let Some(f) = Floor::from_values(&values)
         {

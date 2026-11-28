@@ -45,16 +45,36 @@ fn container_of(key: &str) -> Option<&'static [&'static str]> {
         STOREY | LEVEL => Some(&[BUILDING]),
         k if types::is_datum(k) => Some(&[BUILDING]),
         types::PLAN_VIEW => Some(&[STOREY]),
-        types::SELECTION_SET => Some(&[PROJECT]),
+        types::SELECTION_SET
+        | types::VARIABLE
+        | types::PARAMETER
+        | types::FAMILY
+        | types::FAMILY_TYPE
+        | types::GROUP => Some(&[PROJECT]),
+        types::MODEL_VIEW => Some(&[PROJECT, BUILDING]),
+        types::FOREIGN_ELEMENT => Some(&[STOREY, BUILDING]),
         k if types::is_storey_element(k) => Some(&[STOREY]),
-        DOOR | WINDOW | WALL_OPENING => Some(&[WALL]),
+        DOOR | WINDOW | WALL_OPENING | types::FAMILY_INSERT => Some(&[WALL]),
         VERTICAL_OPENING => Some(&types::VERTICAL_HOSTS),
         types::FLOOR_EDGE => Some(&[FLOOR]),
+        types::DORMER | types::ROOF_EDGE => Some(&[ROOF]),
         k if types::TYPE_KEYS.contains(&k) || k == types::RAILING_TYPE || k == types::RAMP_TYPE => {
             Some(&[PROJECT])
         }
         _ => None,
     }
+}
+
+/// A formula identifier that cannot name a value, or that another definition uses.
+fn identifier_problem(candidate: &Snapshot, object: &Object) -> Option<Error> {
+    let own = types::text(&object.values, types::variable::IDENTIFIER).unwrap_or_default();
+    if let Err(error) = crate::expr::check_identifier(own) {
+        return Some(error);
+    }
+    crate::variable::identifiers(candidate, Some(object.id))
+        .iter()
+        .any(|i| i == own)
+        .then(|| Error::new(codes::PARAM_IDENTIFIER_TAKEN).with_arg("identifier", own))
 }
 
 fn name_taken(object: &Object) -> Error {
@@ -65,7 +85,13 @@ fn name_taken(object: &Object) -> Error {
 }
 
 fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut Vec<Error>) {
+    let in_definition = object
+        .header
+        .owner
+        .and_then(|owner| type_of(candidate, owner))
+        .is_some_and(|owner| owner == types::GROUP);
     if let Some(containers) = container_of(key)
+        && !in_definition
         && !object
             .header
             .owner
@@ -86,12 +112,19 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
         if !top_is_above(candidate, object) {
             out.push(Error::new(codes::WALL_TOP_INVALID).with_arg("name", display_name(object)));
         }
+        out.extend(wall_shape_problems(candidate, object));
     }
     if key == WALL {
         out.extend(crate::curtain::problems(candidate, object));
     }
     if key == DOOR || key == WINDOW || key == WALL_OPENING {
         out.extend(crate::insert::problems(candidate, object));
+    }
+    if key == types::FAMILY_INSERT {
+        out.extend(crate::family::loaded::insert_problems(candidate, object));
+    }
+    if key == types::GROUP_INSTANCE {
+        out.extend(crate::group::instance_problems(candidate, object));
     }
     if key == STAIR {
         out.extend(stair_problem(candidate, object));
@@ -105,18 +138,43 @@ fn check_object(candidate: &Snapshot, key: &str, object: &Arc<Object>, out: &mut
     if key == types::PLAN_VIEW {
         out.extend(crate::view::problem(object));
     }
+    if key == types::MODEL_VIEW {
+        out.extend(crate::model_view::problem(object));
+    }
     if types::is_datum(key) && crate::datum::is_degenerate(candidate, key, object) {
         out.push(Error::new(codes::DATUM_DEGENERATE).with_arg("name", display_name(object)));
     }
     out.extend(type_problem(candidate, key, object));
+    if key == types::VARIABLE || key == types::PARAMETER {
+        out.extend(identifier_problem(candidate, object));
+    }
+    if key == types::PARAMETER {
+        let p = crate::parameter::Parameter::of(object);
+        if p.categories
+            .iter()
+            .any(|c| !crate::parameter::is_category(c))
+        {
+            out.push(Error::new(codes::PARAM_CATEGORY).with_arg("parameter", p.name));
+        }
+    }
     let own = folded(object);
     // Rooms are told apart by number, not by name.
+    // A component's mark is optional, and a family type is named within its family.
+    let scope = |o: &Object| {
+        o.header.owner == object.header.owner
+            && (key != types::FAMILY_TYPE
+                || o.values.get(types::family_type::FAMILY)
+                    == object.values.get(types::family_type::FAMILY))
+    };
     if key != PROJECT
         && key != ROOM
         && key != types::GRID
+        && key != types::COMPONENT
+        && key != types::FAMILY_INSERT
+        && key != types::FOREIGN_ELEMENT
         && objects(candidate, key)
             .iter()
-            .any(|o| o.id != object.id && o.header.owner == object.header.owner && folded(o) == own)
+            .any(|o| o.id != object.id && scope(o) && folded(o) == own)
     {
         out.push(name_taken(object));
     }
@@ -201,21 +259,37 @@ pub fn circulation_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error>
     let mut out = Vec::new();
     match type_of(candidate, object.id).as_deref() {
         Some(types::RAMP) => {
-            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout)
-                && layout.exceeds()
-            {
-                out.push(
-                    Error::new(codes::RAMP_SLOPE)
-                        .with_arg("name", name)
-                        .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
-                        .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
-                        .with_arg(OBJECT, object.id.to_string()),
-                );
+            if let Some(Ok(layout)) = crate::ramp::Placed::of(candidate, object).map(|p| p.layout) {
+                if layout.exceeds() {
+                    out.push(
+                        Error::new(codes::RAMP_SLOPE)
+                            .with_arg("name", name.clone())
+                            .with_arg("slope", format!("{:.1}", layout.slope() * 100.0))
+                            .with_arg("max", format!("{:.1}", layout.max_slope * 100.0))
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
+                if layout.top_off().abs() > crate::ramp::TOP_TOLERANCE {
+                    out.push(
+                        Error::new(codes::RAMP_TOP)
+                            .with_arg("name", name)
+                            .with_arg("off", format!("{:.0}", layout.top_off() * 1000.0))
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
             }
         }
         Some(types::RAILING) => {
             if let Ok(d) = crate::railing::Derived::of(candidate, object) {
                 let gap = d.widest_gap();
+                if d.balusters_capped() {
+                    out.push(
+                        Error::new(codes::RAILING_BALUSTERS)
+                            .with_arg("name", name.clone())
+                            .with_arg("max", crate::railing::MAX_BALUSTERS.to_string())
+                            .with_arg(OBJECT, object.id.to_string()),
+                    );
+                }
                 if gap > crate::railing::CLEAR_GAP_LIMIT + 1.0e-9 {
                     out.push(
                         Error::new(codes::RAILING_GAP)
@@ -300,6 +374,25 @@ pub fn stair_warnings(candidate: &Snapshot, object: &Object) -> Vec<Error> {
                 .with_arg("low", format!("{low:.2}"))
                 .with_arg("high", format!("{high:.2}")),
         );
+    }
+    if let Some(found) = crate::headroom::minimum(candidate, &placed) {
+        let least = crate::stair::headroom_of(&object.values);
+        if found.clear < least - 1.0e-9 {
+            let by = get(candidate, found.by);
+            out.push(
+                Error::new(codes::STAIR_HEADROOM)
+                    .with_arg("name", display_name(object))
+                    .with_arg("clear", format!("{:.2}", found.clear))
+                    .with_arg("least", format!("{least:.2}"))
+                    .with_arg("x", format!("{:.2}", found.at[0]))
+                    .with_arg("y", format!("{:.2}", found.at[1]))
+                    .with_arg(
+                        "by",
+                        by.as_ref().map(|o| display_name(o)).unwrap_or_default(),
+                    )
+                    .with_detail(OTHER, found.by.to_string()),
+            );
+        }
     }
     let Some(top) = placed.top_level else {
         return with_object(out, object.id);
@@ -448,6 +541,7 @@ pub fn check(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<
     check_ceilings(candidate, touched, &mut out);
     check_openings(candidate, touched, &mut out);
     check_floor_edges(candidate, touched, &mut out);
+    check_roof_elements(candidate, touched, &mut out);
     check_roof_extrusions(candidate, touched, &mut out);
     check_roofs(candidate, touched, &mut out);
     check_instances_of_types(candidate, touched, &mut out);
@@ -739,6 +833,44 @@ fn check_floor_edges(
     }
 }
 
+/// The elevators, dormers and roof edge elements that changed need sizes in their ranges and, for
+/// a roof edge element, a profile that can be swept and at least one edge.
+fn check_roof_elements(
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, Change>,
+    out: &mut Vec<Error>,
+) {
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        let (Some(key), Some(object)) = (type_of(candidate, *id), get(candidate, *id)) else {
+            continue;
+        };
+        let (ok, code) = match key.as_str() {
+            types::ELEVATOR => (
+                crate::elevator::Elevator::from_values(&object.values)
+                    .is_some_and(|e| e.sizes_ok()),
+                codes::ELEVATOR_INVALID,
+            ),
+            types::DORMER => (
+                crate::dormer::Dormer::from_values(&object.values).is_some_and(|d| d.sizes_ok()),
+                codes::DORMER_INVALID,
+            ),
+            types::ROOF_EDGE => (
+                crate::roof_edge::RoofEdge::from_values(&object.values).is_some_and(|e| {
+                    !e.edges.is_empty() && crate::floor_edge::FloorEdge::profile_ok(&e.profile)
+                }),
+                codes::ROOF_EDGE_PROFILE,
+            ),
+            _ => continue,
+        };
+        if !ok {
+            out.push(Error::new(code).with_arg("name", display_name(&object)));
+        }
+    }
+}
+
 /// The error code of a boundary refusal.
 #[must_use]
 pub fn refusal_code(refusal: crate::floor::Refusal) -> arc_base::ErrorCode {
@@ -861,6 +993,10 @@ fn label_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) ->
 /// joined), a floor edge that follows a wall that no longer bounds it, and a door or window that
 /// would open into another wall. They concern the touched walls and the floors of their storeys.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one list of every warning of a change"
+)]
 pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
     let mut out = Vec::new();
     let mut storeys: Vec<ObjectId> = Vec::new();
@@ -918,6 +1054,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
             .iter()
             .enumerate()
             .filter_map(|(k, o)| crate::wall::Wall::from_values(&o.values).map(|w| (k, w)))
+            .filter(|(_, w)| !w.is_arc())
             .collect();
         let plain: Vec<crate::wall::Wall> = data.iter().map(|(_, w)| *w).collect();
         for (i, j) in crate::join::open_corners(&plain) {
@@ -937,7 +1074,9 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
                 continue;
             };
             let wall_of = |id: ObjectId| {
-                get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values))
+                get(candidate, id)
+                    .and_then(|o| crate::wall::Wall::from_values(&o.values))
+                    .filter(|w| !w.is_arc())
             };
             // The edges are matched to the vertices, so the boundary without the shaft openings.
             let Some(raw) = derived.floor.boundary_in(candidate) else {
@@ -961,6 +1100,7 @@ pub fn warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> V
     }
     out.extend(ceiling_warnings(candidate, touched));
     out.extend(floor_edge_warnings(candidate, touched));
+    out.extend(roof_edge_warnings(candidate, touched));
     out
 }
 
@@ -997,12 +1137,44 @@ fn floor_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change
     out
 }
 
+/// The warnings about roof edge elements: edges the roof no longer has, or that have no slope.
+fn roof_edge_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
+    let mut edges: Vec<Arc<Object>> = Vec::new();
+    for (id, change) in touched {
+        if *change == Change::Deleted {
+            continue;
+        }
+        match type_of(candidate, *id).as_deref() {
+            Some(types::ROOF_EDGE) => edges.extend(get(candidate, *id)),
+            Some(ROOF) => edges.extend(crate::spatial::children(candidate, types::ROOF_EDGE, *id)),
+            _ => {}
+        }
+    }
+    edges.sort_by_key(|e| e.id);
+    edges.dedup_by_key(|e| e.id);
+    edges
+        .into_iter()
+        .filter_map(|edge| {
+            let orphans = crate::roof_edge::orphans_of(candidate, &edge);
+            (!orphans.is_empty()).then(|| {
+                Error::new(codes::ROOF_EDGE_ORPHAN)
+                    .with_arg("name", display_name(&edge))
+                    .with_arg("count", orphans.len().to_string())
+                    .with_detail(OBJECT, edge.id.to_string())
+            })
+        })
+        .collect()
+}
+
 /// The warnings about ceilings and vertical openings: an edge that follows a wall that no longer
 /// bounds the ceiling there, and an opening that reaches outside the element that hosts it.
 fn ceiling_warnings(candidate: &Snapshot, touched: &BTreeMap<ObjectId, Change>) -> Vec<Error> {
     let mut out = Vec::new();
-    let wall_of =
-        |id: ObjectId| get(candidate, id).and_then(|o| crate::wall::Wall::from_values(&o.values));
+    let wall_of = |id: ObjectId| {
+        get(candidate, id)
+            .and_then(|o| crate::wall::Wall::from_values(&o.values))
+            .filter(|w| !w.is_arc())
+    };
     for ceiling in objects(candidate, CEILING) {
         let storey_touched = ceiling.header.owner.is_some_and(|s| {
             touched.iter().any(|(id, c)| {
@@ -1092,8 +1264,9 @@ pub fn room_findings(candidate: &Snapshot, storey: ObjectId) -> Vec<Error> {
 }
 
 /// The fields of an element of type `key` that a pinned element may still change: its name, its
-/// flag, the values copied from its type (a type edit reaches every instance) and, for a room, its
-/// number and finishes.
+/// flag, the values copied from its type (a type edit reaches every instance), for a room its
+/// number and finishes, and for a curtain wall its grid edits and panel overrides (they fill and
+/// divide the wall but never move or reshape it).
 fn pin_free(key: &str) -> &'static [usize] {
     use types::{floor, insert, room, wall};
     match key {
@@ -1102,6 +1275,8 @@ fn pin_free(key: &str) -> &'static [usize] {
             wall::THICKNESS,
             wall::CORE_EXTERIOR,
             wall::CORE_INTERIOR,
+            wall::GRID_EDITS,
+            wall::CELL_OVERRIDES,
             wall::PINNED,
         ],
         DOOR | WINDOW => &[
@@ -1147,6 +1322,9 @@ fn pin_free(key: &str) -> &'static [usize] {
             types::vertical_opening::PINNED,
         ],
         types::FLOOR_EDGE => &[types::floor_edge::NAME, types::floor_edge::PINNED],
+        types::ELEVATOR => &[types::elevator::NAME, types::elevator::PINNED],
+        types::DORMER => &[types::dormer::NAME, types::dormer::PINNED],
+        types::ROOF_EDGE => &[types::roof_edge::NAME, types::roof_edge::PINNED],
         types::ROOF_EXTRUSION => &[
             types::roof_extrusion::NAME,
             types::roof_extrusion::THICKNESS,
@@ -1178,9 +1356,14 @@ pub fn pin_refusal(
             (Change::Deleted, _) | (_, None) => true,
             (_, Some(after)) => {
                 let free = pin_free(&key);
+                // Parameter values are data, not placement: a pinned element takes them.
+                let values = crate::parameter::field_at(base, &key);
                 after.header.owner != before.header.owner
-                    || (0..before.values.len().max(after.values.len()))
-                        .any(|k| !free.contains(&k) && before.values.get(k) != after.values.get(k))
+                    || (0..before.values.len().max(after.values.len())).any(|k| {
+                        !free.contains(&k)
+                            && Some(k) != values
+                            && before.values.get(k) != after.values.get(k)
+                    })
             }
         };
         if changed {
@@ -1209,11 +1392,13 @@ pub enum WarningKind {
     Ceiling,
     /// A grid label used twice in a building.
     Datum,
+    /// Geometry far from the internal origin.
+    Location,
 }
 
 impl WarningKind {
     /// Every kind, in the order the panel lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Stair,
         Self::Room,
         Self::Wall,
@@ -1222,6 +1407,7 @@ impl WarningKind {
         Self::Insert,
         Self::Type,
         Self::Datum,
+        Self::Location,
     ];
 
     /// The kind of a finding, by its code.
@@ -1234,7 +1420,7 @@ impl WarningKind {
             Self::Stair
         } else if code.starts_with("ab.model.room") {
             Self::Room
-        } else if code.starts_with("ab.model.floor") {
+        } else if code.starts_with("ab.model.floor") || code.starts_with("ab.model.roof_edge") {
             Self::Floor
         } else if code.starts_with("ab.model.ceiling") || code.starts_with("ab.model.opening") {
             Self::Ceiling
@@ -1242,6 +1428,8 @@ impl WarningKind {
             Self::Insert
         } else if code.starts_with("ab.model.datum") {
             Self::Datum
+        } else if code.starts_with("ab.model.location") {
+            Self::Location
         } else if code.starts_with("ab.model.type") {
             Self::Type
         } else {
@@ -1350,6 +1538,9 @@ pub fn register(snapshot: &Snapshot) -> Vec<Warning> {
             .with_arg("count", found.len().to_string());
         push(Severity::Warning, error, found);
     }
+    if let Some((error, found)) = crate::coordinates::distant_findings(snapshot) {
+        push(Severity::Warning, error, found);
+    }
     for key in [WALL, FLOOR, DOOR, WINDOW, ROOF, CEILING] {
         for object in objects(snapshot, key) {
             if let Some(error) = type_problem(snapshot, key, &object) {
@@ -1402,6 +1593,7 @@ pub fn is_ceiling_range(error: &Error) -> bool {
 pub fn is_warning(error: &Error) -> bool {
     error.code() == codes::INSERT_MEETS_WALL.code
         || error.code() == codes::FLOOR_EDGE_ORPHAN.code
+        || error.code() == codes::ROOF_EDGE_ORPHAN.code
         || is_ceiling_range(error)
 }
 
@@ -1412,6 +1604,7 @@ pub fn validator() -> DocumentValidator {
     Arc::new(|base, candidate, touched| {
         pin_refusal(base, candidate, touched)
             .into_iter()
+            .chain(crate::group::direct_member_edits(base, candidate, touched))
             .chain(check(candidate, touched))
             .map(|error| Finding {
                 severity: if is_warning(&error) {
@@ -1437,6 +1630,81 @@ pub fn validator() -> DocumentValidator {
 /// path has none; the headless runner and the tests install it.
 pub fn install(document: &Document) {
     document.add_validator(validator());
+}
+
+/// What is wrong with the shape of a wall record: an arc whose faces have no radius, a lean that
+/// leaves no thickness at the top, shapes that cannot be combined, a profile or a band that does
+/// not fit, and doors or windows the profile leaves out.
+fn wall_shape_problems(candidate: &Snapshot, object: &Object) -> Vec<Error> {
+    use crate::wall::{Band, Profile, Wall};
+    let Some(wall) = Wall::from_values(&object.values) else {
+        return Vec::new();
+    };
+    let name = display_name(object);
+    let mut out = Vec::new();
+    let profile = Profile::of(&object.values);
+    let bands = Band::of(&object.values);
+    let combination = |first: &str, second: &str| {
+        Error::new(codes::WALL_SHAPE_COMBINATION)
+            .with_arg("name", name.clone())
+            .with_arg("first", first)
+            .with_arg("second", second)
+    };
+    if !wall.shape_fits() {
+        out.push(Error::new(codes::WALL_SHAPE_INVALID).with_arg("name", name.clone()));
+    }
+    if profile.is_some() && wall.is_arc() {
+        out.push(combination("profile", "arc"));
+    }
+    if profile.is_some() && wall.leans() {
+        out.push(combination("profile", "lean"));
+    }
+    if !bands.is_empty() && (wall.is_arc() || wall.leans() || profile.is_some()) {
+        out.push(combination(
+            "bands",
+            if wall.is_arc() {
+                "arc"
+            } else if wall.leans() {
+                "lean"
+            } else {
+                "profile"
+            },
+        ));
+    }
+    if let Some(profile) = &profile {
+        if !profile.fits(wall.length(), wall.height) {
+            out.push(Error::new(codes::WALL_PROFILE_INVALID).with_arg("name", name.clone()));
+        } else {
+            let left: Vec<String> = crate::insert::hosted(candidate, object.id)
+                .into_iter()
+                .filter(|(_, i)| {
+                    let (x0, x1) = i.extent();
+                    !profile.holds((x0, x1), (i.sill, i.top()))
+                })
+                .map(|(o, _)| display_name(&o))
+                .collect();
+            if !left.is_empty() {
+                out.push(
+                    Error::new(codes::WALL_PROFILE_INSERTS)
+                        .with_arg("name", name.clone())
+                        .with_arg("count", left.len().to_string())
+                        .with_arg("inserts", left.join(", ")),
+                );
+            }
+        }
+    }
+    for band in &bands {
+        let span = if band.vertical {
+            wall.length()
+        } else {
+            wall.height
+        };
+        if !band.fits(span) {
+            out.push(Error::new(codes::WALL_BAND_INVALID).with_arg("name", name.clone()));
+            break;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

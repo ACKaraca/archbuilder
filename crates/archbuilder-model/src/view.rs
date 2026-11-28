@@ -66,11 +66,17 @@ pub enum Category {
     Room,
     /// Shafts and openings.
     Opening,
+    /// Railings.
+    Railing,
+    /// Ramps.
+    Ramp,
+    /// Components: placed instances of families.
+    Component,
 }
 
 impl Category {
     /// Every category, in the order of the flags of a view record.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 12] = [
         Self::Wall,
         Self::Floor,
         Self::Roof,
@@ -80,6 +86,9 @@ impl Category {
         Self::Stair,
         Self::Room,
         Self::Opening,
+        Self::Railing,
+        Self::Ramp,
+        Self::Component,
     ];
 
     /// The name of the category in the drawing (the key of its graphic overrides).
@@ -95,6 +104,9 @@ impl Category {
             Self::Stair => "stair",
             Self::Room => "room",
             Self::Opening => "opening",
+            Self::Railing => "railing",
+            Self::Ramp => "ramp",
+            Self::Component => "component",
         }
     }
 
@@ -111,6 +123,9 @@ impl Category {
             Self::Stair => "show_stairs",
             Self::Room => "show_rooms",
             Self::Opening => "show_openings",
+            Self::Railing => "show_railings",
+            Self::Ramp => "show_ramps",
+            Self::Component => "show_components",
         }
     }
 
@@ -124,7 +139,26 @@ impl Category {
     /// The position of the category's flag in the view record.
     #[must_use]
     pub fn slot(self) -> usize {
-        plan_view::CATEGORIES + Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+        match self {
+            // Appended to the record after the first categories, the list of hidden elements and
+            // the range.
+            Self::Railing => plan_view::SHOW_RAILINGS,
+            Self::Ramp => plan_view::SHOW_RAMPS,
+            Self::Component => plan_view::SHOW_COMPONENTS,
+            _ => plan_view::CATEGORIES + Self::ALL.iter().position(|c| *c == self).unwrap_or(0),
+        }
+    }
+
+    /// The position of the category's flag in the record of a model view.
+    #[must_use]
+    pub fn model_slot(self) -> usize {
+        match self {
+            Self::Component => crate::types::model_view::SHOW_COMPONENTS,
+            _ => {
+                crate::types::model_view::CATEGORIES
+                    + Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+            }
+        }
     }
 
     /// The category of the element type `key`; `None` for what a view does not draw.
@@ -138,9 +172,13 @@ impl Category {
             t::CEILING => Self::Ceiling,
             t::DOOR => Self::Door,
             t::WINDOW => Self::Window,
-            t::STAIR | t::RAMP | t::RAILING => Self::Stair,
+            t::STAIR => Self::Stair,
+            t::RAMP => Self::Ramp,
+            t::COMPONENT => Self::Component,
+            t::RAILING => Self::Railing,
             t::ROOM => Self::Room,
-            t::SHAFT | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
+            t::SHAFT | t::ELEVATOR | t::WALL_OPENING | t::VERTICAL_OPENING => Self::Opening,
+            t::DORMER | t::ROOF_EDGE => Self::Roof,
             _ => return None,
         })
     }
@@ -164,7 +202,7 @@ pub struct PlanView {
     /// Whether the storey below shows faint underneath.
     pub underlay: bool,
     /// Which categories are drawn, in the order of [`Category::ALL`].
-    pub shown: [bool; 9],
+    pub shown: [bool; 12],
     /// The elements hidden in this view.
     pub hidden: Vec<ObjectId>,
     /// The bottom of the range relative to the level (not above the cut).
@@ -172,6 +210,112 @@ pub struct PlanView {
     /// The view depth relative to the level: how far below the bottom elements are still drawn
     /// (not above the bottom).
     pub depth: f64,
+    /// The extent and head overrides of grids in this view.
+    pub datum_views: Vec<DatumView>,
+    /// Which north the view is oriented to.
+    pub north: North,
+}
+
+coded! {
+    /// Which north a plan view is oriented to.
+    North {
+        /// Project north: the internal y axis points up.
+        #[default]
+        Project = 0, "project_north";
+        /// True north points up.
+        True = 1, "true_north";
+    }
+}
+
+/// The range of a view-specific grid extent adjustment, in meters.
+pub const INSET_RANGE: (f64, f64) = (-1000.0, 1000.0);
+
+/// What one view overrides of a grid: how far each end is pulled in (positive) or pushed out
+/// (negative) from the model extent, and whether each end shows its head. `None` keeps what the
+/// grid itself says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DatumView {
+    /// The grid.
+    pub datum: ObjectId,
+    /// How far the start is pulled in along the line, in meters.
+    pub start_inset: Option<f64>,
+    /// How far the end is pulled in along the line, in meters.
+    pub end_inset: Option<f64>,
+    /// Whether the start shows its head.
+    pub head_start: Option<bool>,
+    /// Whether the end shows its head.
+    pub head_end: Option<bool>,
+}
+
+impl DatumView {
+    /// The override of `datum` that overrides nothing.
+    #[must_use]
+    pub fn new(datum: ObjectId) -> Self {
+        Self {
+            datum,
+            start_inset: None,
+            end_inset: None,
+            head_start: None,
+            head_end: None,
+        }
+    }
+
+    /// Whether the entry overrides nothing and may be dropped.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.start_inset.is_none()
+            && self.end_inset.is_none()
+            && self.head_start.is_none()
+            && self.head_end.is_none()
+    }
+}
+
+/// The value of the `datum_views` field; absent when there is no override.
+#[must_use]
+pub fn datum_views_value(list: &[DatumView]) -> Option<Value> {
+    (!list.is_empty()).then(|| {
+        Value::List(
+            list.iter()
+                .take(crate::types::MAX_PER_VIEW_DATUMS)
+                .map(|d| {
+                    Value::Record(vec![
+                        Some(Value::Reference(d.datum)),
+                        d.start_inset.map(crate::types::length),
+                        d.end_inset.map(crate::types::length),
+                        d.head_start.map(Value::Bool),
+                        d.head_end.map(Value::Bool),
+                    ])
+                })
+                .collect(),
+        )
+    })
+}
+
+fn datum_views_at(values: &[Option<Value>]) -> Vec<DatumView> {
+    let Some(Some(Value::List(items))) = values.get(plan_view::DATUM_VIEWS) else {
+        return Vec::new();
+    };
+    let flag = |r: &[Option<Value>], at: usize| match r.get(at) {
+        Some(Some(Value::Bool(b))) => Some(*b),
+        _ => None,
+    };
+    items
+        .iter()
+        .take(crate::types::MAX_PER_VIEW_DATUMS)
+        .filter_map(|item| match item {
+            Value::Record(r) => match r.first() {
+                Some(Some(Value::Reference(datum))) => Some(DatumView {
+                    datum: *datum,
+                    start_inset: crate::types::meters(r, 1),
+                    end_inset: crate::types::meters(r, 2),
+                    head_start: flag(r, 3),
+                    head_end: flag(r, 4),
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 impl PlanView {
@@ -190,6 +334,8 @@ impl PlanView {
             hidden: Vec::new(),
             bottom: 0.0,
             depth: -BOTTOM_MARGIN,
+            datum_views: Vec::new(),
+            north: North::Project,
         }
     }
 
@@ -231,6 +377,8 @@ impl PlanView {
             hidden,
             bottom: crate::types::meters(values, plan_view::BOTTOM).unwrap_or(0.0),
             depth: crate::types::meters(values, plan_view::DEPTH).unwrap_or(-BOTTOM_MARGIN),
+            datum_views: datum_views_at(values),
+            north: North::of_field(values, plan_view::NORTH),
         })
     }
 
@@ -246,10 +394,21 @@ impl PlanView {
             Some(Value::Enum(self.detail.code())),
             Some(Value::Bool(self.underlay)),
         ];
-        out.extend(self.shown.iter().map(|b| Some(Value::Bool(*b))));
+        let flags = |range: std::ops::Range<usize>| {
+            self.shown
+                .get(range)
+                .unwrap_or_default()
+                .iter()
+                .map(|b| Some(Value::Bool(*b)))
+                .collect::<Vec<_>>()
+        };
+        out.extend(flags(0..plan_view::CATEGORY_COUNT));
         out.push(Some(hidden_value(&self.hidden)));
         out.push(Some(crate::types::length(self.bottom)));
         out.push(Some(crate::types::length(self.depth)));
+        out.push(datum_views_value(&self.datum_views));
+        out.push((self.north != North::Project).then(|| Value::Enum(self.north.code())));
+        out.extend(flags(plan_view::CATEGORY_COUNT..Category::ALL.len()));
         out
     }
 

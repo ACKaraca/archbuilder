@@ -75,6 +75,8 @@ pub struct Chain {
     pub location: Option<String>,
     /// Whether the next wall is flipped, once a wall carried it.
     pub flip: bool,
+    /// Whether the walls are arcs: the prompts ask for a point on each.
+    pub arc: bool,
     /// The start of each wall placed, in order: where the chain goes back to on undo.
     pub trail: Vec<[f64; 2]>,
 }
@@ -199,6 +201,18 @@ impl Tool {
     /// # Errors
     /// `ab.cmd.no_building` without a storey; the errors of the command line.
     pub fn begin(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        self.begin_with(env, run, false)
+    }
+
+    /// Starts a chain of arc walls: like [`Self::begin`], with a point on each arc asked for.
+    ///
+    /// # Errors
+    /// As [`Self::begin`].
+    pub fn begin_arc(&mut self, env: &Env<'_>, run: Runner<'_>) -> Result<()> {
+        self.begin_with(env, run, true)
+    }
+
+    fn begin_with(&mut self, env: &Env<'_>, run: Runner<'_>, arc: bool) -> Result<()> {
         self.line.cancel();
         self.chain = None;
         let (storey, elevation) = storey_for(&env.document.snapshot(), env.selection)
@@ -218,6 +232,7 @@ impl Tool {
             top_level: None,
             location: None,
             flip: false,
+            arc,
             trail: Vec::new(),
         });
         self.next(env, run)
@@ -262,6 +277,9 @@ impl Tool {
         }
         if chain.flip {
             preset.insert("flip".into(), Value::from(true));
+        }
+        if chain.arc {
+            preset.insert("arc".into(), Value::from(true));
         }
         if let Some(location) = &chain.location {
             preset.insert("location_line".into(), Value::from(location.as_str()));
@@ -327,6 +345,8 @@ impl Tool {
             .and_then(Value::as_f64)
             .filter(|_| chain.top_level.is_none());
         chain.flip = wall.get("flip").and_then(Value::as_bool).unwrap_or(false);
+        // The chain goes on with arcs when the last wall was one (the keyword turns it off).
+        chain.arc = wall.get("arc").and_then(Value::as_bool).unwrap_or(false);
         chain.location = wall
             .get("location_line")
             .and_then(Value::as_str)

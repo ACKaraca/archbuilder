@@ -56,3 +56,69 @@ bound the rooms of [06-rooms-areas-and-spaces.md](06-rooms-areas-and-spaces.md).
 | AB-WALL-025 | Curved curtain walls | Places curtain walls on arcs with planar panels between vertical grid lines, reporting chord deviation per panel. | T2 | 2 |
 | AB-WALL-026 | Curtain systems on faces | Applies curtain grids, panels and mullions to arbitrary planar or ruled faces of mass or generic elements with a UV grid, and regenerates when the face changes. | T2 | 3 |
 | AB-WALL-027 | Panel and mullion counts | Exposes per-panel width, height, area and type and per-mullion length to schedules and IFC, with cell keys that stay stable across regeneration. | T1 | 2 |
+
+### Behavior notes: wall shapes
+
+- **Arc walls (AB-WALL-001, AB-WALL-007, AB-WALL-025).** A wall on an arc keeps its layers along it,
+  joins straight and arc walls at their ends, hosts doors and windows placed by distance along the arc
+  and draws, picks, moves, rotates, mirrors and copies like any wall. Openings in an arc wall are
+  flat chords within the arc's deviation over their width. A wall ending on the middle of an arc wall,
+  floor edges following an arc face, and the edit commands align, offset, trim, extend, split and
+  merge are for straight walls; the command that meets an arc wall says so.
+- **Curved curtain walls (AB-WALL-025).** A curtain wall on an arc has a flat panel in each cell
+  between two vertical lines and the schedule lists the deviation of the arc from each panel
+  (`chord_deviation`); mullions stand at the grid lines and bars along the arc are flat pieces, each
+  within 10 mm of the arc. A grid turned by an angle is not available on an arc wall, and a curtain
+  wall is not embedded in an arc wall.
+- **Profile (AB-WALL-009).** A sketched profile with openings replaces the rectangle of the
+  elevation and is restored by clearing it. A door or window outside the profile refuses the edit and is
+  named. A profiled wall keeps square ends.
+- **Slanted and tapered walls (AB-WALL-010).** One angle leans both faces; two angles taper the wall.
+  Layers follow in proportion. Not on arc walls.
+- **Stacked walls (AB-WALL-012).** A stacked wall type is made of basic wall types (`archbuilder.wall.stack_type`):
+  segments from the base up with fixed heights and exactly one variable segment that takes the rest of
+  the wall's height. Every segment has the same total thickness, so the stack is one wall for
+  placement, joins and hosting; the layers of each segment are cleaned against the neighbors, drawn in
+  plan and section and exported at their own heights. A type used by a stack cannot be deleted.
+  Stacks of curtain types or of stacks are refused.
+- **Bands (AB-WALL-011).** Horizontal and vertical bands, projecting or recessed, measured from the
+  base or top, stop at doors and windows. They belong to a wall instance; a band by type, and bands
+  joined across corners, are not available.
+
+### Behavior notes: curtain grids
+
+- **Grid angle (AB-WALL-020).** Each grid rule of a curtain type has an angle of at most 60 degrees
+  either way, counter-clockwise in the elevation seen with the start of the baseline on the left.
+  A turned family leans its lines about the middle of the wall; a line's position is where it
+  crosses the middle, and fixed distances and spacings are measured along the baseline (vertical
+  lines) or the height (horizontal lines). Cells and panels of a turned grid are convex polygons
+  cut to the wall, listed with their corners; width and height of such a panel are those of its
+  bounding box and its area is the polygon's. Leaning bars are cut square to their axis. A door or
+  window override needs a rectangular cell: in a turned cell the panel is drawn as a plain one.
+  Added lines lean with their family. The two families must cross at a clear angle; a rule pair
+  that makes them nearly parallel is refused. Older documents carry no angle and stay straight.
+- **Justification and offset (AB-WALL-020).** A fixed distance counts from the start, the middle
+  or the end of the baseline or the height, shifted by the offset. The other three rules divide
+  the stretch the offset leaves free (from the offset to the end for a start justification, up to
+  the end less the offset for an end justification, between the two for a center one) into equal
+  cells, and a line stands at each end of that stretch that does not reach a border. Their value
+  is the number of interior lines of the stretch or the spacing measured over it. Without an
+  offset nothing changes.
+- **Split and merge with grid edits (AB-WALL-018, AB-WALL-023).** A curtain wall that holds grid
+  edits or panel overrides can be split or merged. Edits are carried to the wall they belong to
+  only where that is unambiguous: an added line stays where it is, a segment is cut to the part
+  it lies in, and a move or removal of a rule's line, or a panel override, is kept only when the
+  new wall has the same line or cell, under the same key and in the same place. The first line of
+  a merged wall's second part gets a fresh key past the first part's. What cannot be kept without
+  guessing is left out and listed in the command result as `unkept`, never rebound to a neighbor.
+  Both commands are one undo step.
+- **Pin (AB-DATUM-022).** A pinned curtain wall still takes grid edits and panel overrides: they
+  divide and fill the wall but never move or reshape it, like the finishes of a pinned room.
+  Moving, splitting, merging or deleting it is refused, naming the wall.
+- **Schedule rows (AB-WALL-027).** `archbuilder.curtain.schedule` (read-only, not an undo step)
+  lists, for one curtain wall or all of them, a row per panel (cell key, kind, door or window type
+  name, material, thickness, clear width, height and area, whether overridden, whether the cell
+  is cut by a turned grid) and per mullion (key, role, upright or not, profile, width, depth,
+  length along its axis), with the wall's total panel area and mullion length. The rows are
+  derived from the wall, and `archbuilder-cli inspect` prints the same rows. A schedule view
+  built on them follows the keys, which stay the same when the grid regenerates.

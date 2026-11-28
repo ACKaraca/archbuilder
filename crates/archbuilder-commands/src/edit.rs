@@ -180,8 +180,14 @@ fn wall_at(
         .map(|(id, w)| (wall_distance(&w, p), id, w))
         .filter(|(d, _, _)| *d <= radius)
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id, w)| (id, w))
         .ok_or_else(|| Error::new(codes::NO_WALL_AT))
+        .and_then(|(_, id, w)| {
+            if w.is_arc() {
+                Err(Error::new(codes::ARC_WALL_UNSUPPORTED).with_arg("name", name_of(snapshot, id)))
+            } else {
+                Ok((id, w))
+            }
+        })
 }
 
 /// A straight line an element offers to align or trim to: a face or the center line of a wall,
@@ -197,7 +203,7 @@ struct Line {
 fn lines(snapshot: &Snapshot, storey: ObjectId) -> Vec<Line> {
     let mut out = Vec::new();
     for object in spatial::walls(snapshot, storey).iter().take(MAX_OBJECTS) {
-        let Some(w) = Wall::from_values(&object.values) else {
+        let Some(w) = Wall::from_values(&object.values).filter(|w| !w.is_arc()) else {
             continue;
         };
         let f = w.plain_footprint();
@@ -519,6 +525,11 @@ fn plan_offset(
                 .map(|w| (*id, w))
         })
         .collect();
+    if let Some((id, _)) = walls.iter().find(|(_, w)| w.is_arc()) {
+        return Err(
+            Error::new(codes::ARC_WALL_UNSUPPORTED).with_arg("name", name_of(snapshot, *id))
+        );
+    }
     let floors: Vec<(ObjectId, Floor, Vec<Vec<P>>)> = floor_ids
         .iter()
         .take(MAX_OBJECTS)
@@ -978,10 +989,6 @@ fn split(ctx: &mut Context<'_>, p: Split) -> Result<Edited> {
     };
     let snapshot = ctx.snapshot().clone();
     let (id, w) = wall_at(&snapshot, storey, p.at, radius)?;
-    if spatial::get(&snapshot, id).is_some_and(|o| archbuilder_model::curtain::is_edited(&o)) {
-        return Err(Error::new(archbuilder_model::error::codes::CURTAIN_EDITED)
-            .with_arg("name", name_of(&snapshot, id)));
-    }
     let u = direction(&w).ok_or_else(|| Error::new(codes::NO_WALL_AT))?;
     let length = w.length();
     let picked = dot(sub(p.at, w.start), u);
@@ -1052,6 +1059,14 @@ fn split(ctx: &mut Context<'_>, p: Split) -> Result<Edited> {
         }
     }
     reshape(ctx, id, &first)?;
+    // A curtain wall's grid edits and panel overrides go to the piece they belong to.
+    let mut unkept = Vec::new();
+    if let Some(([one, two], lost)) = crate::curtain::split_carry(&snapshot, id, cut_low, cut_high)
+    {
+        crate::curtain::write_carried(ctx, id, &one)?;
+        crate::curtain::write_carried(ctx, second, &two)?;
+        unkept = lost;
+    }
     // Floor edges that follow the wall follow the piece they lie along; an edge across the cut
     // is cut there too, so the outline stays where it is.
     for floor in spatial::children(&snapshot, FLOOR, storey_id.unwrap_or(id)) {
@@ -1081,6 +1096,7 @@ fn split(ctx: &mut Context<'_>, p: Split) -> Result<Edited> {
             objects: 2,
             created: vec![IdParam(second)],
             meets,
+            unkept,
             ..Modified::default()
         },
         "gap",
@@ -1260,10 +1276,6 @@ fn merge(ctx: &mut Context<'_>, p: Merge) -> Result<Edited> {
         spatial::get(&snapshot, ia).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?,
         spatial::get(&snapshot, ib).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?,
     );
-    if archbuilder_model::curtain::is_edited(&oa) || archbuilder_model::curtain::is_edited(&ob) {
-        return Err(Error::new(archbuilder_model::error::codes::CURTAIN_EDITED)
-            .with_arg("name", name_of(&snapshot, ia)));
-    }
     let (Some(ua), Some(ub)) = (direction(&a), direction(&b)) else {
         return Err(refused());
     };
@@ -1336,6 +1348,14 @@ fn merge(ctx: &mut Context<'_>, p: Merge) -> Result<Edited> {
     }
     // A's own openings keep their place: its start moves only when b comes before it.
     reshape(ctx, ia, &merged)?;
+    // The grid edits and panel overrides of curtain walls go to the merged wall.
+    let mut unkept = Vec::new();
+    if let Some((carried, lost)) =
+        crate::curtain::merge_carry(&snapshot, ia, ib, (u8::from(ea == 1), u8::from(eb == 1)))
+    {
+        crate::curtain::write_carried(ctx, ia, &carried)?;
+        unkept = lost;
+    }
     for (item, distance, facing) in moved {
         set_length(ctx, item, "distance", distance)?;
         if let Some(code) = facing {
@@ -1385,6 +1405,7 @@ fn merge(ctx: &mut Context<'_>, p: Merge) -> Result<Edited> {
         modified: Modified {
             objects: 2,
             meets,
+            unkept,
             ..Modified::default()
         },
         keep: None,
@@ -1496,10 +1517,7 @@ fn radial_array(ctx: &mut Context<'_>, p: RadialArray) -> Result<Edited> {
     let full = std::f64::consts::TAU;
     let angle = match &p.angle {
         None => full,
-        Some(QuantityParam::Text(t)) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(360.0).to_radians()
-        }
-        Some(other) => ctx.quantity(other, Dimension::ANGLE)?.value(),
+        Some(other) => crate::angle(ctx, other)?,
     };
     if !angle.is_finite() || angle == 0.0 || angle.abs() > full + Tolerance::DEFAULT.angular {
         return Err(invalid());

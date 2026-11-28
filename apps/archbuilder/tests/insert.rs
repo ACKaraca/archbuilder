@@ -457,6 +457,8 @@ fn the_plan_symbol_has_the_leaf_open_on_the_facing_side_and_the_swing_on_the_han
         location: LocationLine::Center,
         start_join: JoinStyle::Auto,
         end_join: JoinStyle::Auto,
+        bulge: 0.0,
+        lean: [0.0; 2],
     };
     let door = Insert {
         kind: Kind::Door,
@@ -470,6 +472,7 @@ fn the_plan_symbol_has_the_leaf_open_on_the_facing_side_and_the_swing_on_the_han
         hand: Hand::Left,
         facing: Facing::Exterior,
         rise: 0.0,
+        profile: None,
     };
     let lines = symbol(&wall, 0.0, &door).unwrap();
     // The outline, the leaf and the arc.
@@ -536,4 +539,52 @@ fn options_work_before_any_wall_is_chosen_and_survive_a_refused_placement() {
         .unwrap()
         .1;
     assert_eq!(second.width, 1.0);
+}
+
+#[test]
+fn the_insert_tool_places_hosted_family_instances_in_a_row_and_flips_them() {
+    use archbuilder_model::family::def::Category;
+    use archbuilder_model::family::templates::starter;
+    use archbuilder_model::types::FAMILY_INSERT;
+    let mut rig = Rig::new();
+    let wall = rig.wall();
+    // The door starter becomes a family of the project; a furniture starter stands freely.
+    rig.invoke(
+        "archbuilder.family.commit",
+        json!({"text": starter(Category::Door).unwrap()}),
+    );
+    let snapshot = rig.document.snapshot();
+    assert!(archbuilder_commands::family_project::hosted_by_walls(
+        &snapshot,
+        "Door: 0900x2100"
+    ));
+    rig.invoke(
+        "archbuilder.family.commit",
+        json!({"text": starter(Category::Furniture).unwrap()}),
+    );
+    assert!(!archbuilder_commands::family_project::hosted_by_walls(
+        &rig.document.snapshot(),
+        "Table: 1400x800"
+    ));
+    // The chain: a typed distance places one instance, a click places the next, and a flip
+    // typed before a distance turns the hand of that one.
+    rig.step(|t, env, run| t.begin_family(env, run, "Door: 0900x2100".to_owned()));
+    assert!(rig.tool.running());
+    rig.step(|t, env, run| t.text(env, run, "2.0", None));
+    assert_eq!(rig.count(FAMILY_INSERT), 1);
+    rig.step(|t, env, run| t.click(env, run, wall, 6.0, false));
+    assert_eq!(rig.count(FAMILY_INSERT), 2);
+    rig.step(|t, env, run| t.text(env, run, "flip_hand", None));
+    rig.step(|t, env, run| t.text(env, run, "8.0", None));
+    let snapshot = rig.document.snapshot();
+    let last = spatial::children(&snapshot, FAMILY_INSERT, wall)
+        .into_iter()
+        .filter_map(|o| archbuilder_model::family::loaded::FamilyInsert::of(&o))
+        .find(|f| f.distance == 8.0)
+        .unwrap();
+    assert_eq!(last.hand, archbuilder_model::insert::Hand::Right);
+    // Enter ends the chain; the instances stay.
+    rig.step(|t, env, run| t.text(env, run, "", None));
+    assert!(!rig.tool.running());
+    assert_eq!(rig.count(FAMILY_INSERT), 3);
 }

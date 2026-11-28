@@ -748,10 +748,10 @@ fn a_room_around_a_courtyard_is_a_space_with_a_void() {
     near(volumes[&global_id(by("201").id.as_u128())], 3.0 * 121.6);
 }
 
-/// A stair is named in the loss report (the writer has no stair entities); the shaft opening it
-/// cuts in the slab of the level above is a hole of the slab's profile in the file.
+/// A stair is written with its parts; the shaft opening it cuts in the slab of the level above is
+/// a hole of the slab's profile in the file.
 #[test]
-fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
+fn a_stair_is_written_and_its_opening_is_a_hole_of_the_slab_above() {
     let house = House::new();
     let made = house.run(
         "archbuilder.stair.create",
@@ -769,13 +769,14 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     near(derived.area(), 60.0 - 4.0 - 4.53 * 1.1);
     let exported = export_ifc(&snapshot, &options()).unwrap();
     assert!(exported.valid, "{:?}", exported.report.items);
-    let [item] = &exported.report.items[..] else {
-        panic!("{:?}", exported.report.items);
-    };
-    assert_eq!(item.reason, "ab.io.ifc.stair_not_written");
-    assert_eq!(item.record_kind.as_deref(), Some("IFCSTAIR"));
-    assert_eq!(item.object_id, Some(stair.to_string()));
-    assert_eq!(exported.elements, 15);
+    assert!(
+        exported.report.items.is_empty(),
+        "{:?}",
+        exported.report.items
+    );
+    assert_eq!(file_count(&exported.bytes, "IFCSTAIR"), 1);
+    assert!(stair.as_u128() != 0);
+    assert_eq!(exported.elements, 16);
     // The body read back has the opening as a hole: its volume is the net area times 0.2 m.
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
@@ -792,21 +793,19 @@ fn a_stair_is_reported_and_its_opening_is_a_hole_of_the_slab_above() {
     near(body, (60.0 - 4.0 - 4.53 * 1.1) * 0.2);
 }
 
-/// A ramp and its railings are named in the loss report (the pinned writer has no ramp or railing
-/// entities), never written as proxies; the opening the ramp cuts in the slab above is written.
+/// A ramp and its hosted railings are written (see `parts.rs`); the opening the ramp cuts in the
+/// slab above is written too.
 #[test]
-fn a_ramp_and_its_railings_are_reported_and_its_opening_is_a_hole_of_the_slab_above() {
+fn a_ramp_is_written_and_its_opening_is_a_hole_of_the_slab_above() {
     let house = House::new();
-    let made = house.run(
+    house.run(
         "archbuilder.ramp.create",
         json!({"start": [6.5, 0.5], "to": [6.5, 5.5]}),
     );
-    let ramp = House::id(&made["ramp"]);
-    let free = house.run(
+    house.run(
         "archbuilder.railing.create",
         json!({"points": [[1.0, 1.0], [2.0, 1.0]]}),
     );
-    let free = House::id(&free["railing"]);
     let snapshot = house.snapshot();
     let upper = spatial::objects(&snapshot, FLOOR)
         .into_iter()
@@ -817,49 +816,16 @@ fn a_ramp_and_its_railings_are_reported_and_its_opening_is_a_hole_of_the_slab_ab
     assert_eq!(derived.boundary.loops.len(), 3);
     near(derived.area(), 60.0 - 4.0 - 5.05 * 1.3);
     let exported = export_ifc(&snapshot, &options()).unwrap();
-    let mut kinds: Vec<(String, String)> = exported
-        .report
-        .items
-        .iter()
-        .map(|i| (i.reason.clone(), i.record_kind.clone().unwrap_or_default()))
-        .collect();
-    kinds.sort();
-    assert_eq!(
-        kinds,
-        [
-            (
-                "ab.io.ifc.railing_not_written".to_owned(),
-                "IFCRAILING".to_owned()
-            ),
-            (
-                "ab.io.ifc.railing_not_written".to_owned(),
-                "IFCRAILING".to_owned()
-            ),
-            (
-                "ab.io.ifc.railing_not_written".to_owned(),
-                "IFCRAILING".to_owned()
-            ),
-            (
-                "ab.io.ifc.ramp_not_written".to_owned(),
-                "IFCRAMP".to_owned()
-            ),
-        ]
-    );
+    assert!(exported.valid, "{:?}", exported.report.items);
     assert!(
-        exported
-            .report
-            .items
-            .iter()
-            .any(|i| i.object_id == Some(ramp.to_string()))
+        exported.report.items.is_empty(),
+        "{:?}",
+        exported.report.items
     );
-    assert!(
-        exported
-            .report
-            .items
-            .iter()
-            .any(|i| i.object_id == Some(free.to_string()))
-    );
-    assert_eq!(exported.elements, 15);
+    assert_eq!(file_count(&exported.bytes, "IFCRAMP"), 1);
+    assert_eq!(file_count(&exported.bytes, "IFCRAILING"), 3);
+    // The ramp, its two railings and the railing by path.
+    assert_eq!(exported.elements, 15 + 1 + 3);
 }
 
 /// A hip roof over the upper walls, with those walls attached to it: an `IfcRoof` of the roof
@@ -939,6 +905,78 @@ fn a_roof_and_its_attached_walls_read_back_with_their_bodies() {
             .unwrap()
             .volume();
         assert!((gross - want).abs() < 1e-6, "{gross} {want}");
+    }
+}
+
+/// The roof body follows the eave cut of its type: for each cut the body read back from the file
+/// has the volume of the derived solid, which is smaller than the plumb slab. Written to
+/// `ABSLAB_IFC_OUT` for independent validation when that is set.
+#[test]
+fn the_roof_body_follows_the_eave_cut_of_its_type() {
+    let house = House::new();
+    let snapshot = house.snapshot();
+    let upper_storey = spatial::storeys(&snapshot, spatial::buildings(&snapshot)[0].id)[1]
+        .storey
+        .id;
+    let made = house.run(
+        "archbuilder.roof.create",
+        json!({"storey": upper_storey, "picks": [[5.0, 3.0]], "type": "Timber rafters with insulation and tiles"}),
+    );
+    let roof = House::id(&made["roof"]);
+    let ty = spatial::objects(&house.snapshot(), archbuilder_model::types::ROOF_TYPE)
+        .into_iter()
+        .find(|t| {
+            archbuilder_model::element_type::name(t) == "Timber rafters with insulation and tiles"
+        })
+        .unwrap()
+        .id;
+    let slab_volume = |snapshot: &Snapshot| {
+        let object = spatial::get(snapshot, roof).unwrap();
+        archbuilder_model::roof::Derived::of(snapshot, &object)
+            .unwrap()
+            .solid()
+            .unwrap()
+            .volume()
+    };
+    let plumb = slab_volume(&house.snapshot());
+    for (cut, depth, name) in [
+        ("square", "0.1", "roof_square.ifc"),
+        ("two_cut_plumb", "0.1", "roof_two_cut_plumb.ifc"),
+        ("two_cut_square", "0.1", "roof_two_cut_square.ifc"),
+        ("plumb", "0.1", "roof_plumb.ifc"),
+    ] {
+        house.run(
+            "archbuilder.type.set",
+            json!({"type": ty, "rafter_cut": cut, "fascia_depth": depth}),
+        );
+        let snapshot = house.snapshot();
+        let exported = export_ifc(&snapshot, &options()).unwrap();
+        assert!(exported.valid, "{cut}: {:?}", exported.report.items);
+        assert!(!exported.report.has_loss(), "{cut}: {:?}", exported.report);
+        if let Ok(dir) = std::env::var("ABSLAB_IFC_OUT") {
+            std::fs::write(std::path::Path::new(&dir).join(name), &exported.bytes).unwrap();
+        }
+        let file = read(&exported.bytes, &mut ReadOptions::default())
+            .unwrap()
+            .file;
+        let geometry = file.geometry(&Limits::DEFAULT, &Cancel::new()).unwrap();
+        let mut written = 0.0;
+        for item in &geometry.items {
+            if gid(&file, item.product) == global_id(roof.as_u128()) {
+                let mesh = item.world_mesh(&Limits::DEFAULT).unwrap().unwrap();
+                written += volume(&mesh, &Limits::DEFAULT).unwrap();
+            }
+        }
+        let derived = slab_volume(&snapshot);
+        assert!(
+            (written - derived).abs() < 1e-6,
+            "{cut}: {written} against {derived}"
+        );
+        if cut == "plumb" {
+            assert!((derived - plumb).abs() < 1e-9);
+        } else {
+            assert!(derived < plumb - 1e-3, "{cut}");
+        }
     }
 }
 
@@ -1062,10 +1100,9 @@ fn a_cut_slab_keeps_its_height_and_wall_bodies_are_their_net_volume() {
     }
 }
 
-/// A curtain wall is never written as a wall or a proxy: its wall, panels and mullions are named
-/// in the loss report with their counts, and a curtain wall inside a basic wall is a void of it.
+/// A curtain wall inside a basic wall is a void of it, and the curtain wall is no wall.
 #[test]
-fn a_curtain_wall_is_reported_and_its_embedding_is_a_void_of_the_host() {
+fn a_curtain_wall_is_written_and_its_embedding_is_a_void_of_the_host() {
     let house = House::new();
     let ty = House::id(&house.run("archbuilder.curtain.type", json!({"name": "CW"}))["type"]);
     let host = House::id(
@@ -1081,30 +1118,13 @@ fn a_curtain_wall_is_reported_and_its_embedding_is_a_void_of_the_host() {
         )["wall"],
     );
     let snapshot = house.snapshot();
-    let d = archbuilder_model::curtain::Derived::of(
-        &snapshot,
-        &spatial::get(&snapshot, curtain).unwrap(),
-    )
-    .unwrap();
-    let (panels, mullions) = d.counts();
     let exported = export_ifc(&snapshot, &options()).unwrap();
-    let kinds: BTreeMap<String, i64> = exported
-        .report
-        .items
-        .iter()
-        .filter(|i| i.reason == "ab.io.ifc.curtain_not_written")
-        .map(|i| {
-            assert_eq!(i.object_id, Some(curtain.to_string()));
-            let count = match i.arguments.get("count") {
-                Some(arc_io_common::loss::Argument::Int(n)) => *n,
-                other => panic!("{other:?}"),
-            };
-            (i.record_kind.clone().unwrap(), count)
-        })
-        .collect();
-    assert_eq!(kinds["IFCCURTAINWALL"], 1);
-    assert_eq!(kinds["IFCPLATE"], i64::try_from(panels).unwrap());
-    assert_eq!(kinds["IFCMEMBER"], i64::try_from(mullions).unwrap());
+    assert!(exported.valid, "{:?}", exported.report.items);
+    assert!(
+        exported.report.items.is_empty(),
+        "{:?}",
+        exported.report.items
+    );
     let file = read(&exported.bytes, &mut ReadOptions::default())
         .unwrap()
         .file;
@@ -1120,12 +1140,15 @@ fn a_curtain_wall_is_reported_and_its_embedding_is_a_void_of_the_host() {
         0
     ))));
     assert!(host != curtain);
-    // Neither the wall nor the type is written as a wall.
-    assert!(
-        !file
-            .instances()
-            .iter()
-            .any(|i| i.records[0].type_name == "IFCWALL"
-                && gid(&file, i.name) == global_id(curtain.as_u128()))
-    );
+    let is_curtain = |i: &&arc_io_ifc::Instance| gid(&file, i.name) == global_id(curtain.as_u128());
+    assert!(file.instances_of("IFCCURTAINWALL").any(|i| is_curtain(&i)));
+    assert!(!file.instances_of("IFCWALL").any(|i| is_curtain(&i)));
+}
+
+fn file_count(bytes: &[u8], class: &str) -> usize {
+    read(bytes, &mut ReadOptions::default())
+        .unwrap()
+        .file
+        .instances_of(class)
+        .count()
 }

@@ -51,6 +51,13 @@ pub fn stack(
     let mut out: Vec<ObjectId> = Vec::new();
     let ray = ray.unwrap_or(([at[0], at[1], 1.0e4], [0.0, 0.0, -1.0]));
     out.extend(crate::insert::pick(snapshot, ray));
+    // A group instance is picked at its reference point; its elements are picked as walls.
+    for instance in crate::group::instances(snapshot).iter().take(MAX_PER_KIND) {
+        let d = (instance.origin[0] - at[0]).hypot(instance.origin[1] - at[1]);
+        if d <= aperture {
+            out.push(instance.id);
+        }
+    }
     let mut walls: Vec<(f64, f64, ObjectId)> = spatial::objects(snapshot, WALL)
         .iter()
         .take(MAX_PER_KIND)
@@ -143,6 +150,67 @@ pub fn stack(
             .fold(f64::MIN, f64::max);
         if near {
             on_lines.push((-z, o.id));
+        }
+    }
+    // A roof edge element lies along its roof's eave: picked on its line, like a floor edge.
+    for o in spatial::objects(snapshot, crate::types::ROOF_EDGE)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(d) = crate::roof_edge::Derived::of(snapshot, o) else {
+            continue;
+        };
+        let near = d.chains.iter().any(|c| {
+            c.points
+                .windows(2)
+                .any(|w| segment_distance([w[0][0], w[0][1]], [w[1][0], w[1][1]], at) <= aperture)
+        });
+        let z = d
+            .chains
+            .iter()
+            .flat_map(|c| c.points.iter().map(|p| p[2]))
+            .fold(f64::MIN, f64::max);
+        if near {
+            on_lines.push((-z, o.id));
+        }
+    }
+    // A dormer is picked over its opening in the roof.
+    for o in spatial::objects(snapshot, crate::types::DORMER)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        if let Some(dormer) = crate::dormer::Dormer::from_values(&o.values)
+            && crate::floor::Boundary::polygons(vec![dormer.opening()]).contains(at)
+        {
+            on_lines.push((f64::MIN, o.id));
+        }
+    }
+    // A component is picked over its footprint.
+    for o in spatial::objects(snapshot, crate::types::COMPONENT)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some(c) = crate::family::loaded::Component::of(o) else {
+            continue;
+        };
+        let outline = crate::family::loaded::outline(snapshot, &c);
+        if outline.len() == 4 && crate::floor::Boundary::polygons(vec![outline]).contains(at) {
+            on_lines.push((f64::MIN, o.id));
+        }
+    }
+    // A foreign element is picked over its mesh's plan box, widened by the aperture.
+    // shortcut: each hover decodes the meshes of up to MAX_PER_KIND foreign elements; store the plan box beside the mesh once a format change is approved.
+    for o in spatial::objects(snapshot, crate::types::FOREIGN_ELEMENT)
+        .iter()
+        .take(MAX_PER_KIND)
+    {
+        let Some((lo, hi)) = crate::foreign::bounds(&o.values) else {
+            continue;
+        };
+        let inside = (lo[0] - aperture..=hi[0] + aperture).contains(&at[0])
+            && (lo[1] - aperture..=hi[1] + aperture).contains(&at[1]);
+        if inside {
+            on_lines.push((f64::MIN, o.id));
         }
     }
     on_lines.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -308,10 +376,30 @@ fn segment_distance(a: [f64; 2], b: [f64; 2], p: [f64; 2]) -> f64 {
 }
 
 /// The distance from `p` to the body of `wall` (0 inside), in meters.
+fn segment_miss(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let l2 = d[0] * d[0] + d[1] * d[1];
+    let t = if l2 > 0.0 {
+        (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - d[0] * t).hypot(p[1] - a[1] - d[1] * t)
+}
+
 fn distance_to_body(wall: &Wall, p: [f64; 2]) -> f64 {
     let length = wall.length();
     if length <= 0.0 {
         return f64::MAX;
+    }
+    if wall.is_arc() {
+        let outline = wall.plain_outline();
+        if crate::wall::inside_outline(&outline, p) {
+            return 0.0;
+        }
+        return (0..outline.len())
+            .map(|k| segment_miss(p, outline[k], outline[(k + 1) % outline.len()]))
+            .fold(f64::MAX, f64::min);
     }
     let (ux, uy) = (
         (wall.end[0] - wall.start[0]) / length,
@@ -371,7 +459,7 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             // The outline of the layers, which meet the walls around as the body does.
             let loops = crate::cleanup::wall_outline(snapshot, &object);
             if loops.is_empty() {
-                vec![close(&w.plain_footprint(), z)]
+                vec![close(&w.plain_outline(), z)]
             } else {
                 loops.iter().map(|l| close(l, z)).collect()
             }
@@ -390,6 +478,21 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
             .unwrap_or_default(),
         Some(crate::types::SHAFT) => crate::opening::shaft_span(snapshot, &object)
             .map(|s| vec![close(&s.outline, s.z.0), close(&s.outline, s.z.1)])
+            .unwrap_or_default(),
+        Some(crate::types::ELEVATOR) => crate::elevator::span(snapshot, &object)
+            .map(|s| vec![close(&s.outline, s.z.0), close(&s.outline, s.z.1)])
+            .unwrap_or_default(),
+        Some(crate::types::DORMER) => crate::dormer::Derived::of(snapshot, &object)
+            .map(|d| {
+                d.parts
+                    .iter()
+                    .flat_map(|(_, s)| s.vertices().iter().map(|v| [v.x, v.y, v.z]))
+                    .collect::<Vec<_>>()
+            })
+            .map(|v| vec![v])
+            .unwrap_or_default(),
+        Some(crate::types::ROOF_EDGE) => crate::roof_edge::Derived::of(snapshot, &object)
+            .map(|d| d.chains.iter().map(|c| c.points.clone()).collect())
             .unwrap_or_default(),
         Some(crate::types::VERTICAL_OPENING) => {
             crate::opening::outline_of(snapshot, &object, crate::floor::VERTICAL_SLOTS)
@@ -418,6 +521,24 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
         Some(crate::types::GRID | crate::types::REFERENCE_PLANE) => {
             crate::datum::outline(snapshot, &object)
         }
+        Some(crate::types::FOREIGN_ELEMENT) => crate::foreign::bounds(&object.values)
+            .map(|(lo, hi)| {
+                [lo[2], hi[2]]
+                    .into_iter()
+                    .map(|z| {
+                        close(
+                            &[
+                                [lo[0], lo[1]],
+                                [hi[0], lo[1]],
+                                [hi[0], hi[1]],
+                                [lo[0], hi[1]],
+                            ],
+                            z,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         Some(crate::types::ROOF_EXTRUSION) => crate::roof_extrusion::Derived::of(snapshot, &object)
             .map(|d| {
                 d.pieces()
@@ -457,7 +578,12 @@ pub fn outline(snapshot: &Snapshot, rooms: &[Entry], id: ObjectId) -> Vec<Vec<[f
                 }
             })
             .unwrap_or_default(),
-        Some(crate::types::DOOR | crate::types::WINDOW | crate::types::WALL_OPENING) => {
+        Some(
+            crate::types::DOOR
+            | crate::types::WINDOW
+            | crate::types::WALL_OPENING
+            | crate::types::FAMILY_INSERT,
+        ) => {
             let item = crate::insert::Insert::of(snapshot, &object);
             let host = object.header.owner.and_then(|w| spatial::get(snapshot, w));
             match (item, host.as_ref().and_then(|h| Wall::of(snapshot, h))) {

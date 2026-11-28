@@ -56,22 +56,33 @@ macro_rules! coded {
 
 pub mod ceiling;
 pub mod cleanup;
+pub mod coordinates;
 pub mod curtain;
 pub mod datum;
+pub mod dormer;
 pub mod element_type;
+pub mod elevator;
 pub mod error;
+pub mod expr;
+pub mod family;
 pub mod floor;
 pub mod floor_edge;
+pub mod foreign;
+pub mod group;
+pub mod headroom;
 pub mod insert;
 pub mod join;
 pub mod layered;
+pub mod model_view;
 pub mod names;
 pub mod opening;
+pub mod parameter;
 pub mod pick;
 pub mod plan;
 pub mod railing;
 pub mod ramp;
 pub mod roof;
+pub mod roof_edge;
 pub mod roof_extrusion;
 pub mod room;
 pub mod selection;
@@ -83,8 +94,10 @@ pub mod transform;
 pub mod types;
 pub mod units;
 pub mod validate;
+pub mod variable;
 pub mod view;
 pub mod wall;
+pub mod wall_shape;
 
 use arc_base::Result;
 use arc_doc::TypeRegistry;
@@ -143,6 +156,56 @@ pub mod defaults {
     #[must_use]
     pub fn names(language: &str) -> Names {
         if turkish(language) { TURKISH } else { ENGLISH }
+    }
+
+    /// The name of the 3D view numbered `n` in `language`: `3D View 2`, `3B Görünüm 2`.
+    #[must_use]
+    pub fn view_3d(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("3B Görünüm {n}")
+        } else {
+            format!("3D View {n}")
+        }
+    }
+
+    /// The name of the section numbered `n` in `language`: `Section 2`, `Kesit 2`.
+    #[must_use]
+    pub fn section(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Kesit {n}")
+        } else {
+            format!("Section {n}")
+        }
+    }
+
+    /// The name of the elevation of a building's `side` in `language`: `North Elevation`,
+    /// `Kuzey Cephesi`.
+    #[must_use]
+    pub fn elevation(language: &str, side: crate::model_view::Side) -> String {
+        use crate::model_view::Side;
+        let tr = turkish(language);
+        match (side, tr) {
+            (Side::North, false) => "North Elevation",
+            (Side::East, false) => "East Elevation",
+            (Side::South, false) => "South Elevation",
+            (Side::West, false) => "West Elevation",
+            (Side::North, true) => "Kuzey Cephesi",
+            (Side::East, true) => "Doğu Cephesi",
+            (Side::South, true) => "Güney Cephesi",
+            (Side::West, true) => "Batı Cephesi",
+        }
+        .to_owned()
+    }
+
+    /// The name of the group definition or instance numbered `n` in `language`: `Group 2`,
+    /// `Grup 2`.
+    #[must_use]
+    pub fn group(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Grup {n}")
+        } else {
+            format!("Group {n}")
+        }
     }
 
     /// The name of the wall numbered `n` on a storey in `language`: `Wall 3`, `Duvar 3`.
@@ -297,6 +360,16 @@ pub mod defaults {
         }
     }
 
+    /// The name of the dormer opening numbered `n` in `language`: `Dormer 3`, `Çatı çıkması 3`.
+    #[must_use]
+    pub fn dormer_opening(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çatı çıkması {n}")
+        } else {
+            format!("Dormer {n}")
+        }
+    }
+
     /// The name of the roof by extrusion numbered `n` in `language`: `Extruded roof 3`,
     /// `Ekstrüzyon çatı 3`.
     #[must_use]
@@ -305,6 +378,38 @@ pub mod defaults {
             format!("Ekstrüzyon çatı {n}")
         } else {
             format!("Extruded roof {n}")
+        }
+    }
+
+    /// The name of the elevator numbered `n` in `language`: `Elevator 2`, `Asansör 2`.
+    #[must_use]
+    pub fn elevator(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Asansör {n}")
+        } else {
+            format!("Elevator {n}")
+        }
+    }
+
+    /// The name of the dormer numbered `n` in `language`: `Dormer 2`, `Çatı penceresi 2`.
+    #[must_use]
+    pub fn dormer(language: &str, n: usize) -> String {
+        if turkish(language) {
+            format!("Çatı penceresi {n}")
+        } else {
+            format!("Dormer {n}")
+        }
+    }
+
+    /// The name of the roof edge element of `role` numbered `n` in `language`: `Fascia 1`,
+    /// `Saçak silmesi 1`, `Gutter 1`, `Oluk 1`.
+    #[must_use]
+    pub fn roof_edge(language: &str, gutter: bool, n: usize) -> String {
+        match (turkish(language), gutter) {
+            (true, true) => format!("Oluk {n}"),
+            (true, false) => format!("Saçak silmesi {n}"),
+            (false, true) => format!("Gutter {n}"),
+            (false, false) => format!("Fascia {n}"),
         }
     }
 
@@ -341,7 +446,8 @@ pub mod defaults {
 /// # Errors
 /// The registry's errors; none occur for these declarations.
 pub fn register_types(registry: &mut TypeRegistry) -> Result<()> {
-    types::register(registry)
+    types::register(registry)?;
+    family::package::register(registry)
 }
 
 /// The document type set of the model.

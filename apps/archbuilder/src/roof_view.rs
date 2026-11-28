@@ -12,7 +12,7 @@ use arc_ui::{OverlayColor, ProductOverlay};
 use archbuilder_model::roof::{ArcKind, Derived};
 use archbuilder_model::spatial;
 use archbuilder_model::types::{ROOF, ROOM};
-use archbuilder_model::units::{decimal_separator, slope_text, slope_unit};
+use archbuilder_model::units::{decimal_separator, slope_text};
 
 use crate::room_view::{anchor_for_center, label_size};
 
@@ -54,7 +54,7 @@ pub fn overlays(snapshot: &Snapshot, language: &str) -> Vec<ProductOverlay> {
     let (Some(storey), Some(frame)) = (view.active(), view.view()) else {
         return Vec::new();
     };
-    let unit = spatial::project(snapshot).map_or_else(Default::default, |p| slope_unit(&p.values));
+    let unit = spatial::unit_settings(snapshot);
     let separator = decimal_separator(language);
     // The room tags stand about their placement points.
     let tags: Vec<[f64; 4]> = spatial::children(snapshot, ROOM, storey)

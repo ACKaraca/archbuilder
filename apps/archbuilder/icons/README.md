@@ -10,3 +10,5 @@ Vector icons for the command tabs, outliner and panels of the ArchBuilder applic
   Plain `path`, `rect`, `circle` and `polygon` elements only. The file name is the icon name that
   `arc_ui::icons::IconAtlas` is given.
 - Each file stays under the 16 KiB limit of the atlas.
+- Group icons (`group-create`, `group-place`, `group-edit`, `group-separate`): drawn for this
+  project from scratch in the same style; no third-party artwork was used.

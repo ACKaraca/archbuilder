@@ -40,22 +40,28 @@ use archbuilder_model::types::{DOOR, FLOOR, LEVEL, ROOF, STAIR, WALL, WINDOW};
 
 pub mod ceiling_view;
 pub mod chrome;
+pub mod circ_types;
 pub mod clipboard;
 pub mod datum_tool;
 pub mod datum_view;
 pub mod direct;
 pub mod extract_ceiling;
 pub mod extract_circulation;
+pub mod extract_component;
 pub mod extract_datum;
 pub mod extract_floor;
 pub mod extract_floor_edge;
+pub mod extract_foreign;
 pub mod extract_insert;
 pub mod extract_level;
+pub mod extract_model_view;
 pub mod extract_roof;
 pub mod extract_roof_extrusion;
+pub mod extract_roof_parts;
 pub mod extract_stair;
 pub mod extract_view;
 pub mod extract_wall;
+pub mod family_editor;
 pub mod floor_sketch;
 pub mod floor_tool;
 pub mod insert_tool;
@@ -68,9 +74,11 @@ pub mod outliner;
 pub mod picker;
 pub mod plan_state;
 pub mod properties;
+pub mod ramp_view;
 pub mod roof_view;
 pub mod room_tool;
 pub mod room_view;
+pub mod section_view;
 pub mod selection;
 pub mod shortcuts;
 pub mod snap;
@@ -97,6 +105,8 @@ pub const SETTINGS: &str = "archbuilder.settings";
 pub const TYPES: &str = "archbuilder.types";
 /// The warnings panel.
 pub const WARNINGS: &str = "archbuilder.warnings";
+/// The family editor panel.
+pub const FAMILY_EDITOR: &str = "archbuilder.family_editor";
 
 /// A message of the application.
 struct Message {
@@ -133,9 +143,33 @@ fn entry(id: &str, label: Message, make: fn() -> Box<dyn shell::Panel>) -> Entry
     }
 }
 
+const TEMPLATE_TITLE: Message = Message {
+    message_id: "ab-template-title",
+};
+const TRANSFER_STANDARDS_TITLE: Message = Message {
+    message_id: "ab-transfer-standards-title",
+};
+
 const EXPORT_IFC_TITLE: Message = Message {
     message_id: "ab-export-ifc-title",
 };
+
+const IMPORT_IFC_TITLE: Message = Message {
+    message_id: "ab-import-ifc-title",
+};
+
+/// The open dialog of File > Import > IFC.
+fn import_ifc_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: IMPORT_IFC_TITLE.message_id.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-import-ifc-filter".into(),
+            extensions: vec!["ifc".into(), "ifczip".into()],
+        }],
+        default_name: None,
+    }
+}
 
 /// The save dialog of File > Export > IFC.
 fn export_ifc_dialog() -> PathDialog {
@@ -147,6 +181,68 @@ fn export_ifc_dialog() -> PathDialog {
             extensions: vec!["ifc".into()],
         }],
         default_name: Some("{document}.ifc".into()),
+    }
+}
+
+/// The open dialog of the commands that read another document: the template of a new project and
+/// the document standards are copied from.
+fn document_dialog(title: &str) -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: title.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-file-archb".into(),
+            extensions: vec!["archb".into()],
+        }],
+        default_name: None,
+    }
+}
+
+const FAMILY_LOAD_TITLE: Message = Message {
+    message_id: "ab-family-load-title",
+};
+
+/// The open dialog of Manage > Load family: a family package or a document.
+fn family_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Open,
+        title: FAMILY_LOAD_TITLE.message_id.into(),
+        filters: vec![PathFilter {
+            message_id: "ab-family-load-filter".into(),
+            extensions: vec!["archbfam".into(), "archb".into()],
+        }],
+        default_name: None,
+    }
+}
+
+const EXPORT_MESH_TITLE: Message = Message {
+    message_id: "ab-export-mesh-title",
+};
+
+/// The save dialog of Export mesh: the extension the person picks or types names the format.
+fn export_mesh_dialog() -> PathDialog {
+    PathDialog {
+        mode: PathMode::Save,
+        title: EXPORT_MESH_TITLE.message_id.into(),
+        filters: vec![
+            PathFilter {
+                message_id: "ab-export-mesh-filter-obj".into(),
+                extensions: vec!["obj".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-stl".into(),
+                extensions: vec!["stl".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-gltf".into(),
+                extensions: vec!["gltf".into()],
+            },
+            PathFilter {
+                message_id: "ab-export-mesh-filter-glb".into(),
+                extensions: vec!["glb".into()],
+            },
+        ],
+        default_name: Some("{document}.obj".into()),
     }
 }
 
@@ -212,9 +308,11 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         out.extend(extract_roof::dependents(snapshot, changes));
         out.extend(extract_ceiling::dependents(snapshot, changes));
         out.extend(extract_floor_edge::dependents(snapshot, changes));
+        out.extend(extract_roof_parts::dependents(snapshot, changes));
         out.extend(extract_roof_extrusion::dependents(snapshot, changes));
         out.extend(extract_datum::dependents(snapshot, changes));
         out.extend(extract_view::dependents(snapshot, changes));
+        out.extend(extract_component::dependents(snapshot, changes));
         out.sort_unstable();
         out.dedup();
         out
@@ -223,6 +321,8 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     register_settings(&mut builder)?;
     // File > Export > IFC asks for the file in a save dialog that starts with the document's name.
     builder.path_dialog(archbuilder_io::command::EXPORT_IFC, export_ifc_dialog());
+    builder.path_dialog(archbuilder_io::import::IMPORT_IFC, import_ifc_dialog());
+    builder.path_dialog(archbuilder_io::command::EXPORT_MESH, export_mesh_dialog());
     // The shortcut table goes to and comes from a small JSON file.
     builder.path_dialog(
         archbuilder_io::command::EXPORT_SHORTCUTS,
@@ -231,6 +331,20 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
     builder.path_dialog(
         archbuilder_io::command::IMPORT_SHORTCUTS,
         shortcuts_dialog(PathMode::Open, SHORTCUTS_IMPORT_TITLE.message_id),
+    );
+    // A template and the document standards come from are chosen in an open dialog.
+    builder.path_dialog(
+        archbuilder_io::standards::NEW_FROM_TEMPLATE,
+        document_dialog(TEMPLATE_TITLE.message_id),
+    );
+    builder.path_dialog(
+        archbuilder_io::standards::TRANSFER_STANDARDS,
+        document_dialog(TRANSFER_STANDARDS_TITLE.message_id),
+    );
+    // Architecture > Component and Manage > Load family ask for the file in an open dialog.
+    builder.path_dialog(
+        archbuilder_commands::family_project::FAMILY_LOAD,
+        family_dialog(),
     );
     builder.package_extension("archb");
     // A new document is created with its project in one step: the starting content is no undo
@@ -274,6 +388,13 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
                 message_id: "ab-panel-types",
             },
             || shell::panel(type_panel::TypePanel::default()),
+        ),
+        entry(
+            FAMILY_EDITOR,
+            Message {
+                message_id: "ab-panel-family-editor",
+            },
+            || shell::panel(family_editor::FamilyEditorPanel::default()),
         ),
         entry(
             SETTINGS,
@@ -389,6 +510,33 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.roof_edge".into(),
+        types: vec![archbuilder_model::types::ROOF_EDGE.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_roof_edge(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.dormer".into(),
+        types: vec![archbuilder_model::types::DORMER.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_dormer(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.elevator".into(),
+        types: vec![archbuilder_model::types::ELEVATOR.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_roof_parts::extract_elevator(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.shaft".into(),
         types: vec![archbuilder_model::types::SHAFT.to_owned()],
         factory: Arc::new(|| -> extract::Extractor {
@@ -438,6 +586,24 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         }),
     })?;
     builder.extractor(Extractor {
+        id: "archbuilder.foreign_element".into(),
+        types: vec![archbuilder_model::types::FOREIGN_ELEMENT.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_foreign::extract_foreign(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.component".into(),
+        types: vec![archbuilder_model::types::COMPONENT.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_component::extract_component(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
         id: "archbuilder.plan_view".into(),
         // A storey stands for its default view while it has none of its own.
         types: vec![
@@ -447,6 +613,15 @@ pub fn product(clock: Arc<dyn Clock>, owner: LockOwner) -> Result<Product> {
         factory: Arc::new(|| -> extract::Extractor {
             shell::extractor(|snapshot, object, cancel| {
                 extract_view::extract_view(snapshot, object, cancel)
+            })
+        }),
+    })?;
+    builder.extractor(Extractor {
+        id: "archbuilder.model_view".into(),
+        types: vec![archbuilder_model::types::MODEL_VIEW.to_owned()],
+        factory: Arc::new(|| -> extract::Extractor {
+            shell::extractor(|snapshot, object, cancel| {
+                extract_model_view::extract(snapshot, object, cancel)
             })
         }),
     })?;
@@ -470,12 +645,25 @@ fn menu() -> Result<Menu> {
             .iter()
             .position(|i| matches!(i, MenuItem::Command { command } if command == arc_app::commands::FILE_SAVE_AS))
             .map_or(file.len(), |k| k + 1);
+        // After New: File > New From Template.
+        let after_new = file
+            .iter()
+            .position(|i| matches!(i, MenuItem::Command { command } if command == arc_app::commands::FILE_NEW))
+            .map_or(0, |k| k + 1);
+        file.insert(
+            after_new,
+            MenuItem::Command {
+                command: archbuilder_io::standards::NEW_FROM_TEMPLATE.into(),
+            },
+        );
+        let at = at + 1;
         file.insert(
             at,
             MenuItem::Submenu {
                 label: MENU_EXPORT.message_id.into(),
                 items: [
                     archbuilder_io::command::EXPORT_IFC,
+                    archbuilder_io::command::EXPORT_MESH,
                     archbuilder_io::command::EXPORT_SHORTCUTS,
                 ]
                 .into_iter()
@@ -487,9 +675,13 @@ fn menu() -> Result<Menu> {
             at + 1,
             MenuItem::Submenu {
                 label: MENU_IMPORT.message_id.into(),
-                items: vec![MenuItem::Command {
-                    command: archbuilder_io::command::IMPORT_SHORTCUTS.into(),
-                }],
+                items: [
+                    archbuilder_io::import::IMPORT_IFC,
+                    archbuilder_io::command::IMPORT_SHORTCUTS,
+                ]
+                .into_iter()
+                .map(|c| MenuItem::Command { command: c.into() })
+                .collect(),
             },
         );
     }
@@ -605,7 +797,13 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         overlays: Some(OverlayProbe(Arc::new(|app, tab, language| {
             // A plan view draws the lines of stairs, roofs, ceilings and openings itself; what stays
             // here is text (room tags, stair texts) and the marks of pinned elements.
-            let planned = plan_state::current(tab).is_some();
+            // A section or elevation shows its datums only; a saved 3D view is a 3D view.
+            if let Some(out) = section_overlays(app, tab, language) {
+                return out;
+            }
+            let planned = app
+                .tab(tab)
+                .is_ok_and(|t| plan_state::current_in(tab, &t.document().snapshot()).is_some());
             let mut out = if planned {
                 Vec::new()
             } else {
@@ -617,6 +815,11 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                 if planned {
                     // The roofs are in the drawing (overhead when above the cut): no tint here.
                     out.extend(stair_view::labels(&snapshot, language));
+                    let shows_ramps = plan_state::current_in(tab, &snapshot)
+                        .and_then(|v| archbuilder_model::spatial::get(&snapshot, v))
+                        .and_then(|o| archbuilder_model::view::settings_of(&snapshot, &o))
+                        .is_none_or(|s| s.shows(archbuilder_model::view::Category::Ramp));
+                    out.extend(ramp_view::labels(&snapshot, language, shows_ramps));
                 } else {
                     out.extend(stair_view::overlays(&snapshot, language));
                     out.extend(roof_view::overlays(&snapshot, language));
@@ -628,7 +831,12 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
                     .flatten()
                     .and_then(|s| archbuilder_model::spatial::get(&snapshot, s))
                     .map(|s| archbuilder_model::spatial::storey_elevation(&snapshot, &s));
-                out.extend(datum_view::overlays(&snapshot, level, &|id| {
+                let overrides = plan_state::current_in(tab, &snapshot)
+                    .and_then(|v| archbuilder_model::spatial::get(&snapshot, v))
+                    .and_then(|o| archbuilder_model::view::PlanView::from_values(&o.values))
+                    .map(|v| v.datum_views)
+                    .unwrap_or_default();
+                out.extend(datum_view::overlays(&snapshot, level, &overrides, &|id| {
                     room_view::shared().is_hidden(id)
                 }));
                 out.extend(pin_marks(&snapshot));
@@ -648,6 +856,21 @@ pub fn config(seed: u64) -> Result<ShellConfig> {
         status_text: Some(chrome::status_text()),
         seed,
     })
+}
+
+/// The overlays of the section or elevation `tab` shows; `None` for any other view.
+fn section_overlays(
+    app: &arc_app::application::Application,
+    tab: arc_app::application::TabId,
+    language: &str,
+) -> Option<Vec<arc_ui::ProductOverlay>> {
+    let snapshot = app.tab(tab).ok()?.document().snapshot();
+    let id = plan_state::model_in(tab, &snapshot)?;
+    let object = archbuilder_model::spatial::get(&snapshot, id)?;
+    let settings = archbuilder_model::model_view::settings(&snapshot, id)?;
+    settings
+        .is_drawing()
+        .then(|| section_view::overlays(&snapshot, object.header.owner, &settings, language))
 }
 
 /// A small pin drawn at the middle of every pinned element, so pinned elements stand out in plan:

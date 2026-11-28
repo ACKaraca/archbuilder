@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use arc_base::id::Identifier;
 use arc_command::{Invocation, Invoker, Permission, Session, Surface};
 use arc_doc::graph::Evaluators;
 use arc_doc::{Document, DocumentConfig, Snapshot};
@@ -31,6 +32,10 @@ fn run(document: &Document, registry: &arc_command::Registry, command: &str, par
 }
 
 #[test]
+#[allow(
+    clippy::cognitive_complexity,
+    reason = "one fixture for every kind and its checks"
+)]
 fn a_document_with_every_element_kind_exports_and_validates() {
     let document = Document::open(
         Snapshot::empty(Arc::new(archbuilder_commands::types().unwrap())),
@@ -78,13 +83,39 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         "archbuilder.wall.create",
         json!({"start": [20.0, 0.0], "end": [24.0, 0.0], "type": cw["type"]}),
     );
+    // An arc wall, a slanted wall and a curved curtain wall.
+    r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 5.0], "end": [26.0, 5.0], "bulge": 0.4}),
+    );
+    let slanted = r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 8.0], "end": [24.0, 8.0]}),
+    );
+    r(
+        "archbuilder.wall.set_lean",
+        json!({"walls": [slanted["wall"]], "degrees": 10.0}),
+    );
+    r(
+        "archbuilder.wall.create",
+        json!({"start": [20.0, 12.0], "end": [26.0, 12.0], "type": cw["type"], "bulge": 0.3}),
+    );
     let floor = r(
         "archbuilder.floor.create",
         json!({"points": [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]}),
     );
-    r(
+    let floor_edge = r(
         "archbuilder.floor_edge.create",
         json!({"floor": floor["floor"]}),
+    );
+    // Railings hosted on a floor edge of the slab and on the edge element.
+    r(
+        "archbuilder.railing.create",
+        json!({"host": floor["floor"], "host_edge": 0}),
+    );
+    r(
+        "archbuilder.railing.create",
+        json!({"host": floor_edge["floor_edge"]}),
     );
     let sloped = r(
         "archbuilder.floor.create",
@@ -101,9 +132,25 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     );
     r("archbuilder.room.place", json!({"points": [[5.0, 3.0]]}));
     r("archbuilder.ceiling.create", json!({"picks": [[5.0, 3.0]]}));
-    r(
+    let roof = r(
         "archbuilder.roof.create",
         json!({"picks": [[5.0, 3.0]], "slope": 0.5}),
+    );
+    r(
+        "archbuilder.dormer.create",
+        json!({"roof": roof["roof"], "center": [5.0, 1.2], "depth": 0.8}),
+    );
+    r(
+        "archbuilder.roof_edge.create",
+        json!({"roof": roof["roof"], "role": "fascia"}),
+    );
+    r(
+        "archbuilder.roof_edge.create",
+        json!({"roof": roof["roof"], "role": "gutter"}),
+    );
+    r(
+        "archbuilder.elevator.create",
+        json!({"center": [-8.0, 3.0]}),
     );
     r(
         "archbuilder.roof_extrusion.create",
@@ -133,9 +180,28 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         "archbuilder.railing.create",
         json!({"points": [[70.0, 0.0], [73.0, 0.0], [73.0, 2.0]]}),
     );
+    // A ramp of three runs with two quarter turns the same way and landings at both ends, and a
+    // ramp by sketch.
+    r(
+        "archbuilder.ramp.create",
+        json!({"start": [80.0, 0.0], "to": [86.0, 0.0], "rise": 1.5, "landing_start": 1.0,
+               "landing_end": 2.0, "runs": [
+                   {"turn": "90", "length": 6.0, "landing": 2.0},
+                   {"turn": "90", "length": 6.0, "landing": 1.5}]}),
+    );
+    r(
+        "archbuilder.ramp.create",
+        json!({"start": [100.0, 2.0], "to": [105.0, 2.0], "rise": 0.4, "landing_start": 0.5,
+               "landing_end": 1.0,
+               "boundary": [[100.0, 1.0], [106.5, 1.0], [106.5, 3.0], [100.0, 3.0]]}),
+    );
     r(
         "archbuilder.grid.create",
         json!({"start": [-2.0, 0.0], "end": [-2.0, 10.0]}),
+    );
+    r(
+        "archbuilder.grid.create",
+        json!({"start": [-3.0, 8.0], "end": [14.0, 8.0]}),
     );
     r(
         "archbuilder.reference_plane.create",
@@ -150,6 +216,162 @@ fn a_document_with_every_element_kind_exports_and_validates() {
         json!({"name": "All walls", "objects": walls}),
     );
 
+    // A generic model that names no IFC entity: it is listed in the loss report, not a proxy.
+    {
+        use archbuilder_model::family::def::Category;
+        use archbuilder_model::family::fixtures::table;
+        use archbuilder_model::family::loaded::{Component, FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let s = document.snapshot();
+        let project = spatial::project(&s).unwrap().id;
+        let storey = spatial::objects(&s, types::STOREY)[0].id;
+        let mut definition = table();
+        definition.header.category = Category::GenericModel;
+        let published = publish(
+            &definition,
+            None,
+            archbuilder_model::family::Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let values = definition.type_named("1400x800").unwrap().values.clone();
+        document
+            .submit(move |txn| {
+                use arc_base::id::Identifier;
+                let owned = |owner| arc_doc::Header {
+                    owner: Some(owner),
+                    ..Default::default()
+                };
+                let (f, t, c) = (
+                    arc_base::ObjectId::from_u128(0xC1),
+                    arc_base::ObjectId::from_u128(0xC2),
+                    arc_base::ObjectId::from_u128(0xC3),
+                );
+                txn.create(
+                    types::FAMILY,
+                    f,
+                    owned(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    types::FAMILY_TYPE,
+                    t,
+                    owned(project),
+                    FamilyType::record("1400x800", f, &values),
+                )?;
+                let comp = Component {
+                    id: c,
+                    storey: Some(storey),
+                    name: String::new(),
+                    family_type: t,
+                    offset: 0.0,
+                    origin: [30.0, 30.0],
+                    rotation: 0.0,
+                    mirror: false,
+                    values: Default::default(),
+                };
+                txn.create(types::COMPONENT, c, owned(storey), comp.record())
+            })
+            .wait()
+            .unwrap();
+    }
+    // A group of the first wall with its door and window, placed beside the room: its instance is
+    // an element of the document and an IFC group.
+    let group = r(
+        "archbuilder.group.create",
+        json!({"name": "Unit", "ids": [walls[0].clone()]}),
+    );
+    let storey =
+        archbuilder_model::spatial::objects(&document.snapshot(), archbuilder_model::types::STOREY)
+            [0]
+        .id
+        .to_string();
+    r(
+        "archbuilder.group.place",
+        json!({"group": group["group"], "storey": storey, "origin": [40.0, 20.0]}),
+    );
+    // A hosted family instance: a door family in the west wall, which has no opening yet.
+    {
+        use arc_base::id::Identifier;
+        use archbuilder_model::family::fixtures::hosted_door;
+        use archbuilder_model::family::loaded::{FamilyType, Loaded};
+        use archbuilder_model::family::package::publish;
+        let definition = hosted_door();
+        let published = publish(
+            &definition,
+            None,
+            archbuilder_model::family::Version {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+        )
+        .unwrap();
+        let s = document.snapshot();
+        let project = spatial::project(&s).unwrap().id;
+        let (f, t) = (
+            arc_base::ObjectId::from_u128(0xD1),
+            arc_base::ObjectId::from_u128(0xD2),
+        );
+        let ty_name = definition.types[0].name.clone();
+        let ty_values = definition.types[0].values.clone();
+        document
+            .submit(move |txn| {
+                let owned = |owner| arc_doc::Header {
+                    owner: Some(owner),
+                    ..Default::default()
+                };
+                txn.create(
+                    types::FAMILY,
+                    f,
+                    owned(project),
+                    Loaded::values(&published, &definition),
+                )?;
+                txn.create(
+                    types::FAMILY_TYPE,
+                    t,
+                    owned(project),
+                    FamilyType::record(&ty_name, f, &ty_values),
+                )
+            })
+            .wait()
+            .unwrap();
+        r(
+            "archbuilder.family_insert.place",
+            json!({"host": walls[3], "type": t.to_string(), "distance": 3.0}),
+        );
+    }
+    // An imported element: a box in the storey, as the import writes one.
+    let storey = spatial::objects(&document.snapshot(), types::STOREY)[0].id;
+    let mut values: Vec<Option<arc_doc::Value>> = document
+        .snapshot()
+        .registry()
+        .get(types::FOREIGN_ELEMENT)
+        .map(|d| d.schema.fields.iter().map(|f| f.default.clone()).collect())
+        .unwrap_or_default();
+    if let Some(slot) = values.get_mut(types::foreign_element::NAME) {
+        *slot = Some(arc_doc::Value::String("Column".to_owned()));
+    }
+    if let Some(slot) = values.get_mut(types::foreign_element::MESH) {
+        *slot = archbuilder_model::foreign::box_value([30.0, 0.0, 0.0], [31.0, 1.0, 3.0]);
+    }
+    document
+        .submit(move |txn| {
+            txn.create(
+                types::FOREIGN_ELEMENT,
+                arc_base::ObjectId::from_u128(0xF0),
+                arc_doc::Header {
+                    owner: Some(storey),
+                    ..Default::default()
+                },
+                values,
+            )
+        })
+        .wait()
+        .unwrap();
     let s = document.snapshot();
     for key in ELEMENTS
         .iter()
@@ -159,24 +381,76 @@ fn a_document_with_every_element_kind_exports_and_validates() {
     }
     let out = export_ifc(&s, &ExportOptions::default()).unwrap();
     assert!(out.valid, "{:#?}", out.report.items);
+    let text = String::from_utf8_lossy(&out.bytes);
+    let count = |entity: &str| text.matches(&format!("={entity}(")).count();
+    // One flight per run: one each for the ramp of one run and the ramp by sketch, three for the
+    // ramp of three runs; that one's landings are at the foot, at both turns and at the top.
+    assert_eq!(count("IFCRAMPFLIGHT"), 5);
+    assert!(
+        text.contains(".TWO_QUARTER_TURN_RAMP."),
+        "no two-quarter-turn ramp"
+    );
+    assert!(text.contains(".STRAIGHT_RUN_RAMP."), "no straight ramp");
+    // Railings: the two sides of the stair, the one by path, two on each ramp and the two on the
+    // floor.
+    assert_eq!(count("IFCRAILING"), 11);
     if let Ok(path) = std::env::var("AB_EVERY_KIND_IFC") {
         std::fs::write(path, &out.bytes).unwrap();
     }
-    // Each kind that has no entity of its own is named in the report.
-    for kind in [
-        "IFCCURTAINWALL",
-        "IFCSTAIR",
-        "IFCRAMP",
-        "IFCRAILING",
-        "IFCGRID",
-        "IFCGRIDAXIS",
+    // Only what has no IFC building element is named in the report.
+    let mut reasons: Vec<&str> = out.report.items.iter().map(|i| i.reason.as_str()).collect();
+    reasons.sort_unstable();
+    reasons.dedup();
+    assert!(
+        !reasons.iter().any(|r| r.ends_with("_not_written")
+            && !matches!(
+                *r,
+                "ab.io.ifc.datum_not_written" | "ab.io.ifc.family_not_written"
+            )),
+        "{reasons:?}"
+    );
+    for reason in [
+        "ab.io.ifc.family_not_written",
+        "ab.io.ifc.dormer_as_parts",
+        "ab.io.ifc.fascia_as_covering",
     ] {
-        assert!(
-            out.report
-                .items
-                .iter()
-                .any(|i| format!("{i:?}").contains(kind)),
-            "{kind} not reported"
-        );
+        assert!(reasons.contains(&reason), "{reason} not reported");
+    }
+    // The standard property sets of the kinds the model knows values for.
+    for set in [
+        "Pset_StairCommon",
+        "Pset_StairFlightCommon",
+        "Pset_RampCommon",
+        "Pset_RampFlightCommon",
+        "Pset_RailingCommon",
+        "Pset_DoorCommon",
+        "Pset_WindowCommon",
+        "Pset_SlabCommon",
+        "Pset_SpaceCommon",
+        "Pset_TransportElementElevator",
+    ] {
+        assert!(text.contains(&format!("'{set}'")), "{set} not written");
+    }
+    // Conformance is checked only for a schema the build has tables of; IFC4 has none here, so
+    // the export must not claim it.
+    assert!(out.conformance.is_none() || out.valid);
+    // An elevator is a transport element with its type, a gutter a pipe segment, a selection set and
+    // a group instance each a group with the elements it names.
+    assert_eq!(count("IFCTRANSPORTELEMENT"), 1);
+    assert_eq!(count("IFCTRANSPORTELEMENTTYPE"), 1);
+    assert!(text.contains(".ELEVATOR."));
+    assert_eq!(count("IFCPIPESEGMENT"), 1);
+    assert!(text.contains(".GUTTER."));
+    assert_eq!(count("IFCGROUP"), 2);
+    assert_eq!(count("IFCRELASSIGNSTOGROUP"), 2);
+    assert!(text.contains("'Group instance'"));
+    // A dormer is written as the opening in its roof, walls and a roof; a fascia as a molding.
+    for written in [
+        "Dormer 1 (front)",
+        "Dormer 1 (cheek)",
+        "Dormer 1 (roof)",
+        "Fascia 1",
+    ] {
+        assert!(text.contains(written), "{written} not written");
     }
 }

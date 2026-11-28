@@ -127,8 +127,9 @@ pub struct Chain {
     /// The outward normal of the segment that starts at each point but the last.
     pub normals: Vec<[f64; 2]>,
     /// The plane of the slab's top, which the profile's `v` is measured from, also outward of the
-    /// edge (a sheared profile keeps every face planar).
-    pub top: crate::terrain::Plane,
+    /// edge (a sheared profile keeps every face planar); `None` measures `v` from the `z` of each
+    /// corner point (a roof edge element, whose eave line is not one plane).
+    pub top: Option<crate::terrain::Plane>,
 }
 
 /// The floor that owns `object`, read.
@@ -163,6 +164,107 @@ fn unit(a: [f64; 2], b: [f64; 2]) -> Option<[f64; 2]> {
     (l > 1.0e-9).then(|| [dx / l, dy / l])
 }
 
+/// The chains of the selected edges (`selected` by vertex number) of the loops `spans` of
+/// `boundary`, at the top plane `top` of the slab.
+fn chains_of(
+    boundary: &Boundary,
+    spans: &[(usize, usize)],
+    selected: &[bool],
+    top: crate::terrain::Plane,
+) -> Vec<Chain> {
+    let mut chains = Vec::new();
+    let mut budget = MAX_POINTS;
+    for (l, (first, n)) in spans.iter().enumerate() {
+        let Some(points) = boundary.loops.get(l) else {
+            continue;
+        };
+        if points.len() != *n || *n < 2 {
+            continue;
+        }
+        // Away from the slab's material: the right of a counterclockwise outer loop, the left
+        // of a counterclockwise hole.
+        let ccw = crate::floor::signed_area(points) > 0.0;
+        let right = ccw == (l == 0);
+        let on = |k: usize| selected.get(first + k).copied().unwrap_or(false);
+        let all = (0..*n).all(on);
+        // A chain starts at a selected edge whose predecessor is not selected.
+        let starts: Vec<usize> = if all {
+            vec![0]
+        } else {
+            (0..*n).filter(|k| on(*k) && !on((k + n - 1) % n)).collect()
+        };
+        for start in starts {
+            let mut chain = Chain {
+                points: Vec::new(),
+                closed: all,
+                normals: Vec::new(),
+                top: Some(top),
+            };
+            let mut k = start;
+            loop {
+                let (a, b) = (points[k], points[(k + 1) % n]);
+                let bulge = boundary.bulge(l, k);
+                let mut run = flatten_edge(a, b, bulge, FLAT_CHORD);
+                run.push(b);
+                for w in run.windows(2) {
+                    let Some(d) = unit(w[0], w[1]) else {
+                        continue;
+                    };
+                    let normal = if right { [d[1], -d[0]] } else { [-d[1], d[0]] };
+                    if chain.points.is_empty() {
+                        chain.points.push(at_plane(&top, w[0]));
+                    }
+                    chain.points.push(at_plane(&top, w[1]));
+                    chain.normals.push(normal);
+                }
+                k = (k + 1) % n;
+                if k == start || !on(k) {
+                    break;
+                }
+            }
+            budget = budget.saturating_sub(chain.points.len());
+            if chain.normals.is_empty() {
+                continue;
+            }
+            chains.push(chain);
+            if budget == 0 {
+                break;
+            }
+        }
+    }
+    chains
+}
+
+/// The point `p` of the plan at the elevation of the slab's top, `plane`.
+fn at_plane(plane: &crate::terrain::Plane, p: [f64; 2]) -> [f64; 3] {
+    [p[0], p[1], plane.z(p)]
+}
+
+/// The chain of the boundary edge `edge` (the one that starts at that vertex number) of the floor
+/// `floor`, or, without a number, of the whole outer loop, at the top of the slab with arcs
+/// flattened; `None` when the floor is unreadable or has no such edge. Heights are absolute.
+#[must_use]
+pub fn boundary_chain(snapshot: &Snapshot, floor: &Object, edge: Option<usize>) -> Option<Chain> {
+    let data = Floor::from_values(&floor.values)?;
+    let top = crate::floor::Derived::of(snapshot, floor)?.plane;
+    let boundary = data.boundary_in(snapshot)?;
+    let spans = loop_spans(&data);
+    let mut selected = vec![false; data.vertices.len()];
+    match (edge, spans.first()) {
+        (Some(e), _) => *selected.get_mut(e)? = true,
+        (None, Some((first, n))) => {
+            selected
+                .get_mut(*first..first + n)?
+                .iter_mut()
+                .for_each(|s| *s = true);
+        }
+        (None, None) => return None,
+    }
+    chains_of(&boundary, &spans, &selected, top)
+        .into_iter()
+        .next()
+}
+
 impl Derived {
     /// Reads the floor edge `object` of `snapshot`; `None` when it or its floor is unreadable.
     #[must_use]
@@ -179,66 +281,7 @@ impl Derived {
                 None => orphans.push(*e),
             }
         }
-        let mut chains = Vec::new();
-        let mut budget = MAX_POINTS;
-        for (l, (first, n)) in spans.iter().enumerate() {
-            let Some(points) = boundary.loops.get(l) else {
-                continue;
-            };
-            if points.len() != *n || *n < 2 {
-                continue;
-            }
-            // Away from the slab's material: the right of a counterclockwise outer loop, the left
-            // of a counterclockwise hole.
-            let ccw = crate::floor::signed_area(points) > 0.0;
-            let right = ccw == (l == 0);
-            let on = |k: usize| selected.get(first + k).copied().unwrap_or(false);
-            let all = (0..*n).all(on);
-            // A chain starts at a selected edge whose predecessor is not selected.
-            let starts: Vec<usize> = if all {
-                vec![0]
-            } else {
-                (0..*n).filter(|k| on(*k) && !on((k + n - 1) % n)).collect()
-            };
-            for start in starts {
-                let mut chain = Chain {
-                    points: Vec::new(),
-                    closed: all,
-                    normals: Vec::new(),
-                    top: top.plane,
-                };
-                let mut k = start;
-                loop {
-                    let (a, b) = (points[k], points[(k + 1) % n]);
-                    let bulge = boundary.bulge(l, k);
-                    let mut run = flatten_edge(a, b, bulge, FLAT_CHORD);
-                    run.push(b);
-                    for w in run.windows(2) {
-                        let Some(d) = unit(w[0], w[1]) else {
-                            continue;
-                        };
-                        let normal = if right { [d[1], -d[0]] } else { [-d[1], d[0]] };
-                        if chain.points.is_empty() {
-                            chain.points.push(at(&top, w[0]));
-                        }
-                        chain.points.push(at(&top, w[1]));
-                        chain.normals.push(normal);
-                    }
-                    k = (k + 1) % n;
-                    if k == start || !on(k) {
-                        break;
-                    }
-                }
-                budget = budget.saturating_sub(chain.points.len());
-                if chain.normals.is_empty() {
-                    continue;
-                }
-                chains.push(chain);
-                if budget == 0 {
-                    break;
-                }
-            }
-        }
+        let chains = chains_of(&boundary, &spans, &selected, top.plane);
         Some(Self {
             edge,
             floor: floor_id,
@@ -253,53 +296,7 @@ impl Derived {
     /// The solid kernel's errors when a shell is not closed (a profile that turns inside out at a
     /// sharp corner).
     pub fn solid(&self) -> Result<Option<Polyhedron>> {
-        let mut vertices: Vec<Point3> = Vec::new();
-        let mut faces: Vec<PolyFace> = Vec::new();
-        for chain in &self.chains {
-            let first = vertices.len();
-            let sections = sections(chain, &self.edge.profile);
-            let count = sections.len();
-            let m = self.edge.profile.len();
-            for s in &sections {
-                vertices.extend(s.iter().map(|p| Point3::new(p[0], p[1], p[2])));
-            }
-            let at = |s: usize, j: usize| u32::try_from(first + s * m + j % m).unwrap_or(u32::MAX);
-            let mut shell: Vec<Vec<u32>> = Vec::new();
-            let rings = if chain.closed { count } else { count - 1 };
-            for s in 0..rings {
-                for j in 0..m {
-                    shell.push(vec![
-                        at(s, j),
-                        at(s, j + 1),
-                        at((s + 1) % count, j + 1),
-                        at((s + 1) % count, j),
-                    ]);
-                }
-            }
-            if !chain.closed {
-                shell.push((0..m).rev().map(|j| at(0, j)).collect());
-                shell.push((0..m).map(|j| at(count - 1, j)).collect());
-            }
-            faces.extend(shell.into_iter().map(PolyFace::new));
-        }
-        if faces.is_empty() {
-            return Ok(None);
-        }
-        let mut solid = Polyhedron::new(
-            vertices.clone(),
-            faces.clone(),
-            &Tolerance::DEFAULT,
-            &Limits::DEFAULT,
-        );
-        // The profile may run either way round: the same shells turned inside out are the solid.
-        if solid.as_ref().is_ok_and(|s| s.volume() < 0.0) || solid.is_err() {
-            let flipped = faces
-                .into_iter()
-                .map(|f| PolyFace::new(f.outer.into_iter().rev().collect()))
-                .collect();
-            solid = Polyhedron::new(vertices, flipped, &Tolerance::DEFAULT, &Limits::DEFAULT);
-        }
-        solid.map(Some)
+        sweep(&self.chains, &self.edge.profile)
     }
 
     /// The length of the edges swept, in meters, along the slab's boundary in plan.
@@ -342,9 +339,59 @@ impl Derived {
     }
 }
 
-/// The point `p` of the plan at the elevation of the slab's top.
-fn at(top: &crate::floor::Derived, p: [f64; 2]) -> [f64; 3] {
-    [p[0], p[1], top.plane.z(p)]
+/// The solid of `profile` swept along `chains`, as one solid with a shell for each chain.
+///
+/// # Errors
+/// The solid kernel's errors when a shell is not closed (a profile that turns inside out at a
+/// sharp corner).
+pub fn sweep(chains: &[Chain], profile: &[[f64; 2]]) -> Result<Option<Polyhedron>> {
+    let mut vertices: Vec<Point3> = Vec::new();
+    let mut faces: Vec<PolyFace> = Vec::new();
+    for chain in chains {
+        let first = vertices.len();
+        let sections = sections(chain, profile);
+        let count = sections.len();
+        let m = profile.len();
+        for s in &sections {
+            vertices.extend(s.iter().map(|p| Point3::new(p[0], p[1], p[2])));
+        }
+        let at = |s: usize, j: usize| u32::try_from(first + s * m + j % m).unwrap_or(u32::MAX);
+        let mut shell: Vec<Vec<u32>> = Vec::new();
+        let rings = if chain.closed { count } else { count - 1 };
+        for s in 0..rings {
+            for j in 0..m {
+                shell.push(vec![
+                    at(s, j),
+                    at(s, j + 1),
+                    at((s + 1) % count, j + 1),
+                    at((s + 1) % count, j),
+                ]);
+            }
+        }
+        if !chain.closed {
+            shell.push((0..m).rev().map(|j| at(0, j)).collect());
+            shell.push((0..m).map(|j| at(count - 1, j)).collect());
+        }
+        faces.extend(shell.into_iter().map(PolyFace::new));
+    }
+    if faces.is_empty() {
+        return Ok(None);
+    }
+    let mut solid = Polyhedron::new(
+        vertices.clone(),
+        faces.clone(),
+        &Tolerance::DEFAULT,
+        &Limits::DEFAULT,
+    );
+    // The profile may run either way round: the same shells turned inside out are the solid.
+    if solid.as_ref().is_ok_and(|s| s.volume() < 0.0) || solid.is_err() {
+        let flipped = faces
+            .into_iter()
+            .map(|f| PolyFace::new(f.outer.into_iter().rev().collect()))
+            .collect();
+        solid = Polyhedron::new(vertices, flipped, &Tolerance::DEFAULT, &Limits::DEFAULT);
+    }
+    solid.map(Some)
 }
 
 /// The profile placed at each corner point of `chain`: mitered between two segments, square at an
@@ -378,7 +425,7 @@ fn sections(chain: &Chain, profile: &[[f64; 2]]) -> Vec<Vec<[f64; 3]>> {
                 .iter()
                 .map(|q| {
                     let at = [p[0] + m[0] * q[0], p[1] + m[1] * q[0]];
-                    [at[0], at[1], chain.top.z(at) + q[1]]
+                    [at[0], at[1], chain.top.map_or(p[2], |t| t.z(at)) + q[1]]
                 })
                 .collect()
         })

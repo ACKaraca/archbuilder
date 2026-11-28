@@ -31,6 +31,11 @@ pub(crate) fn wall_of(object: &Value) -> Option<Wall> {
             .unwrap_or_default(),
         start_join: JoinStyle::default(),
         end_join: JoinStyle::default(),
+        bulge: number(v, "bulge").unwrap_or(0.0),
+        lean: [
+            number(v, "lean_exterior").unwrap_or(0.0),
+            number(v, "lean_interior").unwrap_or(0.0),
+        ],
     })
 }
 
@@ -147,6 +152,47 @@ fn shaft_cuts(objects: &[Value], z: (f64, f64)) -> Vec<Vec<[f64; 2]>> {
         .collect()
 }
 
+/// The shaft footprints of the elevators that pass through the slab whose body spans `z`: from the
+/// base level of the elevator's storey to its top level (the highest level without one) plus the
+/// overrun.
+fn elevator_cuts(objects: &[Value], z: (f64, f64)) -> Vec<Vec<[f64; 2]>> {
+    use archbuilder_model::types::ELEVATOR;
+    objects
+        .iter()
+        .filter(|o| o["type_key"] == ELEVATOR)
+        .filter_map(|lift| {
+            let v = &lift["values"];
+            let n = |f: &str| number(v, f);
+            let home = objects
+                .iter()
+                .find(|s| s["type_key"] == STOREY && s["id"] == lift["owner"])?;
+            let base = elevation(objects, &home["values"]["level"])?;
+            let top = match v["top_level"].as_str() {
+                Some(_) => elevation(objects, &v["top_level"])?,
+                None => objects
+                    .iter()
+                    .filter(|o| o["type_key"] == LEVEL)
+                    .filter_map(|o| number(&o["values"], "elevation"))
+                    .fold(base, f64::max),
+            };
+            let outline = archbuilder_model::elevator::Elevator {
+                center: [n("x")?, n("y")?],
+                direction: n("direction")?,
+                car: [n("car_width")?, n("car_depth")?],
+                clearance: n("clearance")?,
+                door_width: n("door_width")?,
+                pit: n("pit")?,
+                overrun: n("overrun")?,
+                top_level: None,
+                stops: Vec::new(),
+            }
+            .shaft_outline();
+            let top = top + n("overrun")?;
+            (top > z.0 + 1.0e-6 && base < z.1 - 1.0e-6).then_some(outline)
+        })
+        .collect()
+}
+
 /// The `floors` list of the dump's `objects`, in the dump's order.
 #[must_use]
 pub fn summary(objects: &[Value]) -> Vec<Value> {
@@ -180,6 +226,7 @@ pub fn summary(objects: &[Value]) -> Vec<Value> {
             ) {
                 let top = level + f.top_offset;
                 openings.extend(shaft_cuts(objects, (top - f.thickness, top)));
+                openings.extend(elevator_cuts(objects, (top - f.thickness, top)));
             }
             let area = boundary
                 .as_ref()

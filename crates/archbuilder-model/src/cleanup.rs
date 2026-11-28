@@ -19,9 +19,11 @@ use arc_doc::{Object, Snapshot};
 use arc_geom::{BooleanOp, CurveFlatten, Polyhedron, Region, prism};
 
 use crate::floor::{Boundary, Derived, FLAT_CHORD};
+use crate::insert::Insert;
 use crate::layered::{self, Layout, Poly, Spec, area, finish_wall};
 use crate::types::{FLOOR, WALL};
-use crate::wall::Wall;
+use crate::wall::{Band, BandFace, Profile, Wall};
+use crate::wall_shape;
 use crate::{insert, spatial};
 
 type P = [f64; 2];
@@ -33,14 +35,25 @@ const CHORD: f64 = 0.01;
 /// The layers of the walls of one storey at one snapshot.
 #[derive(Debug)]
 pub struct StoreyLayers {
-    /// The walls, in identifier order.
+    /// The walls, in identifier order; an arc wall appears once for each of its facets.
     pub ids: Vec<ObjectId>,
-    /// Their data.
+    /// Their data (the straight facet of an arc wall).
     pub walls: Vec<Wall>,
-    /// Their layers.
+    /// Where each entry lies along its record's baseline: the distance of its start and its
+    /// length, both along the arc for an arc wall.
+    pub spans: Vec<(f64, f64)>,
+    /// The whole wall each entry belongs to (the entry itself for a straight wall).
+    pub wholes: Vec<Wall>,
+    /// Their layers (the first segment's for a stacked wall).
     pub specs: Vec<Spec>,
     /// The cleaned layer polygons.
     pub layout: Layout,
+    /// For each further segment of the tallest stack (the first is `layout`), the layout made
+    /// with each stacked wall's layers of that segment: a stack shows each segment's layers.
+    pub stacked: Vec<(Vec<Spec>, Layout)>,
+    /// The layers of every segment of each entry's stack, from the base; empty for a wall that is
+    /// not stacked.
+    pub stack_specs: Vec<Vec<Spec>>,
 }
 
 /// The objects a derived result reads. A result is kept while every one of them is the very
@@ -175,52 +188,220 @@ pub fn storey_layers(snapshot: &Snapshot, storey: ObjectId) -> Arc<StoreyLayers>
             let mut ids = Vec::new();
             let mut walls = Vec::new();
             let mut specs = Vec::new();
+            let mut spans = Vec::new();
+            let mut wholes = Vec::new();
             for o in spatial::walls(snapshot, storey) {
                 if let Some(w) = Wall::from_values(&o.values) {
-                    specs.push(Spec::of(snapshot, &o, &w));
-                    ids.push(o.id);
-                    walls.push(w);
+                    let spec = Spec::of(snapshot, &o, &w);
+                    let marks = w.facet_marks();
+                    for (k, facet) in w.facets().into_iter().enumerate() {
+                        ids.push(o.id);
+                        specs.push(spec.clone());
+                        spans.push((marks[k], marks[k + 1] - marks[k]));
+                        wholes.push(w);
+                        walls.push(facet);
+                    }
+                }
+            }
+            // A stacked wall's layers come from its segments.
+            let mut stack_specs: Vec<Vec<Spec>> = vec![Vec::new(); walls.len()];
+            let mut at = 0;
+            for o in spatial::walls(snapshot, storey) {
+                if let Some(w) = Wall::from_values(&o.values) {
+                    let n = w.facets().len();
+                    if let Some(found) = stack_specs_of(snapshot, &o, &w) {
+                        for k in at..at + n {
+                            if let (Some(first), Some(slot), Some(spec)) =
+                                (found.first(), specs.get_mut(k), stack_specs.get_mut(k))
+                            {
+                                slot.clone_from(first);
+                                spec.clone_from(&found);
+                            }
+                        }
+                    }
+                    at += n;
                 }
             }
             let layout = layered::layout(&walls, &specs);
+            let most = stack_specs.iter().map(Vec::len).max().unwrap_or(0);
+            let stacked = (1..most)
+                .map(|k| {
+                    let pass: Vec<Spec> = specs
+                        .iter()
+                        .zip(&stack_specs)
+                        .map(|(own, segments)| {
+                            segments
+                                .get(k)
+                                .or_else(|| segments.last())
+                                .unwrap_or(own)
+                                .clone()
+                        })
+                        .collect();
+                    let layout = layered::layout(&walls, &pass);
+                    (pass, layout)
+                })
+                .collect();
             StoreyLayers {
                 ids,
                 walls,
+                spans,
+                wholes,
                 specs,
                 layout,
+                stacked,
+                stack_specs,
             }
         },
     )
 }
 
+/// The layers of each segment of the stacked wall `object`, from the base; `None` for a wall that
+/// is not stacked (or whose stack cannot be read).
+fn stack_specs_of(snapshot: &Snapshot, object: &Object, wall: &Wall) -> Option<Vec<Spec>> {
+    use crate::element_type::{Layers, StackEntry, TypeKind, WallType, type_of};
+    let ty = type_of(snapshot, TypeKind::Wall, &object.values)?;
+    let stack = StackEntry::of(&ty.values);
+    crate::element_type::stack_ranges(&stack, wall.height)?;
+    stack
+        .iter()
+        .map(|e| {
+            let t = spatial::get(snapshot, e.type_id)?;
+            let wt = WallType::from_values(&t.values)?;
+            Some(Spec::of_type(
+                &Layers::from_values(&t.values)?,
+                wt.wrap_ends,
+                wt.wrap_inserts,
+                wall.thickness,
+            ))
+        })
+        .collect()
+}
+
+/// The height ranges of the segments of the stacked wall `object`, above its base; empty for a
+/// wall that is not stacked.
+#[must_use]
+pub fn stack_ranges_of(snapshot: &Snapshot, object: &Object) -> Vec<(f64, f64)> {
+    use crate::element_type::{StackEntry, TypeKind, type_of};
+    let (Some(wall), Some(ty)) = (
+        Wall::of(snapshot, object),
+        type_of(snapshot, TypeKind::Wall, &object.values),
+    ) else {
+        return Vec::new();
+    };
+    crate::element_type::stack_ranges(&StackEntry::of(&ty.values), wall.height).unwrap_or_default()
+}
+
 impl StoreyLayers {
-    /// The index of the wall `id`.
-    fn index(&self, id: ObjectId) -> Option<usize> {
-        self.ids.iter().position(|i| *i == id)
+    /// The indexes of the entries of the wall `id`: its facets, in order from its start.
+    fn indexes(&self, id: ObjectId) -> Vec<usize> {
+        self.ids
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| **i == id)
+            .map(|(k, _)| k)
+            .collect()
+    }
+
+    /// The polygons of the whole wall `id` with openings active at the height `z`. The facets of
+    /// an arc wall are united layer by layer where they touch, and each opening is cut (and its
+    /// reveal wrapped) on its own tangent frame, as the solid of the wall and the IFC opening
+    /// have it.
+    fn finished_wall(&self, snapshot: &Snapshot, id: ObjectId, z: f64) -> Vec<Poly> {
+        let pass = if z.is_finite() && z < f64::MAX / 2.0 {
+            spatial::get(snapshot, id)
+                .map(|o| stack_ranges_of(snapshot, &o))
+                .and_then(|r| r.iter().position(|(a, b)| z >= *a && z < *b))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        self.finished_wall_in(snapshot, id, z, pass)
+    }
+
+    /// [`Self::finished_wall`] with the layers of the stack segment `pass`.
+    fn finished_wall_in(
+        &self,
+        snapshot: &Snapshot,
+        id: ObjectId,
+        z: f64,
+        pass: usize,
+    ) -> Vec<Poly> {
+        let at = self.indexes(id);
+        if at.len() < 2 {
+            return at
+                .iter()
+                .flat_map(|k| self.finished(snapshot, *k, z, true, pass))
+                .collect();
+        }
+        let all: Vec<Poly> = at
+            .iter()
+            .flat_map(|k| self.finished(snapshot, *k, z, false, pass))
+            .collect();
+        let mut out = layered::merge_touching(all, &|w| self.ids.get(w).copied());
+        let specs = match pass.checked_sub(1).and_then(|k| self.stacked.get(k)) {
+            Some((specs, _)) => specs,
+            None => &self.specs,
+        };
+        let (Some(whole), Some(spec)) = (
+            at.first().and_then(|k| self.wholes.get(*k)),
+            at.first().and_then(|k| specs.get(*k)),
+        ) else {
+            return out;
+        };
+        for item in insert::openings_of(snapshot, id)
+            .into_iter()
+            .filter(|i| i.sill <= z && z < i.top())
+        {
+            let (tangent, local) = insert::on_arc(whole, &item);
+            out = finish_wall(&tangent, spec, &out, [false; 2], &[local.extent()]);
+        }
+        out
     }
 
     /// The polygons of the wall at `at` with openings active at the height `z` above its base.
     /// Kept while the polygons the layout gave the wall, its openings and its type are the same,
     /// so a move elsewhere in the storey does not make them again.
-    fn finished(&self, snapshot: &Snapshot, at: usize, z: f64) -> Vec<Poly> {
+    fn finished(
+        &self,
+        snapshot: &Snapshot,
+        at: usize,
+        z: f64,
+        with_gaps: bool,
+        pass: usize,
+    ) -> Vec<Poly> {
+        // The layers and the layout of the segment of a stack (the first when it has none).
+        let (specs, layout) = match pass.checked_sub(1).and_then(|k| self.stacked.get(k)) {
+            Some((specs, layout)) => (specs, layout),
+            None => (&self.specs, &self.layout),
+        };
         let (Some(wall), Some(spec), Some(id)) =
-            (self.walls.get(at), self.specs.get(at), self.ids.get(at))
+            (self.walls.get(at), specs.get(at), self.ids.get(at))
         else {
             return Vec::new();
         };
-        let own: Vec<Poly> = self
-            .layout
+        let own: Vec<Poly> = layout
             .polys
             .iter()
             .filter(|p| p.wall == at)
             .cloned()
             .collect();
+        let (from, length) = self.spans.get(at).copied().unwrap_or((0.0, wall.length()));
+        // The openings along the record's baseline (the arc), moved into this facet's own
+        // distances along its chord.
+        let scale = if length > 0.0 {
+            wall.length() / length
+        } else {
+            1.0
+        };
         let gaps: Vec<(f64, f64)> = insert::openings_of(snapshot, *id)
             .into_iter()
+            .filter(|_| with_gaps)
             .filter(|i| i.sill <= z && z < i.top())
             .map(|i| i.extent())
+            .filter(|(a, b)| *b > from && *a < from + length)
+            .map(|(a, b)| ((a - from) * scale, (b - from) * scale))
             .collect();
-        let free = self.layout.free.get(at).copied().unwrap_or([true; 2]);
+        let free = layout.free.get(at).copied().unwrap_or([true; 2]);
         let key = FinishedKey {
             own,
             free,
@@ -281,8 +462,11 @@ pub fn plan_lines(snapshot: &Snapshot, storey: ObjectId, cut: f64) -> Arc<Vec<Pl
         || {
             let layers = storey_layers(snapshot, storey);
             let mut all: Vec<Poly> = Vec::new();
-            for at in 0..layers.walls.len() {
-                all.extend(layers.finished(snapshot, at, cut));
+            for (at, id) in layers.ids.iter().enumerate() {
+                // An arc wall is finished once, as a whole, at its first facet.
+                if at == 0 || layers.ids.get(at - 1) != Some(id) {
+                    all.extend(layers.finished_wall(snapshot, *id, cut));
+                }
             }
             layered::lines(&all)
                 .into_iter()
@@ -300,10 +484,10 @@ pub fn wall_outline(snapshot: &Snapshot, object: &Object) -> Vec<Vec<P>> {
         return Vec::new();
     };
     let layers = storey_layers(snapshot, storey);
-    layers
-        .index(object.id)
-        .map(|at| layered::outline(&layers.finished(snapshot, at, f64::MAX)))
-        .unwrap_or_default()
+    if layers.indexes(object.id).is_empty() {
+        return Vec::new();
+    }
+    layered::outline(&layers.finished_wall(snapshot, object.id, f64::MAX))
 }
 
 /// The elevation of the base of the wall record `object` and the height of its top above it.
@@ -417,6 +601,7 @@ pub fn clean_floor(snapshot: &Snapshot, object: &Object) -> Option<Arc<CleanFloo
         FLOOR,
         crate::types::ROOF,
         crate::types::SHAFT,
+        crate::types::ELEVATOR,
     ] {
         deps.extend(spatial::objects(snapshot, key));
     }
@@ -479,13 +664,15 @@ fn compute_clean_floor(snapshot: &Snapshot, object: &Object) -> Option<CleanFloo
             continue;
         }
         let layers = storey_layers(snapshot, storey);
-        let Some(at) = layers.index(wall_object.id) else {
+        let facets = layers.indexes(wall_object.id);
+        // The side is probed at the middle of the wall: its middle facet.
+        let Some(at) = facets.get(facets.len() / 2).copied() else {
             continue;
         };
         let Some(wall) = layers.walls.get(at) else {
             continue;
         };
-        let polys = layers.finished(snapshot, at, (from + to) / 2.0 - base);
+        let polys = layers.finished_wall(snapshot, wall_object.id, (from + to) / 2.0 - base);
         let overlap: f64 = polys
             .iter()
             .filter_map(|p| {
@@ -625,8 +812,11 @@ pub struct Piece {
     pub class: PieceClass,
     /// The solid.
     pub solid: Polyhedron,
-    /// The layer, by index in the wall type's layers.
+    /// The layer, by index in the layers of its segment's type.
     pub layer: usize,
+    /// The segment of a stacked wall the piece belongs to, from the base; 0 for a wall that is
+    /// not stacked.
+    pub segment: usize,
     /// A key of the piece that stays the same while its wall's openings and layers stay: the
     /// band of heights, the layer and the part of the layer packed in one number.
     pub key: u32,
@@ -636,9 +826,22 @@ pub struct Piece {
 /// whose type does not give its layers (a plain wall).
 #[must_use]
 pub fn layer_materials(snapshot: &Snapshot, object: &Object) -> Vec<String> {
-    use crate::element_type::{Layers, TypeKind, type_of};
+    layer_materials_in(snapshot, object, 0)
+}
+
+/// [`layer_materials`] for the segment `segment` of a stacked wall (the wall's own type when it is
+/// not stacked).
+#[must_use]
+pub fn layer_materials_in(snapshot: &Snapshot, object: &Object, segment: usize) -> Vec<String> {
+    use crate::element_type::{Layers, StackEntry, TypeKind, type_of};
     let wall = Wall::of(snapshot, object);
-    type_of(snapshot, TypeKind::Wall, &object.values)
+    let ty = type_of(snapshot, TypeKind::Wall, &object.values);
+    let of_segment = ty
+        .as_ref()
+        .and_then(|t| StackEntry::of(&t.values).get(segment).copied())
+        .and_then(|e| spatial::get(snapshot, e.type_id));
+    of_segment
+        .or(ty)
         .and_then(|t| Layers::from_values(&t.values))
         .filter(|l| {
             wall.is_some_and(|w| (l.total() - w.thickness).abs() <= 1.0e-6) && !l.layers.is_empty()
@@ -686,6 +889,10 @@ pub fn wall_net_volume_ready(snapshot: &Snapshot, object: &Object) -> Option<Opt
     Some(wall_net_volume(snapshot, object))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one pass over the bands of heights: layers, stacks, shapes, bands"
+)]
 fn pieces_in(
     snapshot: &Snapshot,
     object: &Object,
@@ -695,21 +902,57 @@ fn pieces_in(
     let wall = Wall::of(snapshot, object)?;
     let (base, height) = wall_range(snapshot, object)?;
     let layers = storey_layers(snapshot, storey);
-    let at = layers.index(object.id)?;
+    if layers.indexes(object.id).is_empty() {
+        return None;
+    }
     let inserts = if openings {
         insert::openings_of(snapshot, object.id)
     } else {
         Vec::new()
     };
+    let level = base - wall.base_offset;
+    // A wall with a profile is its layers extruded from the profile, ends square.
+    if let Some(profile) = Profile::of(&object.values)
+        && profile.fits(wall.length(), wall.height)
+        && let Some(spec) = layers.specs.get(layers.indexes(object.id)[0])
+    {
+        return Some(
+            wall_shape::profile_solids(&wall, &profile, level, spec, &inserts, openings)
+                .map(|shaped| shaped.into_iter().map(piece_of).collect()),
+        );
+    }
+    // Bands apply to a plain vertical straight wall.
+    let bands: Vec<Band> = if wall.is_arc() || wall.leans() {
+        Vec::new()
+    } else {
+        Band::of(&object.values)
+            .into_iter()
+            .filter(|b| {
+                b.fits(if b.vertical {
+                    wall.length()
+                } else {
+                    wall.height
+                })
+            })
+            .collect()
+    };
     let mut marks: Vec<f64> = vec![0.0, height];
     for i in &inserts {
         marks.extend([i.sill.clamp(0.0, height), i.top().clamp(0.0, height)]);
+    }
+    for b in bands.iter().filter(|b| !b.vertical) {
+        let (a, z) = b.range(wall.height);
+        marks.extend([a.clamp(0.0, height), z.clamp(0.0, height)]);
+    }
+    // A stacked wall changes its layers at the borders of its segments.
+    let ranges = stack_ranges_of(snapshot, object);
+    for (from, to) in &ranges {
+        marks.extend([from.clamp(0.0, height), to.clamp(0.0, height)]);
     }
     marks.sort_by(f64::total_cmp);
     marks.dedup_by(|a, b| (*a - *b).abs() < 1.0e-9);
     let roof = insert::attached_roof(snapshot, object).map(|(_, s)| s);
     let cleaned = floors(snapshot);
-    let level = base - wall.base_offset;
     let mut out = Vec::new();
     let tolerance = Tolerance::DEFAULT;
     for (band_at, band) in marks.windows(2).enumerate() {
@@ -717,11 +960,40 @@ fn pieces_in(
             continue;
         };
         let reaches_top = (b - height).abs() < 1.0e-9;
-        for p in layers.finished(
+        let cuts = wall_shape::recess_cuts(&wall, &bands, a, b);
+        let segment = ranges
+            .iter()
+            .position(|(from, to)| (a + b) / 2.0 >= *from && (a + b) / 2.0 < *to)
+            .unwrap_or(0);
+        let mut polys = layers.finished_wall_in(
             snapshot,
-            at,
+            object.id,
             if openings { (a + b) / 2.0 } else { f64::MAX },
-        ) {
+            segment,
+        );
+        for cut in &cuts {
+            polys = polys
+                .into_iter()
+                .flat_map(|p| layered::subtract(p, cut))
+                .collect();
+        }
+        // A projecting band is united with the outermost (or innermost) layer it stands on, and
+        // stops at the openings active at this height.
+        let gaps: Vec<(f64, f64)> = inserts
+            .iter()
+            .filter(|i| i.sill <= (a + b) / 2.0 && (a + b) / 2.0 < i.top())
+            .map(Insert::extent)
+            .collect();
+        for (face, rect) in wall_shape::band_rects(&wall, &bands, a, b, &gaps) {
+            let spec = layers.specs.get(layers.indexes(object.id)[0]);
+            let layer = spec.and_then(|s| match face {
+                BandFace::Exterior => s.layers.iter().position(|l| l.thickness > 0.0),
+                BandFace::Interior => s.layers.iter().rposition(|l| l.thickness > 0.0),
+            });
+            let Some(layer) = layer else { continue };
+            polys = layered::unite_into(polys, layer, rect);
+        }
+        for p in polys {
             let Some(region) = poly_region(&p.points) else {
                 continue;
             };
@@ -741,6 +1013,7 @@ fn pieces_in(
                     class,
                     solid,
                     layer: p.layer,
+                    segment,
                     key: piece_key(band_at, p.layer, 0),
                 });
                 continue;
@@ -758,11 +1031,25 @@ fn pieces_in(
                 if z1 - z0 < 1.0e-6 {
                     continue;
                 }
-                match prism(&region, z0, z1 - z0, CHORD, &tolerance, &Limits::DEFAULT) {
+                let made = if wall.leans() {
+                    // A leaning layer is its polygon moved sideways by height.
+                    flatten_region(&region).first().map_or_else(
+                        || {
+                            Err(arc_base::Error::new(
+                                crate::error::codes::WALL_SHAPE_INVALID,
+                            ))
+                        },
+                        |pts| wall_shape::leaning_prism(&wall, pts, z0, z1, base),
+                    )
+                } else {
+                    prism(&region, z0, z1 - z0, CHORD, &tolerance, &Limits::DEFAULT)
+                };
+                match made {
                     Ok(solid) => out.push(Piece {
                         class,
                         solid,
                         layer: p.layer,
+                        segment,
                         key: piece_key(band_at, p.layer, part_at),
                     }),
                     Err(e) => return Some(Err(e)),
@@ -771,6 +1058,23 @@ fn pieces_in(
         }
     }
     Some(Ok(out))
+}
+
+/// The piece of a shaped solid.
+fn piece_of(s: wall_shape::Shaped) -> Piece {
+    Piece {
+        class: if s.core {
+            PieceClass::Core
+        } else if s.finish {
+            PieceClass::Finish
+        } else {
+            PieceClass::Other
+        },
+        solid: s.solid,
+        layer: s.layer,
+        segment: 0,
+        key: piece_key(1000, s.layer, s.part),
+    }
 }
 
 /// The key of a piece: band, layer and part, each clamped to its share of the number.

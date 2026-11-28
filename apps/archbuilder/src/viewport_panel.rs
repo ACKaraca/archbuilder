@@ -1,5 +1,5 @@
 //! The viewport panel with a header that names what it shows: the 3D view, or the plan view with
-//! its scale and detail level. The viewport itself is the shell's.
+//! its scale and detail level, or the saved 3D view, section or elevation with its scale. The viewport itself is the shell's.
 
 use arc_app::shell::{Panel, PanelContext, ViewportPanel};
 use arc_ui::egui::Ui;
@@ -11,6 +11,9 @@ struct Message {
 
 const HEADER_3D: Message = Message {
     message_id: "ab-viewport-3d",
+};
+const HEADER_MODEL: Message = Message {
+    message_id: "ab-viewport-model",
 };
 const HEADER_PLAN: Message = Message {
     message_id: "ab-viewport-plan",
@@ -52,6 +55,21 @@ impl Panel for HeaderViewport {
                 ),
             ];
             cx.localize.message(HEADER_PLAN.message_id, &args)
+        });
+        // A saved 3D view, section or elevation is named with its scale.
+        let text = text.or_else(|| {
+            let tab = cx.tab?;
+            let snapshot = cx.app.tab(tab).ok()?.document().snapshot();
+            let id = crate::plan_state::model_in(tab, &snapshot)?;
+            let settings = archbuilder_model::model_view::settings(&snapshot, id)?;
+            let args = [
+                ("name", arc_base::error::Value::Text(settings.name)),
+                (
+                    "scale",
+                    arc_base::error::Value::Text(format!("{:.0}", settings.scale)),
+                ),
+            ];
+            cx.localize.message(HEADER_MODEL.message_id, &args)
         });
         let text = text.unwrap_or_else(|| {
             cx.localize

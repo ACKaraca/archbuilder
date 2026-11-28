@@ -225,13 +225,17 @@ pub struct SetProperty {
     #[schemars(length(min = 1, max = 1000))]
     pub objects: Vec<IdParam>,
     /// The field: `name` of any object, `elevation` of a level, a storey (its level's) or a
-    /// building, `number`, `client`, `address`, `length_unit` or `template` of the project,
+    /// building, `number`, `client`, `address`, `status`, `issue_date`, `author`, `organization`, `description`,
+    /// `long_name`, `occupancy_type`, `year_of_construction`, `construction_method`, `length_unit`,
+    /// `area_unit`, `volume_unit`, `angle_unit`, `slope_unit`, a `…_precision` or a `…_rounding` or
+    /// `template` of the project,
     /// `start_x`, `start_y`, `end_x`, `end_y`, `thickness`, `height`, `base_offset` (lengths) or
     /// `location_line` (`center`, `exterior`, `interior`, `core_center`, `core_exterior`,
     /// `core_interior`) of a wall, and `type` (a type's name or identifier, or its number in the
     /// list of the kind's types) of a wall, floor, door or window. The values a type decides
     /// (a wall's or floor's thickness, a door's or window's width, height, frame and operation)
-    /// are edited on the type.
+    /// are edited on the type. `parameter:<identifier>` sets a project parameter's value: a text
+    /// starting with `=` is a formula, an empty text clears the object's own value.
     pub field: String,
     /// The value in canonical JSON form: a text, a number in meters (also as a text without a unit, `"0.35"`), an enum name or code, or a
     /// truth value.
@@ -243,8 +247,8 @@ pub(crate) fn named(name: &str) -> Value {
 }
 
 /// Runs the model's rules on the open transaction.
-/// Whether the open transaction `txn` created `id` or changed it in more than its name and pinned
-/// flag.
+/// Whether the open transaction `txn` created `id` or changed it in more than its name, pinned
+/// flag and parameter values.
 fn changed_by(txn: &arc_doc::Txn, id: ObjectId) -> bool {
     let (base, candidate) = (txn.base(), txn.snapshot());
     txn.touched()
@@ -252,10 +256,18 @@ fn changed_by(txn: &arc_doc::Txn, id: ObjectId) -> bool {
         .is_some_and(|c| *c != arc_doc::Change::Deleted)
         && match (spatial::get(base, id), spatial::get(candidate, id)) {
             (Some(before), Some(after)) => {
-                let pin = spatial::type_of(base, id).and_then(|k| types::pinned_slot(&k));
+                let key = spatial::type_of(base, id);
+                let pin = key.as_deref().and_then(types::pinned_slot);
+                // Parameter values change no geometry, so they are like the name and the pin.
+                let values = key
+                    .as_deref()
+                    .and_then(|k| archbuilder_model::parameter::field_at(base, k));
                 before.header.owner != after.header.owner
-                    || (1..before.values.len().max(after.values.len()))
-                        .any(|k| Some(k) != pin && before.values.get(k) != after.values.get(k))
+                    || (1..before.values.len().max(after.values.len())).any(|k| {
+                        Some(k) != pin
+                            && Some(k) != values
+                            && before.values.get(k) != after.values.get(k)
+                    })
             }
             _ => true,
         }
@@ -578,8 +590,15 @@ pub(crate) fn delete_storey(ctx: &mut Context<'_>, p: DeleteStorey) -> Result<()
         None => storey_in_selection(ctx).ok_or_else(|| Error::new(codes::NOTHING_SELECTED))?,
     };
     let object = expect(ctx.snapshot(), id, STOREY)?;
+    if archbuilder_model::group::instances(ctx.snapshot())
+        .iter()
+        .any(|i| i.level_map.contains(&id))
+    {
+        return Err(Error::new(crate::error::codes::GROUP_LEVEL_MAPPED));
+    }
     let walls: usize = types::STOREY_ELEMENTS
         .iter()
+        .chain(&[types::FOREIGN_ELEMENT])
         .map(|k| spatial::children(ctx.snapshot(), k, id).len())
         .sum();
     if walls > 0 {
@@ -697,6 +716,7 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         ValueType::String => Some(Value::String(json.as_str()?.trim().to_owned())),
         ValueType::Bool => Some(Value::Bool(json.as_bool()?)),
         ValueType::F64 => json.as_f64().filter(|v| v.is_finite()).map(Value::F64),
+        ValueType::I64 => json.as_i64().map(Value::I64),
         ValueType::Enum(variants) => {
             let code = match json.as_str() {
                 Some(name) => variants.iter().find(|v| v.name == name)?.code,
@@ -709,12 +729,9 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
         }
         ValueType::Quantity(dimension) => {
             let param: QuantityParam = serde_json::from_value(json.clone()).ok()?;
-            let quantity = if *dimension == arc_base::Dimension::LENGTH {
-                crate::length(ctx, &param)
-            } else {
-                ctx.quantity(&param, *dimension)
-            };
-            quantity.ok().map(Value::Quantity)
+            crate::quantity(ctx, &param, *dimension)
+                .ok()
+                .map(Value::Quantity)
         }
         _ => None,
     }
@@ -725,9 +742,19 @@ fn decode(ctx: &Context<'_>, value_type: &ValueType, json: &serde_json::Value) -
     reason = "one arm per special field of the property command"
 )]
 pub(crate) fn set_property(ctx: &mut Context<'_>, p: SetProperty) -> Result<()> {
+    if let Some(identifier) = p.field.strip_prefix(crate::project_parameter::FIELD_PREFIX) {
+        let objects: Vec<ObjectId> = p.objects.iter().map(|IdParam(id)| *id).collect();
+        return crate::project_parameter::set_property(ctx, &objects, identifier, &p.value);
+    }
     for IdParam(id) in p.objects {
         let snapshot = ctx.snapshot();
         let key = spatial::type_of(snapshot, id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        if let Some(param) = p.field.strip_prefix(crate::family_project::VALUE_FIELD)
+            && matches!(key.as_str(), types::COMPONENT | types::FAMILY_INSERT)
+        {
+            crate::family_project::set_instance_value(ctx, id, param, &p.value)?;
+            continue;
+        }
         match (key.as_str(), p.field.as_str()) {
             (_, "name") => {
                 let name = p

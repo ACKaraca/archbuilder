@@ -40,7 +40,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use arc_base::{Dimension, Error, ObjectId, Result};
+use arc_base::{Error, ObjectId, Result};
 use arc_command::prompt::{
     Accept, KeywordOption, Point, PointDims, Prompt, PromptInput, PromptMachine, PromptState, Step,
 };
@@ -162,6 +162,10 @@ pub struct Modified {
     /// Doors and windows that now open into another wall, as `[door or window, wall]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub meets: Vec<[String; 2]>,
+    /// The grid edits and panel overrides of curtain walls that a split or merge could not
+    /// carry to a resulting wall without guessing, as `[wall, what]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unkept: Vec<[String; 2]>,
 }
 
 /// The movable objects a command works on.
@@ -193,10 +197,18 @@ pub(crate) struct Set {
     pub(crate) datums: Vec<ObjectId>,
     /// The roofs by extrusion (their plane moves).
     pub(crate) extruded: Vec<ObjectId>,
+    /// The elevators (their middle and direction move).
+    pub(crate) elevators: Vec<ObjectId>,
+    /// The dormers, and those of the roofs in the set (their middle and direction move).
+    pub(crate) dormers: Vec<ObjectId>,
+    /// The family components (their insertion point and heading move).
+    pub(crate) components: Vec<ObjectId>,
+    /// The foreign elements (their mesh moves; they cannot be mirrored).
+    pub(crate) foreign: Vec<ObjectId>,
 }
 
 impl Set {
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.walls.len()
             + self.floors.len()
             + self.rooms.len()
@@ -210,6 +222,10 @@ impl Set {
             + self.cuts.len()
             + self.datums.len()
             + self.extruded.len()
+            + self.elevators.len()
+            + self.dormers.len()
+            + self.components.len()
+            + self.foreign.len()
     }
 }
 
@@ -264,7 +280,11 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
             Some(types::VERTICAL_OPENING) => set.cuts.push(id),
             Some(types::GRID | types::REFERENCE_PLANE) => set.datums.push(id),
             Some(types::ROOF_EXTRUSION) => set.extruded.push(id),
-            Some(DOOR | WINDOW | types::WALL_OPENING) => inserts.push(id),
+            Some(types::ELEVATOR) => set.elevators.push(id),
+            Some(types::DORMER) => set.dormers.push(id),
+            Some(types::COMPONENT) => set.components.push(id),
+            Some(types::FOREIGN_ELEMENT) => set.foreign.push(id),
+            Some(DOOR | WINDOW | types::WALL_OPENING | types::FAMILY_INSERT) => inserts.push(id),
             // Storeys and levels are skipped in a selection; naming one is an error.
             Some(_) if !explicit => skipped = true,
             _ => return Err(Error::new(codes::NOT_MOVABLE)),
@@ -281,6 +301,14 @@ pub(crate) fn gather(ctx: &Context<'_>, given: Option<Vec<IdParam>>) -> Result<S
         for cut in spatial::children(snapshot, types::VERTICAL_OPENING, *host) {
             if !set.cuts.contains(&cut.id) {
                 set.cuts.push(cut.id);
+            }
+        }
+    }
+    // The dormers of a roof go where it goes.
+    for roof in &set.roofs {
+        for dormer in spatial::children(snapshot, types::DORMER, *roof) {
+            if !set.dormers.contains(&dormer.id) {
+                set.dormers.push(dormer.id);
             }
         }
     }
@@ -772,7 +800,11 @@ pub(crate) fn shifted_inserts(
                 .with_arg("from", "0.00")
                 .with_arg("to", format!("{:.2}", wall.length())));
         }
-        out.push((object.id, distance, hand));
+        out.push((
+            object.id,
+            Insert::stored_distance(snapshot, &object, distance),
+            hand,
+        ));
     }
     Ok(out)
 }
@@ -822,14 +854,13 @@ fn move_stairs(
 ) -> Result<()> {
     for id in stairs {
         let object = spatial::get(snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-        let moved = Stair::from_values(&object.values)
-            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
-            .moved(xf);
         let name = types::text(&object.values, 0)
             .unwrap_or_default()
             .to_owned();
+        let values = Stair::moved_values(&object.values, &name, xf, false)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
         let txn = ctx.txn()?;
-        for (k, value) in moved.values(&name).into_iter().enumerate().skip(1) {
+        for (k, value) in values.into_iter().enumerate().skip(1) {
             if let Some(decl) = snapshot
                 .registry()
                 .get(types::STAIR)
@@ -891,8 +922,11 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
     }
     let mut slides = Vec::new();
     for id in &set.inserts {
-        let (_, distance) = slide(&snapshot, *id, xf)?;
-        slides.push((*id, distance));
+        let (item, distance) = slide(&snapshot, *id, xf)?;
+        let object =
+            spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        slides.push((*id, Insert::stored_distance(&snapshot, &object, distance)));
+        let _ = item;
     }
     for (id, wall, hosted) in wall_changes.into_iter().chain(follows) {
         for (field, value) in [
@@ -946,6 +980,9 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         set_length(ctx, *id, "y", at[1])?;
     }
     move_stairs(ctx, &snapshot, &set.stairs, xf)?;
+    crate::roof_parts::move_parts(ctx, &snapshot, &set.elevators, &set.dormers, xf)?;
+    crate::family_project::move_components(ctx, &snapshot, &set.components, xf)?;
+    crate::foreign::move_foreign(ctx, &snapshot, &set.foreign, xf)?;
     crate::circulation::move_circulation(ctx, &snapshot, &set.ramps, &set.railings, xf)?;
     dissociated += crate::roof::move_roofs(ctx, &snapshot, &set.roofs, xf, &walls)?;
     dissociated += crate::ceiling::move_ceilings(ctx, &snapshot, &set.ceilings, xf, &walls)?;
@@ -973,6 +1010,7 @@ pub(crate) fn transform_in_place(ctx: &mut Context<'_>, set: &Set, xf: &Xform) -
         reconnected: Some(joined.ends).filter(|n| *n > 0),
         unjoined: joined.unjoined,
         meets,
+        unkept: Vec::new(),
     })
 }
 
@@ -1138,20 +1176,17 @@ pub(crate) fn copy_set(
     for id in &set.stairs {
         let object =
             spatial::get(&snapshot, *id).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
-        let mut moved = Stair::from_values(&object.values)
-            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?
-            .moved(xf);
         let storey = target.or(object.header.owner);
         let Some(s) = storey else {
             return Err(Error::new(codes::KIND_MISMATCH));
         };
-        // In another storey the top is that storey's level above.
-        if target.is_some_and(|t| Some(t) != object.header.owner) {
-            moved.top_level = None;
-        }
         let seen = ctx.txn()?.snapshot().clone();
         let name = crate::stair::next_stair_name(&seen, s, &tongue);
-        let new = create(ctx, types::STAIR, storey, moved.values(&name))?;
+        // In another storey the top is that storey's level above.
+        let other = target.is_some_and(|t| Some(t) != object.header.owner);
+        let values = Stair::moved_values(&object.values, &name, xf, other)
+            .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        let new = create(ctx, types::STAIR, storey, values)?;
         created.push(new);
         // The railings hosted on the stair go with it.
         created.extend(crate::circulation::copy_hosted_railings(
@@ -1195,6 +1230,41 @@ pub(crate) fn copy_set(
     dissociated += lost;
     // The edge elements of the floors copied go with them: they follow the new floor's edges.
     created.extend(crate::floor_edge::copy_for(ctx, &snapshot, &hosts)?);
+    // The dormers and roof edge elements of the roofs copied go with them; a dormer copied alone
+    // stays on its own roof.
+    created.extend(crate::roof_parts::copy_for(ctx, &snapshot, &hosts, xf)?);
+    let alone: Vec<ObjectId> = set
+        .dormers
+        .iter()
+        .copied()
+        .filter(|d| {
+            spatial::get(&snapshot, *d)
+                .and_then(|o| o.header.owner)
+                .is_none_or(|r| !set.roofs.contains(&r))
+        })
+        .collect();
+    created.extend(crate::roof_parts::copy_parts(
+        ctx,
+        &snapshot,
+        &set.elevators,
+        &alone,
+        xf,
+        target,
+    )?);
+    created.extend(crate::family_project::copy_components(
+        ctx,
+        &snapshot,
+        &set.components,
+        xf,
+        target,
+    )?);
+    created.extend(crate::foreign::copy_foreign(
+        ctx,
+        &snapshot,
+        &set.foreign,
+        xf,
+        target,
+    )?);
     created.extend(crate::opening::copy_cuts(
         ctx,
         &snapshot,
@@ -1283,10 +1353,24 @@ pub(crate) fn copy_insert(
 ) -> Result<ObjectId> {
     let key = spatial::type_of(ctx.snapshot(), source.id)
         .ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+    let distance = Insert::stored_distance(ctx.snapshot(), source, distance);
+    let mut values = source.values.clone();
+    if key == types::FAMILY_INSERT {
+        // A family instance keeps its mark; its positions are the family record's.
+        let mut put = |at: usize, value: Value| {
+            if let Some(slot) = values.get_mut(at) {
+                *slot = Some(value);
+            }
+        };
+        put(types::family_insert::DISTANCE, types::length(distance));
+        if let Some(code) = hand {
+            put(types::family_insert::HAND, Value::Enum(code));
+        }
+        return create(ctx, &key, Some(host), values);
+    }
     let kind = Kind::of_key(&key).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
     let seen = ctx.txn()?.snapshot().clone();
     let name = crate::insert::next_name(&seen, kind, host, tongue);
-    let mut values = source.values.clone();
     let mut put = |at: usize, value: Value| {
         if let Some(slot) = values.get_mut(at) {
             *slot = Some(value);
@@ -1310,6 +1394,9 @@ fn run(
         return Err(invalid());
     }
     let set = gather(ctx, objects)?;
+    if !set.foreign.is_empty() && !archbuilder_model::foreign::can_move(&xf) {
+        return Err(Error::new(codes::FOREIGN_MIRROR));
+    }
     if copy {
         copy_set(ctx, &set, &xf, None)
     } else {
@@ -1359,13 +1446,9 @@ fn paste_objects(ctx: &mut Context<'_>, p: Paste, into_storey: bool) -> Result<M
 }
 
 fn rotate_objects(ctx: &mut Context<'_>, p: Rotate) -> Result<Modified> {
-    // A bare text number is degrees; a JSON number is radians; a text with a unit says its own.
-    let angle = match &p.angle {
-        QuantityParam::Text(t) if t.trim().parse::<f64>().is_ok() => {
-            t.trim().parse::<f64>().unwrap_or(0.0).to_radians()
-        }
-        other => ctx.quantity(other, Dimension::ANGLE)?.value(),
-    };
+    // A bare text number is in the project's angle unit (degrees by default); a JSON number is
+    // radians; a text with a unit says its own.
+    let angle = crate::angle(ctx, &p.angle)?;
     run(
         ctx,
         p.objects,

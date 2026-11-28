@@ -13,8 +13,11 @@ use std::sync::Arc;
 use arc_base::{Error, ObjectId, Result};
 use arc_command::{CommandSpec, Context, IdParam, QuantityParam, Registry};
 use arc_doc::{Snapshot, Value};
-use archbuilder_model::floor::{Floor, VERTICAL_SLOTS, Vertex};
-use archbuilder_model::types::{self, SHAFT, VERTICAL_HOSTS, VERTICAL_OPENING};
+use archbuilder_model::floor::{
+    self, Face, Floor, MAX_VERTICES, VERTICAL_SLOTS, Vertex, WallsRefusal,
+};
+use archbuilder_model::types::{self, ROOF, SHAFT, VERTICAL_HOSTS, VERTICAL_OPENING, WALL};
+use archbuilder_model::wall::Wall;
 use archbuilder_model::{defaults, names, spatial};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,10 +31,42 @@ pub const SHAFT_CREATE: &str = "archbuilder.shaft.create";
 /// The identifier of the create-vertical-opening command.
 pub const VERTICAL_OPENING_CREATE: &str = "archbuilder.vertical_opening.create";
 
+/// The identifier of the create-dormer-opening command.
+pub const DORMER_OPENING_CREATE: &str = "archbuilder.dormer_opening.create";
+
+/// Parameters of `archbuilder.dormer_opening.create`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateDormer {
+    /// The roof that hosts the opening; else the selected roof.
+    #[serde(default)]
+    pub roof: Option<IdParam>,
+    /// The walls of the dormer, in order around it, each meeting the next: a closed loop of three
+    /// or more, or an open chain of two or more whose ends the roof closes (a dormer's cheeks and
+    /// front). The cut follows their faces and moves with them. The selected walls, in selection
+    /// order, when absent.
+    #[serde(default)]
+    pub walls: Option<Vec<IdParam>>,
+    /// The face the cut follows; the interior face when absent.
+    #[serde(default)]
+    pub face: Option<crate::floor::FaceParam>,
+    /// The offset of the cut from the wall face, toward the left of the wall's direction, in
+    /// meters; 0 when absent.
+    #[serde(default)]
+    pub edge_offset: Option<QuantityParam>,
+    /// The name; else the first free `Dormer <n>` of the roof.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Parameters of `archbuilder.shaft.create`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateShaft {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The storey the shaft starts on; else the storey of the selection, else the lowest.
     #[serde(default)]
     pub storey: Option<IdParam>,
@@ -66,6 +101,10 @@ pub struct CreateShaft {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateCut {
+    /// The work plane the sketch is made on, stored with the element; it must belong to the
+    /// element's building.
+    #[serde(default)]
+    pub work_plane: Option<IdParam>,
     /// The floor, roof or ceiling that hosts the opening; else the selected one.
     #[serde(default)]
     pub host: Option<IdParam>,
@@ -209,6 +248,7 @@ fn create_shaft(ctx: &mut Context<'_>, p: CreateShaft) -> Result<OpeningCreated>
             reference(top),
         ],
     )?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
     let span = spatial::get(txn.snapshot(), id)
@@ -246,6 +286,110 @@ fn create_cut(ctx: &mut Context<'_>, p: CreateCut) -> Result<OpeningCreated> {
         VERTICAL_OPENING,
         Some(host),
         vec![Some(named(&name)), Some(Floor::vertex_values(&vertices))],
+    )?;
+    crate::datum::store_work_plane(ctx, id, p.work_plane)?;
+    ensure_valid(ctx)?;
+    let txn = ctx.txn()?;
+    let area = spatial::get(txn.snapshot(), id)
+        .and_then(|o| Floor::read(&o.values, VERTICAL_SLOTS)?.boundary_in(txn.snapshot()))
+        .map_or(0.0, |b| b.area());
+    ctx.set_selection_after(vec![id]);
+    Ok(OpeningCreated {
+        opening: IdParam(id),
+        area,
+        span: None,
+    })
+}
+
+/// Cuts a roof where the walls of a dormer meet it: a vertical opening whose edges follow the
+/// faces of the selected walls.
+fn create_dormer(ctx: &mut Context<'_>, p: CreateDormer) -> Result<OpeningCreated> {
+    let snapshot = ctx.snapshot();
+    let roof = match p.roof {
+        Some(IdParam(id)) if spatial::type_of(snapshot, id).as_deref() == Some(ROOF) => id,
+        Some(_) => return Err(Error::new(codes::KIND_MISMATCH)),
+        None => ctx
+            .selection()
+            .iter()
+            .copied()
+            .find(|id| spatial::type_of(snapshot, *id).as_deref() == Some(ROOF))
+            .ok_or_else(|| Error::new(codes::NO_HOST_SELECTED))?,
+    };
+    let listed: Vec<IdParam> = match p.walls {
+        Some(list) => list,
+        None => ctx
+            .selection()
+            .iter()
+            .copied()
+            .filter(|id| spatial::type_of(snapshot, *id).as_deref() == Some(WALL))
+            .map(IdParam)
+            .collect(),
+    };
+    if listed.len() > MAX_VERTICES
+        || listed
+            .iter()
+            .enumerate()
+            .any(|(k, a)| listed[..k].contains(a))
+    {
+        return Err(Error::new(codes::FLOOR_NO_LOOP));
+    }
+    let mut chain = Vec::with_capacity(listed.len());
+    for IdParam(id) in &listed {
+        let object = crate::structure::expect(snapshot, *id, WALL)?;
+        let wall =
+            Wall::from_values(&object.values).ok_or_else(|| Error::new(codes::KIND_MISMATCH))?;
+        chain.push((*id, wall));
+    }
+    let face = p.face.map_or(Face::Interior, Face::from);
+    let offset = match &p.edge_offset {
+        Some(param) => crate::length(ctx, param)?.value(),
+        None => 0.0,
+    };
+    let refuse = |r| match r {
+        WallsRefusal::NoLoop => Error::new(codes::FLOOR_NO_LOOP),
+        WallsRefusal::Parallel => Error::new(codes::FLOOR_WALLS_PARALLEL),
+    };
+    // Walls whose last end meets the first close a loop; an open chain is closed by the roof.
+    let closed = match (chain.first(), chain.last()) {
+        (Some((_, a)), Some((_, b))) if chain.len() >= 3 => {
+            [a.start, a.end]
+                .iter()
+                .flat_map(|p| [b.start, b.end].map(|q| (p[0] - q[0]).hypot(p[1] - q[1])))
+                .fold(f64::MAX, f64::min)
+                <= a.thickness.max(b.thickness) + 0.01
+        }
+        _ => false,
+    };
+    let vertices = if closed {
+        floor::vertices_of_walls(&chain, face, offset)
+    } else {
+        floor::vertices_of_chain(&chain, face, offset)
+    }
+    .map_err(refuse)?;
+    let name = match p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_owned(),
+        None => {
+            let tongue = language(ctx);
+            let used = spatial::children(ctx.snapshot(), VERTICAL_OPENING, roof);
+            (used.len() + 1..)
+                .map(|n| defaults::dormer_opening(&tongue, n))
+                .find(|name| {
+                    !used
+                        .iter()
+                        .any(|o| types::text(&o.values, 0).is_some_and(|t| names::same(t, name)))
+                })
+                .unwrap_or_default()
+        }
+    };
+    let id = create(
+        ctx,
+        VERTICAL_OPENING,
+        Some(roof),
+        vec![
+            Some(named(&name)),
+            Some(Floor::vertex_values(&vertices)),
+            Floor::arc_values(&vertices),
+        ],
     )?;
     ensure_valid(ctx)?;
     let txn = ctx.txn()?;
@@ -299,7 +443,19 @@ pub fn register(registry: &mut Registry) -> Result<()> {
             |ctx: &mut Context<'_>, p: CreateCut| create_cut(ctx, p),
         )
         .with_prompt(Arc::new(FloorPrompts::of(Subject::Cut))),
-    )
+    )?;
+    registry.register(CommandSpec::new(
+        DORMER_OPENING_CREATE,
+        Msg {
+            message_id: "ab-cmd-dormer-opening-create-label",
+        }
+        .message_id,
+        Msg {
+            message_id: "ab-cmd-dormer-opening-create-description",
+        }
+        .message_id,
+        |ctx: &mut Context<'_>, p: CreateDormer| create_dormer(ctx, p),
+    ))
 }
 
 /// Moves the shafts or vertical openings `ids`, whose boundary is at `slots`, by `xf`.

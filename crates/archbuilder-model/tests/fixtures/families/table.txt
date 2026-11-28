@@ -1,0 +1,56 @@
+archbfam-text 1 functions 1.0
+definition id=00000000-0000-0000-0000-000000000010 version=1.0.0 name="Table" category=furniture hosting=none flags="" ifc_entity="" ifc_type="" source="ArchBuilder fixtures" license="Apache-2.0"
+parameter key=Depth id=00000000-0000-0000-0000-000000000012 name="Depth" data=length scope=type role=driving group="Dimensions" order=18 default=0.8
+parameter key=Height id=00000000-0000-0000-0000-000000000013 name="Height" data=length scope=type role=driving group="Dimensions" order=19 default=0.75
+parameter key=LegSize id=00000000-0000-0000-0000-000000000015 name="Leg size" data=length scope=instance role=driving group="Dimensions" order=21 default=0.06
+parameter key=TopThickness id=00000000-0000-0000-0000-000000000014 name="Top thickness" data=length scope=type role=driving group="Dimensions" order=20 default=0.04
+parameter key=Volume id=00000000-0000-0000-0000-000000000016 name="Volume" data=volume scope=instance role=reporting group="Dimensions" order=22 default_f="solid_volume" default_u=m
+parameter key=Width id=00000000-0000-0000-0000-000000000011 name="Width" data=length scope=type role=driving group="Dimensions" order=17 default=1.4
+type id=00000000-0000-0000-0000-000000000021 name="1400x800"
+value param=Depth v=0.8
+value param=Height v=0.75
+value param=Width v=1.4
+type id=00000000-0000-0000-0000-000000000022 name="1800x900"
+value param=Depth v=0.9
+value param=Height v=0.75
+value param=Width v=1.8
+plane key=back name="back" axis=y role=back strong=true offset_f="Depth" offset_u=m
+plane key=front name="front" axis=y role=front strong=true offset=0
+plane key=left name="left" axis=x role=left strong=true offset=0
+plane key=right name="right" axis=x role=right strong=true offset_f="Width" offset_u=m
+plane key=top name="top" axis=z role=top strong=true offset_f="Height" offset_u=m
+plane key=under name="under" axis=z role=none strong=true offset_f="Height - TopThickness" offset_u=m
+profile key=leg_lb_outline axis=z
+vertex u=left v=back dv_f="-LegSize" dv_u=m
+vertex u=left du_f="LegSize" du_u=m v=back dv_f="-LegSize" dv_u=m
+vertex u=left du_f="LegSize" du_u=m v=back
+vertex u=left v=back
+profile key=leg_lf_outline axis=z
+vertex u=left v=front
+vertex u=left du_f="LegSize" du_u=m v=front
+vertex u=left du_f="LegSize" du_u=m v=front dv_f="LegSize" dv_u=m
+vertex u=left v=front dv_f="LegSize" dv_u=m
+profile key=leg_rb_outline axis=z
+vertex u=right du_f="-LegSize" du_u=m v=back dv_f="-LegSize" dv_u=m
+vertex u=right v=back dv_f="-LegSize" dv_u=m
+vertex u=right v=back
+vertex u=right du_f="-LegSize" du_u=m v=back
+profile key=leg_rf_outline axis=z
+vertex u=right du_f="-LegSize" du_u=m v=front
+vertex u=right v=front
+vertex u=right v=front dv_f="LegSize" dv_u=m
+vertex u=right du_f="-LegSize" du_u=m v=front dv_f="LegSize" dv_u=m
+profile key=top_outline axis=z
+vertex u=left v=front
+vertex u=right v=front
+vertex u=right v=back
+vertex u=left v=back
+form key=leg_lb kind=solid profile=leg_lb_outline from=origin_z to=under material="body" subcategory=""
+form key=leg_lf kind=solid profile=leg_lf_outline from=origin_z to=under material="body" subcategory=""
+form key=leg_rb kind=solid profile=leg_rb_outline from=origin_z to=under material="body" subcategory=""
+form key=leg_rf kind=solid profile=leg_rf_outline from=origin_z to=under material="body" subcategory=""
+form key=top kind=solid profile=top_outline from=under to=top material="body" subcategory=""
+test name="1400x800" type="1400x800" volume=0.055023999999999997 tolerance=0.000000001
+test name="1800x900" type="1800x900" volume=0.07502400000000001 tolerance=0.000000001
+test name="zero width" type="1400x800" tolerance=0.000000001 fails=top
+set param=Width v=0
