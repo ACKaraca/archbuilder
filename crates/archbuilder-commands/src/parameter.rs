@@ -301,7 +301,7 @@ pub(crate) fn rewrite_identifier(ctx: &mut Context<'_>, from: &str, to: &str) ->
             changes.push((p.id, "default", Stored::Formula(g).to_value()));
         }
     }
-    for (_, object) in project_parameter::hosts(snapshot) {
+    for (_, object) in project_parameter::hosts_raw(snapshot) {
         let mut entries = project_parameter::stored(snapshot, &object);
         let mut changed = false;
         for (_, stored) in &mut entries {
@@ -316,11 +316,12 @@ pub(crate) fn rewrite_identifier(ctx: &mut Context<'_>, from: &str, to: &str) ->
             changes.push((object.id, "parameters", value));
         }
     }
+    let before = crate::group::fingerprints(ctx.snapshot(), changes.iter().map(|c| c.0));
     let txn = ctx.txn()?;
     for (id, field, value) in changes {
         txn.modify(id, FieldPath::new(field), Some(value))?;
     }
-    Ok(())
+    crate::group::accept_derived(ctx, &before)
 }
 
 /// The identifier `given`, checked, or one proposed from `name`; unused by the document's other

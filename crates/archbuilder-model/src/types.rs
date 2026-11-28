@@ -2018,6 +2018,9 @@ pub mod group {
     pub const LEVELS: usize = 3;
     /// The level index of each member, by the member's identifier in decimal text.
     pub const MEMBER_LEVELS: usize = 4;
+    /// A counter the group commands and the sanctioned propagations raise whenever they write a
+    /// member; the commit validator takes it as the mark that a member's change is theirs.
+    pub const REVISION: usize = 5;
 }
 
 /// The fields of a group instance.
@@ -2066,6 +2069,9 @@ fn group_fields() -> Vec<FieldDecl> {
             .with_bound(Bound::Length {
                 max: crate::group::MAX_MEMBERS as u64,
             })
+            .optional()
+            .in_aspect("data"),
+        FieldDecl::new("revision", ValueType::I64)
             .optional()
             .in_aspect("data"),
     ]

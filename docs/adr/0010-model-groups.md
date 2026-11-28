@@ -34,7 +34,28 @@ per-instance exceptions, separation and reuse.
   A regeneration removes and recreates them in one transaction.
 - **Direct edits.** A generated element changed outside the group commands no longer matches its
   fingerprint. A regeneration that would overwrite it is refused, and `archbuilder.group.edit`
-  writes the element back into the definition first, then regenerates every instance.
+  writes the element back into the definition first, then regenerates every instance. A generated
+  element that is missing, not excluded and not hosted by an excluded wall counts as changed: it
+  is refused the same way (`ab.cmd.group_edited`), so a deletion is never undone silently. The
+  way out is to exclude the element (`archbuilder.group.exclude`), which records the deletion as
+  an exclusion, or to edit the group. The message names both.
+- **Definition members are written by the group only.** The commit validator refuses any
+  transaction that creates, changes or deletes a member of a definition (a record owned by the
+  definition, or by one of its walls) without also changing the definition record itself
+  (`ab.model.group_member_direct`). The definition carries an optional counter, `revision`. The
+  group commands that write members (`archbuilder.group.edit`) and the sanctioned propagations
+  (the values of a changed or replaced element type, `archbuilder.family.update`, the removal and
+  rename of a project parameter or variable identifier in formulas, and a parameter's change of
+  scope) raise it with every member they write, through `group::accept_derived`, which also takes
+  the regenerated elements as derived data. Creating and deleting a definition change the record
+  anyway. Any other command that reaches a member by its identifier (`archbuilder.modify.*`,
+  `archbuilder.object.delete`, property edits) leaves the definition untouched and is refused with
+  the whole transaction. Rejected: a marker on the transaction (the document API has none and a
+  second channel would escape undo), and a check inside every command (one forgotten command
+  orphans the generated elements for good).
+- **Types and parameters.** `archbuilder.type.delete` counts the members that use a type with the
+  other users, and its replacement retypes them in the same transaction as the generated elements.
+  A project-wide rewrite of parameter values reaches the members as well (`parameter::hosts_raw`).
 - **Level mapping.** A placement maps each definition level to a storey of the same building, by
   elevation unless `levels` names the storeys. A mapped storey cannot be deleted
   (`archbuilder.storey.delete` refuses with `ab.cmd.group_level_mapped`) until the instance is

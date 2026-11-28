@@ -131,3 +131,4 @@ ab-family-evaluation-failed = The family instance "{ $instance }" would not eval
 ab-model-group-definition-missing = The group instance has no group definition.
 ab-model-group-levels-unmapped = Each level of the group must be mapped to a storey of the same building.
 ab-model-group-member-unknown = The group instance excludes an element the group does not have.
+ab-model-group-member-direct = An element of the group definition "{ $name }" cannot be changed directly. Edit an instance of the group and use "Edit group", or separate the instance.

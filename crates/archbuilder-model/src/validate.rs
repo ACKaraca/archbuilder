@@ -1604,6 +1604,7 @@ pub fn validator() -> DocumentValidator {
     Arc::new(|base, candidate, touched| {
         pin_refusal(base, candidate, touched)
             .into_iter()
+            .chain(crate::group::direct_member_edits(base, candidate, touched))
             .chain(check(candidate, touched))
             .map(|error| Finding {
                 severity: if is_warning(&error) {

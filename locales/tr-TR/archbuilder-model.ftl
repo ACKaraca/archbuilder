@@ -131,3 +131,4 @@ ab-family-evaluation-failed = "{ $instance }" aile örneği değerlendirilemiyor
 ab-model-group-definition-missing = Grup örneğinin bir grup tanımı yok.
 ab-model-group-levels-unmapped = Grubun her seviyesi aynı binanın bir katına eşlenmelidir.
 ab-model-group-member-unknown = Grup örneği, grubun sahip olmadığı bir öğeyi dışarıda bırakıyor.
+ab-model-group-member-direct = "{ $name }" grup tanımının bir öğesi doğrudan değiştirilemez. Grubun bir örneğini düzenleyip "Grubu düzenle" komutunu kullanın ya da örneği ayırın.

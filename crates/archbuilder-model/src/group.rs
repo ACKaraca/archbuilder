@@ -531,6 +531,48 @@ pub fn placed_values(
     Some(out)
 }
 
+/// The definition that owns `id` as a member: its owner, or the owner of its wall for a hosted
+/// member.
+#[must_use]
+pub fn owner_definition(snapshot: &Snapshot, id: ObjectId) -> Option<ObjectId> {
+    let is_group = |o: ObjectId| spatial::type_of(snapshot, o).as_deref() == Some(GROUP);
+    let owner = spatial::get(snapshot, id)?.header.owner?;
+    if is_group(owner) {
+        return Some(owner);
+    }
+    let up = spatial::get(snapshot, owner)?.header.owner?;
+    is_group(up).then_some(up)
+}
+
+/// One refusal per definition whose members a transaction wrote without writing the definition
+/// itself. The group commands and the propagations of types, families and parameters raise the
+/// definition's revision with every member they write, so a change of a member by its own
+/// identifier through any other command finds the definition untouched (ADR 0010).
+#[must_use]
+pub fn direct_member_edits(
+    base: &Snapshot,
+    candidate: &Snapshot,
+    touched: &BTreeMap<ObjectId, arc_doc::Change>,
+) -> Vec<Error> {
+    let mut out: Vec<Error> = Vec::new();
+    let mut seen: Vec<ObjectId> = Vec::new();
+    for (&id, &change) in touched {
+        let (snap, def) = if change == arc_doc::Change::Deleted {
+            (base, owner_definition(base, id))
+        } else {
+            (candidate, owner_definition(candidate, id))
+        };
+        let Some(def) = def else { continue };
+        if touched.contains_key(&def) || seen.contains(&def) {
+            continue;
+        }
+        seen.push(def);
+        let name = definition(snap, def).map(|d| d.name).unwrap_or_default();
+        out.push(Error::new(codes::GROUP_MEMBER_DIRECT).with_arg("name", name));
+    }
+    out
+}
+
 /// Problems with a group instance: its definition must exist, its level mapping must name one
 /// storey of the same building for each level of the definition, and each member it excludes or
 /// takes an exception for must be a member of that definition.

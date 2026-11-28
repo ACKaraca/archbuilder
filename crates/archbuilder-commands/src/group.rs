@@ -304,10 +304,19 @@ fn regenerate(
     let members = group::members(&snap, def.id);
     for m in &members {
         let child = group::member_id(instance, m.id);
-        if let (Some(object), Some(check)) = (spatial::get(&snap, child), inst.checks.get(&m.id))
-            && !inst.excluded(m.id)
+        // A generated element that was deleted directly is a direct edit too (ADR 0010); a
+        // hosted one is left out with its excluded host.
+        let left_out = inst.excluded(m.id)
+            || (group::is_insert_kind(m.kind)
+                && m.object
+                    .header
+                    .owner
+                    .is_some_and(|host| inst.excluded(host)));
+        if let Some(check) = inst.checks.get(&m.id)
+            && !left_out
             && !accept.contains(&m.id)
-            && &group::fingerprint(&object.values) != check
+            && spatial::get(&snap, child)
+                .is_none_or(|object| &group::fingerprint(&object.values) != check)
         {
             return Err(Error::new(codes::GROUP_EDITED).with_arg("name", inst.name.clone()));
         }
@@ -369,6 +378,43 @@ fn regenerate(
     Ok(created.len())
 }
 
+/// The fingerprints of the objects `ids` before a project-wide rewrite, for [`accept_derived`]:
+/// the elements a group generates follow such a rewrite and are no direct edits.
+pub(crate) fn fingerprints(
+    snapshot: &Snapshot,
+    ids: impl IntoIterator<Item = ObjectId>,
+) -> BTreeMap<ObjectId, String> {
+    ids.into_iter()
+        .filter_map(|id| spatial::get(snapshot, id).map(|o| (id, group::fingerprint(&o.values))))
+        .collect()
+}
+
+/// Marks the definitions that own the records `ids` as written on purpose: it raises each
+/// definition's revision, which the commit validator reads as the sign that the change of a
+/// member comes from the group commands or a sanctioned propagation, not from a command that
+/// reached the member by its identifier. Records that are no members are ignored.
+pub(crate) fn allow_members(
+    ctx: &mut Context<'_>,
+    ids: impl IntoIterator<Item = ObjectId>,
+) -> Result<()> {
+    let snap = ctx.txn()?.snapshot().clone();
+    let defs: BTreeSet<ObjectId> = ids
+        .into_iter()
+        .filter_map(|id| group::owner_definition(&snap, id))
+        .collect();
+    for def in defs {
+        let next = match spatial::get(&snap, def)
+            .and_then(|d| d.values.get(types::group::REVISION).cloned())
+        {
+            Some(Some(Value::I64(n))) => n.wrapping_add(1),
+            _ => 1,
+        };
+        ctx.txn()?
+            .modify(def, FieldPath::new("revision"), Some(Value::I64(next)))?;
+    }
+    Ok(())
+}
+
 /// Takes the generated elements in `changed` (identifier and fingerprint before the change) as
 /// written by their group: a change that reached the definition member as well (a type's values)
 /// is no direct edit. An element whose fingerprint did not match before stays a direct edit.
@@ -379,6 +425,7 @@ pub(crate) fn accept_derived(
     if changed.is_empty() {
         return Ok(());
     }
+    allow_members(ctx, changed.keys().copied())?;
     let snap = ctx.txn()?.snapshot().clone();
     for inst in group::instances(&snap) {
         let mut checks: BTreeMap<String, Value> = inst
@@ -414,6 +461,7 @@ fn capture(ctx: &mut Context<'_>, instance: ObjectId) -> Result<BTreeSet<ObjectI
     let (inst, def) = load(&snap, instance)?;
     let unchain = group::unplacing(inst.origin, inst.rotation, inst.mirror);
     let members = group::members(&snap, def.id);
+    allow_members(ctx, members.iter().map(|m| m.id))?;
     let mut accepted = BTreeSet::new();
     let mut gone: Vec<(ObjectId, bool)> = Vec::new();
     for m in members.iter().filter(|m| !inst.excluded(m.id)) {

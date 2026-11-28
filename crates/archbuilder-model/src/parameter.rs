@@ -572,6 +572,21 @@ pub fn hosts(snapshot: &Snapshot) -> Vec<(String, std::sync::Arc<Object>)> {
         .collect()
 }
 
+/// [`hosts`] with the members of group definitions, which the readers hide: a change that
+/// rewrites every parameter value of the document must reach them too.
+#[must_use]
+pub fn hosts_raw(snapshot: &Snapshot) -> Vec<(String, std::sync::Arc<Object>)> {
+    PARAMETER_HOSTS
+        .iter()
+        .chain(types::TYPE_KEYS.iter())
+        .flat_map(|key| {
+            spatial::objects_raw(snapshot, key)
+                .into_iter()
+                .map(move |o| ((*key).to_owned(), o))
+        })
+        .collect()
+}
+
 /// The most objects one refusal names.
 const MAX_NAMED: usize = 20;
 

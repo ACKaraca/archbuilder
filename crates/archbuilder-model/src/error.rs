@@ -37,6 +37,13 @@ pub mod codes {
         category: Category::Conflict,
         message_id: "ab-model-group-member-unknown",
     };
+    /// A member of a group definition was changed, moved or deleted directly; only the group
+    /// commands and the propagation of types, families and parameters may write it.
+    pub const GROUP_MEMBER_DIRECT: ErrorCode = ErrorCode {
+        code: "ab.model.group_member_direct",
+        category: Category::Conflict,
+        message_id: "ab-model-group-member-direct",
+    };
     /// An object is not contained in an object of the kind its type belongs to.
     pub const PARENT_INVALID: ErrorCode = ErrorCode {
         code: "ab.model.parent_invalid",

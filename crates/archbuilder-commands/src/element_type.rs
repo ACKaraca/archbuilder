@@ -1506,6 +1506,13 @@ fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
         return Err(Error::new(codes::TYPE_LAST).with_arg("name", et::name(&object).to_owned()));
     }
     let users = et::instances(ctx.snapshot(), kind, id);
+    // Members of group definitions are hidden from the readers but use the type all the same.
+    let shown: std::collections::BTreeSet<ObjectId> = users.iter().map(|o| o.id).collect();
+    let hidden: Vec<ObjectId> = spatial::objects_raw(ctx.snapshot(), kind.instance_key())
+        .into_iter()
+        .filter(|o| et::type_id(kind, &o.values) == Some(id) && !shown.contains(&o.id))
+        .map(|o| o.id)
+        .collect();
     let replacement = match p.replacement {
         Some(IdParam(r)) => {
             let (other, _) = type_record(ctx.snapshot(), r)?;
@@ -1514,17 +1521,28 @@ fn delete_type(ctx: &mut Context<'_>, p: DeleteType) -> Result<TypeChanged> {
             }
             Some(r)
         }
-        None if users.is_empty() => None,
+        None if users.is_empty() && hidden.is_empty() => None,
         None => {
             return Err(Error::new(codes::TYPE_IN_USE)
                 .with_arg("name", et::name(&object).to_owned())
-                .with_arg("count", i64::try_from(users.len()).unwrap_or(i64::MAX)));
+                .with_arg(
+                    "count",
+                    i64::try_from(users.len() + hidden.len()).unwrap_or(i64::MAX),
+                ));
         }
     };
     if let Some(r) = replacement {
+        let mut before = std::collections::BTreeMap::new();
         for user in &users {
+            before.insert(user.id, archbuilder_model::group::fingerprint(&user.values));
             assign(ctx, user.id, kind, r)?;
         }
+        // The members follow, and the elements their instances generated are no direct edits.
+        for member in &hidden {
+            assign(ctx, *member, kind, r)?;
+        }
+        crate::group::allow_members(ctx, hidden.iter().copied())?;
+        crate::group::accept_derived(ctx, &before)?;
     }
     ctx.txn()?.delete(id)?;
     ensure_valid(ctx)?;

@@ -485,7 +485,7 @@ fn move_scope(ctx: &mut Context<'_>, p: &Parameter, to: Scope) -> Result<(usize,
         for t in et::of_kind(snapshot, kind) {
             let mut type_entries = parameter::stored(snapshot, &t);
             let type_value = type_entries.iter().find(|(id, _)| *id == p.id).cloned();
-            let mut instances = et::instances(snapshot, kind, t.id);
+            let mut instances = et::instances_raw(snapshot, kind, t.id);
             instances.sort_by_key(|o| o.id);
             match to {
                 Scope::Type => {
@@ -505,6 +505,10 @@ fn move_scope(ctx: &mut Context<'_>, p: &Parameter, to: Scope) -> Result<(usize,
                             instances
                                 .iter()
                                 .filter(|o| own_value(o).is_some_and(|(_, v)| v != value))
+                                .filter(|o| {
+                                    archbuilder_model::group::owner_definition(snapshot, o.id)
+                                        .is_none()
+                                })
                                 .map(|o| o.id),
                         );
                     }
@@ -523,9 +527,11 @@ fn move_scope(ctx: &mut Context<'_>, p: &Parameter, to: Scope) -> Result<(usize,
         }
     }
     let copied = writes.len();
+    let before = crate::group::fingerprints(ctx.snapshot(), writes.iter().map(|(id, _)| *id));
     for (id, entries) in writes {
         write_entries(ctx, id, &entries)?;
     }
+    crate::group::accept_derived(ctx, &before)?;
     Ok((copied, diverging))
 }
 
@@ -612,7 +618,7 @@ fn rename(ctx: &mut Context<'_>, r: RenameParameter) -> Result<()> {
 fn delete(ctx: &mut Context<'_>, d: DeleteParameter) -> Result<()> {
     expect(ctx.snapshot(), d.parameter.0, PARAMETER)?;
     let snapshot = ctx.snapshot();
-    let writes: Vec<(ObjectId, Vec<(ObjectId, Stored)>)> = parameter::hosts(snapshot)
+    let writes: Vec<(ObjectId, Vec<(ObjectId, Stored)>)> = parameter::hosts_raw(snapshot)
         .into_iter()
         .filter_map(|(_, o)| {
             let entries = parameter::stored(snapshot, &o);
@@ -624,9 +630,11 @@ fn delete(ctx: &mut Context<'_>, d: DeleteParameter) -> Result<()> {
             (kept.len() != entries.len()).then_some((o.id, kept))
         })
         .collect();
+    let before = crate::group::fingerprints(ctx.snapshot(), writes.iter().map(|(id, _)| *id));
     for (id, entries) in writes {
         write_entries(ctx, id, &entries)?;
     }
+    crate::group::accept_derived(ctx, &before)?;
     let limits = *ctx.limits();
     let txn = ctx.txn()?;
     txn.delete(d.parameter.0)?;

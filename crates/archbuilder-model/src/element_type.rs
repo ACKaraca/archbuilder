@@ -615,6 +615,15 @@ pub fn instances(snapshot: &Snapshot, kind: TypeKind, id: ObjectId) -> Vec<Arc<O
         .collect()
 }
 
+/// [`instances`] with the members of group definitions.
+#[must_use]
+pub fn instances_raw(snapshot: &Snapshot, kind: TypeKind, id: ObjectId) -> Vec<Arc<Object>> {
+    crate::spatial::objects_raw(snapshot, kind.instance_key())
+        .into_iter()
+        .filter(|o| type_id(kind, &o.values) == Some(id))
+        .collect()
+}
+
 /// The values a type of `kind` (its record values `values`) decides on its instances: the field
 /// position, the field name and the value. Empty when the record cannot be read.
 #[must_use]

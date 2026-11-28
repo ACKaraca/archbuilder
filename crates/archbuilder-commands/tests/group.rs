@@ -563,3 +563,159 @@ fn a_type_change_reaches_the_definition_and_is_no_direct_edit() {
     place(&env, def, ground, [60.0, 0.0]);
     assert_eq!(thickness(group::member_id(a, member.id)), Some(0.3));
 }
+
+fn is_refusal(result: &arc_base::Result<Outcome>, code: &str) -> bool {
+    result.as_ref().is_err_and(|e| e.code() == code)
+}
+
+#[test]
+fn a_definition_member_cannot_be_changed_or_deleted_by_its_identifier() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    room_on(&env, ground, [0.0, 0.0]);
+    let def = group_all(&env, "Unit");
+    let a = place(&env, def, ground, [20.0, 0.0]);
+    let before = env.dump();
+    let members = group::members(&env.snapshot(), def);
+    let wall = members.iter().find(|m| m.kind == WALL).unwrap().id;
+    let door = members.iter().find(|m| m.kind == types::DOOR).unwrap().id;
+    for (command, params, sel) in [
+        (
+            "archbuilder.modify.move",
+            json!({"objects": [wall.to_string()], "displacement": [0.0, 0.5]}),
+            wall,
+        ),
+        ("archbuilder.object.delete", json!({}), wall),
+        ("archbuilder.object.delete", json!({}), door),
+    ] {
+        let result = env.run(command, params, &[sel]);
+        assert!(
+            is_refusal(&result, "ab.model.group_member_direct"),
+            "{command}: {result:?}"
+        );
+    }
+    assert_eq!(env.dump(), before, "nothing changed");
+    // The group's own paths still write the members.
+    env.ok("archbuilder.group.edit", json!({"instance": a.to_string()}));
+}
+
+#[test]
+fn a_generated_element_deleted_directly_is_a_direct_edit() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    room_on(&env, ground, [0.0, 0.0]);
+    let def = group_all(&env, "Unit");
+    let a = place(&env, def, ground, [20.0, 0.0]);
+    let members = group::members(&env.snapshot(), def);
+    let door = members.iter().find(|m| m.kind == types::DOOR).unwrap();
+    let host = door.object.header.owner.unwrap();
+    let other = members
+        .iter()
+        .find(|m| m.kind == WALL && m.id != host)
+        .unwrap()
+        .id;
+    let gone = group::member_id(a, host);
+    env.run("archbuilder.object.delete", json!({}), &[gone])
+        .unwrap();
+    let refused = env.run(
+        "archbuilder.group.exclude",
+        json!({"instance": a.to_string(), "elements": [group::member_id(a, other).to_string()]}),
+        &[],
+    );
+    assert!(
+        is_refusal(&refused, "ab.cmd.group_edited"),
+        "the deleted element would come back: {refused:?}"
+    );
+    // Excluding the deleted element, and so its hosted door, settles it.
+    env.ok(
+        "archbuilder.group.exclude",
+        json!({"instance": a.to_string(), "elements": [gone.to_string()]}),
+    );
+    assert!(spatial::get(&env.snapshot(), gone).is_none());
+}
+
+#[test]
+fn deleting_a_type_counts_and_retypes_the_definition_members() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    let first = env.wall_on(ground, [0.0, 0.0], [4.0, 0.0]);
+    let type_of = |id: ObjectId| match &spatial::get(&env.snapshot(), id).unwrap().values
+        [types::wall::WALL_TYPE]
+    {
+        Some(arc_doc::Value::Reference(t)) => *t,
+        other => panic!("{other:?}"),
+    };
+    let kept = type_of(first);
+    let made = env.ok(
+        "archbuilder.wall.create",
+        json!({"storey": ground.to_string(), "start": [0.0, 5.0], "end": [4.0, 5.0],
+            "type": "Interior partition 100"}),
+    );
+    let second = parse(made["wall"].as_str().unwrap());
+    let doomed = type_of(second);
+    assert_ne!(kept, doomed);
+    let created = env.ok(
+        "archbuilder.group.create",
+        json!({"name": "Unit", "ids": [second.to_string()]}),
+    );
+    let def = parse(created["group"].as_str().unwrap());
+    env.run("archbuilder.object.delete", json!({}), &[second])
+        .unwrap();
+    // Only the member uses the type now.
+    let refused = env.run(
+        "archbuilder.type.delete",
+        json!({"type": doomed.to_string()}),
+        &[],
+    );
+    assert!(is_refusal(&refused, "ab.cmd.type_in_use"), "{refused:?}");
+    let a = place(&env, def, ground, [20.0, 0.0]);
+    env.ok(
+        "archbuilder.type.delete",
+        json!({"type": doomed.to_string(), "replacement": kept.to_string()}),
+    );
+    let member = group::members(&env.snapshot(), def)[0].id;
+    assert_eq!(type_of(member), kept, "the member follows");
+    assert_eq!(type_of(group::member_id(a, member)), kept);
+    // The retyping of the generated element is no direct edit.
+    place(&env, def, ground, [40.0, 0.0]);
+    env.ok(
+        "archbuilder.group.set_exception",
+        json!({"instance": a.to_string(), "element": group::member_id(a, member).to_string(),
+            "kind": "name", "text": "Renamed"}),
+    );
+}
+
+#[test]
+fn deleting_a_parameter_reaches_the_members_and_is_no_direct_edit() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    let wall = env.wall_on(ground, [0.0, 0.0], [4.0, 0.0]);
+    let made = env.ok(
+        "archbuilder.parameter.create",
+        json!({"name": "Mark", "data_type": "length", "categories": ["archbuilder.wall"],
+            "value": 1.0}),
+    );
+    let parameter = made["parameter"].as_str().unwrap().to_owned();
+    env.ok(
+        "archbuilder.parameter.set",
+        json!({"objects": [wall.to_string()], "parameter": parameter, "value": 2.0}),
+    );
+    let def = group_all(&env, "Unit");
+    let a = place(&env, def, ground, [20.0, 0.0]);
+    env.ok(
+        "archbuilder.parameter.delete",
+        json!({"parameter": parameter}),
+    );
+    let member = group::members(&env.snapshot(), def)[0].id;
+    let stored = |id: ObjectId| {
+        let snap = env.snapshot();
+        archbuilder_model::parameter::stored(&snap, &spatial::get(&snap, id).unwrap()).len()
+    };
+    assert_eq!(stored(member), 0, "the member lost the value");
+    assert_eq!(stored(group::member_id(a, member)), 0);
+    env.ok(
+        "archbuilder.group.set_exception",
+        json!({"instance": a.to_string(), "element": group::member_id(a, member).to_string(),
+            "kind": "name", "text": "Renamed"}),
+    );
+}
