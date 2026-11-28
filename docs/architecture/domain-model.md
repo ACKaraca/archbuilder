@@ -1335,8 +1335,10 @@ headless and prints the loss report. The format is the `format` parameter or els
 extension; without a path the application asks in a save dialog whose extension picks the format.
 Every body the viewport draws is written (walls by layer, curtain walls by panel and mullion, doors
 and windows by part, floors, floor edges, both kinds of roof with their eave cut, fascias and
-gutters, dormers, ceilings, stairs, ramps, railings and elevator cars), each solid derived from the
-records as the viewport derives it. An element is one object (OBJ), one node (glTF) or part of the
+gutters, dormers, ceilings, stairs, ramps, railings and elevator cars, family components with
+their shared nested children), each solid derived from the records as the viewport derives it, and
+the stored mesh of each foreign element. Family instances hosted by walls are not derived for a mesh
+yet: the loss report counts them (`ab.io.mesh.hosted_family_not_exported`). An element is one object (OBJ), one node (glTF) or part of the
 single solid (STL); its name is `<name> [<identifier>]`, with `#` and `\` written as `_`, and a
 glTF node also carries `{"archbuilder": {"id", "kind", "name"}}` as `extras`. A glTF file has a
 root node, named after the project, that turns the model's Z axis up into glTF's Y axis up; the

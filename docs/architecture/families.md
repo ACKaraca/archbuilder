@@ -107,7 +107,8 @@ run the same evaluation for every stored parameter set before a version is publi
   exported separately.
 - A shared nested child becomes its own element in the project, with its own identifier derived
   from the parent identifier and the nested-use key, its own tags and schedule rows, and its own IFC
-  element aggregated by the parent.
+  element aggregated by the parent. The IFC export does not write shared children yet; it lists them in
+  the loss report (`ab.io.ifc.family_shared_not_written`).
 - A nested definition is pinned by version inside the parent. Updating the child in a document
   updates parents that use the same child version family-wide only through the explicit update
   command, which lists every affected parent.
