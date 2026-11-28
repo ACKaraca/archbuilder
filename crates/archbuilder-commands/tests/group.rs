@@ -525,3 +525,41 @@ fn a_type_that_only_a_definition_uses_is_not_purged() {
     env.ok("archbuilder.project.purge", json!({}));
     assert!(spatial::get(&env.snapshot(), wall_type).is_some());
 }
+
+#[test]
+fn a_type_change_reaches_the_definition_and_is_no_direct_edit() {
+    let env = Env::new();
+    let ground = env.storeys()[0];
+    let wall = env.wall_on(ground, [0.0, 0.0], [4.0, 0.0]);
+    let wall_type =
+        match &spatial::get(&env.snapshot(), wall).unwrap().values[types::wall::WALL_TYPE] {
+            Some(arc_doc::Value::Reference(id)) => *id,
+            other => panic!("{other:?}"),
+        };
+    let def = group_all(&env, "Unit");
+    let a = place(&env, def, ground, [20.0, 0.0]);
+    place(&env, def, ground, [40.0, 0.0]);
+    let set = json!({"type": wall_type.to_string(), "core": [0, 1],
+        "layers": [{"function": "structure", "material": "x", "thickness": 0.3}]});
+    env.undoes("archbuilder.type.set", set.clone(), &[]);
+    env.ok("archbuilder.type.set", set);
+    let thickness = |id: ObjectId| {
+        types::meters(
+            &spatial::get(&env.snapshot(), id).unwrap().values,
+            types::wall::THICKNESS,
+        )
+    };
+    let member = group::members(&env.snapshot(), def)
+        .into_iter()
+        .find(|m| m.kind == WALL)
+        .unwrap();
+    assert_eq!(
+        thickness(member.id),
+        Some(0.3),
+        "the definition follows its type"
+    );
+    // The instances regenerate: the type's change is not a direct edit.
+    env.ok("archbuilder.group.edit", json!({"instance": a.to_string()}));
+    place(&env, def, ground, [60.0, 0.0]);
+    assert_eq!(thickness(group::member_id(a, member.id)), Some(0.3));
+}

@@ -1403,7 +1403,17 @@ pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> 
     };
     let copies = et::copies(kind, &found.values);
     let mut changed = 0;
-    for instance in et::instances(&snapshot, kind, id) {
+    let mut before = std::collections::BTreeMap::new();
+    let shown: std::collections::BTreeSet<ObjectId> = et::instances(&snapshot, kind, id)
+        .iter()
+        .map(|o| o.id)
+        .collect();
+    // The members of group definitions follow their type too, so that the elements their
+    // instances generate stay what the definition says.
+    let users = spatial::objects_raw(&snapshot, kind.instance_key())
+        .into_iter()
+        .filter(|o| et::type_id(kind, &o.values) == Some(id));
+    for instance in users {
         let mut touched = false;
         for (at, name, value) in &copies {
             let differs = instance
@@ -1417,8 +1427,15 @@ pub(crate) fn propagate(ctx: &mut Context<'_>, kind: TypeKind, id: ObjectId) -> 
                 touched = true;
             }
         }
-        changed += usize::from(touched);
+        if touched {
+            before.insert(
+                instance.id,
+                archbuilder_model::group::fingerprint(&instance.values),
+            );
+        }
+        changed += usize::from(touched && shown.contains(&instance.id));
     }
+    crate::group::accept_derived(ctx, &before)?;
     Ok(changed)
 }
 

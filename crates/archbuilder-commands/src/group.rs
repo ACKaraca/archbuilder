@@ -366,6 +366,44 @@ fn regenerate(
     Ok(created.len())
 }
 
+/// Takes the generated elements in `changed` (identifier and fingerprint before the change) as
+/// written by their group: a change that reached the definition member as well (a type's values)
+/// is no direct edit. An element whose fingerprint did not match before stays a direct edit.
+pub(crate) fn accept_derived(
+    ctx: &mut Context<'_>,
+    changed: &BTreeMap<ObjectId, String>,
+) -> Result<()> {
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let snap = ctx.txn()?.snapshot().clone();
+    for inst in group::instances(&snap) {
+        let mut checks: BTreeMap<String, Value> = inst
+            .checks
+            .iter()
+            .map(|(m, f)| (m.as_u128().to_string(), Value::String(f.clone())))
+            .collect();
+        let mut any = false;
+        for (member, check) in &inst.checks {
+            let child = group::member_id(inst.id, *member);
+            if let (Some(before), Some(now)) = (changed.get(&child), spatial::get(&snap, child))
+                && before == check
+            {
+                checks.insert(
+                    member.as_u128().to_string(),
+                    Value::String(group::fingerprint(&now.values)),
+                );
+                any = true;
+            }
+        }
+        if any {
+            ctx.txn()?
+                .modify(inst.id, FieldPath::new("checks"), Some(Value::Map(checks)))?;
+        }
+    }
+    Ok(())
+}
+
 /// Writes the changes of the generated elements of `instance` into its definition, and removes
 /// the members whose elements were deleted. Returns the members taken as they are now.
 fn capture(ctx: &mut Context<'_>, instance: ObjectId) -> Result<BTreeSet<ObjectId>> {
