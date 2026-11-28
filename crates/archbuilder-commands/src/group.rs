@@ -220,7 +220,10 @@ fn apply_exceptions(values: &mut [Option<Value>], member: &Member, inst: &Instan
         None if inst.name.is_empty() || base.is_empty() => base.to_owned(),
         None => format!("{} {base}", inst.name),
     };
-    set(values, 0, Value::String(name));
+    // An element without a name (a component's mark is optional) stays without one.
+    if !name.trim().is_empty() {
+        set(values, 0, Value::String(name));
+    }
     if member.kind == types::ROOM
         && let Some(number) = inst.text_of(member.id, "number")
     {
