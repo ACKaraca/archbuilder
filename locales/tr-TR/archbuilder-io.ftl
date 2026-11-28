@@ -63,6 +63,7 @@ ab-io-loss-import-layers-mismatch = Bir öğenin katmanları gövdesiyle uyuşmu
 ab-io-loss-import-swing-assumed = Kapı ya da pencerenin açılma yönü dosyadan okunmadı.
 ab-io-loss-import-insert-regenerated = Kapı ya da pencerenin gövdesi dosyadaki şekil değil, modelin kendi kasası ve kanadıdır.
 ab-io-loss-import-insert-unhosted = Duvarı eşlenmeyen bir kapı ya da pencere yabancı öğe olarak saklandı.
+ab-io-loss-import-insert-refused = Duvarına sığmayan bir kapı ya da pencere (başka bir açıklıkla çakışıyor ya da duvarın uçlarını veya üstünü aşıyor) yabancı öğe olarak saklandı.
 ab-io-loss-import-opening-unfilled = Dolgusu olmayan bir boşluk öğesi aktarılmadı: duvarda böyle bir boşluk yok.
 ab-io-loss-import-not-carried = Öğe olmayan ve yerel karşılığı bulunmayan bir ürün aktarılmadı.
 ab-io-loss-import-type-unused = Hiçbir ürünün kullanmadığı bir tür nesnesi aktarılmadı.

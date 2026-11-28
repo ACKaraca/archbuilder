@@ -70,6 +70,9 @@ pub struct InsertPlan {
     pub right_hand: bool,
     pub spec: InsertSpec,
     pub kept: Kept,
+    /// The source's mesh, kept for the foreign element the door or window becomes when the
+    /// model's rules refuse it in its wall.
+    pub mesh: Option<Vec<u8>>,
 }
 
 /// A floor, or a ceiling, of the model: a boundary between two horizontal planes.

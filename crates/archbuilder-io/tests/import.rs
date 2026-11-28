@@ -670,3 +670,47 @@ fn a_foreign_element_is_deleted_in_one_step_and_blocks_deleting_its_storey() {
     env.document.undo().wait().unwrap();
     assert_eq!(count(&env.document, types::FOREIGN_ELEMENT), 1);
 }
+
+#[test]
+fn a_door_that_does_not_fit_its_wall_becomes_a_foreign_element() {
+    let dir = scratch("overlap");
+    // The window overlaps the door: the model refuses that, the import keeps going.
+    let text = fixture().replace(
+        "#70=IFCCARTESIANPOINT((2500.,0.,900.));",
+        "#70=IFCCARTESIANPOINT((1200.,0.,900.));",
+    );
+    std::fs::write(dir.join("overlap.ifc"), text).unwrap();
+    let env = Env::new(&dir);
+    let out = env
+        .run(
+            "archbuilder.file.import_ifc",
+            json!({"path": dir.join("overlap.ifc").to_str().unwrap()}),
+        )
+        .unwrap()
+        .value;
+    use archbuilder_model::types;
+    assert_eq!(count(&env.document, types::DOOR), 1);
+    assert_eq!(count(&env.document, types::WINDOW), 0);
+    assert_eq!(count(&env.document, types::FOREIGN_ELEMENT), 2);
+    let snapshot = env.document.snapshot();
+    let window = archbuilder_model::spatial::objects(&snapshot, types::FOREIGN_ELEMENT)
+        .into_iter()
+        .find(|o| types::text(&o.values, types::foreign_element::CLASS) == Some("IfcWindow"))
+        .unwrap();
+    assert_eq!(
+        arc_io_ifc::write::global_id(window.id.as_u128()),
+        format!("{:022}", 83),
+        "the window keeps its identity"
+    );
+    assert!(out["report"]["items"].as_array().unwrap().iter().any(|i| {
+        i["reason"] == "ab.io.ifc.import_insert_refused" && i["record_kind"] == "IfcWindow"
+    }));
+    let window_class = out["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["class"] == "IfcWindow")
+        .unwrap();
+    assert_eq!(window_class["native"], 0);
+    assert_eq!(window_class["foreign"], 1);
+}

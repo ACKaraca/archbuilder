@@ -38,6 +38,9 @@ pub struct Applied {
     pub storeys: usize,
     /// The types made.
     pub types: usize,
+    /// The doors and windows the model's rules refused in their walls, kept as foreign elements:
+    /// the class and the `GlobalId`.
+    pub refused: Vec<(String, String)>,
 }
 
 struct Writer<'c, 'a> {
@@ -556,6 +559,34 @@ impl Writer<'_, '_> {
             Value::Reference(type_id),
         );
         let id = self.create_for(&i.kept, key, Some(host), v)?;
+        // The file's door may not fit the model's rules (an overlap, a reach past the wall): it
+        // becomes a foreign element under the same identifier instead of refusing the import.
+        let snapshot = self.ctx.txn()?.snapshot().clone();
+        let refused = spatial::get(&snapshot, id).is_some_and(|o| {
+            archbuilder_model::insert::problems(&snapshot, &o)
+                .iter()
+                .any(|e| !archbuilder_model::validate::is_warning(e))
+        });
+        if refused {
+            let storey = spatial::get(&snapshot, host)
+                .and_then(|w| w.header.owner)
+                .ok_or_else(|| Error::new(arc_command::error::codes::PARAMS_INVALID))?;
+            self.ctx.txn()?.delete(id)?;
+            self.claimed.remove(&id);
+            self.applied
+                .refused
+                .push((i.kept.class.clone(), i.kept.global_id.clone()));
+            return self.foreign(
+                storey,
+                &ForeignPlan {
+                    key: i.key,
+                    name: i.name.clone(),
+                    class: i.kept.class.clone(),
+                    mesh: i.mesh.clone(),
+                    kept: i.kept.clone(),
+                },
+            );
+        }
         self.identify(id, &i.kept)?;
         Ok(id)
     }
@@ -761,7 +792,7 @@ pub fn apply(
     plan: &Plan,
     file_name: &str,
     original: Option<&[u8]>,
-    report_json: &[u8],
+    report: &mut arc_io_common::loss::LossReport,
 ) -> Result<Applied> {
     let snapshot = ctx.snapshot().clone();
     let map = SourceMap::of(&snapshot);
@@ -928,12 +959,29 @@ pub fn apply(
             ..StoredForeign::default()
         })?;
     }
+    for (class, global_id) in &w.applied.refused {
+        report.summary.approximated += 1;
+        let mut arguments = BTreeMap::new();
+        arguments.insert("count".to_owned(), arc_io_common::loss::Argument::Int(1));
+        let reason = crate::error::reasons::IMPORT_INSERT_REFUSED;
+        report.items.push(arc_io_common::loss::LossItem {
+            outcome: reason.outcome,
+            severity: reason.severity,
+            source_id: Some(global_id.clone()),
+            record_kind: Some(class.clone()),
+            object_id: None,
+            reason: reason.code.to_owned(),
+            message_id: reason.message_id.to_owned(),
+            arguments,
+        });
+    }
+    let report_json = serde_json::to_vec(&*report).unwrap_or_default();
     txn.add_foreign(StoredForeign {
         source_format: FORMAT.to_owned(),
         source_version: Some(plan.schema.clone()),
         source_id: Some(file_name.to_owned()),
         record_kind: KIND_REPORT.to_owned(),
-        data: report_json.to_vec(),
+        data: report_json,
         ..StoredForeign::default()
     })?;
     let _ = Error::new;

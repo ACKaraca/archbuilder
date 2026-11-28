@@ -409,13 +409,18 @@ impl<'a> Mapper<'a> {
     }
 
     /// A foreign element for `o`, with its mesh.
-    fn foreign(&mut self, o: &ObjectView, why: Option<crate::error::Reason>) -> Item {
-        let class = class_name(self.src, &o.type_name);
-        let mesh = self.soup(o, true).and_then(|soup| {
+    /// The encoded mesh of the body of `o`, openings subtracted.
+    fn mesh(&self, o: &ObjectView) -> Option<Vec<u8>> {
+        self.soup(o, true).and_then(|soup| {
             soup.to_mesh(&self.options.limits)
                 .and_then(|m| m.encode(&Quantization::default()))
                 .ok()
-        });
+        })
+    }
+
+    fn foreign(&mut self, o: &ObjectView, why: Option<crate::error::Reason>) -> Item {
+        let class = class_name(self.src, &o.type_name);
+        let mesh = self.mesh(o);
         if mesh.is_none() {
             self.lose(reasons::IMPORT_NO_GEOMETRY, &class, o);
         }
@@ -766,6 +771,7 @@ impl<'a> Mapper<'a> {
         let key = self.key(o);
         let type_name = type_object.and_then(|t| clean(&t.name));
         let name = self.name(o, if window { "Window" } else { "Door" });
+        let mesh = self.mesh(o);
         self.count(&o.type_name.clone(), |t| t.native += 1);
         Some((
             building,
@@ -787,6 +793,7 @@ impl<'a> Mapper<'a> {
                     operation: operation.code(),
                 },
                 kept: self.kept(o),
+                mesh,
             }),
         ))
     }

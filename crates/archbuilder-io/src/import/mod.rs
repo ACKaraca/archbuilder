@@ -153,13 +153,19 @@ pub fn import_bytes(
     ctx.checkpoint()?;
     let mut report = plan.report.clone();
     report.header.file_name = Some(file.to_owned());
+    let original = (keep_source && bytes.len() <= MAX_KEPT_SOURCE).then_some(bytes);
+    let applied = apply::apply(ctx, &plan, file, original, &mut report)?;
     let report_json = serde_json::to_value(&report)
         .map_err(|e| Error::new(arc_command::error::codes::PATH_IO).with_source(e))?;
-    let report_bytes = serde_json::to_vec(&report_json).unwrap_or_default();
-    let original = (keep_source && bytes.len() <= MAX_KEPT_SOURCE).then_some(bytes);
-    let applied = apply::apply(ctx, &plan, file, original, &report_bytes)?;
-    let mut classes: Vec<ClassCount> = plan
-        .tally
+    // A door or window the model refused in its wall became a foreign element.
+    let mut tally = plan.tally.clone();
+    for (class, _) in &applied.refused {
+        if let Some(t) = tally.get_mut(&class.to_uppercase()) {
+            t.native = t.native.saturating_sub(1);
+            t.foreign += 1;
+        }
+    }
+    let mut classes: Vec<ClassCount> = tally
         .iter()
         .map(|(class, t)| ClassCount {
             class: source
@@ -175,7 +181,7 @@ pub fn import_bytes(
         })
         .collect();
     classes.sort_by(|a, b| a.class.cmp(&b.class));
-    let sum = |f: fn(&plan::Tally) -> u64| plan.tally.values().map(f).sum::<u64>();
+    let sum = |f: fn(&plan::Tally) -> u64| tally.values().map(f).sum::<u64>();
     let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
     Ok(Imported {
         file: file.to_owned(),

@@ -63,6 +63,7 @@ ab-io-loss-import-layers-mismatch = The layers of an element do not add up to it
 ab-io-loss-import-swing-assumed = The swing side of a door or window is not read from the file.
 ab-io-loss-import-insert-regenerated = The body of a door or window is the model's own frame and leaf, not the shape in the file.
 ab-io-loss-import-insert-unhosted = A door or window whose wall was not mapped is kept as a foreign element.
+ab-io-loss-import-insert-refused = A door or window that does not fit its wall (it overlaps another opening, or reaches past the wall's ends or top) is kept as a foreign element.
 ab-io-loss-import-opening-unfilled = An opening element without a filling is not carried: the wall has no such opening.
 ab-io-loss-import-not-carried = A product that is not an element and has no native counterpart is not carried.
 ab-io-loss-import-type-unused = A type object that no product uses is not carried.

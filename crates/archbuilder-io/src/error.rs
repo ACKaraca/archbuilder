@@ -355,6 +355,15 @@ pub mod reasons {
         message_id: "ab-io-loss-import-swing-assumed",
     };
 
+    /// A door or window the model's rules refuse in its wall (it overlaps another, or reaches past
+    /// the wall's ends or top), kept as a foreign element instead of refusing the import.
+    pub const IMPORT_INSERT_REFUSED: Reason = Reason {
+        code: "ab.io.ifc.import_insert_refused",
+        outcome: Outcome::Approximated,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-import-insert-refused",
+    };
+
     /// A door or window whose wall was not mapped, kept as a foreign element.
     pub const IMPORT_INSERT_UNHOSTED: Reason = Reason {
         code: "ab.io.ifc.import_insert_unhosted",
