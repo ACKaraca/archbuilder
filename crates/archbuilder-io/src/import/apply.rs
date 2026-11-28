@@ -51,6 +51,7 @@ struct Writer<'c, 'a> {
     insert_types: BTreeMap<String, ObjectId>,
     taken: BTreeSet<(&'static str, String)>,
     used: BTreeSet<(String, ObjectId, String)>,
+    next: BTreeMap<(String, ObjectId, String), usize>,
     claimed: BTreeSet<ObjectId>,
     map: SourceMap,
     project: ObjectId,
@@ -205,11 +206,7 @@ impl Writer<'_, '_> {
     fn unique(&mut self, key: &str, owner: ObjectId, name: &str) -> Result<String> {
         let snapshot = self.ctx.txn()?.snapshot().clone();
         let seed = |me: &mut Self| {
-            if !me
-                .used
-                .iter()
-                .any(|(k, o, n)| k == key && *o == owner && n.is_empty())
-            {
+            if !me.used.contains(&(key.to_owned(), owner, String::new())) {
                 for o in spatial::objects(&snapshot, key) {
                     if o.header.owner == Some(owner) {
                         me.used.insert((
@@ -232,7 +229,10 @@ impl Writer<'_, '_> {
             base
         };
         let mut candidate = base.clone();
-        let mut n = 2;
+        // Where the count of this name stopped, so that a file repeating one name thousands of
+        // times does not search from 2 for each.
+        let next_key = (key.to_owned(), owner, archbuilder_model::names::fold(&base));
+        let mut n = self.next.get(&next_key).copied().unwrap_or(2);
         while self.used.contains(&(
             key.to_owned(),
             owner,
@@ -241,6 +241,7 @@ impl Writer<'_, '_> {
             candidate = format!("{base} ({n})");
             n += 1;
         }
+        self.next.insert(next_key, n);
         self.used.insert((
             key.to_owned(),
             owner,
@@ -777,6 +778,7 @@ pub fn apply(
         insert_types: BTreeMap::new(),
         taken: BTreeSet::new(),
         used: BTreeSet::new(),
+        next: BTreeMap::new(),
         claimed: BTreeSet::new(),
         map,
         project: ObjectId::from_u128(0),
