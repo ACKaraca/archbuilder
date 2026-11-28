@@ -437,6 +437,9 @@ fn shared_nested_children_are_in_the_loss_reports_or_the_mesh() {
     // The IFC export does not write shared children yet, and says so.
     let export = export_ifc(&snapshot, &ExportOptions::default()).unwrap();
     assert!(export.valid);
+    if let Ok(dir) = std::env::var("AB_IFC_OUT") {
+        std::fs::write(std::path::Path::new(&dir).join("shared.ifc"), &export.bytes).unwrap();
+    }
     let item = export
         .report
         .items
@@ -514,6 +517,13 @@ fn a_mirrored_occurrence_never_becomes_the_shared_geometry_of_its_type() {
         .unwrap();
     let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
     assert!(export.valid, "{:?}", export.report.items);
+    if let Ok(dir) = std::env::var("AB_IFC_OUT") {
+        std::fs::write(
+            std::path::Path::new(&dir).join("mirrored.ifc"),
+            &export.bytes,
+        )
+        .unwrap();
+    }
     let text = String::from_utf8_lossy(&export.bytes);
     let line = |name: &str| {
         text.lines()
