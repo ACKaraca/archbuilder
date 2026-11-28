@@ -329,7 +329,9 @@ impl Mapper<'_> {
         element.overall_width = Some(size[0]).filter(|w| *w > 0.0);
         element.overall_height = Some(size[2]).filter(|h| *h > 0.0);
         match body {
-            Some(body) if self.share_geometry(type_id, &body) => {
+            // A mirrored occurrence never becomes the type's shared geometry: the type's shape is
+            // the family's own, and a mirror writes its own body.
+            Some(body) if !component.mirror && self.share_geometry(type_id, &body) => {
                 element.mapping = Some(Placement::default());
             }
             Some(body) => element.body = Some(body),

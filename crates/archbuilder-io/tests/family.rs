@@ -478,3 +478,64 @@ fn shared_nested_children_are_in_the_loss_reports_or_the_mesh() {
         .sum();
     assert!(mesh.triangles > own, "{} > {own}", mesh.triangles);
 }
+
+#[test]
+fn a_mirrored_occurrence_never_becomes_the_shared_geometry_of_its_type() {
+    let document = place_family(table(), "1400x800");
+    let (mirrored, plain) = (
+        arc_base::ObjectId::from_u128(0xF00F),
+        arc_base::ObjectId::from_u128(0xF0FF),
+    );
+    let snapshot = document.snapshot();
+    let mut second = Component::of(&spatial::get(&snapshot, mirrored).unwrap()).unwrap();
+    let storey = spatial::objects(&snapshot, STOREY)[0].id;
+    second.id = plain;
+    second.origin = [6.0, 1.0];
+    document
+        .submit(move |txn| {
+            // The first occurrence (by identifier) is the mirrored one.
+            txn.modify(
+                mirrored,
+                arc_doc::FieldPath::new("mirror"),
+                Some(arc_doc::Value::Bool(true)),
+            )?;
+            txn.create(
+                COMPONENT,
+                plain,
+                Header {
+                    owner: Some(storey),
+                    ..Header::default()
+                },
+                second.record(),
+            )?;
+            Ok(())
+        })
+        .wait()
+        .unwrap();
+    let export = export_ifc(&document.snapshot(), &ExportOptions::default()).unwrap();
+    assert!(export.valid, "{:?}", export.report.items);
+    let text = String::from_utf8_lossy(&export.bytes);
+    let line = |name: &str| {
+        text.lines()
+            .find(|l| l.starts_with(&format!("{name}=")))
+            .unwrap()
+            .to_owned()
+    };
+    // The body of an occurrence: the representation its product shape lists.
+    let body = |id: arc_base::ObjectId| {
+        let gid = arc_io_ifc::write::global_id(id.as_u128());
+        let element = text
+            .lines()
+            .find(|l| l.contains("IFCFURNITURE(") && l.contains(&format!("'{gid}'")))
+            .unwrap();
+        let shape = line(element.split(',').nth(6).unwrap());
+        let inner = shape.rsplit('(').next().unwrap();
+        line(inner.split([',', ')']).next().unwrap())
+    };
+    assert!(
+        body(plain).contains("'MappedRepresentation'"),
+        "{}",
+        body(plain)
+    );
+    assert!(!body(mirrored).contains("'MappedRepresentation'"));
+}
