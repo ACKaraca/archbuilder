@@ -372,6 +372,40 @@ impl Writer<'_, '_> {
         Ok(id)
     }
 
+    /// The object of kind `key` owned by `owner` that the document already has for the source
+    /// object of `kept`: the one its `GlobalId` encodes, or the one the source map binds to it.
+    /// A re-import puts the products it makes into the building and storeys it matched, instead
+    /// of making the structure again.
+    fn matched(&mut self, kept: &Kept, key: &str, owner: ObjectId) -> Result<Option<ObjectId>> {
+        if kept.global_id.is_empty() {
+            return Ok(None);
+        }
+        let snapshot = self.ctx.txn()?.snapshot();
+        let fits = |id: ObjectId| {
+            spatial::type_of(snapshot, id).as_deref() == Some(key)
+                && spatial::get(snapshot, id).is_some_and(|o| o.header.owner == Some(owner))
+        };
+        if let Some(id) = decode_global_id(&kept.global_id).map(ObjectId::from_u128)
+            && fits(id)
+        {
+            return Ok(Some(id));
+        }
+        Ok(snapshot
+            .foreign_rows()
+            .filter(|row| {
+                row.source_format == FORMAT
+                    && row.record_kind == arc_doc::source_map::RECORD_KIND
+                    && row.source_id.as_deref() == Some(kept.global_id.as_str())
+            })
+            .filter_map(|row| {
+                row.object
+                    .as_deref()
+                    .and_then(|b| <[u8; 16]>::try_from(b).ok())
+                    .map(|b| ObjectId::from_u128(u128::from_be_bytes(b)))
+            })
+            .find(|id| fits(*id)))
+    }
+
     /// Records the identity and the kept data of an object made from a source product.
     fn identify(&mut self, id: ObjectId, kept: &Kept) -> Result<()> {
         if kept.global_id.is_empty() {
@@ -394,6 +428,9 @@ impl Writer<'_, '_> {
     }
 
     fn storey(&mut self, building: ObjectId, plan: &StoreyPlan) -> Result<ObjectId> {
+        if let Some(id) = self.matched(&plan.kept, STOREY, building)? {
+            return Ok(id);
+        }
         let name = {
             let used: BTreeSet<String> = spatial::storeys(self.ctx.txn()?.snapshot(), building)
                 .iter()
@@ -623,7 +660,17 @@ impl Writer<'_, '_> {
         Ok(id)
     }
 
-    fn grid(&mut self, building: ObjectId, g: &GridPlan) -> Result<ObjectId> {
+    /// The grid line of `g`; `None` when the building already has a grid line of that name (a
+    /// re-import: grid lines keep no `GlobalId`, see `IMPORT_GRID_IDENTITY`).
+    fn grid(&mut self, building: ObjectId, g: &GridPlan) -> Result<Option<ObjectId>> {
+        let own = archbuilder_model::names::fold(&g.name);
+        // The grid lines the document had before this import: a file may repeat a label.
+        if spatial::children(self.ctx.txn()?.base(), GRID, building)
+            .iter()
+            .any(|o| archbuilder_model::names::fold(types::text(&o.values, 0).unwrap_or("")) == own)
+        {
+            return Ok(None);
+        }
         let mut v = self.blank(GRID)?;
         set(&mut v, types::grid::NAME, text(&g.name));
         let (first, last) = (g.points[0], g.points[g.points.len() - 1]);
@@ -644,10 +691,13 @@ impl Writer<'_, '_> {
                 .collect();
             set(&mut v, types::grid::PATH, Value::List(path));
         }
-        self.create(GRID, Some(building), v)
+        self.create(GRID, Some(building), v).map(Some)
     }
 
     fn building(&mut self, site: ObjectId, b: &BuildingPlan) -> Result<ObjectId> {
+        if let Some(id) = self.matched(&b.kept, BUILDING, site)? {
+            return Ok(id);
+        }
         let mut v = self.blank(BUILDING)?;
         let n = self.unique(BUILDING, site, &b.name)?;
         set(&mut v, types::building::NAME, text(&n));
@@ -840,8 +890,9 @@ pub fn apply(
             w.applied.ids.insert(f.key, made);
         }
         for g in &building.grids {
-            let made = w.grid(building_id, g)?;
-            w.applied.ids.insert(g.key, made);
+            if let Some(made) = w.grid(building_id, g)? {
+                w.applied.ids.insert(g.key, made);
+            }
         }
     }
     // Groups as selection sets of the members that are elements of the model.

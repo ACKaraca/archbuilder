@@ -412,6 +412,14 @@ fn an_imported_file_exports_with_its_identities_foreign_elements_and_properties(
     assert_eq!(made, 0);
     assert_eq!(again["matched"].as_u64().unwrap(), 6);
     assert_eq!(count(&env.document, archbuilder_model::types::WALL), 1);
+    // The building and storeys the document already has are matched too, not made again.
+    for key in [
+        archbuilder_model::types::BUILDING,
+        archbuilder_model::types::STOREY,
+        archbuilder_model::types::LEVEL,
+    ] {
+        assert_eq!(count(&env.document, key), 1, "{key}");
+    }
 }
 
 fn find(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
