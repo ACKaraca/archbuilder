@@ -392,4 +392,89 @@ fn a_hosted_door_family_is_an_opening_in_its_wall_filled_by_an_ifc_door() {
     if let Ok(dir) = std::env::var("AB_IFC_OUT") {
         std::fs::write(std::path::Path::new(&dir).join("hosted.ifc"), &a.bytes).unwrap();
     }
+    // The mesh export does not derive hosted bodies yet: the report says so, never silence.
+    let mesh = archbuilder_io::mesh::export_mesh(
+        &document.snapshot(),
+        &archbuilder_io::mesh::MeshOptions::default(),
+    )
+    .unwrap();
+    let hosted = mesh
+        .report
+        .items
+        .iter()
+        .find(|i| i.reason == "ab.io.mesh.hosted_family_not_exported")
+        .unwrap();
+    assert_eq!(
+        hosted.arguments.get("count"),
+        Some(&arc_io_common::loss::Argument::Int(3))
+    );
+}
+
+#[test]
+fn shared_nested_children_are_in_the_loss_reports_or_the_mesh() {
+    use archbuilder_model::family::def::{Anchor, NestedUse};
+    let child = table();
+    let mut parent = cabinet();
+    parent.header.id = arc_base::ObjectId::from_u128(0x7001);
+    parent.nested = vec![NestedUse {
+        key: "tbl".into(),
+        family: child.header.id,
+        version: Version {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        },
+        type_name: Some("1400x800".into()),
+        type_param: None,
+        shared: true,
+        at: [Anchor::default(), Anchor::default(), Anchor::default()],
+        rotation: None,
+        params: std::collections::BTreeMap::new(),
+    }];
+    parent.tests.clear();
+    let document = place_families(vec![(child, "1400x800"), (parent, "600")]);
+    let snapshot = document.snapshot();
+    // The IFC export does not write shared children yet, and says so.
+    let export = export_ifc(&snapshot, &ExportOptions::default()).unwrap();
+    assert!(export.valid);
+    let item = export
+        .report
+        .items
+        .iter()
+        .find(|i| i.reason == "ab.io.ifc.family_shared_not_written")
+        .unwrap();
+    assert_eq!(
+        item.arguments.get("count"),
+        Some(&arc_io_common::loss::Argument::Int(1))
+    );
+    // The mesh has no aggregation: the child goes with its parent's triangles.
+    let parent_id = arc_base::ObjectId::from_u128(0xF00F + 0x10);
+    let mesh = archbuilder_io::mesh::export_mesh(
+        &snapshot,
+        &archbuilder_io::mesh::MeshOptions {
+            only: Some(std::iter::once(parent_id).collect()),
+            ..archbuilder_io::mesh::MeshOptions::default()
+        },
+    )
+    .unwrap();
+    let placed = archbuilder_model::family::loaded::place(
+        &snapshot,
+        &Component::of(&spatial::get(&snapshot, parent_id).unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(placed.shared.len(), 1);
+    let own: usize = placed
+        .solids
+        .iter()
+        .map(|s| {
+            arc_mesh::TriMesh::from_polyhedron(
+                &s.solid,
+                &arc_base::Tolerance::DEFAULT,
+                &Limits::DEFAULT,
+            )
+            .unwrap()
+            .triangle_count()
+        })
+        .sum();
+    assert!(mesh.triangles > own, "{} > {own}", mesh.triangles);
 }

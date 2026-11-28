@@ -316,6 +316,17 @@ fn a_file_is_imported_in_one_undo_step_with_native_and_foreign_elements() {
         assert_eq!(total, c["seen"].as_u64().unwrap(), "{c}");
     }
     assert!(out["report"]["items"].as_array().unwrap().iter().any(|i| i["reason"] == "ab.io.ifc.import_preserved" && i["record_kind"] == "IfcColumn"));
+    // The mesh export writes the column with its stored mesh.
+    let mesh = archbuilder_io::mesh::export_mesh(
+        &snapshot,
+        &archbuilder_io::mesh::MeshOptions {
+            only: Some(std::iter::once(column.id).collect()),
+            ..archbuilder_io::mesh::MeshOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(mesh.elements, 1);
+    assert!(mesh.triangles >= 12);
     // One undo step takes everything back.
     env.document.undo().wait().unwrap();
     assert_eq!(count(&env.document, types::WALL), 0);

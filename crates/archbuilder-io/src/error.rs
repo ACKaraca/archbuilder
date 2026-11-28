@@ -125,6 +125,14 @@ pub mod reasons {
         severity: Severity::Warning,
         message_id: "ab-io-loss-family-not-written",
     };
+    /// The shared nested children of a family instance: they are elements of their own, and the
+    /// export does not write them yet (neither as elements nor in the parent's body).
+    pub const FAMILY_SHARED_NOT_WRITTEN: Reason = Reason {
+        code: "ab.io.ifc.family_shared_not_written",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-family-shared-not-written",
+    };
     /// Parameters of a type or an instance IFC cannot hold (family type) are written as text.
     pub const FAMILY_PARAMETER_AS_TEXT: Reason = Reason {
         code: "ab.io.ifc.family_parameter_as_text",
@@ -268,6 +276,14 @@ pub mod reasons {
         outcome: Outcome::Dropped,
         severity: Severity::Info,
         message_id: "ab-io-loss-mesh-object",
+    };
+    /// A family instance hosted by a wall: the mesh export does not derive its body yet (its
+    /// opening is in the wall).
+    pub const MESH_HOSTED_FAMILY_NOT_EXPORTED: Reason = Reason {
+        code: "ab.io.mesh.hosted_family_not_exported",
+        outcome: Outcome::Dropped,
+        severity: Severity::Warning,
+        message_id: "ab-io-loss-mesh-hosted-family",
     };
     /// An element whose solid could not be derived or meshed.
     pub const MESH_BODY_FAILED: Reason = Reason {

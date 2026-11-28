@@ -466,10 +466,14 @@ fn bodies(snapshot: &Snapshot, key: &str, object: &Object) -> Result<Option<Bodi
                 return Ok(None);
             };
             let placed = archbuilder_model::family::loaded::place(snapshot, &component)?;
+            // The shared nested children are elements of their own; a mesh has no aggregation, so
+            // they go with their parent.
+            let shared = placed.shared.into_iter().flat_map(|c| c.solids);
             out.extend(
                 placed
                     .solids
                     .into_iter()
+                    .chain(shared)
                     .filter(|s| s.shown.at(Detail::High, ViewKind::ThreeD))
                     .map(|s| ("family.component", s.solid)),
             );
@@ -758,6 +762,50 @@ pub fn export_mesh(snapshot: &Snapshot, options: &MeshOptions) -> Result<MeshExp
                 }),
             }
         }
+    }
+    // Foreign elements: their stored mesh is their body.
+    for object in spatial::objects(snapshot, types::FOREIGN_ELEMENT) {
+        options.cancel.check()?;
+        if !wanted(object.id) {
+            continue;
+        }
+        let name = name_of(&object);
+        let mesh = archbuilder_model::foreign::mesh(&object.values).and_then(|m| {
+            let positions = m
+                .positions()
+                .iter()
+                .map(|p| Point3::new(p.x * scale, p.y * scale, p.z * scale))
+                .collect();
+            TriMesh::new(positions, m.triangles().to_vec(), &options.limits).ok()
+        });
+        match mesh {
+            Some(mesh) if mesh.triangle_count() > 0 => entries.push(Entry {
+                id: Some(object.id),
+                key: types::FOREIGN_ELEMENT,
+                label: label(&name, object.id),
+                parts: vec![("foreign", mesh)],
+            }),
+            _ => losses.push(Loss {
+                reason: reasons::MESH_BODY_FAILED,
+                kind: types::FOREIGN_ELEMENT.to_owned(),
+                object: Some(object.id),
+                name,
+                count: 1,
+            }),
+        }
+    }
+    let hosted = spatial::objects(snapshot, types::FAMILY_INSERT)
+        .iter()
+        .filter(|o| wanted(o.id))
+        .count();
+    if hosted > 0 {
+        losses.push(Loss {
+            reason: reasons::MESH_HOSTED_FAMILY_NOT_EXPORTED,
+            kind: types::FAMILY_INSERT.to_owned(),
+            object: None,
+            name: String::new(),
+            count: i64::try_from(hosted).unwrap_or(i64::MAX),
+        });
     }
     for key in BODYLESS {
         let count = spatial::objects(snapshot, key)

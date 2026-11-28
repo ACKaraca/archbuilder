@@ -307,6 +307,14 @@ impl Mapper<'_> {
         } else {
             brep(placed.solids.iter().map(|s| &s.solid), &super::WORLD, 0.0)
         };
+        if !placed.shared.is_empty() {
+            self.lose_n(
+                reasons::FAMILY_SHARED_NOT_WRITTEN,
+                class,
+                object,
+                placed.shared.len(),
+            );
+        }
         let type_id = self.ensure_type(&resolved, &assigned, &placed.evaluation.values, object);
         let storey_id = storey.as_u128();
         let mut element = Element::new(
@@ -486,6 +494,14 @@ impl Mapper<'_> {
         ) else {
             return self.lose(reasons::NOT_EXPORTED, assigned.entity.class(), object);
         };
+        if !evaluation.shared.is_empty() {
+            self.lose_n(
+                reasons::FAMILY_SHARED_NOT_WRITTEN,
+                assigned.entity.class(),
+                object,
+                evaluation.shared.len(),
+            );
+        }
         let type_id = self.ensure_type(&resolved, &assigned, &evaluation.values, object);
         let storey_id = storey.as_u128();
         let mut element = Element::new(
