@@ -221,8 +221,13 @@ fn fixture() -> String {
         "#135=IFCPOLYLINE((#133,#134));".to_owned(),
         "#136=IFCGRIDAXIS('A',#132,.T.);".to_owned(),
         "#137=IFCGRIDAXIS('B',#135,.T.);".to_owned(),
+        // A circular axis: not a line the import carries, so it is listed.
+        "#141=IFCCARTESIANPOINT((0.,0.));".to_owned(),
+        "#142=IFCAXIS2PLACEMENT2D(#141,$);".to_owned(),
+        "#143=IFCCIRCLE(#142,1000.);".to_owned(),
+        "#144=IFCGRIDAXIS('C',#143,.T.);".to_owned(),
         format!(
-            "#138=IFCGRID('{}',$,'Grid',$,$,#90,$,(#136,#137),(),$,$);",
+            "#138=IFCGRID('{}',$,'Grid',$,$,#90,$,(#136,#137),(#144),$,$);",
             g(138)
         ),
         format!(
@@ -316,6 +321,15 @@ fn a_file_is_imported_in_one_undo_step_with_native_and_foreign_elements() {
         assert_eq!(total, c["seen"].as_u64().unwrap(), "{c}");
     }
     assert!(out["report"]["items"].as_array().unwrap().iter().any(|i| i["reason"] == "ab.io.ifc.import_preserved" && i["record_kind"] == "IfcColumn"));
+    assert!(
+        out["report"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["reason"] == "ab.io.ifc.import_not_carried"
+                && i["record_kind"] == "IfcGridAxis"),
+        "the circular grid axis is listed"
+    );
     // The mesh export writes the column with its stored mesh.
     let mesh = archbuilder_io::mesh::export_mesh(
         &snapshot,

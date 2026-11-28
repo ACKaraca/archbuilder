@@ -800,6 +800,7 @@ impl<'a> Mapper<'a> {
             for axis in references(self.src.attribute(o.instance, list)) {
                 let tag = text(self.src.attribute(axis, "AxisTag")).unwrap_or_default();
                 let Some(curve) = reference(self.src.attribute(axis, "AxisCurve")) else {
+                    self.lose(reasons::IMPORT_NOT_CARRIED, "IfcGridAxis", o);
                     continue;
                 };
                 let points = self.curve_points(curve, m);
@@ -810,7 +811,13 @@ impl<'a> Mapper<'a> {
                         [w[0], w[1]]
                     })
                     .collect();
-                if points.len() < 2 || !Self::in_range(points.iter().copied()) {
+                // A curve that is no line or polyline, or one longer than a grid line's path holds,
+                // is listed, not dropped in silence.
+                if points.len() < 2
+                    || points.len() > archbuilder_model::datum::MAX_PATH + 2
+                    || !Self::in_range(points.iter().copied())
+                {
+                    self.lose(reasons::IMPORT_NOT_CARRIED, "IfcGridAxis", o);
                     continue;
                 }
                 let key = self.next;
